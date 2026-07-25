@@ -6,7 +6,7 @@
 //     the standalone single-binary path and what ships out of the box.
 //   - postgres (OPTIONAL): a shared SQL store, opt-in via [storage] config.
 //     Use it when multiple instances must share state, or when an embedding host
-//     (e.g. the Vulos OS control plane) needs to read the same data.
+//     (e.g. a Vulos OS box) needs to read the same data.
 //
 // Existing direct-bbolt users (handlers/api.ThreadStore, push/recipient stores)
 // keep working unchanged; this seam is for new and migratable callers that want
