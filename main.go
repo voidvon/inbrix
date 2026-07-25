@@ -380,7 +380,7 @@ func main() {
 	})
 
 	// Auth-gated root: logged-in users go to the inbox, logged-out visitors to
-	// sign-in. (The marketing landing moved to the centralized vulos-cloud site.)
+	// sign-in. (The marketing landing lives on vulos.org.)
 	app.Get("/", func(c *fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err == nil {

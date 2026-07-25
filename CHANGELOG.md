@@ -32,7 +32,7 @@ No unreleased changes.
 - **Send-as identities write path** — `PUT /v1/settings/identities` (the
   surface was previously read-only, so the compose "From" selector could only
   ever show the primary address and `POST /v1/messages` ignored `from`
-  entirely). For a vulos-mail-hosted mailbox the alias is pushed to the
+  entirely). For a CP-brokered mailbox the alias is pushed to the
   engine's broker-gated `/internal/identities` first, which accepts it only at
   a verified domain owned by the tenant (or a `you+tag@` subaddress); a
   refusal (`403`, now propagated verbatim instead of a generic `502`) or an
@@ -68,9 +68,9 @@ No unreleased changes.
 
 ### Removed
 
-- **Dropped the central `vulos-mail` feature-proxy coupling from `/v1`.**
+- **Dropped the central mail-engine feature-proxy coupling from `/v1`.**
   Several `/v1` surfaces existed only to reverse-proxy to a central
-  `vulos-mail` engine's `/internal/*` endpoints and were permanent `501`s in
+  a central mail engine's `/internal/*` endpoints and were permanent `501`s in
   every standalone deployment. Removed the six proxies — **rules/filters,
   threads, categories, smart-folders, team-inbox, spam-settings** — and the
   best-effort vacation/identities/snooze push-to-central paths, keeping the
@@ -89,7 +89,7 @@ No unreleased changes.
   (unreferenced regexes/maps/fields flagged by `staticcheck U1000`). No
   exported symbol or behaviour change.
 - **HTML marketing landing site.** Product landing pages are now centralized
-  in vulos-cloud; lilmail no longer embeds or serves its own (`/site/*` mount
+  on vulos.org; lilmail no longer embeds or serves its own (`/site/*` mount
   and embedded `siteFS` removed). `/` now redirects a logged-out visitor
   straight to `/login` (a signed-in user still lands on `/inbox`).
 
@@ -255,7 +255,7 @@ No unreleased changes.
   `LILMAIL_BROKER_SECRET` is unset or the secret mismatches, the DAV URL headers
   are ignored entirely. Standalone/session behaviour is unchanged. Outlook/
   Microsoft Graph calendars are not covered (CalDAV/CardDAV only).
-- **CP-brokered credential mode for `/v1`** — lets Vulos Cloud's control plane
+- **CP-brokered credential mode for `/v1`** — lets an external control plane
   (CP) reverse-proxy to lilmail and drive it against a per-request **external**
   mailbox (Gmail / Outlook / IMAP) whose credentials the CP custodies. When a
   `/v1` request presents a valid broker secret (`X-Vulos-Broker-Auth` matched

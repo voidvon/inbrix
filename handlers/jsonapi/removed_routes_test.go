@@ -3,7 +3,7 @@ package jsonapi
 // removed_routes_test.go — regression guard for the central-coupling removal.
 //
 // lilmail is a standalone client: it must NOT expose the /v1 surfaces that only
-// ever reverse-proxied to a central vulos-mail engine (rules/threads/categories/
+// ever reverse-proxied to a central mail engine (rules/threads/categories/
 // smart-folders/team-inbox/spam-settings). Those were deleted; this test locks
 // them out so a future change cannot silently reintroduce a central-coupled
 // endpoint. An authenticated request to any of them must 404 (route not

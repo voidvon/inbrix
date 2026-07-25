@@ -154,8 +154,8 @@ type CardDAVContactsConfig struct {
 //
 //   - Vulos suite: point at the central llmux gateway's
 //     /v1/chat/completions endpoint. llmux resolves the forwarded Bearer
-//     token to an account and applies BYOK-vs-central key selection plus
-//     metering/billing on the account's behalf — LilMail itself does not
+//     token to an account and applies BYOK-vs-central key selection
+//     on the account's behalf — LilMail itself does not
 //     decide BYOK vs central, it only forwards the account's token.
 //
 //     [ai]

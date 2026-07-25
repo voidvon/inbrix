@@ -161,7 +161,7 @@ service). This document tracks where we are and where we're going.
 - Becoming a heavyweight groupware suite.
 - Requiring an external database or message broker.
 - Bundling a full HTML rendering engine / tracking-pixel-friendly mail viewer.
-- Shipping its own marketing/landing site (product pages live in vulos-cloud).
+- Shipping its own marketing/landing site (product pages live on vulos.org).
 
 Have an idea or want to pick something up? See
 [Contributing](README.md#-contributing) and open an issue or PR.
