@@ -270,7 +270,7 @@ No unreleased changes.
   standalone lilmail never trusts arbitrary client-supplied connection headers.
   New `handlers/jsonapi/broker.go`; documented in [docs/API.md](docs/API.md).
 - **JSON API (`/v1`)** — a clean JSON/REST surface served alongside the HTMX UI,
-  for rich React clients (the Vulos webmail `@vulos/mail-ui`, Vulos Workspace) and scripting. Endpoints:
+  for rich React clients (the Vulos webmail `@vulos/mail-ui`, wede) and scripting. Endpoints:
   `GET /v1/me`, `GET /v1/folders`, `GET /v1/messages`, `GET /v1/messages/:uid`,
   `GET /v1/search`, `PATCH /v1/messages/:uid/flags`, `DELETE /v1/messages/:uid`.
   It reuses the existing mail engine and session auth (no duplicated mail logic),
