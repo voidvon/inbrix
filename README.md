@@ -82,6 +82,7 @@ into the binary at build time, and HTMX swaps in server-rendered partials so the
 page never does a full reload.
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
 flowchart TD
     UI["HTMX/Alpine UI (HTMX/SSE)"] --> Server
     React["External UIs (fetch /v1 JSON)"] --> Server
