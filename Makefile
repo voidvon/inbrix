@@ -1,4 +1,4 @@
-.PHONY: build test vet notices screenshots demo-screenshots clean
+.PHONY: build test vet notices screenshots demo-screenshots site-docs clean
 
 # Build the lilmail binary
 build:
@@ -39,6 +39,11 @@ demo-screenshots: build
 	@echo "==> Starting demo server and capturing screenshots..."
 	scripts/seed-demo.sh --screenshots
 	@echo "==> Demo screenshots written to docs/screenshots/"
+
+# Copy the repo's markdown into site/docs/, which site/docs.html renders.
+# Never hand-edit site/docs/*.md — edit the source document and re-run this.
+site-docs:
+	node scripts/sync-site-docs.mjs
 
 clean:
 	rm -f lilmail
