@@ -36,6 +36,11 @@ Server for the web. It talks to the **user's own** accounts (Gmail, Outlook, any
 IMAP/CalDAV/CardDAV) over OAuth/password and exposes a stable **`/v1`** JSON API
 (mail + `/v1/calendar` + `/v1/contacts`) that any rich client can build on.
 
+**Bring your own mailbox.** lilmail hosts no mail and has **no account system**:
+no sign-up, no user table, no tenant, no password of its own. The only credential
+it ever handles is the one for your own mailbox. "Logging in" means connecting a
+mailbox; nothing is provisioned anywhere when you do.
+
 ## Features
 
 - **Single binary (~30 MB), no external database** — templates and vendored JS
@@ -62,6 +67,9 @@ IMAP/CalDAV/CardDAV) over OAuth/password and exposes a stable **`/v1`** JSON API
 - **Calendar (CalDAV) + meeting invites** — month/week views, event CRUD,
   free/busy, and end-to-end iTIP/iMIP invites (send a `METHOD:REQUEST`, parse a
   received invite, RSVP with `METHOD:REPLY`) — opt-in via `[caldav]`
+- **Contacts (CardDAV)** — full-card CRUD over `/v1`, groups (as vCard
+  `CATEGORIES`), starred, raster-only photo upload, and vCard/CSV import + export
+  — opt-in via `[carddav]`
 - **Real-time notifications** — IMAP IDLE watcher, SSE stream, browser
   notifications, native desktop toasts, and VAPID Web Push — opt-in via `[notifications]`
 - **AI mail assistant** — smart compose, thread summaries, reply suggestions,
@@ -172,6 +180,7 @@ key, or [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full walkthrough.
 | [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | Installation, first-run, and basic configuration walkthrough |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Code layout, request lifecycle, and subsystem overview |
 | [docs/API.md](docs/API.md) | `/v1` JSON API reference — endpoints, auth, payloads |
+| [docs/SIGNING.md](docs/SIGNING.md) | Request authentication on the wire — broker secrets, AWS SigV4, known-answer vectors |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete `config.toml` reference — every key, section, and default |
 | [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) | Screenshot gallery and how to regenerate them |
 | [ROADMAP.md](ROADMAP.md) | Shipped features, planned work, and exploratory ideas |

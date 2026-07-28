@@ -48,7 +48,7 @@ func TestValidateDAVURL(t *testing.T) {
 }
 
 // TestNewCalDAVClientRejectsUnsafeURL confirms the guard runs inside the client
-// constructor (so the CP-brokered dial seam can never attach a bearer token to a
+// constructor (so the brokered dial seam can never attach a bearer token to a
 // forged endpoint), before any network dial.
 func TestNewCalDAVClientRejectsUnsafeURL(t *testing.T) {
 	cfg := config.CalDAVConfig{Enabled: true, URL: "http://dav.attacker.example/caldav/", Auth: "oauth2"}

@@ -26,6 +26,7 @@ const MAP = [
   ['docs/ARCHITECTURE.md',    'architecture.md'],
   ['docs/CONFIGURATION.md',   'configuration.md'],
   ['docs/API.md',             'api.md'],
+  ['docs/SIGNING.md',         'signing.md'],
   ['docs/SCREENSHOTS.md',     'screenshots.md'],
   ['ROADMAP.md',              'roadmap.md'],
   ['CHANGELOG.md',            'changelog.md'],

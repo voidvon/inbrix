@@ -31,7 +31,7 @@ func fetchCardDAVContacts(serverURL, username, password, query string, limit int
 }
 
 // fetchCardDAVContactsBearer is the OAuth2/Bearer-token variant of
-// fetchCardDAVContacts, used by the CP-brokered path: the access token is sent as
+// fetchCardDAVContacts, used by the brokered path: the access token is sent as
 // an HTTP Authorization: Bearer header (reusing bearerHTTPClient from caldav.go)
 // instead of basic auth.
 func fetchCardDAVContactsBearer(serverURL, token, query string, limit int) ([]RecipientEntry, error) {

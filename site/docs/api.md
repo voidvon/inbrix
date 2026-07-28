@@ -23,6 +23,28 @@ same engine + authentication — using `/v1` never changes the standalone UI.
 
 ## Authentication
 
+lilmail has **no account system**. There is no sign-up, no user table, no
+password of its own, no tenant, and no server-side identity beyond "whichever
+mailbox this request is authenticated to". The *only* credential in play is the
+one for the **user's own** mailbox (IMAP/SMTP password, or an OAuth2 access token
+for their provider). "Logging in" means *connecting a mailbox*; "logging out"
+means dropping the session that held it. Nothing is provisioned or reserved
+anywhere when a new person uses lilmail. Consequently every `/v1` route is
+implicitly scoped to that one mailbox: there is no account/tenant/user path
+segment or query parameter anywhere in the surface, and none can be added by a
+caller to reach someone else's data.
+
+There are exactly **two** ways a request can be authenticated:
+
+| Mode | How the caller proves itself | Who uses it |
+|------|------------------------------|-------------|
+| **Session cookie** (default) | The cookie set by `POST /login` or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's own HTMX UI |
+| **Injected credentials** (opt-in, off by default) | `X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers | an embedding host that already holds the user's mailbox credentials |
+
+Both resolve to the same thing — one mailbox connection for the duration of one
+request. There is no API-key or bearer-token scheme, no refresh endpoint of
+lilmail's own, and no way to mint a long-lived credential from `/v1`.
+
 The API reuses lilmail's session cookie — the **same** session established by
 `POST /login` or the OAuth2 flow. There is no separate API token scheme.
 
@@ -97,6 +119,17 @@ covered by this CalDAV/CardDAV path; only accounts that expose CalDAV/CardDAV
 The headers are only ever read **inside** the `/v1` group, after the secret has
 been validated — never on unauthenticated or HTMX paths.
 
+**The exact wire format** — header-by-header semantics, the acceptance algorithm,
+and an explicit list of the properties this scheme does *not* have (no HMAC, no
+timestamp window, no nonce, no replay protection) — is specified in
+[SIGNING.md § 1](SIGNING.md#1-mail-broker-seam-inbound). Read it before deploying
+the seam: it is only safe over a trusted transport.
+
+> **No webhooks.** lilmail never calls out to a URL you supply. There is no
+> webhook registration surface, no event delivery, and no outbound signature
+> scheme — see [SIGNING.md § 0](SIGNING.md#0-lilmail-emits-no-webhooks) for what
+> to use instead (SSE, Web Push, or polling).
+
 ## Conventions
 
 - **Folders** travel as the `folder` query parameter (default `INBOX`). This
@@ -151,7 +184,7 @@ or `?folder=`; system folders are `403`.
 discovered Junk/Spam folder — there is no separate training-signal endpoint on
 this backend, so the move IS the report (pair it with an undo toast like archive).
 
-`POST /v1/messages/:uid/snooze` moves the message to the Snoozed folder and, in a
+`POST /v1/messages/:uid/snooze` moves the message to the Snoozed folder and
 validates + echoes `until`. lilmail is a client and does not itself run a
 delivery-side scheduler, so it does **not** auto-return the message to the inbox:
 the response is `200 { snoozed:true, autoReturn:false, until, folder, note }` and
@@ -303,17 +336,151 @@ reads from `GET /v1/messages/:uid`.
 
 ### Contacts (only when `[carddav] enabled`)
 
+Everything here reads and writes the **user's own** CardDAV address book. There
+is no lilmail-side contact database: a card exists iff it exists on the user's
+CardDAV server, so two lilmail instances pointed at one account see one book.
+
 | Method | Path | Query | Body | Returns |
 |--------|------|-------|------|---------|
 | `GET`    | `/v1/contacts`                 | `q`, `limit` (50)  | —       | `{ contacts: { email, name }[] }` (autocomplete form) |
-| `GET`    | `/v1/contacts/cards`           | `q`, `limit` (500) | —       | `{ contacts: Contact[] }` (full cards) |
-| `POST`   | `/v1/contacts`                 | —                  | `{ name, emails, phones?, org?, title?, note? }` | `201 { contact }` |
-| `PUT`    | `/v1/contacts/:uid`            | —                  | `{ name, emails, phones?, org?, title?, note?, path? }` | `{ contact }` |
+| `GET`    | `/v1/contacts/cards`           | `q`, `limit` (500), `group` | — | `{ contacts: Contact[] }` (full cards) |
+| `GET`    | `/v1/contacts/frequent`        | `limit` (12, max 50) | —     | `{ contacts: { email, name?, count, lastUsed }[] }` |
+| `POST`   | `/v1/contacts`                 | —                  | `Contact` (no `uid`/`path`) | `201 { contact }` |
+| `PUT`    | `/v1/contacts/:uid`            | —                  | `Contact` (`path?` targets the exact object) | `{ contact }` |
 | `DELETE` | `/v1/contacts/:uid`            | `path?`            | —       | `204` |
+| `POST`   | `/v1/contacts/:uid/photo`      | —                  | multipart form, file field `file` | `{ contact }` |
+| `DELETE` | `/v1/contacts/:uid/photo`      | —                  | —       | `{ contact }` |
+| `GET`    | `/v1/contacts/groups`          | —                  | —       | `{ groups: { name, count }[] }` |
+| `POST`   | `/v1/contacts/groups`          | —                  | `{ name }` | `201 { group: { name, count: 0 } }` |
+| `PATCH`  | `/v1/contacts/groups/:name`    | —                  | `{ name }` | `{ renamed: <cards rewritten>, name }` |
+| `DELETE` | `/v1/contacts/groups/:name`    | —                  | —       | `{ removed: <cards rewritten> }` |
+| `POST`   | `/v1/contacts/import`          | —                  | multipart form: `file`, `format?`, `mapping?` | `{ imported, skipped }` |
+| `GET`    | `/v1/contacts/export`          | `format` (`vcf`\|`csv`) | —  | file download (`text/vcard` / `text/csv`) |
 
-`Contact` = `{ uid, name, org?, title?, note?, emails[], phones?, path? }`. The
-`path` is the CardDAV object path; pass it back on `PUT`/`DELETE` to target the
-exact card.
+The literal sub-paths (`cards`, `frequent`, `groups`, `import`, `export`) are
+registered **before** `/v1/contacts/:uid`, so they are never captured as a UID.
+
+When the account has no usable CardDAV target — standalone with `[carddav]`
+unconfigured, or an injected-credential request with no
+`X-Vulos-Mail-Carddav-Url` — **reads degrade to an empty result** (`{"contacts":
+[]}` / `{"groups": []}`) and **writes return `501 Not Implemented`** with
+`{"error":"contacts not available for this account"}`. Nothing falls back to a
+different account's book.
+
+#### `Contact` shape
+
+`GET /v1/contacts/cards` returns these verbatim, and `POST`/`PUT` accept the same
+shape. Only `uid`, `name` and `emails` are always present; every other field is
+omitted when empty.
+
+```jsonc
+{
+  "uid": "8f14e45f-ea4c-4b1e-9b06-9f2b3c0a1d77", // vCard UID, server-assigned on create
+  "name": "Alice Adams",                          // vCard FN
+  "structuredName": {                             // vCard N; derived from name when absent
+    "prefix": "Dr", "first": "Alice", "middle": "Q", "last": "Adams", "suffix": "PhD"
+  },
+  "nickname": "Al",
+  "fileAs": "Adams, Alice",                       // SORT-AS / X-ABShowAs list-ordering hint
+  "org": "Example Ltd",
+  "department": "Platform",                       // ORG component 2
+  "title": "Staff Engineer",
+  "note": "met at FOSDEM",
+  "emails": ["alice@example.com"],                // unlabelled projection (always present)
+  "phones": ["+44 20 7946 0000"],
+  "typedEmails": [{ "value": "alice@example.com", "type": "work" }],
+  "typedPhones": [{ "value": "+44 20 7946 0000", "type": "mobile" }],
+  "addresses": [{ "type": "home", "poBox": "", "extended": "", "street": "1 High St",
+                  "locality": "London", "region": "", "postal": "SW1A 1AA", "country": "GB" }],
+  "websites": [{ "value": "https://example.com", "type": "work" }],
+  "ims":      [{ "value": "alice@xmpp.example", "type": "xmpp" }],
+  "birthday": "1990-04-01",                       // ISO date or the vCard raw value
+  "anniversary": "2015-06-20",
+  "groups": ["Team", "Conference"],               // CATEGORIES membership
+  "photo": "data:image/png;base64,iVBORw0KG…",    // raster data URI only (see below)
+  "starred": true,
+  "path": "/dav/addressbooks/user/default/8f14e45f.vcf" // CardDAV object path
+}
+```
+
+- **`typedEmails`/`typedPhones` are authoritative when present**; `emails`/`phones`
+  are then derived from them. A lean client may send only `emails`/`phones`.
+- **`starred`** is stored as a reserved `CATEGORIES` value so it round-trips
+  through CardDAV like any other group, but it is surfaced as a boolean and is
+  **hidden from `/v1/contacts/groups`** — you cannot create or rename a group to
+  the reserved starred name (the request is a `400`).
+- **`photo`** is accepted **only** as a `data:` URI holding a PNG, JPEG, GIF or
+  WebP, is content-sniffed (not trusted from the declared type), and is capped at
+  **2 MiB**. An SVG, an HTML payload, or a bare `http(s)://` URL is dropped
+  server-side rather than stored — so a hostile card can never carry a
+  stored-XSS vector or a tracking beacon into a client that renders it.
+- **Bounds** (silently clamped, never a `500`): 1024 chars per scalar field, 8192
+  for `note`, 512 per email/phone/URL/IM value, 64 items per typed collection,
+  128 groups per card, 128 chars per group name, 64 chars per `type` label.
+- `POST` ignores any client-sent `uid`/`path` and always mints a fresh UID.
+  Both `POST` and `PUT` require at least a name **or** one email (`400` otherwise).
+
+#### Photos
+
+`POST /v1/contacts/:uid/photo` takes a multipart form with a `file` field, runs
+the same raster/size gate as the JSON path, attaches the result to the card, and
+returns the saved `{ contact }`. `DELETE` clears it and likewise returns the saved
+card. An over-cap upload is `413`; a non-raster image is `415`; an unknown `uid`
+is `404`.
+
+#### Groups (labels)
+
+Groups are modelled **entirely** inside each card's `CATEGORIES` property (the
+Google/Apple convention) — there is no separate group store, so a group exists
+iff some card in the book carries it, and group state is per-account by
+construction.
+
+- **Assign / unassign is done through the normal contact `PUT`**: edit
+  `contact.groups` and save. There is deliberately no assign endpoint.
+- `POST /v1/contacts/groups` makes a brand-new (empty) group visible by writing a
+  hidden placeholder card carrying only that category. Placeholder cards are
+  filtered out of `/v1/contacts/cards`, `/v1/contacts/export` and group counts,
+  and are deleted automatically once the group is removed from them. A duplicate
+  name (case-insensitive) is `409`.
+- `PATCH` rewrites the category on every card that carries it and reports how many
+  cards changed; `DELETE` drops the membership from every card but **keeps the
+  cards themselves**.
+
+#### Import / export
+
+`POST /v1/contacts/import` accepts a `.vcf` (one or many vCards) or a `.csv`
+(Google/Outlook export shape). `format` may be `vcf` or `csv`; when omitted it is
+sniffed from the filename, then from the content (`BEGIN:VCARD`). `mapping` is an
+optional `field:index,field:index` override applied on top of the auto-matched CSV
+header — useful after the client previews the header row. Recognised mapping
+fields: `name`, `first`, `middle`, `last`, `prefix`, `suffix`, `nickname`,
+`email`, `phone`, `org`, `department`, `title`, `note`, `website`, `birthday`,
+`groups`, `starred`, `photo`.
+
+Import is **bounded and forgiving**: the upload is capped at **10 MiB** (`413`
+past that), at most **5000** contacts are created per request, every row is
+sanitized through the same gate as a JSON write, and a malformed or
+identity-less row is counted in `skipped` rather than failing the whole import.
+Imported UIDs are always discarded and re-minted. The response is
+`{ "imported": <n>, "skipped": <n> }`.
+
+`GET /v1/contacts/export?format=vcf` (default) streams `text/vcard`;
+`format=csv` streams `text/csv` with the fixed column set *Name, Given Name,
+Family Name, Nickname, Organization, Department, Title, E-mail 1, Phone 1,
+Website 1, Birthday, Notes, Groups, Starred, Photo* — a superset that re-imports
+cleanly. CSV export is **formula-injection guarded**: any cell starting with
+`=`, `+`, `-`, `@`, TAB or CR is prefixed with `'` so a hostile contact field
+cannot execute when the export is opened in Excel/Sheets.
+
+#### Frequently contacted
+
+`GET /v1/contacts/frequent` is **not** a CardDAV read. It exposes the local
+recent-recipients store that the send path already appends to after every send,
+ordered by (`count` desc, `lastUsed` desc). It is read-only and per-account: the
+store file is keyed by the request's own sanitized username under
+`[cache] folder` — the exact path the send path writes to. Where there is no
+local store (a brokered account whose sends were never recorded locally, or
+`[cache] folder` unset) it returns an empty list rather than an error.
 
 ### Settings — vacation responder (`/v1/settings/vacation`)
 
@@ -499,6 +666,8 @@ curl -b cookies.txt 'http://localhost:3000/v1/unified?folder=INBOX&limit=50'
   "from": "alice@example.com",
   "fromName": "Alice",
   "to": "me@example.com",
+  "toNames": ["Me"],
+  "cc": "bob@example.com",
   "subject": "Invoice",
   "preview": "Here is the invoice you asked for…",
   "body": "plain text body",
@@ -528,9 +697,44 @@ curl -b cookies.txt 'http://localhost:3000/v1/unified?folder=INBOX&limit=50'
     "dmarc": "pass",
     "dkimDomain": "sender.com",
     "raw": "mx.example.com; spf=pass …" // verbatim Authentication-Results value
+  },
+  "invite": { … },                    // present iff the message carries a text/calendar iMIP part
+  "unsubscribe": {                    // present iff the message advertises List-Unsubscribe
+    "httpUrl": "https://example.com/u/abc",
+    "mailtoUrl": "mailto:unsub@example.com?subject=unsub",
+    "oneClick": true
+  },
+  "brand": {                          // present iff DMARC passed AND the domain publishes BIMI
+    "domain": "sender.com",
+    "logo": "data:image/svg+xml;base64,…",
+    "vmc": true
   }
 }
 ```
+
+`invite` (nil for ordinary mail) is the parsed iTIP/iMIP invitation — attendees
+plus the recipient's own `MyPartStat` — and is what the client answers with
+`POST /v1/calendar/rsvp`.
+
+`unsubscribe` is the parsed `List-Unsubscribe` (RFC 2369) pair. **lilmail never
+unsubscribes on your behalf** — it only surfaces the targets. Only `http`,
+`https` and `mailto` schemes are ever emitted; anything else is dropped so a
+hostile scheme cannot ride through to the client. `oneClick` is true only when
+the sender also sent `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC
+8058) **and** an `httpUrl` exists, meaning the client may POST
+`List-Unsubscribe=One-Click` to `httpUrl` directly.
+
+`brand` is a **verified** sender brand logo (BIMI) and is **fail-closed**: it is
+populated only when the message carries a DMARC `pass` verdict *and* the From
+domain publishes a BIMI record whose logo lilmail fetched (SSRF-screened) and
+sanitized. An unauthenticated sender therefore never gets a logo, so its presence
+is only ever a positive trust signal, never a phishing aid. `logo` is a sanitized
+SVG `data:` URI safe to place in an `<img src>`. `vmc` reflects only that the
+record referenced a Verified Mark Certificate (`a=` tag) — the certificate chain
+is **not** validated, so treat it as informational. Resolution is served from a
+per-domain cache and warmed in the background on a miss, so the first read of a
+message from a new domain may return no `brand` even though one exists; a
+subsequent read returns it.
 
 `attachments[]` is metadata only (no bytes). Build a download link as
 `/v1/messages/{id}/attachments/{partId}?folder={folder}`. `isInline` flags parts

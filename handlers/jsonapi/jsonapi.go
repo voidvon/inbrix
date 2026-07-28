@@ -33,12 +33,12 @@ import (
 
 // Handler serves the JSON API. It owns no mail state of its own — every request
 // reconstructs a MailClient from the caller's session via the AuthHandler, or
-// (in CP-brokered mode) directly from validated X-Vulos-Mail-* request headers.
+// (in brokered mode) directly from validated X-Vulos-Mail-* request headers.
 type Handler struct {
 	store  *session.Store
 	config *config.Config
 	auth   *web.AuthHandler
-	// brokerSecret gates the CP-brokered credential path (see broker.go). When
+	// brokerSecret gates the brokered credential path (see broker.go). When
 	// empty, brokered headers are never trusted and the API behaves identically
 	// to standalone lilmail. Read once from LILMAIL_BROKER_SECRET at construction.
 	brokerSecret string
@@ -63,7 +63,7 @@ type Handler struct {
 
 // New builds a JSON API handler. auth is the same *web.AuthHandler the HTMX UI
 // uses, so both surfaces share one authentication + client-construction path.
-// The CP-brokered credential mode is enabled when LILMAIL_BROKER_SECRET is set.
+// The brokered credential mode is enabled when LILMAIL_BROKER_SECRET is set.
 //
 // Scheduled send is OFF in this constructor (no durable store). Use NewWithStore
 // to enable it; standalone/tests that don't need send-later keep the simpler form.
@@ -103,7 +103,7 @@ func (h *Handler) Register(app *fiber.App) {
 	g.Get("/messages", h.handleMessages)     // ?folder=&limit=
 	g.Get("/messages/:uid", h.handleMessage) // ?folder=
 	// Attachment download — streams a single MIME part. Works in both session and
-	// CP-brokered modes; engages the object-storage attachment cache when present.
+	// brokered modes; engages the object-storage attachment cache when present.
 	g.Get("/messages/:uid/attachments/:partId", h.handleAttachment) // ?folder=
 	g.Get("/search", h.handleSearch)                                // ?folder=&q=&limit=
 	g.Patch("/messages/:uid/flags", h.handleSetFlag)                // ?folder=  body {flag,add}
@@ -154,7 +154,7 @@ func (h *Handler) Register(app *fiber.App) {
 	h.registerAccounts(g) // connected accounts CRUD + unified inbox read path
 
 	// Calendar — registered when CalDAV is enabled OR the broker path is active.
-	// In CP-brokered deployments the per-account CalDAV URL arrives per request
+	// In brokered deployments the per-account CalDAV URL arrives per request
 	// (X-Vulos-Mail-Caldav-Url), so the routes must exist even when the local
 	// [caldav] block is not enabled; the brokered handlers build the client from
 	// the headers. Reuses the CalDAV client + models.Calendar* types from the
@@ -190,7 +190,7 @@ func (h *Handler) Register(app *fiber.App) {
 }
 
 // requireAuth gates the group, returning 401 JSON (never a redirect) when the
-// request is neither a validated CP-brokered request nor a valid session. The
+// request is neither a validated brokered request nor a valid session. The
 // broker middleware has already run, so a brokered request is trusted here.
 func (h *Handler) requireAuth(c *fiber.Ctx) error {
 	if _, ok := brokerSpecOf(c); ok {
@@ -203,7 +203,7 @@ func (h *Handler) requireAuth(c *fiber.Ctx) error {
 }
 
 // client opens a MailClient for the request and returns it; the caller must
-// Close() it. For CP-brokered requests the client is built directly from the
+// Close() it. For brokered requests the client is built directly from the
 // validated X-Vulos-Mail-* headers; otherwise it comes from the session via the
 // AuthHandler. Demo mode transparently yields the in-memory DemoClient.
 func (h *Handler) client(c *fiber.Ctx) (api.MailClient, error) {
@@ -225,7 +225,7 @@ type smtpSender interface {
 var brokerSMTPSender = func(spec brokerSpec) smtpSender { return brokerSMTPClient(spec) }
 
 // smtpClient returns an SMTP sender for the request: brokered SMTP host/port +
-// creds for CP-brokered requests, otherwise the session-derived client.
+// creds for brokered requests, otherwise the session-derived client.
 func (h *Handler) smtpClient(c *fiber.Ctx) (smtpSender, error) {
 	if spec, ok := brokerSpecOf(c); ok {
 		return brokerSMTPSender(spec), nil
@@ -234,7 +234,7 @@ func (h *Handler) smtpClient(c *fiber.Ctx) (smtpSender, error) {
 }
 
 // fromEmail returns the sender identity for the request: the brokered mailbox
-// address for CP-brokered requests, otherwise the session email.
+// address for brokered requests, otherwise the session email.
 func (h *Handler) fromEmail(c *fiber.Ctx) string {
 	if spec, ok := brokerSpecOf(c); ok {
 		return spec.Email

@@ -60,7 +60,7 @@ func (c *captureSMTP) SendRawMessage(rcpts []string, raw []byte) error {
 
 // newBrokeredAppCfg is like newBrokeredApp but takes an explicit config (so a
 // test can set Cache.Folder for the attachment-staging path). It wires a /v1 app
-// in CP-brokered mode to the given fake mail client.
+// in brokered mode to the given fake mail client.
 func newBrokeredAppCfg(t *testing.T, cfg *config.Config, cl api.MailClient) *fiber.App {
 	t.Helper()
 	t.Setenv(brokerEnvSecret, "s3cr3t")

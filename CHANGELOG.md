@@ -9,7 +9,88 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
-No unreleased changes.
+### Added
+
+- **`docs/SIGNING.md`** — the exact wire format of every non-session request
+  authentication lilmail performs: the mail-broker and storage-broker header
+  seams (shared bearer secrets, constant-time compared — with an explicit list of
+  the properties they do *not* have: no HMAC, no timestamp window, no nonce, no
+  replay protection, no body binding) and the AWS SigV4 object-storage signer
+  (canonical URI, signed-header set, canonical request, string-to-sign, key
+  derivation, `Authorization` layout, timestamp/nonce/retry semantics). It states
+  lilmail's standing position that it emits **no outbound webhooks** and has no
+  bespoke webhook HMAC, and points clients at SSE / Web Push / polling instead.
+- **Known-answer vectors for the SigV4 signer**
+  (`storage/sigv4_vectors_test.go`). Two published vectors — GET with an empty
+  payload, and PUT with a body, a session token and a percent-encoded key — pin
+  the canonical URI, payload hash, `SignedHeaders` list, credential scope and
+  signature byte for byte. The expected values were derived from the prose in
+  `docs/SIGNING.md` by a separate implementation, so the document and the code are
+  held to each other rather than the test merely echoing the code. A companion
+  test proves the signature actually binds the secret key, region, timestamp,
+  payload, key, bucket, method and session token, and a coverage test stops the
+  vector corpus silently shrinking.
+- **Documentation gates for the `/v1` contract**
+  (`handlers/jsonapi/api_docs_test.go`). Every route `Register()` mounts must
+  appear in `docs/API.md` **with its method**, every `/v1` path the document
+  advertises must actually be mounted, and a floor assertion plus a
+  named-route list keep the walk from under-running (it enumerates the widest
+  surface — CalDAV, CardDAV and the broker seam all enabled — so the
+  conditionally-mounted groups are covered too).
+
+### Changed
+
+- **CI now runs the checks the repo already claimed.** Added `gofmt`, switched
+  the test step to `go test -race` (the broker seam copies out of a pooled
+  request buffer and the unified inbox fans out per account — exactly what a
+  non-race run cannot police), and wired in
+  `node scripts/sync-site-docs.mjs --check`, which `site/README.md` has
+  advertised as the CI gate since the script was written but which nothing ran.
+  `make check` now mirrors CI step for step.
+- **`docs/API.md` documents the whole contacts surface.** Nine mounted routes
+  were absent from the reference — contact groups (list/create/rename/delete),
+  vCard/CSV import + export, photo upload/delete, and frequently-contacted — as
+  was the `?group=` filter on `/v1/contacts/cards`. The `Contact` shape was
+  documented as seven fields when it carries twenty-two (structured name,
+  TYPE-labelled emails/phones/addresses/websites/IMs, birthday, anniversary,
+  department, nickname, file-as, groups, photo, starred), and the `Email` shape
+  omitted `toNames`, `cc`, `invite`, `unsubscribe` and `brand`. All now
+  specified, with the bounds, sanitisation rules and degradation behaviour a
+  client needs.
+- **The auth model is stated up front.** `docs/API.md` now opens with the fact
+  that lilmail has no account system at all — no sign-up, no user table, no
+  tenant, no credential of its own — and that the only two ways to authenticate
+  a request both resolve to one connection to the user's own mailbox.
+
+### Removed
+
+- **Five unreferenced embedded assets** — `apple-touch-icon.png`, `icon-48.png`,
+  `lilmail-logo.svg`, `lilmail.png`, `lilmail.svg`. `//go:embed all:assets`
+  compiles everything under `assets/` into the binary, and none of these were
+  reachable from any template, stylesheet, service worker, manifest or Go source
+  (the templates use `icon-16/32/180`, `icon.png`, `lilmail-favicon.svg` and
+  `og-image.png`; the manifest uses `icon-192`/`icon-512`). `assets_embed_test.go`
+  now fails on any asset that is embedded but referenced by nothing, so the
+  duplicates cannot silently reaccumulate. The vendored `*.LICENSE` files are
+  allow-listed with their reason — they must travel with the bundles.
+
+### Fixed
+
+- Corrected a garbled sentence in the `/v1` snooze description.
+- The 1.13.0 send-as-identities entry described pushing aliases to a central
+  engine's `/internal/identities`, which the same release removed and which no
+  code in this repository has ever called. Rewritten to describe what actually
+  ships: local validation, KV storage keyed by the authenticated mailbox, and
+  the user's own SMTP server remaining the send-as authority.
+- Retired the last "CP" / "control plane" naming for the embedding host from
+  code comments and the changelog, finishing the rename the surrounding commits
+  began, and fixed a duplicated phrase in the 1.13.0 removal notes.
+- `ROADMAP.md` listed "shipping its own marketing/landing site" as a non-goal
+  while `site/` shipped exactly that; the roadmap now describes the static
+  bundle accurately (and notes it is not embedded in or served by the binary).
+  Its Contributing link also pointed at a stale `#-contributing` anchor.
+- The VAPID key-management doc comment named a `GenerateAndSaveVAPIDKeys`
+  function that does not exist (`LoadOrGenerateVAPIDKeys` does).
 
 ## [1.13.0] - 2026-07-17
 
@@ -32,14 +113,14 @@ No unreleased changes.
 - **Send-as identities write path** — `PUT /v1/settings/identities` (the
   surface was previously read-only, so the compose "From" selector could only
   ever show the primary address and `POST /v1/messages` ignored `from`
-  entirely). For a CP-brokered mailbox the alias is pushed to the
-  engine's broker-gated `/internal/identities` first, which accepts it only at
-  a verified domain owned by the tenant (or a `you+tag@` subaddress); a
-  refusal (`403`, now propagated verbatim instead of a generic `502`) or an
-  unreachable engine stores nothing. Compose, draft-save, and scheduled send
-  all gate `From` on the primary address or a registered identity (else
+  entirely). Aliases are validated locally (CR/LF/NUL rejected, then address
+  shape) and stored in the durable KV keyed by the authenticated mailbox, so a
+  caller only ever edits their own list. Compose, draft-save, and scheduled
+  send all gate `From` on the primary address or a registered identity (else
   `403`); a scheduled send's ownership key stays the authenticated mailbox
-  even when `From` is an alias. Send-as only — an alias does not become an
+  even when `From` is an alias. lilmail is **not** the send-as authority: the
+  user's own SMTP server re-checks the `From` at submission time and remains
+  the thing that can refuse it. Send-as only — an alias does not become an
   inbound address. Documented in `docs/API.md`.
 - **Third-party licence notices.** lilmail redistributes other people's code
   (51 Go modules plus vendored htmx/Alpine.js) but shipped none of the
@@ -69,8 +150,8 @@ No unreleased changes.
 ### Removed
 
 - **Dropped the central mail-engine feature-proxy coupling from `/v1`.**
-  Several `/v1` surfaces existed only to reverse-proxy to a central
-  a central mail engine's `/internal/*` endpoints and were permanent `501`s in
+  Several `/v1` surfaces existed only to reverse-proxy to a central mail
+  engine's `/internal/*` endpoints and were permanent `501`s in
   every standalone deployment. Removed the six proxies — **rules/filters,
   threads, categories, smart-folders, team-inbox, spam-settings** — and the
   best-effort vacation/identities/snooze push-to-central paths, keeping the
@@ -161,7 +242,7 @@ No unreleased changes.
   `api.NewClientTLS` + a config regression test.
   (`config/config.go`, `handlers/api/client.go`, `handlers/web/auth.go`)
 - **Brokered spec buffer-aliasing (per-account routing corruption).** In
-  CP-brokered mode the per-request `brokerSpec` was built from `c.Get(...)`
+  brokered mode the per-request `brokerSpec` was built from `c.Get(...)`
   strings that alias fasthttp's recycled request buffer; because the spec is
   stored in `c.Locals` and its fields (e.g. the CardDAV URL) are used as
   per-account cache/map keys, a later pooled request could silently overwrite an
@@ -239,8 +320,9 @@ No unreleased changes.
 
 ### Added
 
-- **Brokered calendar & contacts for `/v1`** — extends the CP-brokered credential
-  mode to `/v1/calendar/*` and `/v1/contacts`. When the CP sends the new
+- **Brokered calendar & contacts for `/v1`** — extends the brokered credential
+  mode to `/v1/calendar/*` and `/v1/contacts`. When the embedding host sends
+  the new
   `X-Vulos-Mail-Caldav-Url` / `X-Vulos-Mail-Carddav-Url` headers (only honored
   behind the same valid-broker-secret gate), lilmail builds the CalDAV/CardDAV
   client **directly from those per-account URLs**, authenticating with the
@@ -255,9 +337,9 @@ No unreleased changes.
   `LILMAIL_BROKER_SECRET` is unset or the secret mismatches, the DAV URL headers
   are ignored entirely. Standalone/session behaviour is unchanged. Outlook/
   Microsoft Graph calendars are not covered (CalDAV/CardDAV only).
-- **CP-brokered credential mode for `/v1`** — lets an external control plane
-  (CP) reverse-proxy to lilmail and drive it against a per-request **external**
-  mailbox (Gmail / Outlook / IMAP) whose credentials the CP custodies. When a
+- **Brokered credential mode for `/v1`** — lets an embedding host
+  reverse-proxy to lilmail and drive it against a per-request **external**
+  mailbox (Gmail / Outlook / IMAP) whose credentials that host custodies. When a
   `/v1` request presents a valid broker secret (`X-Vulos-Broker-Auth` matched
   against the new `LILMAIL_BROKER_SECRET` env var via a constant-time compare),
   lilmail builds the IMAP/SMTP client **directly** from the injected
@@ -270,7 +352,7 @@ No unreleased changes.
   standalone lilmail never trusts arbitrary client-supplied connection headers.
   New `handlers/jsonapi/broker.go`; documented in [docs/API.md](docs/API.md).
 - **JSON API (`/v1`)** — a clean JSON/REST surface served alongside the HTMX UI,
-  for rich React clients (the Vulos webmail `@vulos/mail-ui`, wede) and scripting. Endpoints:
+  for rich clients and scripting. Endpoints:
   `GET /v1/me`, `GET /v1/folders`, `GET /v1/messages`, `GET /v1/messages/:uid`,
   `GET /v1/search`, `PATCH /v1/messages/:uid/flags`, `DELETE /v1/messages/:uid`.
   It reuses the existing mail engine and session auth (no duplicated mail logic),

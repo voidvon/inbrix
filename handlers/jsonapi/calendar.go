@@ -43,7 +43,7 @@ func parseRange(c *fiber.Ctx) (time.Time, time.Time) {
 	return start, end
 }
 
-// calDAVClient returns a CalDAV client for the request. For CP-brokered requests
+// calDAVClient returns a CalDAV client for the request. For brokered requests
 // it is built directly from the X-Vulos-Mail-Caldav-Url + bearer-token headers
 // (never the session); otherwise it comes from the session via the AuthHandler.
 // The returned bool is false when the request is brokered but the account has no

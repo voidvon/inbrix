@@ -5,8 +5,8 @@
 // email.go HandleAttachment) and works in BOTH auth modes:
 //
 //   - session mode: the MailClient comes from the caller's session.
-//   - CP-brokered mode: the MailClient is built from the validated X-Vulos-Mail-*
-//     headers, so a control-plane-proxied client can download attachments without
+//   - brokered mode: the MailClient is built from the validated X-Vulos-Mail-*
+//     headers, so a broker-proxied client can download attachments without
 //     ever holding a lilmail session.
 //
 // As in the web path, the OPTIONAL object-storage cache (storage.ObjectStore-

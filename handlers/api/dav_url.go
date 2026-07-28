@@ -1,8 +1,8 @@
 // handlers/api/dav_url.go — SSRF / token-exfiltration guard for header-injected
 // CalDAV / CardDAV base URLs.
 //
-// WHY THIS EXISTS: in the CP-brokered deployment (handlers/jsonapi/broker.go)
-// the control plane injects a per-account DAV base URL (X-Vulos-Mail-Caldav-Url
+// WHY THIS EXISTS: in the brokered deployment (handlers/jsonapi/broker.go)
+// the embedding host injects a per-account DAV base URL (X-Vulos-Mail-Caldav-Url
 // / X-Vulos-Mail-Carddav-Url) and lilmail then dials it with the user's XOAUTH2
 // access token attached as an HTTP Bearer header. If a forged or attacker-chosen
 // URL reached the client we would (a) leak that bearer token to an arbitrary

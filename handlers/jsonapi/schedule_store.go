@@ -17,7 +17,7 @@
 //
 // SECRET-AT-REST: the outbound SMTP credential captured at schedule time is
 // stored ENCRYPTED with the same config.Encryption.Key the session store uses
-// (api.EncryptJSON), never in plaintext. In CP-brokered mode the per-request
+// (api.EncryptJSON), never in plaintext. In brokered mode the per-request
 // token is short-lived and must NOT be persisted for a far-future send; the
 // broker path therefore refuses to schedule beyond the token horizon (see
 // schedule.go) — honest degrade rather than a stale-credential silent drop.

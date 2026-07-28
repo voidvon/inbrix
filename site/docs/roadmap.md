@@ -102,7 +102,10 @@ service). This document tracks where we are and where we're going.
 - End-to-end iTIP/iMIP meeting invites: send `METHOD:REQUEST`, parse a
   received invite, RSVP with `METHOD:REPLY` reflected into the responder's
   own calendar
-- CardDAV contact queries feeding recipient autocomplete
+- CardDAV contacts over `/v1`: full-card CRUD (structured name, TYPE-labelled
+  emails/phones/addresses/websites/IMs, birthday, department), groups modelled as
+  `CATEGORIES`, starred, raster-only photo upload, vCard/CSV import + export
+  (formula-injection-guarded), and the lean query feeding recipient autocomplete
 
 **Notifications & real-time** (opt-in via `[notifications].enabled`)
 - Server-side **IMAP IDLE** watcher; **SSE** stream → Web Notifications API
@@ -130,7 +133,16 @@ service). This document tracks where we are and where we're going.
 - **Self-contained binary** — templates and vendored HTMX/Alpine.js are
   embedded via `embed.FS`; runs fully offline with only `config.toml`
 - Unit tests (SASL/MIME/attachment-ID/threading/AI/config/security) + **CI**
-  workflow
+  workflow — build, `gofmt`, `go vet`, `go test -race`, and a published-docs
+  staleness gate
+- Documentation gates in CI: every mounted `/v1` route must appear in
+  [docs/API.md](docs/API.md) with its method (and vice versa), and the AWS SigV4
+  request signer is pinned by known-answer vectors from
+  [docs/SIGNING.md](docs/SIGNING.md)
+- `site/` — a self-contained static landing page + markdown docs viewer (no
+  build step, no CDN). It is **not** embedded in or served by the binary; it is
+  a bundle you host wherever you like. `site/docs/*.md` are generated copies —
+  edit the source document and run `make site-docs`
 - Semantic-versioned **release pipeline** (GitHub Actions on `v*` tags)
 
 ---
@@ -161,7 +173,10 @@ service). This document tracks where we are and where we're going.
 - Becoming a heavyweight groupware suite.
 - Requiring an external database or message broker.
 - Bundling a full HTML rendering engine / tracking-pixel-friendly mail viewer.
-- Shipping its own marketing/landing site (product pages live on vulos.org).
+- Hosting mail, or growing an account system of its own. lilmail connects to the
+  user's own mailbox and stores no identity beyond that connection.
+- Emitting outbound webhooks. Clients read `/v1`, subscribe to SSE, or use Web
+  Push — see [docs/SIGNING.md](docs/SIGNING.md).
 
 Have an idea or want to pick something up? See
-[Contributing](README.md#-contributing) and open an issue or PR.
+[Contributing](README.md#contributing) and open an issue or PR.

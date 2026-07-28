@@ -1,4 +1,4 @@
-.PHONY: build test vet notices screenshots demo-screenshots site-docs clean
+.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check check clean
 
 # Build the lilmail binary
 build:
@@ -18,8 +18,18 @@ test:
 vet:
 	go vet ./...
 
-# Run build + vet + test
-check: build vet test
+# Fail if anything is unformatted (the same gate CI runs).
+fmt-check:
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then echo "gofmt found unformatted files:"; echo "$$unformatted"; exit 1; fi; \
+	echo "gofmt: clean"
+
+# Fail if site/docs/*.md have drifted from their sources (the same gate CI runs).
+site-docs-check:
+	node scripts/sync-site-docs.mjs --check
+
+# Everything CI runs, in the same order. Run this before opening a PR.
+check: build fmt-check vet test site-docs-check
 
 # Regenerate docs/screenshots/*.png using Playwright.
 # Boots lilmail with a minimal demo config (login page captured without credentials).

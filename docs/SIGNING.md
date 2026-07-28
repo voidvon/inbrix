@@ -1,0 +1,370 @@
+# lilmail — request authentication & signing
+
+This document specifies every place lilmail authenticates an HTTP request that is
+not a browser session: what is on the wire, byte for byte, and what is
+deliberately *not*. It is written to be implementable without reading the source.
+
+Known-answer vectors are pinned by `storage/sigv4_vectors_test.go`, which runs in
+CI. If this document and the code ever disagree, that test fails.
+
+---
+
+## 0. lilmail emits no webhooks
+
+**lilmail has no outbound webhook emitter and no bespoke webhook HMAC scheme.**
+
+There is no webhook registration surface, no event-delivery queue, no per-tenant
+signing secret, no `X-Lilmail-Signature` header, and no retry/redelivery
+machinery. Nothing in `/v1` causes lilmail to POST an event to a caller-supplied
+URL. A client that wants to react to new mail uses the pull/stream surfaces
+lilmail does have:
+
+| Want | Use |
+|------|-----|
+| Real-time new-mail notification, browser | `GET /events` (Server-Sent Events, session-authenticated) |
+| Real-time new-mail notification, background | Web Push / VAPID (`POST /api/push/subscribe`) — signed by the [Web Push](https://datatracker.ietf.org/doc/html/rfc8292) standard, not by lilmail |
+| Polling | `GET /v1/messages?folder=&limit=&offset=` |
+
+This is a deliberate position, not an omission. It is enforced by
+`TestNoOutboundWebhookSigner`, which fails the build if an `hmac.New` call site
+appears anywhere outside the single documented AWS SigV4 signer below. Adding an
+outbound webhook therefore requires specifying its wire format **here**, with
+vectors, before it can ship.
+
+The rest of this document covers the three authentication mechanisms lilmail
+*does* implement:
+
+1. §1 — the **mail broker** seam (inbound, shared secret, no HMAC)
+2. §2 — the **storage broker** seam (inbound, shared secret, no HMAC)
+3. §3 — **AWS SigV4** object-storage request signing (outbound, HMAC-SHA256)
+
+---
+
+## 1. Mail broker seam (inbound)
+
+*Implementation: `handlers/jsonapi/broker.go`. Consumer-facing summary:
+[API.md → Injected-credential mode](API.md#injected-credential-mode-embedding-hosts).*
+
+An embedding host that already holds the user's mailbox credentials may pass the
+per-request connection descriptor as headers instead of establishing a lilmail
+session. The seam is **off unless `LILMAIL_BROKER_SECRET` is set** in the lilmail
+process's environment.
+
+### 1.1 Wire format
+
+```
+X-Vulos-Broker-Auth: <the exact value of LILMAIL_BROKER_SECRET>
+X-Vulos-Mail-Provider:    gmail | outlook | imap        (informational, unvalidated)
+X-Vulos-Mail-Email:       user@example.com              (required)
+X-Vulos-Mail-Username:    user@example.com              (optional; defaults to -Email)
+X-Vulos-Mail-Auth:        xoauth2 | plain               (optional; defaults to "plain")
+X-Vulos-Mail-Secret:      <access token | password>     (required)
+X-Vulos-Mail-Imap-Host:   imap.example.com              (required)
+X-Vulos-Mail-Imap-Port:   993                           (optional; default 993, implicit TLS)
+X-Vulos-Mail-Smtp-Host:   smtp.example.com              (optional; defaults to -Imap-Host)
+X-Vulos-Mail-Smtp-Port:   587                           (optional; default 587; 465 ⇒ implicit TLS, else STARTTLS)
+X-Vulos-Mail-Caldav-Url:  https://…                     (optional; enables /v1/calendar/*)
+X-Vulos-Mail-Carddav-Url: https://…                     (optional; enables /v1/contacts)
+```
+
+Header names are matched case-insensitively (HTTP rules). `X-Vulos-Mail-Auth` is
+lower-cased and trimmed before comparison; `-Email`, `-Username`, `-Imap-Host`,
+`-Smtp-Host` and the two DAV URLs are trimmed. `X-Vulos-Broker-Auth` and
+`X-Vulos-Mail-Secret` are **not** trimmed — they are compared/used verbatim.
+
+### 1.2 Acceptance algorithm
+
+The gate is **closed by default** and opens only when every step passes. Any
+failure is silent: the `X-Vulos-Mail-*` headers are discarded and the request
+falls through to ordinary session authentication (which will then `401` if there
+is no session). The seam never rejects a request on its own.
+
+1. `LILMAIL_BROKER_SECRET` is non-empty. Otherwise → closed.
+2. `X-Vulos-Broker-Auth` is present and non-empty. Otherwise → closed.
+3. `subtle.ConstantTimeCompare(presented, secret) == 1`. This is a **byte-exact
+   comparison of the whole value** — not a prefix, not a hash, not an HMAC.
+   Otherwise → closed.
+4. `X-Vulos-Mail-Auth`, after lower-casing, is `xoauth2` or `plain` (empty ⇒
+   `plain`). Otherwise → closed.
+5. `X-Vulos-Mail-Email`, `X-Vulos-Mail-Secret` and `X-Vulos-Mail-Imap-Host` are
+   all non-empty. Otherwise → closed.
+6. Defaults are applied: `Username ??= Email`, `SmtpHost ??= ImapHost`,
+   `ImapPort ??= 993`, `SmtpPort ??= 587`.
+
+A non-numeric port header falls back to the default rather than failing.
+
+The parsed descriptor is scoped to **one request**. Every header value is copied
+out of the transport buffer at parse time (`strings.Clone`), because the server's
+buffers are pooled and recycled — without the copy, a later request could mutate
+an earlier request's retained descriptor and cross-account routing could bleed.
+
+### 1.3 What this scheme deliberately does NOT have
+
+Implementers must not assume any of the following, because none of it is there:
+
+| Property | Status |
+|----------|--------|
+| Message authentication code (HMAC) over the request | **absent** — the header is a bearer secret |
+| Timestamp / freshness header | **absent** — no window, no clock skew tolerance |
+| Nonce / replay cache | **absent** — a captured request replays forever |
+| Body or method binding | **absent** — the secret does not cover the request at all |
+| Per-tenant or rotating secret | **absent** — one process-wide secret |
+| Signature over the `X-Vulos-Mail-*` headers | **absent** |
+
+**Therefore**: this seam is only safe over a trusted transport. Deploy it with
+TLS end-to-end and a network path where nothing untrusted can observe or replay a
+request — a loopback/unix-socket hop, or a private network between the embedding
+host and lilmail. Anyone who observes one brokered request has the secret *and*
+the user's mailbox credential. Treat `LILMAIL_BROKER_SECRET` as equivalent in
+blast radius to "may impersonate any mailbox the host can describe".
+
+Rotation is a process restart with a new environment value; there is no
+two-secret overlap window, so rotate by draining rather than in place.
+
+---
+
+## 2. Storage broker seam (inbound)
+
+*Implementation: `storage/object.go`. Configuration:
+[CONFIGURATION.md → Shared object storage](CONFIGURATION.md#shared-object-storage-vulos_storage_broker_secret).*
+
+Structurally identical to §1, for a different resource: it lets an embedding host
+hand a request a scratch S3 bucket, which lilmail uses **only** to cache large,
+immutable attachment blobs so repeated downloads do not re-pull the MIME part
+from IMAP. It is off unless `VULOS_STORAGE_BROKER_SECRET` is set.
+
+```
+X-Vulos-Storage-Broker-Auth: <the exact value of VULOS_STORAGE_BROKER_SECRET>
+X-Vulos-Storage-Endpoint:      https://s3.example.com     (required)
+X-Vulos-Storage-Bucket:        my-bucket                  (required)
+X-Vulos-Storage-Access-Key:    AKIA…                      (required)
+X-Vulos-Storage-Secret-Key:    …                          (required)
+X-Vulos-Storage-Region:        eu-west-2                  (optional; default "us-east-1")
+X-Vulos-Storage-Prefix:        tenant-a                   (optional)
+X-Vulos-Storage-Session-Token: …                          (optional; STS)
+```
+
+Acceptance: `VULOS_STORAGE_BROKER_SECRET` set **and**
+`X-Vulos-Storage-Broker-Auth` present **and** constant-time byte-equal — then
+Endpoint/Bucket/Access-Key/Secret-Key all non-empty, the endpoint parses to a URL
+with a scheme and host, and the endpoint passes the transport rule below. Any
+failure → the headers are ignored entirely and lilmail keeps its standalone
+IMAP-only behaviour.
+
+**Transport rule (SSRF / exfiltration guard).** The injected endpoint must be
+`https://`, *except* when its host is loopback, an RFC1918/private IP, a
+link-local IP, `localhost`, a single-label hostname (e.g. a compose service named
+`minio`), or a name ending in `.local` / `.internal`, where plaintext `http://`
+is permitted. Any other scheme is refused. This stops a forged or leaked header
+from making lilmail ship credentials and attachment bytes in the clear to an
+arbitrary public endpoint.
+
+**Namespacing.** lilmail writes only under `<X-Vulos-Storage-Prefix>/mail/`, so it
+cannot collide with another application sharing the bucket.
+
+§1.3 applies here verbatim: no HMAC, no timestamp, no nonce, no replay
+protection, no body binding.
+
+---
+
+## 3. AWS SigV4 object-storage signing (outbound)
+
+*Implementation: `storage/object.go`, `func (s *s3Store) sign`. Vectors:
+`storage/sigv4_vectors_test.go`.*
+
+This is the **only** HMAC signature lilmail produces. Requests to the object
+store from §2 are signed with AWS Signature Version 4, header authentication,
+service `s3`, path-style addressing. It is a minimal stdlib-only implementation —
+no AWS SDK — to preserve the single-static-binary property.
+
+### 3.1 Canonical URI
+
+For an object key `K` and configured prefix `P` (the gateway prefix joined with
+lilmail's own `mail/` sub-space, always ending in `/`):
+
+```
+full     = P + trimLeadingSlash(K)
+canonURI = "/" + enc(bucket) + "/" + join(enc(seg) for seg in split(full, "/"), "/")
+```
+
+`enc` is RFC 3986 percent-encoding where the unreserved set `A–Z a–z 0–9 - . _ ~`
+passes through and every other byte becomes `%XX` with **upper-case** hex. `/` is
+not encoded (it is the segment separator; segments are encoded individually).
+
+The request URL's `RawPath` is pinned to `canonURI`, so the bytes on the wire are
+exactly the bytes that were signed.
+
+### 3.2 Signed headers
+
+Exactly these, always in this order (they are lexicographically sorted, and this
+is that order):
+
+| Header | Value |
+|--------|-------|
+| `host` | the endpoint host |
+| `x-amz-content-sha256` | lower-case hex SHA-256 of the request payload (`e3b0c442…b855` for an empty body) |
+| `x-amz-date` | request time, UTC, `20060102T150405Z` |
+| `x-amz-security-token` | present **only** when a session token was injected |
+
+`SignedHeaders` is those names joined with `;`. `Content-Type` and every
+`x-amz-meta-*` user-metadata header travel **unsigned** — S3 accepts this.
+
+### 3.3 Canonical request
+
+Six `\n`-joined fields. Note the third field is the raw query string, which is
+always empty for lilmail's GET/PUT (producing an empty line), and the fourth
+field — the canonical headers block — itself ends in `\n`, producing the blank
+line before `SignedHeaders`:
+
+```
+<HTTP method>\n
+<canonURI>\n
+<raw query string>\n
+<name>:<trimmed value>\n   (one line per signed header, in the order above)
+\n
+<SignedHeaders>\n
+<payload hash>
+```
+
+### 3.4 String to sign
+
+```
+AWS4-HMAC-SHA256\n
+<x-amz-date>\n
+<yyyymmdd>/<region>/s3/aws4_request\n
+<lower-case hex SHA-256 of the canonical request>
+```
+
+### 3.5 Signing key and signature
+
+```
+kDate    = HMAC-SHA256("AWS4" + secretKey, yyyymmdd)
+kRegion  = HMAC-SHA256(kDate,    region)
+kService = HMAC-SHA256(kRegion,  "s3")
+kSigning = HMAC-SHA256(kService, "aws4_request")
+signature = lowerhex(HMAC-SHA256(kSigning, stringToSign))
+```
+
+### 3.6 Authorization header
+
+One space after the algorithm, `", "` between the three fields:
+
+```
+Authorization: AWS4-HMAC-SHA256 Credential=<accessKey>/<yyyymmdd>/<region>/s3/aws4_request, SignedHeaders=<signedHeaders>, Signature=<signature>
+```
+
+### 3.7 Timestamp, nonce and retry semantics
+
+- **Timestamp.** `x-amz-date` is the signing time, taken from the system clock in
+  UTC at signing. It is both sent and covered by the signature (it appears in the
+  canonical headers *and* in the string-to-sign), so it cannot be altered in
+  flight. lilmail enforces **no window of its own** — the acceptance window is the
+  S3 server's (AWS's is ±15 minutes). A host with a skewed clock will see requests
+  rejected by the server, not by lilmail.
+- **Nonce.** There is none, and SigV4 does not define one. Replay protection
+  within the timestamp window is the responsibility of TLS and of the server.
+- **Retry.** There is **no retry**. `Get`/`Put` issue one request with a 30-second
+  client timeout; a failure is returned to the caller. Because this store is only
+  ever a *cache* in front of IMAP, a failed `Put` is swallowed (the download still
+  succeeds from IMAP) and a failed `Get` falls through to IMAP. Nothing is queued
+  or redelivered, so there is no "same signature reused across attempts" case to
+  reason about — any future retry must re-sign, since the signature binds
+  `x-amz-date`.
+- **Expiry.** Signatures are not pre-signed URLs and carry no `X-Amz-Expires`;
+  they are valid only for the single request that carries them.
+
+### 3.8 Vectors
+
+Both vectors use
+`accessKey = AKIAIOSFODNN7EXAMPLE`,
+`secretKey = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`,
+`host = s3.example.com`, `bucket = lilmail-test`, `region = eu-west-2`,
+`prefix = tenant-a/mail/`, and `x-amz-date = 20260728T123456Z`.
+
+These are the same values asserted by `TestSigV4KnownAnswerVectors`.
+
+#### Vector A — `GET`, empty payload, no session token
+
+| | |
+|---|---|
+| key | `attachments/INBOX/42/2.1` |
+| canonical URI | `/lilmail-test/tenant-a/mail/attachments/INBOX/42/2.1` |
+| payload hash | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| SignedHeaders | `host;x-amz-content-sha256;x-amz-date` |
+| canonical request hash | `685506ea919609c0f428c2d4b80c18dc69e026be14cbff1264852d4218d16b57` |
+| **signature** | `0e137034e1b1508316b18b00848c830f67f2189b048546f193540c730e43d6bb` |
+
+Canonical request (`␊` marks each newline; the blank line before `SignedHeaders`
+is the trailing newline of the canonical-headers block):
+
+```
+GET␊
+/lilmail-test/tenant-a/mail/attachments/INBOX/42/2.1␊
+␊
+host:s3.example.com␊
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855␊
+x-amz-date:20260728T123456Z␊
+␊
+host;x-amz-content-sha256;x-amz-date␊
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+String to sign:
+
+```
+AWS4-HMAC-SHA256␊
+20260728T123456Z␊
+20260728/eu-west-2/s3/aws4_request␊
+685506ea919609c0f428c2d4b80c18dc69e026be14cbff1264852d4218d16b57
+```
+
+Authorization:
+
+```
+AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260728/eu-west-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=0e137034e1b1508316b18b00848c830f67f2189b048546f193540c730e43d6bb
+```
+
+#### Vector B — `PUT`, body `lilmail`, session token, key needing encoding
+
+Session token: `FQoGZXIvYXdzEXAMPLETOKEN`.
+
+| | |
+|---|---|
+| key | `attachments/INBOX/42/invoice #1.pdf` |
+| canonical URI | `/lilmail-test/tenant-a/mail/attachments/INBOX/42/invoice%20%231.pdf` |
+| payload hash | `e96d1944bba44cfbe8325c189f4d02d2ae9706f62fe885de887cf0f5e129d527` |
+| SignedHeaders | `host;x-amz-content-sha256;x-amz-date;x-amz-security-token` |
+| canonical request hash | `89341137fff805435b2f0c78c61f24fee66811b62b470e72a80b447352c9770e` |
+| **signature** | `5eccf848247e3802bf903aaec6bcec14c08bdf02862ca30e9598b5e534fb020a` |
+
+Canonical request:
+
+```
+PUT␊
+/lilmail-test/tenant-a/mail/attachments/INBOX/42/invoice%20%231.pdf␊
+␊
+host:s3.example.com␊
+x-amz-content-sha256:e96d1944bba44cfbe8325c189f4d02d2ae9706f62fe885de887cf0f5e129d527␊
+x-amz-date:20260728T123456Z␊
+x-amz-security-token:FQoGZXIvYXdzEXAMPLETOKEN␊
+␊
+host;x-amz-content-sha256;x-amz-date;x-amz-security-token␊
+e96d1944bba44cfbe8325c189f4d02d2ae9706f62fe885de887cf0f5e129d527
+```
+
+Authorization:
+
+```
+AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260728/eu-west-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=5eccf848247e3802bf903aaec6bcec14c08bdf02862ca30e9598b5e534fb020a
+```
+
+---
+
+## 4. Cross-repo note
+
+Several products in this suite carry their own, mutually incompatible webhook
+HMAC designs. lilmail is **not** one of them — §0. Should lilmail ever need to
+emit signed events, the agreed direction is a **shared written spec plus shared
+vectors**, not a shared library: nothing lilmail ships may become load-bearing on
+another repo staying reachable. This document is lilmail's half of that
+arrangement, and §3.8's vectors are reproducible from §3.1–§3.6 alone.

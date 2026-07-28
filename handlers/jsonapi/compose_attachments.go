@@ -18,7 +18,7 @@
 // Staging is per-account (namespaced by the sanitized sender email, same scheme
 // the rest of lilmail uses for cache dirs) under config.Cache.Folder, so one
 // account can never read another's staged uploads, and it works identically in
-// session and CP-brokered modes on a single instance. Tokens are 128-bit random
+// session and brokered modes on a single instance. Tokens are 128-bit random
 // hex and path-validated, so an attacker cannot traverse out of the staging dir.
 package jsonapi
 

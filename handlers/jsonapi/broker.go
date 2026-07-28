@@ -34,7 +34,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// Broker request headers. The CP sends these on every proxied /v1 request.
+// Broker request headers. The embedding host sends these on every proxied /v1
+// request. Their exact wire format is specified in docs/SIGNING.md § 1.
 const (
 	hdrBrokerAuth = "X-Vulos-Broker-Auth"
 

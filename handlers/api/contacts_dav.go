@@ -3,7 +3,7 @@
 // This extends the read-only address-book *search* in recipients_carddav.go to a
 // full contacts surface: fetch complete cards, and PUT/DELETE vCards. It reuses
 // the same SSRF-hardened HTTP client + address-book discovery, and exposes both
-// basic-auth (standalone [carddav]) and bearer-token (CP-brokered) entry points,
+// basic-auth (standalone [carddav]) and bearer-token (brokered) entry points,
 // mirroring CardDAVContacts / CardDAVContactsBearer.
 //
 // NOTE: end-to-end testing requires a live CardDAV server; the logic is

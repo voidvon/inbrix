@@ -4,7 +4,7 @@
 //
 // # Key lifecycle
 //
-//   - On first use, GenerateAndSaveVAPIDKeys generates an ECDH P-256 key pair
+//   - On first use, LoadOrGenerateVAPIDKeys generates an ECDH P-256 key pair
 //     via webpush-go, persists it as JSON to a configurable file path, and
 //     returns the keys.
 //   - Subsequent starts load the persisted file; no new key pair is generated.

@@ -11,7 +11,7 @@
 //
 // SECURITY: honoring storage headers means lilmail will talk to whatever S3
 // endpoint the headers name — an SSRF/exfiltration risk if a client could forge
-// them. So, exactly like the CP MAIL broker (handlers/jsonapi/broker.go), the
+// them. So, exactly like the mail broker (handlers/jsonapi/broker.go), the
 // seam is authenticated: the X-Vulos-Storage-* headers are honored ONLY when the
 // VULOS_STORAGE_BROKER_SECRET env is set AND the request presents a matching
 // X-Vulos-Storage-Broker-Auth header (constant-time compared). The secret being

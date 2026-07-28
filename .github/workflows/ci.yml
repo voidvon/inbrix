@@ -18,8 +18,34 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: clean"
+
       - name: Vet
         run: go vet ./...
 
+      # -race matters here specifically: the injected-credential broker seam
+      # copies header values out of a POOLED per-request buffer, and the unified
+      # inbox fans out one goroutine per connected account. Both are exactly the
+      # shapes a non-race run cannot police.
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
+
+      # site/docs/*.md are GENERATED copies of the repo's markdown, rendered by
+      # site/docs.html. site/README.md has always advertised this check as the CI
+      # gate; this is it. Without it, editing docs/API.md silently leaves the
+      # published documentation stale.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Published docs are in sync
+        run: node scripts/sync-site-docs.mjs --check
