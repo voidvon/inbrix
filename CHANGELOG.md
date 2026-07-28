@@ -11,6 +11,37 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Added
 
+- **Signed, checksummed releases — and a verifier that fails closed.** Nothing
+  in the release pipeline previously vouched for the bytes it published. The
+  release workflow now stages every asset into `release/`, emits a `SHA256SUMS`
+  manifest **over that directory** (so "published" and "covered" are the same
+  set by construction, not two hand-maintained lists), asserts that the manifest
+  has exactly one line per staged asset, and attaches a sigstore build-provenance
+  attestation minted from the workflow's OIDC identity — no long-lived signing
+  key exists, so there is none to leak, own or rotate. A release that staged
+  nothing, or whose manifest does not cover what it staged, is now a **red**
+  release rather than a green one with an empty manifest.
+  `scripts/verify.sh` is the user-facing half: it fetches the manifest, looks up
+  the **exact** entry for the requested asset (string comparison on field 2 —
+  a substring/regex match would let `…tar.gz.sig` answer for `…tar.gz`) and
+  compares digests. There are two outcomes, verified or non-zero with a distinct
+  diagnostic; there is no `--skip-verify` and **no path where an absent
+  `SHA256SUMS` means "nothing to check"** — that shrug is the bug the file
+  exists not to have, because it converts *"I don't know"* into *"it's fine"*.
+  The release job runs `verify.sh` against its own output before publishing, so
+  producer and consumer cannot drift apart silently.
+- **`make verify-selftest`** (also a CI job, and a release-job step) — 24
+  synthetic-origin cases covering every refusal: manifest 404, manifest served
+  as an HTML error page (both by content-type and by sniffing a lying one),
+  empty/junk/truncated manifest, no entry for the asset, the `.sig` and
+  regex-wildcard name traps (one arranged so a naive substring match would
+  report **exit 0 on an artifact nobody vouched for**), asset 404, asset served
+  as HTML, truncated download, digest mismatch, plaintext origin, missing curl
+  or digest tool, and `--attest` with no `gh` installed. Each case asserts the
+  exit code **and** that a diagnostic was printed — a guard that aborts silently
+  reads as a crash, not a refusal, and "died at a pipeline under `set -e`" is
+  precisely how a sibling installer's unreachable guard shipped.
+
 - **`docs/SIGNING.md`** — the exact wire format of every non-session request
   authentication lilmail performs: the mail-broker and storage-broker header
   seams (shared bearer secrets, constant-time compared — with an explicit list of

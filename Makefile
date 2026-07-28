@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check check clean
+.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check verify-selftest check clean
 
 # Build the lilmail binary
 build:
@@ -30,8 +30,17 @@ fmt-check:
 site-docs-check:
 	go test ./site/gen -count=1
 
+# Prove the release verifier still REFUSES. scripts/verify.sh is what a user
+# runs before executing a downloaded release; this drives 24 synthetic-origin
+# cases (missing manifest, HTML error page, no entry, truncated download,
+# digest mismatch, ...) and asserts both the exit code and that a diagnostic
+# was printed. A checksum guard that has quietly stopped failing looks exactly
+# like one that works until the day it matters.
+verify-selftest:
+	bash scripts/verify.sh --selftest
+
 # Everything CI runs, in the same order. Run this before opening a PR.
-check: build fmt-check vet test site-docs-check
+check: build fmt-check vet test site-docs-check verify-selftest
 
 # Regenerate docs/screenshots/*.png using Playwright.
 # Boots lilmail with a minimal demo config (login page captured without credentials).

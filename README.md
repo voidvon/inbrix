@@ -142,6 +142,31 @@ Prefer a pre-built binary? Grab the latest archive from
 [Releases](https://github.com/vul-os/lilmail/releases) — only `config.toml`
 needs to be present alongside it.
 
+### Verify a release before you run it
+
+Every release publishes a `SHA256SUMS` manifest covering **all** of its assets,
+plus a sigstore build-provenance attestation minted from the release workflow's
+OIDC identity (there is no long-lived signing key, so there is none to leak or
+rotate). `scripts/verify.sh` is what you run before executing the bytes:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/vul-os/lilmail/v1.13.0/scripts/verify.sh
+bash verify.sh --tag v1.13.0 --attest lilmail_1.13.0_linux_amd64.zip
+```
+
+It fetches the manifest, looks up the **exact** entry for that asset (names are
+compared as strings, not as regexes) and compares digests. Two outcomes only:
+verified, or non-zero with a diagnostic naming what was wrong — missing or
+malformed manifest, no entry for the asset, truncated download, digest mismatch,
+HTML error page served where bytes were expected. There is no `--skip-verify`,
+and a `SHA256SUMS` that 404s is a **failure**, never "nothing to check".
+`--attest` additionally verifies the provenance (needs the `gh` CLI); leave it
+off and the script says out loud that provenance was *not* checked, so a pass
+never implies more than it checked.
+
+`make verify-selftest` runs 24 synthetic-origin cases asserting that each
+refusal still fires; CI runs the same matrix on every push.
+
 ## Configuration
 
 All configuration lives in `config.toml`. A minimal setup needs only an IMAP
