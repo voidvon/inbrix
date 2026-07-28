@@ -6,7 +6,7 @@ no font service, no external request. All three families are licensed under the
 
 | File | Family | Copyright | Upstream |
 |------|--------|-----------|----------|
-| `source-serif-600.woff2`, `source-serif-italic.woff2` | Source Serif 4 | © 2014–2023 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source' | <https://github.com/adobe-fonts/source-serif> |
+| `fraunces-var.woff2`, `fraunces-italic-var.woff2` | Fraunces (variable: `opsz` 9–144, `wght` 100–900, `SOFT` 0–100; subset to latin + typographic punctuation) | © 2020 The Fraunces Project Authors | <https://github.com/undercasetype/Fraunces> |
 | `hanken-grotesk-var.woff2` | Hanken Grotesk (variable, latin subset) | © 2020 The Hanken Grotesk Project Authors | <https://github.com/marcologous/Hanken-Grotesk> |
 | `plex-mono-400.woff2`, `plex-mono-600.woff2` | IBM Plex Mono (latin subset) | © 2017 IBM Corp. | <https://github.com/IBM/plex> |
 

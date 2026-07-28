@@ -51,3 +51,9 @@ The pages use the app's own design tokens (Paper `#FBF7F4`, Coral `#F2674E`,
 Teal `#14B8A6`, Ink `#1F2A37`) from `assets/css/mail.css`. If those change in the
 app, change them here too — the `:root` block at the top of each page is the only
 place they appear.
+
+Typography is Fraunces (variable — the landing drives its `opsz` and `SOFT` axes),
+Hanken Grotesk for body copy, and IBM Plex Mono for anything the machine says.
+The Fraunces files are subset to latin plus typographic punctuation with
+`python3 -m fontTools.subset`; re-subset from the upstream variable font rather
+than shipping the full 120 KB original.

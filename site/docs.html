@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="./assets/lilmail-favicon.svg">
 <link rel="preload" href="./assets/fonts/hanken-grotesk-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="./assets/fonts/source-serif-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="./assets/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin>
 <script>try{var t=localStorage.getItem('lilmail-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <style>
 /* =========================================================
@@ -18,8 +18,8 @@
    coral ink, teal accents. Vendored fonts + highlighter.
    ========================================================= */
 @font-face{font-family:"Hanken";src:url(./assets/fonts/hanken-grotesk-var.woff2) format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
-@font-face{font-family:"Source Serif";src:url(./assets/fonts/source-serif-600.woff2) format("woff2");font-weight:600;font-style:normal;font-display:swap}
-@font-face{font-family:"Source Serif";src:url(./assets/fonts/source-serif-italic.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Fraunces";src:url(./assets/fonts/fraunces-var.woff2) format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Fraunces";src:url(./assets/fonts/fraunces-italic-var.woff2) format("woff2");font-weight:100 900;font-style:italic;font-display:swap}
 @font-face{font-family:"Plex Mono";src:url(./assets/fonts/plex-mono-400.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
 @font-face{font-family:"Plex Mono";src:url(./assets/fonts/plex-mono-600.woff2) format("woff2");font-weight:600;font-style:normal;font-display:swap}
 
@@ -31,7 +31,7 @@
   --teal:#14B8A6; --teal-dark:#0E9384; --teal-soft:#DCF5F1; --teal-text:#0B6B60;
   --warn-soft:#FBEFDD; --warn:#E08A2B; --warn-text:#8A4E0F;
   --ink-band:#211D18; --ink-band-2:#16130F; --on-ink:#F4EFE9; --on-ink-2:#B7AFA4;
-  --serif:"Source Serif",Iowan Old Style,Georgia,serif;
+  --serif:"Fraunces",Iowan Old Style,Georgia,serif;
   --sans:"Hanken",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
   --mono:"Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --r-sm:8px; --r-md:12px; --r-lg:18px; --r-full:9999px;
@@ -70,7 +70,7 @@ html[data-theme="dark"]{
 }
 
 *,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:96px}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:96px;overflow-x:clip}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16.5px;
   line-height:1.68;font-weight:380;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
@@ -84,7 +84,8 @@ img{max-width:100%;display:block}
 a{color:inherit;text-decoration:none}
 ::selection{background:var(--coral);color:#fff}
 :focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:5px}
-h1,h2,h3,h4,h5{font-family:var(--serif);font-weight:600;letter-spacing:-.018em;line-height:1.14;margin:0}
+h1,h2,h3,h4,h5{font-family:var(--serif);font-weight:600;letter-spacing:-.02em;line-height:1.14;margin:0;
+  font-variation-settings:"opsz" 72,"SOFT" 30,"wght" 600;text-wrap:balance}
 
 .airmail{height:7px;background:repeating-linear-gradient(-45deg,
   var(--coral) 0 11px, transparent 11px 22px, var(--teal) 22px 33px, transparent 33px 44px);background-color:var(--surface)}
@@ -96,7 +97,7 @@ header.site{position:sticky;top:0;z-index:60;backdrop-filter:saturate(1.4) blur(
 .nav{display:flex;align-items:center;gap:18px;height:66px}
 .brand{display:flex;align-items:center;gap:11px;font-family:var(--serif);font-size:21px;letter-spacing:-.02em}
 .brand img{width:29px;height:29px;border-radius:9px;box-shadow:var(--shadow-sm)}
-.brand .lil{font-weight:400;font-style:italic;color:var(--slate)}
+.brand .lil{font-weight:300;font-style:italic;color:var(--slate)}
 .brand .mail{font-weight:600;color:var(--ink)}
 .brand .tag{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--coral);
   border:1px solid color-mix(in srgb,var(--coral) 32%, transparent);background:var(--coral-soft);
@@ -183,14 +184,14 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 .crumb{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate-2);
   display:flex;align-items:center;gap:9px;margin-bottom:12px}
 .crumb b{color:var(--coral);font-weight:600}
-.doc-head h1{font-size:clamp(32px,4.6vw,46px);letter-spacing:-.028em}
+.doc-head h1{font-size:clamp(34px,4.8vw,52px);letter-spacing:-.032em;font-variation-settings:"opsz" 144,"SOFT" 40,"wght" 600}
 .doc-head p{margin:12px 0 0;color:var(--slate);font-size:17px;max-width:62ch}
 
 .md{max-width:76ch}
 .md>*:first-child{margin-top:0}
 .md h1{display:none} /* the doc's own H1 is rendered in .doc-head */
-.md h2{font-size:29px;margin:2.1em 0 .55em;letter-spacing:-.022em;padding-top:.2em}
-.md h3{font-size:21.5px;margin:1.9em 0 .5em}
+.md h2{font-size:30px;margin:2.1em 0 .55em;letter-spacing:-.024em;padding-top:.2em;font-variation-settings:"opsz" 96,"SOFT" 34,"wght" 600}
+.md h3{font-size:22px;margin:1.9em 0 .5em;font-variation-settings:"opsz" 48,"SOFT" 30,"wght" 600}
 .md h4{font-size:17.5px;margin:1.6em 0 .45em;font-family:var(--sans);font-weight:650;letter-spacing:-.005em}
 .md h2 .anchor,.md h3 .anchor{opacity:0;margin-left:10px;color:var(--coral);font-size:.72em;font-family:var(--mono);
   transition:opacity .15s;vertical-align:middle}
@@ -210,6 +211,8 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 .md hr{border:none;border-top:1px dashed var(--border-strong);margin:2.6em 0}
 .md code{font-family:var(--mono);font-size:.855em;background:var(--surface-alt);border:1px solid var(--border);
   padding:1px 5px;border-radius:6px;color:var(--coral-text);white-space:nowrap}
+/* long identifiers must not push the page sideways on a phone */
+@media(max-width:760px){.md code{white-space:normal;overflow-wrap:anywhere}}
 html[data-theme="dark"] .md code{color:var(--coral-text)}
 .md img{border-radius:var(--r-md);border:1px solid var(--border-strong);box-shadow:var(--shadow-md);margin:1.6em 0}
 .md blockquote{margin:1.6em 0;padding:16px 20px;background:var(--warn-soft);color:var(--warn-text);
