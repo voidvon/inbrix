@@ -43,10 +43,29 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **CI now runs the checks the repo already claimed.** Added `gofmt`, switched
   the test step to `go test -race` (the broker seam copies out of a pooled
   request buffer and the unified inbox fans out per account — exactly what a
-  non-race run cannot police), and wired in
-  `node scripts/sync-site-docs.mjs --check`, which `site/README.md` has
-  advertised as the CI gate since the script was written but which nothing ran.
-  `make check` now mirrors CI step for step.
+  non-race run cannot police), and wired in the published-docs gate, which
+  `site/README.md` had advertised as the CI gate since it was written but which
+  nothing ran. `make check` now mirrors CI step for step.
+- **The published docs are generated, not copied, and the gate checks links.**
+  `scripts/sync-site-docs.mjs` compared source bytes to copy bytes and reported
+  `site/docs is in sync` — which it was. What it could not see is that
+  `site/docs.html` serves a bundle of eight markdown files, so ten links that
+  are perfectly valid inside the repo were dead inside it: `../config.toml.example`,
+  `TASKS.md`, `README.md#contributing` and `docs/screenshots/README.md` resolved
+  against `site/` and 404'd; four `[1.10.0](#1100---2026-06-22)` changelog
+  cross-references and one `[Attachments](#attachments)` were bare fragments,
+  which the viewer's hash router reads as a *document slug* and so navigated the
+  reader to a different chapter entirely; and
+  `CONFIGURATION.md#shared-object-storage-vulos_storage_broker_secret` used
+  GitHub's anchor where `docs.html`'s `slugify()` deletes underscores and
+  collapses hyphen runs. `site/gen` now generates `site/docs` and rewrites each
+  link against what the site really serves, and `site/gen/gen_test.go` fails on
+  drift **and** on any link or anchor that would not resolve — including one the
+  generator sent to an absolute repo URL that names a path this repo does not
+  contain. It also pins the five `docs.html` behaviours the rewriting depends on
+  and the viewer's `slugify()`, so changing the viewer cannot quietly invalidate
+  the gate. Source documents keep their GitHub-correct links; the rewriting
+  happens only in the published copy.
 - **`docs/API.md` documents the whole contacts surface.** Nine mounted routes
   were absent from the reference — contact groups (list/create/rename/delete),
   vCard/CSV import + export, photo upload/delete, and frequently-contacted — as

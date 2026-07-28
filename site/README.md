@@ -7,7 +7,7 @@ binary follows. Open `index.html` over any static server and it works offline.
 site/
 ├── index.html          landing page (self-contained CSS + JS)
 ├── docs.html           documentation viewer (renders the markdown in docs/)
-├── docs/*.md           copies of the repo's markdown — GENERATED, see below
+├── docs/*.md           the repo's markdown, GENERATED with links rewritten — see below
 ├── screenshots/*.png   app screenshots, light + `-dark` variants
 ├── assets/fonts/       vendored woff2 (SIL OFL 1.1 — see LICENSES.md)
 └── assets/vendor/      marked (markdown), highlight.js (syntax), mermaid (diagrams)
@@ -15,16 +15,38 @@ site/
 
 ## Editing the docs
 
-`site/docs/*.md` are copies. **Never edit them** — edit the source document
-(`docs/*.md`, `ROADMAP.md`, `CHANGELOG.md`) and re-sync:
+`site/docs/*.md` are **generated**. Never edit them — edit the source document
+(`docs/*.md`, `ROADMAP.md`, `CHANGELOG.md`) and regenerate:
 
 ```bash
-make site-docs                          # copy sources into site/docs/
-node scripts/sync-site-docs.mjs --check # CI: fail if a copy is stale
+make site-docs              # go run ./site/gen — regenerate site/docs/
+make site-docs-check        # go test ./site/gen — CI gate
 ```
 
-To add a document, add it to `MAP` in `scripts/sync-site-docs.mjs` **and** to the
-`DOCS` table at the top of the script block in `docs.html`.
+They are generated rather than copied because a copy is only ever checked for
+freshness, and freshness is not the property a reader notices. This bundle ships
+eight markdown files, the screenshots and two HTML pages — nothing else — so a
+link that is perfectly valid in the repo (`../config.toml.example`, `TASKS.md`,
+`README.md#contributing`, `docs/screenshots/README.md`) is a 404 here. The
+generator re-points each one:
+
+| Source link | Published as | Why |
+|-------------|--------------|-----|
+| `docs/API.md`, `API.md`, `../docs/API.md` | `api.md` | `docs.html` rule 5 turns a `<chapter>.md` href into in-page navigation |
+| `#attachments` | `api.md#attachments` | the hash router reads a bare `#foo` as a *document slug* and navigates away |
+| `CONFIGURATION.md#shared-object-storage-vulos_storage_broker_secret` | `configuration.md#shared-object-storage-vulosstoragebrokersecret` | `docs.html`'s `slugify()` deletes underscores and backticks and collapses hyphen runs; GitHub's does not |
+| `TASKS.md`, `../config.toml.example` | `https://github.com/vul-os/lilmail/blob/main/…` | not in the bundle, so it leaves the bundle honestly |
+| `docs/screenshots/hero.png` | `screenshots/hero.png` | `docs.html` rule 4 re-points it at `site/screenshots/` |
+
+`site/gen/gen_test.go` fails on drift **and** on any link or heading anchor that
+would not resolve, including links the generator sent to an absolute repo URL
+that name a path this repo does not contain. It also pins the `docs.html`
+behaviour the rewriting depends on, so changing the viewer cannot silently
+invalidate the gate.
+
+To add a document, add it to `pages` in `site/gen/main.go` **and** to the `DOCS`
+table at the top of the script block in `docs.html`; the gate fails if the two
+disagree.
 
 ## Screenshots
 

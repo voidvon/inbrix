@@ -24,9 +24,11 @@ fmt-check:
 	if [ -n "$$unformatted" ]; then echo "gofmt found unformatted files:"; echo "$$unformatted"; exit 1; fi; \
 	echo "gofmt: clean"
 
-# Fail if site/docs/*.md have drifted from their sources (the same gate CI runs).
+# Fail if the published docs have drifted from their sources OR carry a link
+# that the site cannot serve (the same gate CI runs). `go test ./...` runs it
+# too — this target exists so it can be invoked on its own.
 site-docs-check:
-	node scripts/sync-site-docs.mjs --check
+	go test ./site/gen -count=1
 
 # Everything CI runs, in the same order. Run this before opening a PR.
 check: build fmt-check vet test site-docs-check
@@ -50,10 +52,11 @@ demo-screenshots: build
 	scripts/seed-demo.sh --screenshots
 	@echo "==> Demo screenshots written to docs/screenshots/"
 
-# Copy the repo's markdown into site/docs/, which site/docs.html renders.
-# Never hand-edit site/docs/*.md — edit the source document and re-run this.
+# Generate site/docs/*.md, which site/docs.html renders, from the repo's
+# markdown — rewriting every link so it resolves against what the site actually
+# serves. Never hand-edit site/docs/*.md; edit the source document and re-run.
 site-docs:
-	node scripts/sync-site-docs.mjs
+	go run ./site/gen
 
 clean:
 	rm -f lilmail

@@ -250,7 +250,12 @@ func TestSigV4VectorCoverage(t *testing.T) {
 // suite already carries several mutually incompatible ones, and docs/SIGNING.md
 // records lilmail's position that it has none. If someone adds one, this test
 // fails and forces the wire format to be specified + vectored in docs/SIGNING.md
-// before it can ship, rather than becoming a sixth undocumented dialect.
+// before it can ship, rather than becoming one more undocumented dialect.
+//
+// No count of the suite's webhook dialects is asserted here on purpose. lilmail
+// has no webhook signing at all, so it is not a member of that set, and this
+// repo cannot verify the other repos' designs — a number stated here would only
+// feed a suite-wide tally that wrongly includes lilmail.
 //
 // It works by construction: the ONLY hmac.New call site permitted in the repo is
 // hmacSHA256 in this package (AWS SigV4). The check is a compile-time-adjacent

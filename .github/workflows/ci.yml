@@ -38,14 +38,15 @@ jobs:
       - name: Test
         run: go test -race ./...
 
-      # site/docs/*.md are GENERATED copies of the repo's markdown, rendered by
-      # site/docs.html. site/README.md has always advertised this check as the CI
-      # gate; this is it. Without it, editing docs/API.md silently leaves the
-      # published documentation stale.
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Published docs are in sync
-        run: node scripts/sync-site-docs.mjs --check
+      # site/docs/*.md are GENERATED from the repo's markdown by site/gen and
+      # rendered by site/docs.html. The step above already runs this gate as part
+      # of `go test ./...`; it is repeated on its own so a docs failure is
+      # attributed to the docs rather than buried in the test log.
+      #
+      # It checks two things, not one. The freshness half (site/docs matches what
+      # the generator makes) is what the previous Node gate did. The half it did
+      # not do — and the reason the published bundle shipped ten dead links while
+      # the gate reported "in sync" — is resolving every link in every published
+      # chapter, fragments included, against what site/ actually serves.
+      - name: Published docs are in sync and link-clean
+        run: go test ./site/gen -count=1 -v
