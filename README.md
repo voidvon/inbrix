@@ -4,9 +4,7 @@
 
 **A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary.**
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-yellow.svg)](LICENSE-MIT)
-[![Latest release](https://img.shields.io/github/v/tag/vul-os/lilmail?label=release&sort=semver)](https://github.com/vul-os/lilmail/releases)
-[![CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml/badge.svg)](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)
+**[MIT OR Apache-2.0](LICENSE-MIT) · [Releases](https://github.com/vul-os/lilmail/releases) · [CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)**
 
 <br>
 
