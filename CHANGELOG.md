@@ -132,6 +132,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `docs/assets/`. Not embedded in the binary (`docs/` is outside
   `//go:embed all:assets`), so `assets_embed_test.go` could not have caught
   it; this was a manual, independent-verification find.
+- **`docs/demo.png`** and **`site/assets/lilmail-wordmark.png`** — a repo-wide
+  orphan sweep found both had zero references anywhere in the tree (README,
+  `docs/`, `site/`, templates, Go source, `site/gen`), confirmed by grepping
+  each basename repo-wide (`grep -rn demo.png .` / `grep -rn wordmark .`) with
+  no hits beyond the file's own path. `docs/demo.png` was a 1846×963 pre-rebrand
+  screenshot (May 23) superseded by `docs/screenshots/hero.png`; the README's
+  hero image and gallery both use the `docs/screenshots/*.png` set only.
+  `site/assets/lilmail-wordmark.png` was a byte-identical duplicate of
+  `docs/assets/lilmail-wordmark.png` — the site's own pages (`index.html`,
+  `docs.html`) use `lilmail-favicon.svg` plus a live-text `<i>lil</i>mail`
+  wordmark, never the PNG. Neither is embedded in the binary or part of the
+  `site/gen` published bundle, so no existing gate could have caught either;
+  this was a manual, independent-verification find.
 
 ### Fixed
 
