@@ -181,13 +181,13 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 
 /* ---------- Article ---------- */
 .doc-head{border-bottom:1px dashed var(--border-strong);padding-bottom:22px;margin-bottom:34px}
-.crumb{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate-2);
+.crumb{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate);
   display:flex;align-items:center;gap:9px;margin-bottom:12px}
-.crumb b{color:var(--coral);font-weight:600}
+.crumb b{color:var(--coral-text);font-weight:600}
 .doc-head h1{font-size:clamp(34px,4.8vw,52px);letter-spacing:-.032em;font-variation-settings:"opsz" 144,"SOFT" 40,"wght" 600}
 .doc-head p{margin:12px 0 0;color:var(--slate);font-size:17px;max-width:62ch}
 
-.md{max-width:76ch}
+.md{max-width:76ch;overflow-wrap:break-word}
 .md>*:first-child{margin-top:0}
 .md h1{display:none} /* the doc's own H1 is rendered in .doc-head */
 .md h2{font-size:30px;margin:2.1em 0 .55em;letter-spacing:-.024em;padding-top:.2em;font-variation-settings:"opsz" 96,"SOFT" 34,"wght" 600}
@@ -211,8 +211,10 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 .md hr{border:none;border-top:1px dashed var(--border-strong);margin:2.6em 0}
 .md code{font-family:var(--mono);font-size:.855em;background:var(--surface-alt);border:1px solid var(--border);
   padding:1px 5px;border-radius:6px;color:var(--coral-text);white-space:nowrap}
-/* long identifiers must not push the page sideways on a phone */
-@media(max-width:760px){.md code{white-space:normal;overflow-wrap:anywhere}}
+/* long identifiers must not push the page sideways below the desktop
+   breakpoint — 760px missed the 768/1024 tablet+laptop widths, where a
+   long inline snippet was silently clipped off-screen by html{overflow-x:clip} */
+@media(max-width:1279px){.md code{white-space:normal;overflow-wrap:anywhere}}
 html[data-theme="dark"] .md code{color:var(--coral-text)}
 .md img{border-radius:var(--r-md);border:1px solid var(--border-strong);box-shadow:var(--shadow-md);margin:1.6em 0}
 .md blockquote{margin:1.6em 0;padding:16px 20px;background:var(--warn-soft);color:var(--warn-text);
@@ -228,7 +230,7 @@ html[data-theme="dark"] .md code{color:var(--coral-text)}
 .md table{border-collapse:collapse;width:100%;font-size:14.8px}
 .md th,.md td{padding:11px 15px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
 .md th{background:var(--surface-alt);font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
-  text-transform:uppercase;color:var(--slate);font-weight:600;white-space:nowrap}
+  text-transform:uppercase;color:var(--ink);font-weight:600;white-space:nowrap}
 .md tbody tr:last-child td{border-bottom:none}
 .md tbody tr:hover{background:var(--surface-alt)}
 .md td code{white-space:nowrap}
@@ -270,7 +272,7 @@ html[data-theme="dark"] .md code{color:var(--coral-text)}
 .pager a{border:1px solid var(--border);background:var(--surface);border-radius:var(--r-md);padding:16px 20px;
   transition:.2s;box-shadow:var(--shadow-sm)}
 .pager a:hover{border-color:var(--coral);transform:translateY(-2px)}
-.pager a span{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--slate-2);margin-bottom:5px}
+.pager a span{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--slate);margin-bottom:5px}
 .pager a b{font-family:var(--serif);font-size:19px;font-weight:600}
 .pager a.next{text-align:right}
 .pager a.next:only-child{grid-column:2}

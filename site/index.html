@@ -159,10 +159,10 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 /* ---------------- hero ---------------- */
 .hero{padding:clamp(34px,5.4vw,68px) 0 0;position:relative}
 .hero-grid{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(232px,.58fr);gap:clamp(24px,4.2vw,60px);align-items:start}
-@media(max-width:940px){.hero-grid{grid-template-columns:1fr}}
+@media(max-width:940px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
 .slug{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--coral-text)}
-.slug b{font-weight:600;color:var(--coral)}
+.slug b{font-weight:600;color:var(--coral-text)}
 .slug .line{flex:1;height:1px;background:var(--rule)}
 h1.hero-title{margin:22px 0 0;font-size:clamp(40px,7.6vw,94px);line-height:.9;letter-spacing:-.042em;
   font-variation-settings:"opsz" 144,"SOFT" 42,"wght" 600}
@@ -175,11 +175,11 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
 
 /* printed spec sheet */
 .spec{border-top:2px solid var(--ink);padding-top:14px;margin-top:8px}
-.spec .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--slate-2);
+.spec .cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--slate);
   display:flex;justify-content:space-between;margin-bottom:10px}
 .spec dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:0}
 .spec dt,.spec dd{margin:0;padding:7.5px 0;border-bottom:1px dotted var(--rule);font-family:var(--mono);font-size:11.5px}
-.spec dt{color:var(--slate-2);letter-spacing:.08em;text-transform:uppercase;padding-right:16px;white-space:nowrap}
+.spec dt{color:var(--slate);letter-spacing:.08em;text-transform:uppercase;padding-right:16px;white-space:nowrap}
 .spec dd{text-align:right;color:var(--ink)}
 .spec dd em{font-style:normal;color:var(--teal-dark)}
 @media(max-width:940px){.spec{max-width:460px}}
@@ -240,11 +240,11 @@ h2.title .em{display:block;font-style:italic;font-weight:400;color:var(--coral);
 
 /* ---------------- 01 · the index ---------------- */
 .index-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,2.1fr);gap:clamp(20px,3.4vw,54px);align-items:start}
-@media(max-width:900px){.index-grid{grid-template-columns:1fr}}
+@media(max-width:900px){.index-grid{grid-template-columns:minmax(0,1fr)}}
 .index-note{position:sticky;top:96px}
 .index-note p{color:var(--slate);font-size:14.5px;margin:0 0 16px}
 .index-note .stamp-note{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--coral);border:1.5px dashed color-mix(in srgb,var(--coral) 55%, transparent);
+  text-transform:uppercase;color:var(--coral-text);border:1.5px dashed color-mix(in srgb,var(--coral) 55%, transparent);
   border-radius:6px;padding:8px 11px;transform:rotate(-2.2deg);line-height:1.5}
 @media(max-width:900px){.index-note{position:static}}
 .rows{border-top:1px solid var(--ink)}
@@ -259,7 +259,7 @@ h2.title .em{display:block;font-style:italic;font-weight:400;color:var(--coral);
   font-variation-settings:"opsz" 60,"SOFT" 30,"wght" 600;transition:color .25s}
 .row:hover h3{color:var(--coral)}
 .row p{margin:8px 0 0;color:var(--slate);font-size:14.5px;line-height:1.6;max-width:62ch}
-.row .opt{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--slate-2);
+.row .opt{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--slate-2);
   border:1px solid var(--rule);border-radius:999px;padding:4px 9px;white-space:nowrap;align-self:center}
 .row .opt.on{color:var(--teal-text);border-color:color-mix(in srgb,var(--teal) 40%, transparent);background:var(--teal-soft)}
 @media(max-width:620px){.row{grid-template-columns:38px minmax(0,1fr);gap:14px}.row .opt{grid-column:2;justify-self:start;margin-top:12px}}
@@ -287,6 +287,9 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-alt);borde
 .route-stack span{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--on-dark-2)}
 .route-stack b{display:block;font-family:var(--display);font-size:20px;font-weight:600;margin:6px 0 4px}
 .route-stack p{margin:0;font-size:13.5px;color:var(--on-dark-2)}
+/* the shared `code` chip assumes a light paper background; on this dark section
+   that leaves light-on-light text, so give it dark-appropriate ink instead */
+.ink code{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.22);color:var(--on-dark)}
 .strike{margin-top:36px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;font-family:var(--mono);
   font-size:12.5px;color:var(--on-dark-2);padding-top:22px;border-top:1px solid rgba(255,255,255,.12)}
 .strike s{border:1px dashed rgba(255,255,255,.28);border-radius:999px;padding:7px 14px;
@@ -294,14 +297,14 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-alt);borde
 
 /* ---------------- 03 · screens ---------------- */
 .screens{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:clamp(24px,5vw,64px);align-items:start}
-@media(max-width:900px){.screens{grid-template-columns:1fr;gap:0}}
+@media(max-width:900px){.screens{grid-template-columns:minmax(0,1fr);gap:0}}
 .stack{display:grid}
 .step{padding:clamp(38px,7.4vh,72px) 0;border-bottom:1px solid var(--rule);opacity:.5;
   transition:opacity .45s cubic-bezier(.2,.8,.3,1)}
 .step.on{opacity:1}
 .step:first-child{padding-top:0}
 .step:last-child{border-bottom:none}
-.step .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--coral);
+.step .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--coral-text);
   display:flex;align-items:center;gap:10px}
 .step .k::before{content:"";width:18px;height:1.5px;background:var(--coral)}
 .step h3{font-family:var(--display);font-size:clamp(21px,2.6vw,30px);margin:12px 0 9px;letter-spacing:-.024em;
@@ -316,7 +319,7 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-alt);borde
   opacity:0;transition:opacity .5s cubic-bezier(.2,.8,.3,1);border-radius:9px}
 .viewer .frame img.on{opacity:1}
 .viewer .cap{margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--slate-2);display:flex;justify-content:space-between;gap:12px}
+  color:var(--slate);display:flex;justify-content:space-between;gap:12px}
 @media(max-width:900px){
   .viewer{position:sticky;top:60px;z-index:5;background:var(--paper);padding:14px 0 14px;margin-bottom:10px;
     box-shadow:0 16px 20px -18px rgba(0,0,0,.5)}
@@ -336,7 +339,7 @@ html[data-theme="dark"] .only-dark{display:block}
 
 /* ---------------- 04 · quick start ---------------- */
 .start{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(24px,4vw,54px);align-items:start}
-@media(max-width:940px){.start{grid-template-columns:1fr}}
+@media(max-width:940px){.start{grid-template-columns:minmax(0,1fr)}}
 .tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
 .tab{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:8px 13px;
   border-radius:999px;border:1px solid var(--rule);background:transparent;color:var(--slate);cursor:pointer;transition:.2s}
@@ -357,7 +360,7 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
 .term .dots i:first-child{background:var(--coral)}
 .term .name{font-family:var(--mono);font-size:11px;color:var(--on-dark-2);letter-spacing:.05em}
 .term .sp{flex:1}
-.copy{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--on-dark-2);
+.copy{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--on-dark-2);
   background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:4px 10px;cursor:pointer;transition:.2s}
 .copy:hover{color:#fff;border-color:var(--teal);background:rgba(45,212,191,.16)}
 .copy.done{color:var(--teal);border-color:var(--teal)}
@@ -391,21 +394,22 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
 
 /* ---------------- 05 · the contract ---------------- */
 .contract{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:clamp(24px,4vw,54px);align-items:start}
-@media(max-width:940px){.contract{grid-template-columns:1fr}}
+@media(max-width:940px){.contract{grid-template-columns:minmax(0,1fr)}}
 .routes{border-top:2px solid var(--ink)}
-.routes div{display:grid;grid-template-columns:60px 1fr;gap:14px;align-items:center;padding:10px 4px;
+.routes div{display:grid;grid-template-columns:60px minmax(0,1fr);gap:14px;align-items:center;padding:10px 4px;
   border-bottom:1px dotted var(--rule);font-family:var(--mono);font-size:12px;transition:.2s}
 .routes div:hover{background:var(--surface);padding-left:10px}
-.routes em{font-style:normal;font-size:10px;letter-spacing:.08em;font-weight:600;text-align:center;
-  border-radius:4px;padding:3px 0;color:#fff;background:var(--teal-dark)}
+.routes em{font-style:normal;font-size:10.5px;letter-spacing:.08em;font-weight:600;text-align:center;
+  border-radius:4px;padding:3px 0;color:var(--dark);background:var(--teal-dark)}
 .routes em.post{background:var(--coral)}
 .routes em.patch{background:#C98A2E}
-.routes span{color:var(--slate);overflow:hidden;text-overflow:ellipsis}
+.routes span{color:var(--slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.routes code{font-size:1em}
 .routes b{color:var(--ink);font-weight:400}
 
 /* ---------------- pillars ---------------- */
 .pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(20px,3vw,40px)}
-@media(max-width:900px){.pillars{grid-template-columns:1fr}}
+@media(max-width:900px){.pillars{grid-template-columns:minmax(0,1fr)}}
 .pillar{border-top:2px solid var(--ink);padding-top:20px}
 .pillar:nth-child(2){border-color:var(--coral)}
 .pillar:nth-child(3){border-color:var(--teal)}
@@ -437,6 +441,17 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
 .foot-in .links a:hover{color:var(--coral)}
 .legal{border-top:1px dotted var(--rule);padding:14px 0 26px;display:flex;justify-content:space-between;gap:14px;
   flex-wrap:wrap;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--slate-2)}
+
+/* ---------------- legibility floor, mobile/tablet only ----------------
+   These bump a handful of sub-12px runs of copy up to a comfortable
+   reading size below the desktop breakpoint. Desktop (>=1280px) is left
+   exactly as it was. */
+@media(max-width:1279px){
+  .spec dt,.spec dd{font-size:12px}
+  .aside-links a span{font-size:12px}
+  .warn code,.pillar li code,.route-stack code{font-size:.92em}
+  .legal span{font-size:12px}
+}
 </style>
 </head>
 <body>
