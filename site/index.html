@@ -34,7 +34,11 @@
   /* the app's own palette, from assets/css/mail.css */
   --paper:#FBF7F4; --surface:#FFFDFB; --surface-alt:#F6F0EA; --surface-sink:#F1EAE3;
   --rule:#E6DACF; --rule-soft:#F0E7DF;
-  --ink:#1F2A37; --slate:#6B7280; --slate-2:#9AA1AB;
+  /* Both greys are darker than the palette they came from: on this warm paper
+     #6B7280 measured 3.95:1 behind 11px captions and #9AA1AB only 2.30:1 behind
+     the row indices. --slate-2 ends up close to --slate because there is no
+     dimmer grey that still clears 4.5:1 here — legibility wins over the tier. */
+  --ink:#1F2A37; --slate:#606773; --slate-2:#676C73;
   --coral:#F2674E; --coral-dark:#D94E37; --coral-soft:#FCE9E4; --coral-text:#9E3520;
   --teal:#14B8A6; --teal-dark:#0E9384; --teal-soft:#DCF5F1; --teal-text:#0B6B60;
   --dark:#191410; --dark-2:#221B16; --on-dark:#F6F0EA; --on-dark-2:#B0A498;
@@ -53,7 +57,7 @@
 html[data-theme="dark"]{
   --paper:#16130F; --surface:#211D18; --surface-alt:#2A251F; --surface-sink:#332D26;
   --rule:#3A332B; --rule-soft:#2A241E;
-  --ink:#F4EFE9; --slate:#B7AFA4; --slate-2:#847C71;
+  --ink:#F4EFE9; --slate:#B7AFA4; --slate-2:#8D857B;
   --coral:#F2785F; --coral-dark:#FF8E76; --coral-soft:#3A241D; --coral-text:#FBB6A4;
   --teal:#2DD4BF; --teal-dark:#5EEAD9; --teal-soft:#163A36; --teal-text:#7FE6D9;
   --dark:#0E0C0A; --dark-2:#161210; --on-dark:#F6F0EA; --on-dark-2:#B0A498;
@@ -67,7 +71,7 @@ html[data-theme="dark"]{
   html:not([data-theme="light"]){
     --paper:#16130F; --surface:#211D18; --surface-alt:#2A251F; --surface-sink:#332D26;
     --rule:#3A332B; --rule-soft:#2A241E;
-    --ink:#F4EFE9; --slate:#B7AFA4; --slate-2:#847C71;
+    --ink:#F4EFE9; --slate:#B7AFA4; --slate-2:#8D857B;
     --coral:#F2785F; --coral-dark:#FF8E76; --coral-soft:#3A241D; --coral-text:#FBB6A4;
     --teal:#2DD4BF; --teal-dark:#5EEAD9; --teal-soft:#163A36; --teal-text:#7FE6D9;
     --dark:#0E0C0A; --dark-2:#161210;
