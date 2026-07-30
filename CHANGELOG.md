@@ -126,6 +126,21 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Fixed
 
+- **The app-icon set was rendering as a blank coral square.** `icon.png`,
+  `icon-16.png`, `icon-32.png`, `icon-180.png`, `icon-192.png` and
+  `icon-512.png` — the PWA install icon, `apple-touch-icon`, favicon PNG
+  fallback and desktop-notification icon — had shipped since the coral
+  rebrand (`3b386d5`) missing the white envelope-flap glyph entirely, so a
+  home-screen install or a system notification showed an unmarked orange
+  tile indistinguishable from any other app. Re-rendered all six directly
+  from `brand/logo.svg`, the approved mark, at their existing pixel sizes.
+  `assets/lilmail-favicon.svg` and `site/assets/lilmail-favicon.svg` also
+  carried a 2px drift in the flap's vertical position from a hand
+  re-creation instead of a copy; both are now byte-identical to
+  `brand/logo.svg`. Also removed `docs/assets/lilmail-logo.svg` and
+  `docs/assets/lilmail-mark.svg`, two unreferenced leftover brand files
+  depicting an earlier, superseded indigo/parchment envelope design that
+  contradicted the shipped coral mark.
 - Corrected a garbled sentence in the `/v1` snooze description.
 - The 1.13.0 send-as-identities entry described pushing aliases to a central
   engine's `/internal/identities`, which the same release removed and which no
