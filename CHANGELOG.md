@@ -123,6 +123,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
   now fails on any asset that is embedded but referenced by nothing, so the
   duplicates cannot silently reaccumulate. The vendored `*.LICENSE` files are
   allow-listed with their reason — they must travel with the bundles.
+- **`docs/assets/lilmail-logo.png`** — a 2720×880 render of the current coral
+  mark that a brand-verification sweep found had no reference anywhere in the
+  tree (README, docs, `site/`, templates, or Go source); grepped for
+  `lilmail-logo.png` repo-wide with zero hits before removal. Unlike the two
+  `.svg` files removed above, this one already carried the correct, current
+  mark — it just wasn't linked from anywhere, so it sat as dead weight in
+  `docs/assets/`. Not embedded in the binary (`docs/` is outside
+  `//go:embed all:assets`), so `assets_embed_test.go` could not have caught
+  it; this was a manual, independent-verification find.
 
 ### Fixed
 
