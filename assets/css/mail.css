@@ -2170,9 +2170,11 @@ input, textarea, select { font-family: inherit; }
   .avatar { width: 30px; height: 30px; font-size: 11px; }
 }
 
-/* Viewer col hidden on tablet — full list view */
+/* Viewer col hidden on tablet — full list view. The real mobile override lives
+   with the .mail-panes layout rules further down; it has to, because those are
+   three classes deep and come later in the file. */
 @media (max-width: 1023px) {
-  .list-col { width: 100%; max-width: 100%; }
+  .list-col { max-width: 100%; }
 }
 
 /* ---------------------------------------------------------
@@ -2243,6 +2245,19 @@ input, textarea, select { font-family: inherit; }
 @media (min-width: 1024px) {
   .mail-panes.pane-off .viewer-col,
   .mail-panes.pane-off .pane-resizer { display: none; }
+}
+
+/* Below 1024 there is no side-by-side reading pane, so the list owns the whole
+   width. This has to sit AFTER the pane-layout rules above and repeat their
+   selectors: a media query adds no specificity, and ".mail-panes.pane-right
+   .list-col { width: var(--list-w-live) }" is both three classes deep and
+   later in the file, so the earlier bare ".list-col { width: 100% }" never
+   won. The visible symptom was the list frozen at 320 px on a 390 px phone,
+   with a dead 70 px strip where the hidden viewer used to be. */
+@media (max-width: 1023px) {
+  .mail-panes.pane-right .list-col,
+  .mail-panes.pane-bottom .list-col,
+  .mail-panes.pane-off .list-col { width: 100%; max-width: 100%; }
 }
 
 /* Resizer handle */

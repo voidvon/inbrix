@@ -1,12 +1,14 @@
 {
-  "name": "lilmail-screenshots",
+  "name": "lilmail-site-checks",
   "version": "1.0.0",
   "description": "Playwright screenshotter for lilmail",
   "type": "module",
   "private": true,
   "license": "MIT",
   "scripts": {
-    "screenshots": "node screenshots.mjs"
+    "screenshots": "node screenshots.mjs",
+    "check": "node check-render.mjs",
+    "check:selftest": "node check-render.mjs --selftest"
   },
   "dependencies": {
     "playwright": "^1.44.0"

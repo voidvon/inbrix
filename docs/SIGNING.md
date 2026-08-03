@@ -52,7 +52,7 @@ process's environment.
 
 ### 1.1 Wire format
 
-```
+```http
 X-Vulos-Broker-Auth: <the exact value of LILMAIL_BROKER_SECRET>
 X-Vulos-Mail-Provider:    gmail | outlook | imap        (informational, unvalidated)
 X-Vulos-Mail-Email:       user@example.com              (required)
@@ -133,7 +133,7 @@ hand a request a scratch S3 bucket, which lilmail uses **only** to cache large,
 immutable attachment blobs so repeated downloads do not re-pull the MIME part
 from IMAP. It is off unless `VULOS_STORAGE_BROKER_SECRET` is set.
 
-```
+```http
 X-Vulos-Storage-Broker-Auth: <the exact value of VULOS_STORAGE_BROKER_SECRET>
 X-Vulos-Storage-Endpoint:      https://s3.example.com     (required)
 X-Vulos-Storage-Bucket:        my-bucket                  (required)
@@ -182,7 +182,7 @@ no AWS SDK — to preserve the single-static-binary property.
 For an object key `K` and configured prefix `P` (the gateway prefix joined with
 lilmail's own `mail/` sub-space, always ending in `/`):
 
-```
+```text
 full     = P + trimLeadingSlash(K)
 canonURI = "/" + enc(bucket) + "/" + join(enc(seg) for seg in split(full, "/"), "/")
 ```
@@ -216,7 +216,7 @@ always empty for lilmail's GET/PUT (producing an empty line), and the fourth
 field — the canonical headers block — itself ends in `\n`, producing the blank
 line before `SignedHeaders`:
 
-```
+```text
 <HTTP method>\n
 <canonURI>\n
 <raw query string>\n
@@ -228,7 +228,7 @@ line before `SignedHeaders`:
 
 ### 3.4 String to sign
 
-```
+```text
 AWS4-HMAC-SHA256\n
 <x-amz-date>\n
 <yyyymmdd>/<region>/s3/aws4_request\n
@@ -237,7 +237,7 @@ AWS4-HMAC-SHA256\n
 
 ### 3.5 Signing key and signature
 
-```
+```text
 kDate    = HMAC-SHA256("AWS4" + secretKey, yyyymmdd)
 kRegion  = HMAC-SHA256(kDate,    region)
 kService = HMAC-SHA256(kRegion,  "s3")
@@ -249,7 +249,7 @@ signature = lowerhex(HMAC-SHA256(kSigning, stringToSign))
 
 One space after the algorithm, `", "` between the three fields:
 
-```
+```http
 Authorization: AWS4-HMAC-SHA256 Credential=<accessKey>/<yyyymmdd>/<region>/s3/aws4_request, SignedHeaders=<signedHeaders>, Signature=<signature>
 ```
 
@@ -297,7 +297,7 @@ These are the same values asserted by `TestSigV4KnownAnswerVectors`.
 Canonical request (`␊` marks each newline; the blank line before `SignedHeaders`
 is the trailing newline of the canonical-headers block):
 
-```
+```text
 GET␊
 /lilmail-test/tenant-a/mail/attachments/INBOX/42/2.1␊
 ␊
@@ -311,7 +311,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 String to sign:
 
-```
+```text
 AWS4-HMAC-SHA256␊
 20260728T123456Z␊
 20260728/eu-west-2/s3/aws4_request␊
@@ -320,7 +320,7 @@ AWS4-HMAC-SHA256␊
 
 Authorization:
 
-```
+```text
 AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260728/eu-west-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=0e137034e1b1508316b18b00848c830f67f2189b048546f193540c730e43d6bb
 ```
 
@@ -339,7 +339,7 @@ Session token: `FQoGZXIvYXdzEXAMPLETOKEN`.
 
 Canonical request:
 
-```
+```text
 PUT␊
 /lilmail-test/tenant-a/mail/attachments/INBOX/42/invoice%20%231.pdf␊
 ␊
@@ -354,7 +354,7 @@ e96d1944bba44cfbe8325c189f4d02d2ae9706f62fe885de887cf0f5e129d527
 
 Authorization:
 
-```
+```text
 AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260728/eu-west-2/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=5eccf848247e3802bf903aaec6bcec14c08bdf02862ca30e9598b5e534fb020a
 ```
 

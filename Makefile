@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check verify-selftest check clean
+.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest check clean
 
 # Build the lilmail binary
 build:
@@ -30,6 +30,16 @@ fmt-check:
 site-docs-check:
 	go test ./site/gen -count=1
 
+# Render site/index.html and site/docs.html in Chromium at eight viewports in
+# both colour schemes and fail on what only shows up after layout: a stretched
+# screenshot, both theme variants painted at once, a 1x image on a 2x screen,
+# body copy under 12px, horizontal overflow, a dead anchor. --selftest breaks
+# each invariant on purpose and demands the check notice.
+site-render:
+	cd scripts && npm install --silent && npx --yes playwright install chromium 2>/dev/null || true
+	node scripts/check-render.mjs --selftest
+	node scripts/check-render.mjs
+
 # Prove the release verifier still REFUSES. scripts/verify.sh is what a user
 # runs before executing a downloaded release; this drives 24 synthetic-origin
 # cases (missing manifest, HTML error page, no entry, truncated download,
@@ -40,7 +50,7 @@ verify-selftest:
 	bash scripts/verify.sh --selftest
 
 # Everything CI runs, in the same order. Run this before opening a PR.
-check: build fmt-check vet test site-docs-check verify-selftest
+check: build fmt-check vet test site-docs-check site-render verify-selftest
 
 # Regenerate docs/screenshots/*.png using Playwright.
 # Boots lilmail with a minimal demo config (login page captured without credentials).

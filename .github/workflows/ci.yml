@@ -76,3 +76,32 @@ jobs:
       # chapter, fragments included, against what site/ actually serves.
       - name: Published docs are in sync and link-clean
         run: go test ./site/gen -count=1 -v
+
+  # site/gen resolves links; it cannot see anything that only exists once the
+  # page is laid out. This job renders index.html and docs.html in Chromium at
+  # eight viewports in both colour schemes and fails on a stretched screenshot,
+  # both theme variants painted at once, a 1x image on a 2x screen, copy under
+  # 12px, horizontal overflow, or an anchor with no target — every one of which
+  # reads as correct HTML in a diff.
+  site-render:
+    name: site/ renders correctly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        run: |
+          cd scripts
+          npm install --silent
+          npx --yes playwright install --with-deps chromium
+
+      # Run the self-test first. It breaks each invariant on purpose and demands
+      # the check notice; a render gate that has stopped discriminating looks
+      # exactly like one that passes.
+      - name: Gate self-test
+        run: node scripts/check-render.mjs --selftest
+
+      - name: Render checks
+        run: node scripts/check-render.mjs

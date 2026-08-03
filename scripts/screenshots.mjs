@@ -174,6 +174,9 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
+    // 2× so the PNG survives being shown at ~1100 CSS px on a retina display.
+    // A 1× capture upscaled there turns the app's 13 px UI text to mush.
+    deviceScaleFactor: 2,
     colorScheme: 'dark',
   });
   const page = await context.newPage();

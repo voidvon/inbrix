@@ -5,9 +5,21 @@
  * Assumes the server is already running (started by scripts/seed-demo.sh or
  * manually with [demo] enabled = true in config.toml).
  *
+ * Every shot is captured TWICE — once in each colour scheme — and at
+ * deviceScaleFactor 2, because the site displays these at up to ~1100 CSS px
+ * on a retina screen. A 1× capture shown there is upscaled 2× by the browser
+ * and the app's 13 px UI text turns to mush; that softness is the single most
+ * visible quality problem a screenshot-led landing page can have.
+ *
+ * Output, for each name:
+ *   site/screenshots/<name>.png       1280×800   (1× — the srcset default)
+ *   site/screenshots/<name>@2x.png    2560×1600  (2× — what retina actually uses)
+ *   site/screenshots/<name>-dark.png      + @2x  (dark colour scheme)
+ * and a 1× mirror in docs/screenshots/ for the in-repo markdown.
+ *
  * Run via:
  *   scripts/seed-demo.sh --screenshots    (recommended — handles everything)
- *   LILMAIL_EXTERNAL=1 BASE_URL=http://localhost:3099 node scripts/demo-screenshots.mjs
+ *   BASE_URL=http://localhost:3099 node scripts/demo-screenshots.mjs
  *
  * Environment variables:
  *   BASE_URL            Running lilmail instance. Default: http://localhost:3099
@@ -18,184 +30,199 @@
 import { chromium } from 'playwright';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync } from 'fs';
+import { mkdirSync, copyFileSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT    = resolve(__dirname, '..');
-const OUT_DIR = resolve(ROOT, 'docs', 'screenshots');
-mkdirSync(OUT_DIR, { recursive: true });
+const ROOT      = resolve(__dirname, '..');
+const SITE_DIR  = resolve(ROOT, 'site', 'screenshots');
+const DOCS_DIR  = resolve(ROOT, 'docs', 'screenshots');
+mkdirSync(SITE_DIR, { recursive: true });
+mkdirSync(DOCS_DIR, { recursive: true });
 
-const BASE_URL    = process.env.BASE_URL || 'http://localhost:3099';
-const DEMO_EMAIL  = process.env.LILMAIL_DEMO_EMAIL || process.env.LILMAIL_USERNAME || 'demo@lilmail.dev';
-const DEMO_PASS   = process.env.LILMAIL_DEMO_PASS  || process.env.LILMAIL_PASSWORD || 'demo';
+const BASE_URL   = process.env.BASE_URL || 'http://localhost:3099';
+const DEMO_EMAIL = process.env.LILMAIL_DEMO_EMAIL || process.env.LILMAIL_USERNAME || 'demo@lilmail.dev';
+const DEMO_PASS  = process.env.LILMAIL_DEMO_PASS  || process.env.LILMAIL_PASSWORD || 'demo';
 
-async function shot(page, name, description) {
-  const path = resolve(OUT_DIR, `${name}.png`);
-  await page.screenshot({ path, fullPage: false });
-  console.log(`  [ok] ${name}.png — ${description}`);
-  return path;
+const WIDTH  = 1280;
+const HEIGHT = 800;
+const PHONE_W = 390;
+const PHONE_H = 780;
+
+/**
+ * One capture pass. `scheme` is 'light' or 'dark'; `scale` is the device pixel
+ * ratio. The file suffix encodes both, so a single loop produces the whole
+ * 1×/2× × light/dark matrix without any of the four passes knowing about the
+ * others.
+ */
+function fileFor(name, scheme, scale) {
+  return `${name}${scheme === 'dark' ? '-dark' : ''}${scale === 2 ? '@2x' : ''}.png`;
 }
 
-async function main() {
-  const browser = await chromium.launch({ headless: true });
+async function run(browser, scheme, scale) {
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    colorScheme: 'light',
+    viewport: { width: WIDTH, height: HEIGHT },
+    deviceScaleFactor: scale,
+    colorScheme: scheme,
+    reducedMotion: 'reduce',   // no half-finished transitions baked into a still
   });
   const page = await context.newPage();
+  const taken = [];
+
+  const shot = async (target, name, description) => {
+    const file = fileFor(name, scheme, scale);
+    await target.screenshot({ path: resolve(SITE_DIR, file), fullPage: false });
+    taken.push(name);
+    console.log(`  [ok] ${file} — ${description}`);
+  };
+
+  // Alpine hides pre-init markup with [x-cloak]; shooting before it clears
+  // bakes an invisible half-page into the PNG.
+  async function waitForAlpine(p) {
+    try {
+      await p.waitForFunction(() => document.querySelectorAll('[x-cloak]').length === 0, { timeout: 4000 });
+    } catch (_) {
+      await p.waitForTimeout(600);
+    }
+    // Web fonts settle after Alpine; a shot taken mid-swap shows fallback metrics.
+    try { await p.evaluate(() => document.fonts.ready); } catch (_) {}
+    await p.waitForTimeout(150);
+  }
 
   try {
-    // ------------------------------------------------------------------
-    // 1. Login page
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: login page');
+    // ---------------------------------------------------------------- login
+    console.log(`\n[${scheme} ${scale}×] login page`);
     await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle' });
+    await waitForAlpine(page);
     await shot(page, 'login', 'Login page');
 
-    // ------------------------------------------------------------------
-    // 2. Demo login — GET /demo-login creates session + redirects to /inbox
-    // ------------------------------------------------------------------
-    console.log('\nLogging in via demo-login...');
-    // /demo-login (GET) immediately creates a demo session and redirects to /inbox.
+    // ------------------------------------------------- authenticate (demo)
     await page.goto(`${BASE_URL}/demo-login`, { waitUntil: 'networkidle' });
-
-    // Verify we're actually authenticated.
     if (page.url().includes('/login')) {
       throw new Error('Demo login failed — check that [demo] enabled = true in config.toml');
     }
-    console.log('  Logged in. Current URL:', page.url());
 
-    // Helper: wait for Alpine to finish initialising (removes [x-cloak] attrs).
-    async function waitForAlpine(p) {
-      try {
-        await p.waitForFunction(
-          () => document.querySelectorAll('[x-cloak]').length === 0,
-          { timeout: 4000 }
-        );
-      } catch (_) {
-        await p.waitForTimeout(600);
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // 3. Inbox
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: inbox');
+    // ---------------------------------------------------------------- inbox
+    console.log(`[${scheme} ${scale}×] inbox`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
     await waitForAlpine(page);
     await shot(page, 'inbox', 'Inbox with seeded demo messages');
 
-    // ------------------------------------------------------------------
-    // HERO: inbox with a message OPEN in the reading pane (3-pane view).
-    // Open a single-message row so the reading pane shows the email content.
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: hero (inbox + open message)');
-    try {
-        const heroRows = await page.$$('.email-row');
-        const heroTarget = heroRows.length > 1 ? heroRows[1] : heroRows[0];
-        if (heroTarget) {
-            await heroTarget.click();
-            await page.waitForFunction(
-                () => {
-                    const pane = document.querySelector('#email-viewer-pane');
-                    return pane && pane.children.length > 0 && pane.textContent.trim().length > 10
-                        && !document.querySelector('#email-viewer-pane .viewer-placeholder');
-                },
-                { timeout: 5000 }
-            ).catch(() => {});
-            await page.waitForTimeout(500);
+    // ----------------------------------------------------------------- hero
+    // The landing page leads with this one, so it has to be the densest view
+    // the app has: three panes, all populated. Prefer the message with real
+    // body copy and an attachment over the short notification emails — an
+    // open message whose body is four lines leaves the reading pane looking
+    // like a bug rather than a feature.
+    console.log(`[${scheme} ${scale}×] hero (inbox + open message)`);
+    const openBestMessage = async (p) => {
+      const rows = await p.$$('.email-row');
+      let target = null;
+      for (const row of rows) {
+        const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
+        const subject  = await row.evaluate(el => el.querySelector('.email-row__subject')?.textContent || '');
+        if (!isThread && /moodboard/i.test(subject)) { target = row; break; }
+      }
+      if (!target) {
+        for (const row of rows) {
+          const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
+          if (!isThread) { target = row; break; }
         }
-    } catch (_) {}
-    await page.screenshot({ path: resolve(OUT_DIR, 'hero.png'), fullPage: false });
-    console.log('  [ok] hero.png — Inbox with message open in reading pane (demo data)');
+      }
+      if (!target) return false;
+      await target.click();
+      // The placeholder's own text is long enough to satisfy a naive length
+      // check, so assert the real view element and the placeholder's absence.
+      try {
+        await p.waitForFunction(() => {
+          const pane = document.querySelector('#email-viewer-pane');
+          return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
+        }, { timeout: 5000 });
+      } catch (_) {
+        await p.waitForTimeout(1500);
+      }
+      await p.waitForTimeout(900);   // the mail iframe auto-sizes to its content
+      return true;
+    };
 
-    // ------------------------------------------------------------------
-    // 4. Message view — click the first email row, wait for HTMX pane
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: message view');
-    // Use a fresh page for the message view so no residual modal state.
+    if (await openBestMessage(page)) {
+      await shot(page, 'hero', 'Inbox with a message open in the reading pane');
+    } else {
+      console.warn('  [skip] hero — no single-message .email-row found');
+    }
+
+    // -------------------------------------------------------------- message
+    // Deliberately NOT the same message as the hero: this one expands a JWZ
+    // thread first and reads a reply inside it, so the "Reading" screen on the
+    // landing page shows conversation threading rather than repeating the
+    // hero's picture with a different caption.
+    console.log(`[${scheme} ${scale}×] message view`);
     const msgPage = await context.newPage();
     await msgPage.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
     await waitForAlpine(msgPage);
-
-    // Ensure no modals are open.
     await msgPage.evaluate(() => {
-      // Force close compose modal via Alpine if available.
       try {
         const root = document.querySelector('[x-data]');
-        if (root && root._x_dataStack) {
-          const data = root._x_dataStack[0];
-          if (data) { data.showComposeModal = false; data.showEmailViewer = false; }
-        }
+        const data = root?._x_dataStack?.[0];
+        if (data) { data.showComposeModal = false; data.showEmailViewer = false; }
       } catch (_) {}
     });
     await msgPage.waitForTimeout(300);
 
-    // Open a single-message row to show the reading pane. Prefer a rich HTML
-    // message with attachments (Bob Osei — "Moodboard") to showcase the
-    // content rendering; fall back to any non-thread row. Threads (rows with a
-    // count chevron) only expand on click, so we skip those.
-    const allRows = await msgPage.$$('.email-row');
-    let targetRow = null;
-    for (const row of allRows) {
-      const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
-      const subject = await row.evaluate(el => (el.querySelector('.email-row__subject')?.textContent || ''));
-      if (!isThread && /moodboard/i.test(subject)) { targetRow = row; break; }
-    }
-    if (!targetRow) {
-      for (const row of allRows) {
-        const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
-        if (!isThread) { targetRow = row; break; }
-      }
-    }
-    if (targetRow) {
-      await targetRow.click();
-      // Wait for the viewer to load — the HTMX response replaces the
-      // placeholder. We must explicitly exclude .viewer-placeholder, whose own
-      // text is long enough to satisfy a naive length check.
+    const waitForViewer = async (p) => {
       try {
-        await msgPage.waitForFunction(
-          () => {
-            const pane = document.querySelector('#email-viewer-pane');
-            return pane && pane.querySelector('.email-view')
-              && !pane.querySelector('.viewer-placeholder');
-          },
-          { timeout: 5000 }
-        );
+        await p.waitForFunction(() => {
+          const pane = document.querySelector('#email-viewer-pane');
+          return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
+        }, { timeout: 5000 });
       } catch (_) {
-        await msgPage.waitForTimeout(1500);
+        await p.waitForTimeout(1500);
       }
-      // Give the iframe a moment to auto-size to its content.
-      await msgPage.waitForTimeout(900);
-      const msgPath = resolve(OUT_DIR, 'message.png');
-      await msgPage.screenshot({ path: msgPath, fullPage: false });
-      console.log('  [ok] message.png — Message viewer — seeded email open');
+      await p.waitForTimeout(900);
+    };
+
+    let gotMessage = false;
+    const threadRow = await msgPage.$('.email-row:has(.email-row__chevron)');
+    if (threadRow) {
+      await threadRow.click();
+      // Expansion injects .thread-msg children in place; it does not open the
+      // viewer, so a shot taken here would show an empty reading pane.
+      try {
+        await msgPage.waitForSelector('.thread-msg', { timeout: 3000 });
+        // Every collapsed thread in the list contributes hidden .thread-msg
+        // nodes, so an unfiltered $$ returns children of threads that are
+        // still shut — clicking one waits 30 s for a never-visible element.
+        // Take only the children the expansion actually revealed.
+        const children = [];
+        for (const el of await msgPage.$$('.thread-msg')) {
+          if (await el.isVisible()) children.push(el);
+        }
+        if (children.length) {
+          await children[children.length - 1].click({ timeout: 4000 });
+          await waitForViewer(msgPage);
+          gotMessage = await msgPage.evaluate(
+            () => !!document.querySelector('#email-viewer-pane .email-view'));
+        }
+      } catch (_) {}
+    }
+    if (!gotMessage) gotMessage = await openBestMessage(msgPage);   // fall back to any single message
+    if (gotMessage) {
+      await shot(msgPage, 'message', 'Message viewer — a reply open inside an expanded thread');
     } else {
-      console.warn('  [skip] message — no single-message .email-row found');
+      console.warn('  [skip] message — could not open a message in the viewer');
     }
     await msgPage.close();
 
-    // ------------------------------------------------------------------
-    // 5. Compose modal
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: compose modal');
+    // -------------------------------------------------------------- compose
+    console.log(`[${scheme} ${scale}×] compose modal`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
     await waitForAlpine(page);
-    await page.waitForTimeout(200);
-
-    // Try common selectors for the compose button.
     const composeBtn = await page.$([
-      'button[data-compose]',
-      '[data-action="compose"]',
-      '.compose-btn',
-      '.btn-compose',
-      'button:has-text("Compose")',
+      'button[data-compose]', '[data-action="compose"]',
+      '.compose-btn', '.btn-compose', 'button:has-text("Compose")',
     ].join(', '));
-
     if (composeBtn) {
       await composeBtn.click();
       await page.waitForTimeout(700);
-      // Fill in some demo compose data so it looks realistic.
       const toField = await page.$('input[name="to"], input[placeholder*="To"], input[aria-label*="To"]');
       if (toField) await toField.fill('alice@example.com');
       const subjectField = await page.$('input[name="subject"], input[placeholder*="Subject"]');
@@ -205,52 +232,113 @@ async function main() {
       console.warn('  [skip] compose — compose button not found');
     }
 
-    // ------------------------------------------------------------------
-    // 6. Search results
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: search results');
+    // --------------------------------------------------------------- search
+    console.log(`[${scheme} ${scale}×] search results`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
     await waitForAlpine(page);
-    await page.waitForTimeout(200);
-
     const searchInput = await page.$('input[type="search"], input[name="q"]');
     if (searchInput) {
       await searchInput.click();
-      // Use type() to generate real keydown/keyup events for HTMX to fire on.
+      // type() so HTMX sees real keydown/keyup events; fill() fires neither.
       await page.type('input[type="search"], input[name="q"]', 'roadmap', { delay: 80 });
-      // Wait for the debounced HTMX search (500ms delay in hx-trigger) + network.
-      await page.waitForTimeout(1400);
+      await page.waitForTimeout(1400);   // 500 ms hx-trigger debounce + network
       await shot(page, 'search', 'Search results for "roadmap"');
     } else {
-      // Fallback: direct API endpoint.
-      await page.goto(`${BASE_URL}/api/search?q=roadmap`, { waitUntil: 'networkidle' });
-      await shot(page, 'search', 'Search results (fragment)');
+      console.warn('  [skip] search — no search input found');
     }
 
-    // ------------------------------------------------------------------
-    // 7. Calendar (rendered even without CalDAV — shows empty month)
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: calendar');
+    // ------------------------------------------------------------- calendar
+    console.log(`[${scheme} ${scale}×] calendar`);
     const calResp = await page.goto(`${BASE_URL}/calendar`, { waitUntil: 'networkidle' });
     if (calResp && calResp.status() < 400) {
+      await waitForAlpine(page);
       await shot(page, 'calendar', 'Calendar month view');
     } else {
-      console.warn('  [skip] calendar — caldav not enabled (status ' + calResp?.status() + ')');
-      // Capture settings as a fallback so we at least have 6 screenshots.
+      console.warn(`  [skip] calendar — status ${calResp?.status()}`);
     }
 
-    // ------------------------------------------------------------------
-    // 8. Settings
-    // ------------------------------------------------------------------
-    console.log('\nCapturing: settings');
+    // ------------------------------------------------------------- settings
+    console.log(`[${scheme} ${scale}×] settings`);
     await page.goto(`${BASE_URL}/settings`, { waitUntil: 'networkidle' });
+    await waitForAlpine(page);
     await shot(page, 'settings', 'Settings page');
+  } finally {
+    await context.close();
+  }
+  return taken;
+}
 
+/**
+ * Phone pass. The landing page cannot use the 1280-wide desktop captures on a
+ * phone: scaled to ~350 CSS px the app's 13 px UI text lands at ~4 px and the
+ * shot reads as a grey smudge. lilmail has a real single-column layout below
+ * 1024 px, so capture that instead and show it at close to 1:1.
+ */
+async function runPhone(browser, scheme, scale) {
+  const context = await browser.newContext({
+    viewport: { width: PHONE_W, height: PHONE_H },
+    deviceScaleFactor: scale,
+    colorScheme: scheme,
+    isMobile: true,
+    hasTouch: true,
+    reducedMotion: 'reduce',
+  });
+  const page = await context.newPage();
+  const taken = [];
+  try {
+    await page.goto(`${BASE_URL}/demo-login`, { waitUntil: 'networkidle' });
+    if (page.url().includes('/login')) throw new Error('Demo login failed');
+    await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.list-col', { timeout: 8000 });
+    try { await page.evaluate(() => document.fonts.ready); } catch (_) {}
+    await page.waitForTimeout(500);
+
+    // Guard the reason this pass exists. Below 1024 the list column must own
+    // the full width; when it does not, the capture shows a dead strip where
+    // the hidden reading pane used to be and the landing page ships that.
+    const listW = await page.evaluate(
+      () => Math.round(document.querySelector('.list-col').getBoundingClientRect().width));
+    if (listW < PHONE_W - 1) {
+      throw new Error(
+        `phone layout is broken: .list-col is ${listW}px inside a ${PHONE_W}px viewport ` +
+        `(expected full width below 1024px)`);
+    }
+
+    const file = `phone-inbox${scheme === 'dark' ? '-dark' : ''}${scale === 2 ? '@2x' : ''}.png`;
+    await page.screenshot({ path: resolve(SITE_DIR, file), fullPage: false });
+    taken.push('phone-inbox');
+    console.log(`  [ok] ${file} — Inbox, single-column phone layout`);
+  } finally {
+    await context.close();
+  }
+  return taken;
+}
+
+async function main() {
+  const browser = await chromium.launch({ headless: true });
+  let names = [];
+  try {
+    for (const scale of [1, 2]) {
+      for (const scheme of ['light', 'dark']) {
+        names = await run(browser, scheme, scale);
+        console.log(`[${scheme} ${scale}×] phone`);
+        await runPhone(browser, scheme, scale);
+      }
+    }
   } finally {
     await browser.close();
   }
 
-  console.log(`\nDone. Screenshots written to ${OUT_DIR}`);
+  // The repo's own docs/ markdown embeds the light 1× shots; keep that mirror
+  // in step so docs/SCREENSHOTS.md never points at a stale image.
+  for (const name of names) {
+    try {
+      copyFileSync(resolve(SITE_DIR, `${name}.png`), resolve(DOCS_DIR, `${name}.png`));
+    } catch (_) {}
+  }
+
+  console.log(`\nDone. ${names.length} views × light/dark × 1×/2× written to ${SITE_DIR}`);
+  console.log(`Light 1× mirrored to ${DOCS_DIR}`);
 }
 
 main().catch((err) => {

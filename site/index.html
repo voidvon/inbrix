@@ -213,24 +213,60 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
 .aside-links a span{color:var(--slate-2);text-transform:none;letter-spacing:0;font-size:10.5px}
 @media(max-width:940px){.aside-run,.aside-links{max-width:460px}}
 
-/* the app, bleeding off the right edge */
-.stage{position:relative;margin-top:clamp(32px,5vw,62px);padding-bottom:clamp(24px,4vw,50px)}
-.stage-inner{position:relative;margin-right:calc(var(--gut) * -1)}
-@media(min-width:1400px){.stage-inner{margin-right:calc((100vw - var(--sheet)) / -2 - 10px)}}
-.window{border-radius:17px;border:1px solid var(--rule);background:var(--surface);padding:7px;
-  box-shadow:var(--shadow-xl);transform:perspective(2200px) rotateY(-3.2deg) rotateX(1.4deg);transform-origin:left center}
-.window img{border-radius:11px;width:100%}
-@media(max-width:760px){.window{transform:none;border-radius:14px;padding:5px}}
-.postmark{position:absolute;left:-56px;top:-46px;width:108px;height:108px;color:var(--coral);opacity:.85;
+/* ---- the app, presented as a plate ----
+   This used to bleed off the right edge at ~1270px wide and ~830px tall, which
+   made a single screenshot the largest object on the page by a wide margin and
+   pushed everything else below the fold. It is now a contained plate, capped
+   well under the sheet width, so it reads as an illustration of the type above
+   it rather than as the page itself. */
+.stage{position:relative;margin-top:clamp(30px,4.4vw,54px);padding-bottom:clamp(20px,3.4vw,42px)}
+.stage-inner{position:relative;width:min(100%,940px);margin:0 auto}
+.window{border-radius:16px;border:1px solid var(--rule);background:var(--surface);padding:6px;
+  box-shadow:var(--shadow-lg);transform:perspective(2400px) rotateX(1.1deg);transform-origin:center top}
+/* `height:auto` is load-bearing, not decoration. The <img> carries width/height
+   attributes, which the UA sheet turns into a presentational height; with only
+   `width:100%` set in CSS the used height stayed at the attribute's 800px and
+   the capture was stretched — to 1250×825 on desktop and a grotesque 360×800
+   on a phone. It never looked like a bug, only like a bad screenshot. */
+.window img{border-radius:11px;width:100%;height:auto}
+@media(max-width:760px){.window{transform:none;border-radius:22px;padding:5px}}
+/* The stamp hangs in the paper margin BESIDE the plate, never over it. When it
+   overlapped the plate's top-left corner it landed squarely on the app's own
+   logo and wordmark, which read as "|ilmail". Below 1180px the centred plate
+   leaves no margin wide enough to hold it, so it is simply not drawn — a
+   flourish that collides is worse than one that is absent. */
+.postmark{position:absolute;left:-104px;top:8px;width:92px;height:92px;color:var(--coral);opacity:.85;
   animation:stamp 1s .35s cubic-bezier(.2,.8,.3,1) both;pointer-events:none;z-index:2}
 @keyframes stamp{from{opacity:0;transform:rotate(-30deg) scale(1.3)}to{opacity:.85;transform:rotate(-13deg) scale(1)}}
-@media(max-width:900px){.postmark{width:86px;height:86px;left:-12px;top:-18px}}
+@media(max-width:1179px){.postmark{display:none}}
 .tag{position:absolute;z-index:3;display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
   background:var(--surface);border:1px solid var(--rule);border-radius:999px;padding:8px 14px;box-shadow:var(--shadow-md)}
 .tag i{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 4px var(--teal-soft)}
-.tag.a{left:-18px;bottom:38px;animation:bob 7s ease-in-out infinite}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.tag.a{left:50%;transform:translateX(-50%);bottom:-15px;animation:bob 7s ease-in-out infinite;white-space:nowrap}
+@keyframes bob{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-8px)}}
 @media(max-width:900px){.tag{display:none}}
+
+/* ---- phone / desktop capture swap ----
+   The 1280-wide three-pane capture is unreadable at ~350 CSS px: the app's
+   13px UI text lands near 4px. lilmail has a real single-column layout below
+   1024px, so on a phone the page shows THAT capture at close to 1:1 instead of
+   a shrunken desktop one.
+
+   Two independent axes here, so they are nested rather than stacked: the theme
+   picks the outer <span> (the toggle writes data-theme, which no media query
+   can see) and the viewport picks the <source> inside its <picture>. Putting
+   both on `display` over one element would have made them fight in the
+   cascade. <picture> also means exactly one file is fetched per theme. */
+/* .shot is a <div>, so it is block by default. Do NOT add a `.window .shot
+   {display:block}` rule here: at (0,2,0) it out-specifies `.only-dark
+   {display:none}` at (0,1,0) and both themes render at once, stacked. */
+.window picture{display:block}
+@media(max-width:700px){
+  .stage-inner{width:min(100%,320px)}
+  /* width/height on the <img> lock a 1280/800 box; the phone source is
+     390/780, so restate the ratio or the swapped-in shot renders squashed */
+  .window img{aspect-ratio:390/780;height:auto;border-radius:17px}
+}
 
 /* ---------------- ticker ---------------- */
 .ticker{background:var(--dark);color:var(--on-dark-2);border-top:1px solid var(--dark-2);
@@ -312,37 +348,62 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface-alt);borde
 .strike s{border:1px dashed rgba(255,255,255,.28);border-radius:999px;padding:7px 14px;
   text-decoration-color:var(--coral);text-decoration-thickness:2px;color:rgba(255,255,255,.45)}
 
-/* ---------------- 03 · screens ---------------- */
-.screens{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:clamp(24px,5vw,64px);align-items:start}
-@media(max-width:900px){.screens{grid-template-columns:minmax(0,1fr);gap:0}}
-.stack{display:grid}
-.step{padding:clamp(38px,7.4vh,72px) 0;border-bottom:1px solid var(--rule);opacity:.5;
-  transition:opacity .45s cubic-bezier(.2,.8,.3,1)}
-.step.on{opacity:1}
-.step:first-child{padding-top:0}
-.step:last-child{border-bottom:none}
-.step .k{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--coral-text);
-  display:flex;align-items:center;gap:10px}
-.step .k::before{content:"";width:18px;height:1.5px;background:var(--coral)}
-.step h3{font-family:var(--display);font-size:clamp(21px,2.6vw,30px);margin:12px 0 9px;letter-spacing:-.024em;
-  font-variation-settings:"opsz" 72,"SOFT" 30,"wght" 600}
-.step p{margin:0;color:var(--slate);font-size:15px}
-.step.on h3{color:var(--coral)}
-.viewer{position:sticky;top:88px}
-@media(min-width:1400px){.viewer{margin-right:calc((100vw - var(--sheet)) / -2 + 10px)}}
-.viewer .window{transform:none;border-radius:14px}
-.viewer .frame{position:relative;aspect-ratio:1280/800}
-.viewer .frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;
-  opacity:0;transition:opacity .5s cubic-bezier(.2,.8,.3,1);border-radius:9px}
-.viewer .frame img.on{opacity:1}
-.viewer .cap{margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--slate);display:flex;justify-content:space-between;gap:12px}
+/* ---------------- 03 · screens ----------------
+   Rebuilt as a compact gallery. It used to be six long prose steps in a tall
+   column driven by a scroll observer, beside a short sticky viewer: ~2000px of
+   section, a large permanently-empty right column, and no way to reach a
+   screen except by scrolling past the five you did not want. Now the six
+   screens are one row of tabs, the capture is the largest thing in the
+   section, and its description sits beside it. Same words, one at a time. */
+.gallery{margin-top:clamp(20px,3vw,32px)}
+
+.gtabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:clamp(18px,2.4vw,26px);
+  border-bottom:1px solid var(--rule)}
+.gtab{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;
+  border:1px solid var(--rule);background:var(--surface);color:var(--slate);cursor:pointer;
+  font-family:var(--mono);font-size:12px;letter-spacing:.05em;text-transform:uppercase;
+  min-height:40px;transition:color .18s,border-color .18s,background .18s,transform .18s}
+.gtab svg{width:15px;height:15px;flex:none;opacity:.8}
+.gtab:hover{color:var(--ink);border-color:var(--slate-2);transform:translateY(-1px)}
+.gtab:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.gtab[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:600}
+.gtab[aria-selected="true"] svg{opacity:1}
+
+.gstage{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(240px,.38fr);
+  gap:clamp(20px,3vw,38px);align-items:start}
+
+.gside .gcap h3{font-family:var(--display);font-size:clamp(20px,2.2vw,26px);letter-spacing:-.022em;
+  font-variation-settings:"opsz" 60,"SOFT" 30,"wght" 600;margin-bottom:10px}
+.gside .gcap p{margin:0;color:var(--slate);font-size:15px;line-height:1.62}
+.gside .gmeta{margin:18px 0 0;padding-top:14px;border-top:1px dotted var(--rule);
+  font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate-2)}
+
+/* the capture itself */
+.gstage .window{border-radius:16px;border:1px solid var(--rule);background:var(--surface);padding:6px;
+  box-shadow:var(--shadow-lg)}
+.gstage .frame{position:relative;display:block;width:100%;padding:0;border:0;background:none;
+  aspect-ratio:1280/800;border-radius:11px;overflow:hidden;cursor:zoom-in}
+.gstage .frame:focus-visible{outline:2px solid var(--teal);outline-offset:3px}
+.gstage .frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top;
+  opacity:0;transition:opacity .38s cubic-bezier(.2,.8,.3,1)}
+.gstage .frame img.on{opacity:1}
+.gstage .frame img:not(.on){opacity:0!important}
+.zoomcue{position:absolute;right:12px;bottom:12px;z-index:2;padding:6px 12px;border-radius:999px;
+  background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--rule);
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate);
+  opacity:0;transform:translateY(4px);transition:opacity .2s,transform .2s;box-shadow:var(--shadow-sm)}
+.gstage .frame:hover .zoomcue,.gstage .frame:focus-visible .zoomcue{opacity:1;transform:none}
+/* No hover on a touch screen, so the affordance has to be there outright. */
+@media(hover:none){.zoomcue{opacity:1;transform:none}}
+
 @media(max-width:900px){
-  .viewer{position:sticky;top:60px;z-index:5;background:var(--paper);padding:14px 0 14px;margin-bottom:10px;
-    box-shadow:0 16px 20px -18px rgba(0,0,0,.5)}
-  .screens .stack{order:2}
-  .step{padding:40px 0;opacity:1}
+  .gstage{grid-template-columns:minmax(0,1fr)}
+  .gtabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;
+    margin-inline:calc(var(--gut) * -1);padding-inline:var(--gut)}
+  .gtabs::-webkit-scrollbar{display:none}
+  .gtab{flex:0 0 auto}
 }
+
 /* the app has a real dark mode — show the matching capture */
 .only-dark{display:none}
 html[data-theme="dark"] .only-light{display:none}
@@ -351,8 +412,6 @@ html[data-theme="dark"] .only-dark{display:block}
   html:not([data-theme="light"]) .only-light{display:none}
   html:not([data-theme="light"]) .only-dark{display:block}
 }
-.viewer .frame .only-dark.on,.viewer .frame .only-light.on{opacity:1}
-.viewer .frame img:not(.on){opacity:0!important}
 
 /* ---------------- 04 · quick start ---------------- */
 .start{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(24px,4vw,54px);align-items:start}
@@ -384,16 +443,30 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
 .term pre{margin:0;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:#EDE4DA}
 .term pre code{background:none;border:none;padding:0;font-size:inherit;color:inherit;white-space:pre}
 
-/* highlight.js — warm ink on paper-dark */
-.hljs-comment,.hljs-quote{color:#8E8377;font-style:italic}
-.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-doctag,.hljs-name,.hljs-type{color:#FF9E86}
-.hljs-string,.hljs-regexp,.hljs-addition{color:#6FE3D2}
-.hljs-number,.hljs-symbol,.hljs-bullet{color:#F5C77E}
-.hljs-attr,.hljs-attribute,.hljs-variable,.hljs-template-variable,.hljs-selector-attr{color:#C9E27B}
-.hljs-title,.hljs-title.function_,.hljs-built_in{color:#F2A88E}
-.hljs-meta,.hljs-meta .hljs-keyword{color:#9FB6C4}
-.hljs-deletion{color:#F08368}
-.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:600}
+/* ── highlight.js — "warm ink" ─────────────────────────────────────────────
+   One token table, shared verbatim by index.html and docs.html. Every colour
+   here clears 4.5:1 against BOTH code-block grounds (#211D18 on the light
+   page, #0F0D0A on the dark one); the old comment grey sat at 4.40 and was
+   the only run of text on either page that missed.
+
+   The classes below are the ones lilmail's own snippets actually emit —
+   checked against hljs.highlight() for bash, ini/toml, json/jsonc, http and
+   go rather than copied from a generic theme. punctuation (json, http) and
+   function/params (go) were previously unstyled and fell back to body ink,
+   which is why JSON braces and Go signatures read flat. */
+.hljs-comment,.hljs-quote{color:#9A8D81;font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-section,.hljs-doctag,.hljs-name,.hljs-tag,.hljs-type{color:#FF9E86}
+.hljs-string,.hljs-regexp,.hljs-symbol{color:#6FE3D2}
+.hljs-number,.hljs-bullet,.hljs-char.escape_,.hljs-selector-pseudo{color:#F5C77E}
+.hljs-attr,.hljs-attribute,.hljs-property,.hljs-variable,.hljs-template-variable,.hljs-selector-attr,.hljs-selector-id,.hljs-selector-class{color:#C9E27B}
+.hljs-title,.hljs-title.class_,.hljs-title.function_,.hljs-function,.hljs-built_in{color:#F7B79C}
+.hljs-meta,.hljs-meta .hljs-keyword,.hljs-meta .hljs-string{color:#9FB6C4}
+.hljs-punctuation,.hljs-operator,.hljs-params,.hljs-subst{color:#B4A99D}
+.hljs-link{color:#6FE3D2;text-decoration:underline;text-underline-offset:2px}
+.hljs-addition{color:#93E6A0;background:rgba(110,220,140,.12);display:inline-block;width:100%}
+.hljs-deletion{color:#F5947C;background:rgba(240,120,90,.13);display:inline-block;width:100%}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:600}
 
 .steps{list-style:none;margin:0;padding:0}
 .steps li{display:grid;grid-template-columns:auto 1fr;gap:15px;padding:18px 0;border-bottom:1px dotted var(--rule)}
@@ -448,16 +521,20 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
 .legal{border-top:1px dotted var(--rule);padding:14px 0 26px;display:flex;justify-content:space-between;gap:14px;
   flex-wrap:wrap;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--slate-2)}
 
-/* ---------------- legibility floor, mobile/tablet only ----------------
-   These bump a handful of sub-12px runs of copy up to a comfortable
-   reading size below the desktop breakpoint. Desktop (>=1280px) is left
-   exactly as it was. */
-@media(max-width:1279px){
-  .spec dt,.spec dd{font-size:12px}
-  .aside-links a span{font-size:12px}
-  .warn code,.pillar li code,.route-stack code{font-size:.92em}
-  .legal span{font-size:12px}
-}
+/* ---------------- legibility floor ----------------
+   12px is the floor for anything that is read rather than scanned. This used
+   to apply only below 1280px, on the theory that desktop could carry smaller
+   type; it cannot — an 11px spec value or footer line is just as hard to read
+   on a 27" screen, and the split meant the two breakpoints drifted. Tracked
+   uppercase eyebrows (.slug, .cap, .k, ticker) stay small on purpose: they are
+   labels, and letter-spacing plus caps keeps them legible at 11px. */
+.spec dt,.spec dd{font-size:12px}
+.aside-links a span{font-size:12px}
+.warn code,.pillar li code,.route-stack code,.routes code{font-size:.92em}
+.legal,.legal span{font-size:12px}
+.tag{font-size:12px}
+.term .name{font-size:12px}
+.aside-run .p{font-size:12.5px}
 
   /* ── Vulos suite chrome — identical on every product landing ───────────────
      Two elements, and only two: a logo-only home button in the top bar, and
@@ -548,8 +625,14 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
           <text x="60" y="80" text-anchor="middle" font-family="monospace" font-size="10.5" fill="currentColor" letter-spacing="1.4">HOSTED</text>
         </svg>
         <div class="window">
-          <img class="only-light" src="./screenshots/hero.png" alt="lilmail with a message open in the three-pane reading view" width="1280" height="800" fetchpriority="high">
-          <img class="only-dark" src="./screenshots/hero-dark.png" alt="lilmail in dark mode with a message open in the three-pane reading view" width="1280" height="800" loading="lazy">
+          <div class="shot only-light"><picture>
+            <source media="(max-width:700px)" srcset="./screenshots/phone-inbox.png 1x, ./screenshots/phone-inbox@2x.png 2x" width="390" height="780">
+            <img src="./screenshots/hero.png" srcset="./screenshots/hero.png 1x, ./screenshots/hero@2x.png 2x" alt="lilmail with a message open in the three-pane reading view" width="1280" height="800" fetchpriority="high">
+          </picture></div>
+          <div class="shot only-dark"><picture>
+            <source media="(max-width:700px)" srcset="./screenshots/phone-inbox-dark.png 1x, ./screenshots/phone-inbox-dark@2x.png 2x" width="390" height="780">
+            <img src="./screenshots/hero-dark.png" srcset="./screenshots/hero-dark.png 1x, ./screenshots/hero-dark@2x.png 2x" alt="lilmail in dark mode with a message open in the three-pane reading view" width="1280" height="800" loading="lazy">
+          </picture></div>
         </div>
         <span class="tag a"><i></i> no database · no CDN · no build step</span>
       </div>
@@ -694,34 +777,47 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
       <span class="num">03</span>
       <div>
         <h2 class="title">Warm, quiet, <span class="em">and quick.</span></h2>
-        <p class="lede">A hand-written design system — no framework, no utility soup — with a real dark mode. Every screen here is a live capture from the repo's own Playwright script.</p>
+        <p class="lede">A hand-written design system — no framework, no utility soup — with a real dark mode. Pick a screen; every one is a live capture from the repo's own Playwright script.</p>
       </div>
     </div>
-    <div class="screens">
-      <div class="stack">
-        <article class="step" data-shot="inbox"><span class="k">Inbox</span><h3>Three panes, no chrome in the way</h3><p>Folders, a threaded message list and the reading pane — with unread dots, attachment markers and per-sender avatars. HTMX swaps the panels; the page never reloads.</p></article>
-        <article class="step" data-shot="message"><span class="k">Reading</span><h3>HTML mail, safely contained</h3><p>Messages render inside a sandboxed iframe under a strict CSP. Reply, forward, archive, flag, print and delete sit in one row where you'd expect them.</p></article>
-        <article class="step" data-shot="compose"><span class="k">Compose</span><h3>Write, attach, schedule</h3><p>Plain-text or rich-text, file attachments as proper multipart MIME with inline <code>cid:</code> images, send-later scheduling, and drafts auto-saved every 30 seconds.</p></article>
-        <article class="step" data-shot="search"><span class="k">Search</span><h3>Straight to the server</h3><p>Search is executed by your IMAP server, not by a local index that has to be built and kept fresh. The same query is a <code>GET /v1/search</code> away.</p></article>
-        <article class="step" data-shot="settings"><span class="k">Settings</span><h3>Signatures, identities, away messages</h3><p>Send-as identities, signatures, the vacation responder, notification keys and connected accounts — each one also reachable over <code>/v1/settings</code>.</p></article>
-        <article class="step" data-shot="login"><span class="k">Sign in</span><h3>Your address, your password — or your IdP</h3><p>Email and mail-server password by default. Configure <code>[oauth2]</code> and the sign-in button runs a full authorization-code flow with PKCE.</p></article>
+
+    <div class="gallery rv">
+      <div class="gtabs" role="tablist" aria-label="Screens">
+          <button class="gtab" type="button" role="tab" id="tab-inbox" data-shot="inbox" aria-controls="gstage" aria-selected="true" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 8l9 5 9-5"/></svg>Inbox</button>
+          <button class="gtab" type="button" role="tab" id="tab-message" data-shot="message" aria-controls="gstage" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-4 4V5z"/><path d="M8 9h8M8 12h5"/></svg>Reading</button>
+          <button class="gtab" type="button" role="tab" id="tab-compose" data-shot="compose" aria-controls="gstage" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Compose</button>
+          <button class="gtab" type="button" role="tab" id="tab-search" data-shot="search" aria-controls="gstage" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>Search</button>
+          <button class="gtab" type="button" role="tab" id="tab-settings" data-shot="settings" aria-controls="gstage" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M3 12h2.5M18.5 12H21M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>Settings</button>
+          <button class="gtab" type="button" role="tab" id="tab-login" data-shot="login" aria-controls="gstage" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5M15 12H3"/></svg>Sign in</button>
       </div>
-      <div class="viewer">
-        <div class="window"><div class="frame">
-          <img class="only-light on" data-shot="inbox" src="./screenshots/inbox.png" alt="The lilmail inbox" loading="lazy">
-          <img class="only-dark on" data-shot="inbox" src="./screenshots/inbox-dark.png" alt="The lilmail inbox in dark mode" loading="lazy">
-          <img class="only-light" data-shot="message" src="./screenshots/message.png" alt="A message open in lilmail" loading="lazy">
-          <img class="only-dark" data-shot="message" src="./screenshots/message-dark.png" alt="A message open in lilmail, dark mode" loading="lazy">
-          <img class="only-light" data-shot="compose" src="./screenshots/compose.png" alt="The lilmail compose window" loading="lazy">
-          <img class="only-dark" data-shot="compose" src="./screenshots/compose-dark.png" alt="The lilmail compose window in dark mode" loading="lazy">
-          <img class="only-light" data-shot="search" src="./screenshots/search.png" alt="Search results in lilmail" loading="lazy">
-          <img class="only-dark" data-shot="search" src="./screenshots/search-dark.png" alt="Search results in lilmail, dark mode" loading="lazy">
-          <img class="only-light" data-shot="settings" src="./screenshots/settings.png" alt="The lilmail settings screen" loading="lazy">
-          <img class="only-dark" data-shot="settings" src="./screenshots/settings-dark.png" alt="The lilmail settings screen in dark mode" loading="lazy">
-          <img class="only-light" data-shot="login" src="./screenshots/login.png" alt="The lilmail sign-in screen" loading="lazy">
-          <img class="only-dark" data-shot="login" src="./screenshots/login-dark.png" alt="The lilmail sign-in screen in dark mode" loading="lazy">
-        </div></div>
-        <div class="cap"><span id="shot-name">Inbox</span><span>1280 × 800 · live capture</span></div>
+
+      <div class="gstage" id="gstage" role="tabpanel" aria-labelledby="tab-inbox">
+        <div class="window">
+          <button class="frame" type="button" id="shot-zoom" aria-label="Open this screen full size">
+            <img class="only-light on" data-shot="inbox" src="./screenshots/inbox.png" srcset="./screenshots/inbox.png 1x, ./screenshots/inbox@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark on" data-shot="inbox" src="./screenshots/inbox-dark.png" srcset="./screenshots/inbox-dark.png 1x, ./screenshots/inbox-dark@2x.png 2x" alt="" loading="lazy">
+            <img class="only-light" data-shot="message" src="./screenshots/message.png" srcset="./screenshots/message.png 1x, ./screenshots/message@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark" data-shot="message" src="./screenshots/message-dark.png" srcset="./screenshots/message-dark.png 1x, ./screenshots/message-dark@2x.png 2x" alt="" loading="lazy">
+            <img class="only-light" data-shot="compose" src="./screenshots/compose.png" srcset="./screenshots/compose.png 1x, ./screenshots/compose@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark" data-shot="compose" src="./screenshots/compose-dark.png" srcset="./screenshots/compose-dark.png 1x, ./screenshots/compose-dark@2x.png 2x" alt="" loading="lazy">
+            <img class="only-light" data-shot="search" src="./screenshots/search.png" srcset="./screenshots/search.png 1x, ./screenshots/search@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark" data-shot="search" src="./screenshots/search-dark.png" srcset="./screenshots/search-dark.png 1x, ./screenshots/search-dark@2x.png 2x" alt="" loading="lazy">
+            <img class="only-light" data-shot="settings" src="./screenshots/settings.png" srcset="./screenshots/settings.png 1x, ./screenshots/settings@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark" data-shot="settings" src="./screenshots/settings-dark.png" srcset="./screenshots/settings-dark.png 1x, ./screenshots/settings-dark@2x.png 2x" alt="" loading="lazy">
+            <img class="only-light" data-shot="login" src="./screenshots/login.png" srcset="./screenshots/login.png 1x, ./screenshots/login@2x.png 2x" alt="" loading="lazy">
+            <img class="only-dark" data-shot="login" src="./screenshots/login-dark.png" srcset="./screenshots/login-dark.png 1x, ./screenshots/login-dark@2x.png 2x" alt="" loading="lazy">
+            <span class="zoomcue" aria-hidden="true">Enlarge</span>
+          </button>
+        </div>
+        <div class="gside">
+          <div class="gcap" data-shot="inbox"><h3>Three panes, no chrome in the way</h3><p>Folders, a threaded message list and the reading pane — with unread dots, attachment markers and per-sender avatars. HTMX swaps the panels; the page never reloads.</p></div>
+          <div class="gcap" data-shot="message" hidden><h3>HTML mail, safely contained</h3><p>Messages render inside a sandboxed iframe under a strict CSP. Reply, forward, archive, flag, print and delete sit in one row where you'd expect them.</p></div>
+          <div class="gcap" data-shot="compose" hidden><h3>Write, attach, schedule</h3><p>Plain-text or rich-text, file attachments as proper multipart MIME with inline <code>cid:</code> images, send-later scheduling, and drafts auto-saved every 30 seconds.</p></div>
+          <div class="gcap" data-shot="search" hidden><h3>Straight to the server</h3><p>Search is executed by your IMAP server, not by a local index that has to be built and kept fresh. The same query is a <code>GET /v1/search</code> away.</p></div>
+          <div class="gcap" data-shot="settings" hidden><h3>Signatures, identities, away messages</h3><p>Send-as identities, signatures, the vacation responder, notification keys and connected accounts — each one also reachable over <code>/v1/settings</code>.</p></div>
+          <div class="gcap" data-shot="login" hidden><h3>Your address, your password — or your IdP</h3><p>Email and mail-server password by default. Configure <code>[oauth2]</code> and the sign-in button runs a full authorization-code flow with PKCE.</p></div>
+          <p class="gmeta"><span id="shot-name">Inbox</span> · 2560 × 1600 · live capture</p>
+        </div>
       </div>
     </div>
   </div></section>
@@ -878,6 +974,15 @@ key = "a-32-character-encryption-key!!"</code></pre>
     </div>
   </div></section>
 
+
+  <!-- Full-size screen viewer. Plain <dialog>: native focus trap, native Esc. -->
+  <dialog id="lightbox" aria-label="Screen, full size">
+    <button class="lb-close" type="button" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <img id="lb-img" alt="">
+    <p class="lb-cap"><span id="lb-name"></span><span id="lb-dim">2560 × 1600 · live capture</span></p>
+  </dialog>
 </main>
 
 <footer class="foot">
@@ -910,7 +1015,12 @@ document.getElementById('theme').addEventListener('click', () => {
 });
 
 /* tabs -------------------------------------------------------------- */
-document.querySelectorAll('[role="tablist"]').forEach(list => {
+/* Scoped to `.tabs` on purpose. This controller assumes every tab owns its own
+   panel and hides the others — the Screens tablist added later has six tabs
+   pointing at ONE panel, so an unscoped selector picked it up and set
+   `hidden` on the shared viewer, collapsing the section to nothing the moment
+   a screen was clicked. Screens has its own controller further down. */
+document.querySelectorAll('.tabs[role="tablist"]').forEach(list => {
   const tabs = [...list.querySelectorAll('[role="tab"]')];
   const show = tab => tabs.forEach(t => {
     const on = t === tab;
@@ -957,24 +1067,63 @@ if (!reduce && 'IntersectionObserver' in window) {
   revealables.forEach(el => el.classList.add('in'));
 }
 
-/* screens: the sticky viewer follows whichever step you're reading --- */
-const steps = [...document.querySelectorAll('.step')];
-const frames = [...document.querySelectorAll('.viewer .frame img')];
+/* screens: a tab gallery ------------------------------------------------
+   One row of tabs drives one capture and one caption. No scroll observer any
+   more — selection has exactly one source (the tabs), so there is nothing for
+   a scroll to fight with. */
+const gtabs = [...document.querySelectorAll('.gtab')];
+const frames = [...document.querySelectorAll('.gstage .frame img')];
+const gcaps = [...document.querySelectorAll('.gcap')];
 const shotName = document.getElementById('shot-name');
-function showShot(name, step) {
+
+function showShot(name) {
   frames.forEach(f => f.classList.toggle('on', f.dataset.shot === name));
-  steps.forEach(s => s.classList.toggle('on', s === step));
-  if (shotName) shotName.textContent = step.querySelector('.k').textContent;
+  gcaps.forEach(c => { c.hidden = c.dataset.shot !== name; });
+  gtabs.forEach(t => {
+    const on = t.dataset.shot === name;
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.tabIndex = on ? 0 : -1;
+    if (on) {
+      if (shotName) shotName.textContent = t.textContent.trim();
+      document.getElementById('gstage')?.setAttribute('aria-labelledby', t.id);
+    }
+  });
 }
-if (steps.length && 'IntersectionObserver' in window) {
-  const seen = new Set();
-  const spy = new IntersectionObserver(entries => {
-    entries.forEach(e => e.isIntersecting ? seen.add(e.target) : seen.delete(e.target));
-    const first = steps.find(s => seen.has(s));
-    if (first) showShot(first.dataset.shot, first);
-  }, { rootMargin: '-42% 0px -42% 0px' });
-  steps.forEach(s => spy.observe(s));
-  steps[0].classList.add('on');
+
+gtabs.forEach((tab, i) => {
+  tab.addEventListener('click', () => showShot(tab.dataset.shot));
+  tab.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
+            : e.key === 'ArrowLeft'  || e.key === 'ArrowUp'   ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const next = gtabs[(i + d + gtabs.length) % gtabs.length];
+    next.focus();
+    showShot(next.dataset.shot);
+    // Keep the newly selected tab reachable in the scrolling strip on a phone.
+    next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+});
+
+/* full-size screen viewer ------------------------------------------------- */
+const lb = document.getElementById('lightbox');
+const lbImg = document.getElementById('lb-img');
+const lbName = document.getElementById('lb-name');
+const zoomBtn = document.getElementById('shot-zoom');
+if (lb && lbImg && zoomBtn) {
+  zoomBtn.addEventListener('click', () => {
+    // Whichever capture is actually painted — the right theme, the right screen.
+    const live = frames.find(f => f.classList.contains('on') && f.getBoundingClientRect().width > 4);
+    if (!live) return;
+    lbImg.src = live.currentSrc || live.src;
+    lbImg.alt = live.alt;
+    if (lbName) lbName.textContent = shotName ? shotName.textContent : '';
+    lb.showModal();
+  });
+  lb.querySelector('.lb-close')?.addEventListener('click', () => lb.close());
+  // Click the backdrop to dismiss: the dialog fills no more than its image, so
+  // a click whose target IS the dialog element landed outside that image.
+  lb.addEventListener('click', e => { if (e.target === lb) lb.close(); });
 }
 
 /* pause the postal animation when motion is unwelcome ---------------- */

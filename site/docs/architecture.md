@@ -8,7 +8,7 @@ file server or separate asset pipeline is required.
 
 ## Repository layout
 
-```
+```text
 lilmail/
 ├── main.go                  # Entry point: config, DI wiring, route registration
 ├── config/
