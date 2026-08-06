@@ -11,13 +11,26 @@
 // unchanged.
 'use strict';
 
+/**
+ * @typedef {Object} VapidPublicKeyResponse
+ * @property {string} publicKey
+ */
+
+/**
+ * @param {unknown} v
+ * @returns {v is VapidPublicKeyResponse}
+ */
+function isVapidPublicKeyResponse(v) {
+    return typeof v === 'object' && v !== null && typeof (/** @type {{ publicKey?: unknown }} */ (v)).publicKey === 'string';
+}
+
 (function () {
     /**
      * Reads the bearer token carried in the DOM for JS fetch calls.
      * @returns {string}
      */
     function currentToken() {
-        var el = document.getElementById('app-token');
+        const el = document.getElementById('app-token');
         return el instanceof HTMLElement && el.dataset.token ? el.dataset.token : '';
     }
 
@@ -28,11 +41,11 @@
      * @returns {Uint8Array<ArrayBuffer>}
      */
     function urlBase64ToUint8Array(base64String) {
-        var padding = '='.repeat((4 - base64String.length % 4) % 4);
-        var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-        var rawData = atob(base64);
-        var outputArray = new Uint8Array(rawData.length);
-        for (var i = 0; i < rawData.length; ++i) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
             outputArray[i] = rawData.charCodeAt(i);
         }
         return outputArray;
@@ -54,7 +67,10 @@
                 return fetch('/api/push/vapid-public')
                     .then(function (r) { return r.json(); })
                     .then(function (data) {
-                        var key = urlBase64ToUint8Array(data.publicKey);
+                        if (!isVapidPublicKeyResponse(data)) {
+                            throw new Error('Malformed VAPID public key response');
+                        }
+                        const key = urlBase64ToUint8Array(data.publicKey);
                         return reg.pushManager.subscribe({
                             userVisibleOnly: true,
                             applicationServerKey: key
@@ -62,7 +78,7 @@
                     });
             })
             .then(function (sub) {
-                var subJson = sub.toJSON();
+                const subJson = sub.toJSON();
                 // POST the subscription to the server.
                 return fetch('/api/push/subscribe', {
                     method: 'POST',
@@ -89,7 +105,7 @@
             .then(function (reg) { return reg.pushManager.getSubscription(); })
             .then(function (sub) {
                 if (!sub) return;
-                var endpoint = sub.endpoint;
+                const endpoint = sub.endpoint;
                 return sub.unsubscribe().then(function () {
                     return fetch('/api/push/subscribe', {
                         method: 'DELETE',
@@ -125,7 +141,9 @@
 
     // Auto-register the service worker on page load so push events are received
     // even without the Settings page (the subscription was already persisted).
+    // Fire-and-forget: registration failures here have nothing to surface to —
+    // there is no UI on screen yet to show an error in.
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        void navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
 })();
