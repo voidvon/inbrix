@@ -77,6 +77,31 @@ jobs:
       - name: Published docs are in sync and link-clean
         run: go test ./site/gen -count=1 -v
 
+  # go build/vet strip types without checking client JS at all — the app's
+  # security-relevant push/token code (assets/js/, assets/sw.js) previously
+  # sat behind no linter and no type checker. tsc runs both projects (one per
+  # global environment: browser DOM vs Service Worker — see tsconfig.json /
+  # assets/tsconfig.json), then eslint runs type-aware (typescript-eslint
+  # recommendedTypeChecked), which is what actually distinguishes this from a
+  # build step: no-floating-promises and friends need real type information,
+  # not just parsing.
+  client-js:
+    name: Client JS — typecheck & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
   # site/gen resolves links; it cannot see anything that only exists once the
   # page is laid out. This job renders index.html and docs.html in Chromium at
   # eight viewports in both colour schemes and fails on a stretched screenshot,
