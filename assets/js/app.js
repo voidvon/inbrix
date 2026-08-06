@@ -23,9 +23,9 @@ document.addEventListener('alpine:init', function () {
      */
     function loadPref(key, fallback) {
         try {
-            var v = localStorage.getItem('lm.' + key);
+            const v = localStorage.getItem('lm.' + key);
             return v === null ? fallback : v;
-        } catch (e) {
+        } catch {
             return fallback;
         }
     }
@@ -39,17 +39,17 @@ document.addEventListener('alpine:init', function () {
         /** @param {string} p */
         setPane: function (p) {
             this.pane = p;
-            try { localStorage.setItem('lm.pane', p); } catch (e) { /* storage unavailable */ }
+            try { localStorage.setItem('lm.pane', p); } catch { /* storage unavailable */ }
         },
         toggleDensity: function () {
             this.density = this.density === 'compact' ? 'comfortable' : 'compact';
-            try { localStorage.setItem('lm.density', this.density); } catch (e) { /* storage unavailable */ }
+            try { localStorage.setItem('lm.density', this.density); } catch { /* storage unavailable */ }
         },
         /** @param {string} id */
         isSelected: function (id) { return this.selection.indexOf(id) !== -1; },
         /** @param {string} id */
         toggleSelect: function (id) {
-            var i = this.selection.indexOf(id);
+            const i = this.selection.indexOf(id);
             if (i === -1) this.selection.push(id); else this.selection.splice(i, 1);
         },
         clearSelection: function () { this.selection = []; }
@@ -58,7 +58,7 @@ document.addEventListener('alpine:init', function () {
 
 // Reflect layout prefs as classes on <body> so CSS can react globally.
 document.addEventListener('alpine:initialized', function () {
-    var s = Alpine.store('mail');
+    const s = Alpine.store('mail');
     function sync() {
         document.body.dataset.pane = s.pane;
         document.body.dataset.density = s.density;
@@ -69,19 +69,19 @@ document.addEventListener('alpine:initialized', function () {
 });
 
 document.body.addEventListener('htmx:configRequest', function (evt) {
-    var tokenEl = document.getElementById('app-token');
-    var token = tokenEl instanceof HTMLElement && tokenEl.dataset.token ? tokenEl.dataset.token : '';
+    const tokenEl = document.getElementById('app-token');
+    const token = tokenEl instanceof HTMLElement && tokenEl.dataset.token ? tokenEl.dataset.token : '';
     if (token) evt.detail.headers['Authorization'] = 'Bearer ' + token;
     // Double-submit CSRF: read the "_csrf" cookie set by the server and
     // echo it back as a header so the CSRF middleware can validate it.
-    var csrfMatch = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+    const csrfMatch = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
     if (csrfMatch) evt.detail.headers['X-CSRF-Token'] = decodeURIComponent(csrfMatch[1]);
 });
 
 (function () {
-    var bar = document.getElementById('htmx-loading-bar');
+    const bar = document.getElementById('htmx-loading-bar');
     if (!(bar instanceof HTMLElement)) return;
-    var loadingBar = bar;
+    const loadingBar = bar;
     document.addEventListener('htmx:beforeRequest', function () { loadingBar.style.width = '50%'; });
     document.addEventListener('htmx:afterRequest', function () {
         loadingBar.style.width = '100%';
@@ -99,20 +99,20 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
      */
     function isTyping(el) {
         if (!el) return false;
-        var t = el.tagName;
+        const t = el.tagName;
         return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || /** @type {HTMLElement} */ (el).isContentEditable;
     }
     /** @returns {HTMLElement[]} */
     function rows() {
-        return Array.prototype.slice.call(
-            document.querySelectorAll('#email-list-inner .email-row'));
+        return Array.from(document.querySelectorAll('#email-list-inner .email-row'))
+            .filter(function (el) { return el instanceof HTMLElement; });
     }
     /**
      * @param {HTMLElement[]} list
      * @returns {number}
      */
     function currentIndex(list) {
-        for (var i = 0; i < list.length; i++) {
+        for (let i = 0; i < list.length; i++) {
             if (list[i].classList.contains('is-cursor')) return i;
         }
         return -1;
@@ -124,7 +124,7 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
     function focusRow(list, idx) {
         list.forEach(function (r) { r.classList.remove('is-cursor'); });
         if (idx < 0 || idx >= list.length) return;
-        var r = list[idx];
+        const r = list[idx];
         r.classList.add('is-cursor');
         r.scrollIntoView({ block: 'nearest' });
     }
@@ -134,7 +134,10 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
             if (e.key === 'Escape' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
             return;
         }
-        var list, idx;
+        /** @type {HTMLElement[]} */
+        let list;
+        /** @type {number} */
+        let idx;
         switch (e.key) {
             case 'j': case 'ArrowDown':
                 list = rows(); if (!list.length) return;
@@ -152,30 +155,36 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
                 list = rows(); idx = currentIndex(list);
                 if (idx >= 0) { list[idx].click(); e.preventDefault(); }
                 break;
-            case 'c':
-                var cb = document.querySelector('.btn-compose');
+            case 'c': {
+                const cb = document.querySelector('.btn-compose');
                 if (cb instanceof HTMLElement) { cb.click(); e.preventDefault(); }
                 break;
-            case 'r':
-                var rb = document.querySelector('#email-viewer-pane [data-action="reply"]');
+            }
+            case 'r': {
+                const rb = document.querySelector('#email-viewer-pane [data-action="reply"]');
                 if (rb instanceof HTMLElement) { rb.click(); e.preventDefault(); }
                 break;
-            case 'a':
-                var ab = document.querySelector('#email-viewer-pane [data-action="archive"]');
+            }
+            case 'a': {
+                const ab = document.querySelector('#email-viewer-pane [data-action="archive"]');
                 if (ab instanceof HTMLElement) { ab.click(); e.preventDefault(); }
                 break;
-            case 'u':
-                var ub = document.querySelector('#email-viewer-pane [data-action="unread"]');
+            }
+            case 'u': {
+                const ub = document.querySelector('#email-viewer-pane [data-action="unread"]');
                 if (ub instanceof HTMLElement) { ub.click(); e.preventDefault(); }
                 break;
-            case 'Delete': case 'Backspace': case '#':
-                var db = document.querySelector('#email-viewer-pane [data-action="delete"]');
+            }
+            case 'Delete': case 'Backspace': case '#': {
+                const db = document.querySelector('#email-viewer-pane [data-action="delete"]');
                 if (db instanceof HTMLElement) { db.click(); e.preventDefault(); }
                 break;
-            case '/':
-                var si = document.querySelector('.topbar__search-input');
+            }
+            case '/': {
+                const si = document.querySelector('.topbar__search-input');
                 if (si instanceof HTMLElement) { si.focus(); e.preventDefault(); }
                 break;
+            }
         }
     });
 })();
