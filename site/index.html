@@ -300,6 +300,14 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
   .window img{aspect-ratio:390/780;height:auto;border-radius:17px}
 }
 
+/* the ticker reads as a torn-off tape stub, so it gets a perforated top edge
+   rather than a plain rule — the same punched-hole recipe footer.foot::before
+   already uses, just facing the other way: a dark strip (matching the ticker
+   it sits on) with paper-coloured circles cut through it. */
+.tear{height:13px;margin-bottom:-1px;position:relative;z-index:1;background:
+  radial-gradient(circle at 6.5px 6.5px, var(--paper) 5.6px, transparent 6px) 0 0/13px 13px repeat-x,
+  var(--dark)}
+
 /* ---------------- ticker ---------------- */
 .ticker{background:var(--dark);color:var(--on-dark-2);border-top:1px solid var(--dark-2);
   border-bottom:1px solid var(--dark-2);overflow:hidden;padding:12px 0;position:relative}
@@ -683,6 +691,7 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
     </div>
   </div></section>
 
+  <div class="tear" aria-hidden="true"></div>
   <!-- ══════════ TICKER ══════════ -->
   <div class="ticker" aria-hidden="true"><div class="track">
     <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>HTMX</span><span>bbolt</span><span>Postgres (optional)</span>
