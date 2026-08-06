@@ -1,5 +1,10 @@
-// assets/js/global.d.ts — ambient type for the window.lilmailPush API that
-// push.js installs. Declared separately (rather than inline in push.js)
+// types/global.d.ts — ambient types for the extracted client scripts
+// (assets/js/*.js). Lives outside assets/ deliberately: everything under
+// assets/ is compiled into the release binary by `//go:embed all:assets`
+// (see assets_embed_test.go) and served at /assets — this file is dev-time
+// typing metadata, not something to ship or serve.
+//
+// Declares window.lilmailPush separately from push.js (rather than inline)
 // because it is consumed from other, un-typechecked templates too
 // (templates/settings.html calls window.lilmailPush.enable()/disable() from
 // its own inline script, out of scope for this pass — see the extraction
