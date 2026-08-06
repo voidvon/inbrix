@@ -242,8 +242,19 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
    it rather than as the page itself. */
 .stage{position:relative;margin-top:clamp(30px,4.4vw,54px);padding-bottom:clamp(20px,3.4vw,42px)}
 .stage-inner{position:relative;width:min(100%,940px);margin:0 auto}
-.window{border-radius:16px;border:1px solid var(--rule);background:var(--surface);padding:6px;
+.window{position:relative;border-radius:16px;border:1px solid var(--rule);background:var(--surface);padding:6px;
   box-shadow:var(--shadow-lg);transform:perspective(2400px) rotateX(1.1deg);transform-origin:center top}
+/* printer's registration marks — a pre-press proofing detail, straddling the
+   plate's own corners the way they'd straddle the edge of an actual printed
+   sheet. Hero only: the gallery's frame is a working viewer, not a proof. */
+.stage .regmark{position:absolute;width:15px;height:15px;color:var(--slate-2);opacity:.5;
+  pointer-events:none;z-index:3;transition:opacity .3s}
+.stage .window:hover .regmark{opacity:.8}
+.stage .regmark.tl{top:-3px;left:-3px}
+.stage .regmark.tr{top:-3px;right:-3px}
+.stage .regmark.bl{bottom:-3px;left:-3px}
+.stage .regmark.br{bottom:-3px;right:-3px}
+@media(max-width:760px){.stage .regmark{display:none}}
 /* `height:auto` is load-bearing, not decoration. The <img> carries width/height
    attributes, which the UA sheet turns into a presentational height; with only
    `width:100%` set in CSS the used height stayed at the attribute's 800px and
@@ -570,6 +581,14 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
 </style>
 </head>
 <body>
+<!-- shared defs: a printer's registration mark, reused at the plate's corners
+     the way `#wire`/`#ar` are already reused in the route diagram below. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="regmark" viewBox="0 0 20 20">
+    <circle cx="10" cy="10" r="5.4" fill="none" stroke="currentColor" stroke-width="1"/>
+    <path d="M10 0v5.6M10 14.4V20M0 10h5.6M14.4 10H20" stroke="currentColor" stroke-width="1"/>
+  </symbol>
+</defs></svg>
 <div class="airmail"></div>
 
 <header class="top"><div class="sheet topbar">
@@ -646,6 +665,10 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
           <text x="60" y="80" text-anchor="middle" font-family="monospace" font-size="10.5" fill="currentColor" letter-spacing="1.4">HOSTED</text>
         </svg>
         <div class="window">
+          <svg class="regmark tl" aria-hidden="true"><use href="#regmark"/></svg>
+          <svg class="regmark tr" aria-hidden="true"><use href="#regmark"/></svg>
+          <svg class="regmark bl" aria-hidden="true"><use href="#regmark"/></svg>
+          <svg class="regmark br" aria-hidden="true"><use href="#regmark"/></svg>
           <div class="shot only-light"><picture>
             <source media="(max-width:700px)" srcset="./screenshots/phone-inbox.png 1x, ./screenshots/phone-inbox@2x.png 2x" width="390" height="780">
             <img src="./screenshots/hero.png" srcset="./screenshots/hero.png 1x, ./screenshots/hero@2x.png 2x" alt="lilmail with a message open in the three-pane reading view" width="1280" height="800" fetchpriority="high">
