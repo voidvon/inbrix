@@ -14,8 +14,16 @@
 const LILMAIL_ORIGIN = self.location.origin;
 
 // ── Push event ──────────────────────────────────────────────────────────────
+//
+// Bare `addEventListener`/`registration`/`clients` globals are used rather
+// than `self.addEventListener` etc.: they are the exact same objects at
+// runtime (both are properties of the same ServiceWorkerGlobalScope), but
+// @types/serviceworker's ambient `self` is typed as the generic
+// WorkerGlobalScope (shared with dedicated/shared workers) so member access
+// through it loses the ServiceWorker-specific event map, while the bare
+// globals are typed against ServiceWorkerGlobalScope directly.
 
-self.addEventListener('push', function (event) {
+addEventListener('push', function (event) {
     let data = { from: 'Unknown sender', subject: '(no subject)', tag: 'newmail' };
     if (event.data) {
         try { data = event.data.json(); } catch (_) { /* ignore */ }
@@ -31,12 +39,12 @@ self.addEventListener('push', function (event) {
         data: { url: LILMAIL_ORIGIN + '/inbox' },
     };
 
-    event.waitUntil(self.registration.showNotification(title, options));
+    event.waitUntil(registration.showNotification(title, options));
 });
 
 // ── Notification click ───────────────────────────────────────────────────────
 
-self.addEventListener('notificationclick', function (event) {
+addEventListener('notificationclick', function (event) {
     event.notification.close();
     const targetUrl = (event.notification.data && event.notification.data.url)
         ? event.notification.data.url
@@ -64,9 +72,9 @@ self.addEventListener('notificationclick', function (event) {
 // (e.g. after a browser update).  We re-subscribe and POST the new subscription
 // to the server so push delivery isn't interrupted.
 
-self.addEventListener('pushsubscriptionchange', function (event) {
+addEventListener('pushsubscriptionchange', function (event) {
     event.waitUntil(
-        self.registration.pushManager.subscribe(event.oldSubscription.options)
+        registration.pushManager.subscribe(event.oldSubscription.options)
             .then(function (newSub) {
                 return fetch('/api/push/subscribe', {
                     method: 'POST',
