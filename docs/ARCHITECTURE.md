@@ -54,7 +54,12 @@ lilmail/
 ## Request lifecycle
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
 flowchart TD
+    classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0,stroke-width:1.5px;
+    classDef server fill:#0f766e,stroke:#5eead4,color:#f0fdfa,stroke-width:2.5px;
+    classDef backend fill:#334155,stroke:#94a3b8,color:#e2e8f0,stroke-width:1.5px;
+
     Browser --> Server["Fiber HTTP server (main.go)"]
     Server --> MW["Middleware: JWT session auth (except /login, /health, /sw.js)"]
     Server --> Web["Web routes → handlers/web/"]
@@ -68,6 +73,10 @@ flowchart TD
     Server --> SSE["SSE route → IMAP IDLE watcher"]
     SSE --> Stream["SSE stream"]
     Stream --> Notif["browser Web Notifications"]
+
+    class Browser entry
+    class Server server
+    class MW,Web,Tmpl,HTML,API,JSON,Clients,AI,Proxy,SSE,Stream,Notif backend
 ```
 
 ## Key subsystems
