@@ -25,7 +25,7 @@
      * urlBase64ToUint8Array converts a base64url string to a Uint8Array for
      * use as the applicationServerKey in PushManager.subscribe().
      * @param {string} base64String
-     * @returns {Uint8Array}
+     * @returns {Uint8Array<ArrayBuffer>}
      */
     function urlBase64ToUint8Array(base64String) {
         var padding = '='.repeat((4 - base64String.length % 4) % 4);
