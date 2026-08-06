@@ -34,7 +34,15 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 (full history + tags), not the default shallow
+      # fetch-depth: 1. site/gen's TestVersionMatchesLatestTag runs
+      # `git describe --tags` to catch VERSION drifting from the latest
+      # release tag — the actual cause of the 2026-08-06 version drift — and a
+      # shallow checkout carries no tags at all, which would make that check
+      # skip on every run instead of ever really gating anything.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -69,12 +77,17 @@ jobs:
       # of `go test ./...`; it is repeated on its own so a docs failure is
       # attributed to the docs rather than buried in the test log.
       #
-      # It checks two things, not one. The freshness half (site/docs matches what
-      # the generator makes) is what the previous Node gate did. The half it did
-      # not do — and the reason the published bundle shipped ten dead links while
-      # the gate reported "in sync" — is resolving every link in every published
-      # chapter, fragments included, against what site/ actually serves.
-      - name: Published docs are in sync and link-clean
+      # It checks three things now, not one. The freshness half (site/docs
+      # matches what the generator makes) is what the previous Node gate did.
+      # The link half it did not do — and the reason the published bundle
+      # shipped ten dead links while the gate reported "in sync" — is
+      # resolving every link in every published chapter, fragments included,
+      # against what site/ actually serves. The version half is newer still:
+      # site/index.html's hero slug/spec card and site/docs.html's footer must
+      # show exactly VERSION, and VERSION must equal the latest git tag (the
+      # checkout above fetches full tag history so that comparison is real
+      # here, not a permanent skip).
+      - name: Published docs are in sync, link-clean, and the version is current
         run: go test ./site/gen -count=1 -v
 
   # go build/vet strip types without checking client JS at all — the app's
