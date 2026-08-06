@@ -76,9 +76,9 @@
 #
 # USAGE
 # ─────
-#   scripts/verify.sh --tag v1.13.0 lilmail_1.13.0_linux_amd64.zip
-#   scripts/verify.sh --tag v1.13.0 --attest lilmail_1.13.0_linux_amd64.zip
-#   scripts/verify.sh --repo vul-os/lilmail --tag v1.13.0 --out ~/Downloads ASSET
+#   scripts/verify.sh --tag v1.14.0 lilmail_1.14.0_linux_amd64.zip
+#   scripts/verify.sh --tag v1.14.0 --attest lilmail_1.14.0_linux_amd64.zip
+#   scripts/verify.sh --repo vul-os/lilmail --tag v1.14.0 --out ~/Downloads ASSET
 #   scripts/verify.sh --base-url https://example.com/rel ASSET       # any origin
 #   scripts/verify.sh --dir ./release-out ASSET...   # already downloaded
 #   scripts/verify.sh --selftest                     # prove the guards refuse
