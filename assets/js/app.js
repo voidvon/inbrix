@@ -80,11 +80,12 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
 
 (function () {
     var bar = document.getElementById('htmx-loading-bar');
-    if (!bar) return;
-    document.addEventListener('htmx:beforeRequest', function () { bar.style.width = '50%'; });
+    if (!(bar instanceof HTMLElement)) return;
+    var loadingBar = bar;
+    document.addEventListener('htmx:beforeRequest', function () { loadingBar.style.width = '50%'; });
     document.addEventListener('htmx:afterRequest', function () {
-        bar.style.width = '100%';
-        setTimeout(function () { bar.style.width = '0'; }, 300);
+        loadingBar.style.width = '100%';
+        setTimeout(function () { loadingBar.style.width = '0'; }, 300);
     });
 })();
 
