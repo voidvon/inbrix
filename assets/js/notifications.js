@@ -17,7 +17,7 @@
         if (!window.EventSource) return;
         var es = new EventSource('/events');
         es.addEventListener('message', function (e) {
-            /** @type {{from?: string, subject?: string} | undefined} */
+            /** @type {{from?: string, subject?: string}} */
             var data;
             try {
                 data = JSON.parse(e.data);
