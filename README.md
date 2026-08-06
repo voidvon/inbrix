@@ -88,14 +88,22 @@ into the binary at build time, and HTMX swaps in server-rendered partials so the
 page never does a full reload.
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'transparent','primaryBorderColor':'#14b8a6','primaryTextColor':'#8f969e','lineColor':'#8a8f98','nodeBorder':'#5f8f8a','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
 flowchart TD
+    classDef entry fill:#1e293b,stroke:#64748b,color:#e2e8f0,stroke-width:1.5px;
+    classDef server fill:#0f766e,stroke:#5eead4,color:#f0fdfa,stroke-width:2.5px;
+    classDef backend fill:#334155,stroke:#94a3b8,color:#e2e8f0,stroke-width:1.5px;
+
     UI["HTMX/Alpine UI (HTMX/SSE)"] --> Server
     React["External UIs (fetch /v1 JSON)"] --> Server
-    Server["Fiber HTTP server — HTMX routes + /v1 JSON API (one Go binary);<br/>same mail engine + session auth under both"]
+    Server["Fiber HTTP server<br/>HTMX routes + /v1 JSON API (one Go binary)<br/>same mail engine + session auth under both"]
     Server --> IMAP["IMAP/SMTP (your mail server)"]
     Server --> Store["durable store (seam): bbolt by default;<br/>optional Postgres (threads, drafts, recipients, accounts)"]
     Server --> Services["opt-in services (CalDAV, CardDAV, AI, Web Push) — off by default"]
+
+    class UI,React entry
+    class Server server
+    class IMAP,Store,Services backend
 ```
 
 State that must survive a restart (conversation threads, recent recipients,
