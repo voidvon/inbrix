@@ -156,8 +156,8 @@ OIDC identity (there is no long-lived signing key, so there is none to leak or
 rotate). `scripts/verify.sh` is what you run before executing the bytes:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/vul-os/lilmail/v1.13.0/scripts/verify.sh
-bash verify.sh --tag v1.13.0 --attest lilmail_1.13.0_linux_amd64.zip
+curl -fsSLO https://raw.githubusercontent.com/vul-os/lilmail/v1.14.0/scripts/verify.sh
+bash verify.sh --tag v1.14.0 --attest lilmail_1.14.0_linux_amd64.zip
 ```
 
 It fetches the manifest, looks up the **exact** entry for that asset (names are
