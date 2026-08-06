@@ -255,6 +255,10 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
 .stage .regmark.bl{bottom:-3px;left:-3px}
 .stage .regmark.br{bottom:-3px;right:-3px}
 @media(max-width:760px){.stage .regmark{display:none}}
+@media(hover:hover) and (min-width:761px){
+  .stage .window{transition:transform .35s cubic-bezier(.2,.8,.3,1),box-shadow .35s}
+  .stage .window:hover{transform:perspective(2400px) rotateX(1.1deg) translateY(-5px);box-shadow:var(--shadow-xl)}
+}
 /* `height:auto` is load-bearing, not decoration. The <img> carries width/height
    attributes, which the UA sheet turns into a presentational height; with only
    `width:100%` set in CSS the used height stayed at the attribute's 800px and
@@ -347,7 +351,8 @@ h2.title .em{display:block;font-style:italic;font-weight:400;color:var(--coral);
   transition:opacity .35s;border-radius:10px;z-index:-1}
 .row:hover{padding-left:14px}
 .row:hover::before{opacity:1}
-.row .idx{font-family:var(--mono);font-size:11px;color:var(--slate-2);letter-spacing:.08em;padding-top:6px}
+.row .idx{font-family:var(--mono);font-size:11px;color:var(--slate-2);letter-spacing:.08em;padding-top:6px;transition:color .25s}
+.row:hover .idx{color:var(--coral)}
 .row h3{font-family:var(--display);font-size:clamp(19px,2.1vw,25px);letter-spacing:-.02em;
   font-variation-settings:"opsz" 60,"SOFT" 30,"wght" 600;transition:color .25s}
 .row:hover h3{color:var(--coral)}
