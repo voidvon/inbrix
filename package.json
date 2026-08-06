@@ -1,0 +1,16 @@
+{
+  "name": "lilmail-client-js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Typecheck/lint config for lilmail's static client JS (assets/js, assets/sw.js). Not a runtime npm project — the app is a single Go binary with no build step.",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^10.8.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.66.0"
+  }
+}
