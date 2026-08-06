@@ -1,0 +1,17 @@
+{
+  "//": "Typechecks the extracted browser scripts under assets/js/. assets/sw.js runs in a Service Worker global (self, clients, ServiceWorkerGlobalScope) which is incompatible with the DOM lib used here, so it has its own project at assets/tsconfig.json — see npm run typecheck, which runs both.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true
+  },
+  "include": ["assets/js/**/*.js", "assets/js/**/*.d.ts"]
+}
