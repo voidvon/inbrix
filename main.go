@@ -397,8 +397,24 @@ func main() {
 	//   2. HTMX's htmx:configRequest handler reads the cookie and sends its
 	//      value as "X-CSRF-Token" on every mutating request.
 	//   3. Middleware validates header == cookie value before the handler runs.
-	// WebPush subscribe/unsubscribe routes are skipped: they carry
-	// "Authorization: Bearer" headers which already prevent cross-origin CSRF.
+	// WebPush subscribe/unsubscribe routes are skipped.
+	//
+	// CORRECTION (found while typechecking assets/js/push.js, 2026-08-06): the
+	// skip comment used to justify this as "they carry Authorization: Bearer
+	// headers which already prevent cross-origin CSRF". That is not what
+	// happens — handlers/web/push.go's HandleSubscribe/HandleUnsubscribe never
+	// read the Authorization header at all; they authorize purely from
+	// c.Locals("username"), set below by SessionMiddleware from the session
+	// cookie. The Authorization: Bearer header push.js sends on these routes
+	// is therefore inert on the server. What actually keeps these two routes
+	// safe from cross-origin CSRF today is CookieSameSite: "Lax" below — a
+	// forged cross-site POST/DELETE does not carry the session cookie at all,
+	// so SessionMiddleware has nothing to authorize — the same protection
+	// every other protected route relies on. This exemption is not currently
+	// exploitable, but it rests on an inaccurate premise and should be
+	// resolved deliberately (either validate the Bearer token server-side to
+	// match the comment's original intent, or drop the exemption and the now-
+	// pointless header) rather than left as accidentally-correct.
 	csrfMiddleware := csrf.New(csrf.Config{
 		KeyLookup:      "header:X-CSRF-Token",
 		CookieName:     "_csrf",
@@ -407,7 +423,7 @@ func main() {
 		CookieSecure:   config.Server.SecureCookies,
 		Expiration:     24 * time.Hour,
 		Next: func(c *fiber.Ctx) bool {
-			// Skip for WebPush routes (Bearer-token-authenticated)
+			// Skip for WebPush routes — see the correction above.
 			return strings.HasPrefix(c.Path(), "/api/push/")
 		},
 	})
