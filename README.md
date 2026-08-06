@@ -96,7 +96,7 @@ flowchart TD
 
     UI["HTMX/Alpine UI (HTMX/SSE)"] --> Server
     React["External UIs (fetch /v1 JSON)"] --> Server
-    Server["Fiber HTTP server<br/>HTMX routes + /v1 JSON API (one Go binary)<br/>same mail engine + session auth under both"]
+    Server["Fiber HTTP server<br/>HTMX routes + /v1 JSON API<br/>(one Go binary)<br/>same mail engine +<br/>session auth under both"]
     Server --> IMAP["IMAP/SMTP (your mail server)"]
     Server --> Store["durable store (seam): bbolt by default;<br/>optional Postgres (threads, drafts, recipients, accounts)"]
     Server --> Services["opt-in services (CalDAV, CardDAV, AI, Web Push) — off by default"]
