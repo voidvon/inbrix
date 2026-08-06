@@ -1,0 +1,18 @@
+{
+  "//": "Separate project for assets/sw.js: it runs in a Service Worker global (self, clients, ServiceWorkerGlobalScope, PushEvent, NotificationEvent) which the DOM lib used by tsconfig.json for assets/js/ does not model (and conflicts with — both declare an incompatible `self`). @types/serviceworker supplies those types; TS ships no built-in service-worker lib. Kept at repo root, NOT inside assets/ (which is compiled into the release binary by //go:embed all:assets) and not named tsconfig.json (that name is tsconfig.json at root, for assets/js/ — two tsconfig.json files can't coexist for directory-based auto-discovery). eslint.config.js points typescript-eslint's projectService at this file explicitly via defaultProject/allowDefaultProject for assets/sw.js; `npm run typecheck` also invokes it directly.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "types": ["serviceworker"],
+    "libReplacement": true,
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["assets/sw.js"]
+}
