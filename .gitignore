@@ -38,3 +38,7 @@ config.toml
 
 # Release staging directory (built in CI; the SHA256SUMS manifest covers it)
 /release/
+
+# Root devDependency-only npm project (typecheck/lint for assets/js + sw.js).
+# scripts/ has its own node_modules covered by scripts/.gitignore.
+/node_modules/
