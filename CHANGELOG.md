@@ -9,8 +9,25 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+No unreleased changes.
+
+---
+
+## [1.14.0] - 2026-08-06
+
 ### Added
 
+- **Client-side JavaScript is now type-checked and linted, and CI fails the
+  build if it isn't clean.** `assets/js/*.js` and `assets/sw.js` — the code
+  that handles Web Push subscriptions and the session bearer token — had sat
+  behind no linter and no type checker at all; `go build`/`go vet` strip types
+  without checking this code either. JSDoc annotations plus `tsc` (a browser
+  project via `tsconfig.json` and a separate service-worker project via
+  `tsconfig.sw.json`, since a service worker has no DOM and needs its own
+  global-scope types) and a type-aware ESLint flat config now cover both, and
+  a new `client-js` CI job runs both with no `continue-on-error`. Two of the
+  three bugs described under Fixed below were caught this way, by the type
+  checker, not by manual review.
 - **Signed, checksummed releases — and a verifier that fails closed.** Nothing
   in the release pipeline previously vouched for the bytes it published. The
   release workflow now stages every asset into `release/`, emits a `SHA256SUMS`
@@ -71,6 +88,31 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Changed
 
+- **The client JavaScript inlined in `templates/layouts/main.html` is now in
+  ordinary static files.** All five inline `<script>` blocks — VAPID push
+  subscribe/unsubscribe, SSE/desktop-notification wiring, and the Alpine/HTMX
+  shell (store setup, CSRF header injection, keyboard navigation) — moved to
+  `assets/js/push.js`, `assets/js/notifications.js`, and `assets/js/app.js`;
+  the template now only carries `<script src="...">` tags. Behavior is
+  unchanged. One block had read the session bearer token via server-side
+  template interpolation (`const token = '{{.Token}}'`), which cannot exist in
+  a static file; it now reads the same value from the `#app-token` element's
+  `data-token` attribute that the template already renders alongside it —
+  same value, same empty-string fallback when there's no token.
+- README's mermaid diagram had text at roughly 2.9:1 contrast on a white
+  background — under WCAG AA — because its old theme used a transparent node
+  fill with grey text and grey edges, so legibility depended entirely on
+  GitHub's light/dark background. Every node now has an explicit opaque fill
+  with light text (three tiers — entry, server, backend), so contrast holds on
+  both color schemes. `docs/ARCHITECTURE.md`'s request-lifecycle diagram had no
+  theme at all (bare mermaid defaults) and inherited the same problem; it now
+  uses the same palette so both diagrams read consistently, and its published
+  site mirror (`site/docs/architecture.md`) was regenerated to match. Separately,
+  README's `Server` node label was wrapping "JSON API" across two lines
+  mid-term because a line was left for mermaid's automatic word-wrap to break
+  wherever it fell; line breaks in that label are now explicit so it wraps at
+  word/phrase boundaries instead. No diagram content or wording changed in
+  either file.
 - **CI now runs the checks the repo already claimed.** Added `gofmt`, switched
   the test step to `go test -race` (the broker seam copies out of a pooled
   request buffer and the unified inbox fans out per account — exactly what a
@@ -148,6 +190,33 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Fixed
 
+- **Push notifications could silently stop working after a browser-triggered
+  resubscribe, with no error surfaced anywhere.** The service worker's
+  `pushsubscriptionchange` handler read `event.oldSubscription.options`
+  unconditionally, but `oldSubscription` is nullable per spec — a browser is
+  not always able to supply the prior subscription. When it was null, the
+  handler threw before `event.waitUntil()` ran, silently dropping the
+  browser's automatic-resubscribe attempt; push delivery would simply stop
+  until the user happened to notice and re-enabled it by hand in Settings. Now
+  falls back to a fresh VAPID subscribe when there's no prior subscription to
+  reuse.
+- **A `ReferenceError` could break live-mail notifications entirely in
+  browsers without the Notification API.** The handler that raises a desktop
+  notification for each new-mail SSE event referenced `Notification.permission`
+  on every message regardless of whether the Notification API existed in the
+  browser, throwing on the first message received in that case. Now guarded on
+  a captured support flag.
+- Corrected a code comment that misstated why `/api/push/*` is exempt from
+  CSRF checks: it claimed the routes were safe because they carry
+  `Authorization: Bearer` headers, but the handlers never read that header —
+  `CookieSameSite: "Lax"` is what actually protects them, the same as every
+  other protected route. No behavior change; the routes were not exploitable
+  either before or after this correction, only the comment was wrong.
+- `global.d.ts` (ambient client-JS types) and a tsconfig for the service
+  worker had briefly been added inside `assets/`, which
+  `//go:embed all:assets` compiles into the release binary — both would have
+  shipped and been publicly servable at a URL under `/assets/`. Moved to
+  `types/global.d.ts` and a repo-root `tsconfig.sw.json`; no content change.
 - **The app-icon set was rendering as a blank coral square.** `icon.png`,
   `icon-16.png`, `icon-32.png`, `icon-180.png`, `icon-192.png` and
   `icon-512.png` — the PWA install icon, `apple-touch-icon`, favicon PNG
@@ -883,7 +952,8 @@ password-only login, server-rendered Go templates.
 
 ---
 
-[Unreleased]: https://github.com/vul-os/lilmail/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/vul-os/lilmail/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/vul-os/lilmail/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/vul-os/lilmail/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/vul-os/lilmail/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/vul-os/lilmail/compare/v1.11.0...v1.12.0
