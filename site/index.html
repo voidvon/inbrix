@@ -170,7 +170,13 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 .rv.in{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){
   .rv{opacity:1;transform:none;transition:none}
-  *{animation-duration:.001ms!important;animation-iteration-count:1!important;scroll-behavior:auto}
+  /* animation-delay matters as much as animation-duration here: an
+     un-zeroed delay plus fill-mode `both` holds the FROM keyframe (usually
+     opacity:0) for the length of that delay regardless of how short the
+     animation itself is made — a load-in that "respects reduced motion"
+     by playing in .001ms can still leave hero content invisible for the
+     ~500ms its delay was tuned to, which is motion by another name. */
+  *{animation-duration:.001ms!important;animation-delay:0s!important;animation-iteration-count:1!important;scroll-behavior:auto}
 }
 
 /* ---------------- hero load-in ----------------
