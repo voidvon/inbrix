@@ -543,7 +543,16 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
 .pillar{border-top:2px solid var(--ink);padding-top:20px}
 .pillar:nth-child(2){border-color:var(--coral)}
 .pillar:nth-child(3){border-color:var(--teal)}
-.pillar h4{font-family:var(--display);font-size:20px;margin-bottom:9px;font-variation-settings:"opsz" 48,"SOFT" 30,"wght" 600}
+.pillar h4{display:flex;align-items:center;gap:10px;font-family:var(--display);font-size:20px;margin-bottom:9px;font-variation-settings:"opsz" 48,"SOFT" 30,"wght" 600}
+.pillar h4 svg{width:21px;height:21px;flex:none;color:var(--ink)}
+.pillar:nth-child(2) h4 svg{color:var(--coral)}
+.pillar:nth-child(3) h4 svg{color:var(--teal)}
+@media(hover:hover){
+  .pillar{transition:transform .25s cubic-bezier(.2,.8,.3,1)}
+  .pillar h4 svg{transition:transform .25s cubic-bezier(.2,.8,.3,1)}
+  .pillar:hover{transform:translateY(-3px)}
+  .pillar:hover h4 svg{transform:scale(1.1)}
+}
 .pillar p{margin:0 0 13px;color:var(--slate);font-size:14.5px}
 .pillar ul{list-style:none;margin:0;padding:0;display:grid;gap:9px}
 .pillar li{position:relative;padding-left:18px;font-size:13.5px;color:var(--slate)}
@@ -1010,17 +1019,17 @@ key = "a-32-character-encryption-key!!"</code></pre>
     </div>
     <div class="pillars">
       <div class="pillar rv">
-        <h4>Your own accounts</h4>
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.4" r="3.4"/><path d="M5 20c1-3.6 4-5.6 7-5.6s6 2 7 5.6"/></svg>Your own accounts</h4>
         <p>lilmail connects to the mailbox you already own — Gmail, Outlook or any standards-compliant server — over OAuth or password.</p>
         <ul><li>No lilmail account to create</li><li>No relay handling your mail</li><li>Multi-account with per-account error isolation</li></ul>
       </div>
       <div class="pillar rv">
-        <h4>No external services</h4>
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 17.4a4 4 0 0 1 .4-7.97 5.5 5.5 0 0 1 10.6.9A3.6 3.6 0 0 1 17.4 17.4H6.6z"/><path d="M3.5 3.5l17 17"/></svg>No external services</h4>
         <p>Frontend assets are embedded with <code>embed.FS</code> and durable state is a local bbolt file, so an offline box is a supported deployment.</p>
         <ul><li>No CDN, no asset pipeline</li><li>No database server to provision</li><li>Linux, macOS and Windows builds</li></ul>
       </div>
       <div class="pillar rv">
-        <h4>Security-first</h4>
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4l6.5 2.6v5.2c0 4.4-2.7 7.3-6.5 8.6-3.8-1.3-6.5-4.2-6.5-8.6V6l6.5-2.6z"/><path d="M8.7 12l2.1 2.1 4.3-4.4"/></svg>Security-first</h4>
         <p>Sensible defaults rather than switches you have to remember, and a threat model written down in the docs.</p>
         <ul><li>JWT sessions; AES-256-GCM credentials at rest</li><li>Strict CSP and <code>SameSite=Lax</code> cookies</li><li>Sandboxed mail iframe; header-injection guards</li></ul>
       </div>
