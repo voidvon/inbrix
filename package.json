@@ -4,6 +4,7 @@
   "private": true,
   "description": "Typecheck/lint config for lilmail's static client JS (assets/js, assets/sw.js). Not a runtime npm project — the app is a single Go binary with no build step.",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p assets/tsconfig.json",
     "lint": "eslint ."
