@@ -136,32 +136,7 @@
 
 {{if notificationsEnabled}}
 {{if .Username}}
-<script>
-    (function() {
-        function startSSE() {
-            if (!window.EventSource) return;
-            var es = new EventSource('/events');
-            es.addEventListener('message', function(e) {
-                try { var data = JSON.parse(e.data); } catch(err) { return; }
-                if (Notification.permission === 'granted') {
-                    new Notification('New mail from ' + (data.from || 'unknown'), {
-                        body: data.subject || '(no subject)',
-                        icon: '/assets/icon.png'
-                    });
-                }
-            });
-        }
-        if (typeof Notification !== 'undefined') {
-            if (Notification.permission === 'granted') {
-                startSSE();
-            } else if (Notification.permission !== 'denied') {
-                Notification.requestPermission().then(function(p) { if (p === 'granted') startSSE(); });
-            }
-        } else {
-            startSSE();
-        }
-    })();
-</script>
+<script src="/assets/js/notifications.js"></script>
 {{end}}
 {{end}}
 
