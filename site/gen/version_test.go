@@ -88,6 +88,8 @@ func TestLandingVersionMatchesVERSION(t *testing.T) {
 	}
 	if got := slugMatches[0][1]; got != version {
 		t.Errorf("site/index.html hero slug shows v%s but VERSION says %s", got, version)
+	} else {
+		t.Logf("hero slug: VERSION %q == site/index.html %q", version, "v"+got)
 	}
 
 	capRE := regexp.MustCompile(`<span>Specification</span><span>No\. ([0-9]+\.[0-9]+)</span>`)
@@ -99,6 +101,8 @@ func TestLandingVersionMatchesVERSION(t *testing.T) {
 	want := majorMinor(t, version)
 	if got := capMatches[0][1]; got != want {
 		t.Errorf("site/index.html spec card shows \"No. %s\" but VERSION (%s) implies \"No. %s\"", got, version, want)
+	} else {
+		t.Logf("spec card: VERSION %q == site/index.html \"No. %s\"", version, got)
 	}
 }
 
@@ -124,6 +128,8 @@ func TestDocsFooterVersionMatchesVERSION(t *testing.T) {
 	}
 	if got := matches[0][1]; got != version {
 		t.Errorf("site/docs.html sidebar footer shows v%s but VERSION says %s", got, version)
+	} else {
+		t.Logf("docs footer: VERSION %q == site/docs.html %q", version, "v"+got)
 	}
 }
 
