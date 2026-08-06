@@ -13,6 +13,35 @@
 
 const LILMAIL_ORIGIN = self.location.origin;
 
+/**
+ * @typedef {Object} PushPayload
+ * @property {string} [from]
+ * @property {string} [subject]
+ * @property {string} [tag]
+ */
+
+/**
+ * PushMessageData.json() and Notification.data are both typed `any` by
+ * spec — a JSDoc cast on either would satisfy tsc (which lets any/unknown
+ * into anything silently) but not typescript-eslint's no-unsafe-* rules,
+ * which track whether a value was genuinely checked. These two guards do
+ * that check; a malformed payload falls back to the caller's defaults
+ * instead of crashing the handler.
+ * @param {unknown} v
+ * @returns {v is PushPayload}
+ */
+function isPushPayload(v) {
+    return typeof v === 'object' && v !== null;
+}
+
+/**
+ * @param {unknown} v
+ * @returns {v is { url?: string }}
+ */
+function isUrlBag(v) {
+    return typeof v === 'object' && v !== null;
+}
+
 // ── Push event ──────────────────────────────────────────────────────────────
 //
 // Bare `addEventListener`/`registration`/`clients` globals are used rather
@@ -24,9 +53,16 @@ const LILMAIL_ORIGIN = self.location.origin;
 // globals are typed against ServiceWorkerGlobalScope directly.
 
 addEventListener('push', function (event) {
+    /** @type {PushPayload} */
     let data = { from: 'Unknown sender', subject: '(no subject)', tag: 'newmail' };
     if (event.data) {
-        try { data = event.data.json(); } catch (_) { /* ignore */ }
+        try {
+            /** @type {unknown} */
+            const parsed = event.data.json();
+            if (isPushPayload(parsed)) data = parsed;
+        } catch {
+            // Malformed payload — keep the defaults above.
+        }
     }
 
     const title = 'New mail from ' + (data.from || 'unknown');
@@ -46,15 +82,17 @@ addEventListener('push', function (event) {
 
 addEventListener('notificationclick', function (event) {
     event.notification.close();
-    const targetUrl = (event.notification.data && event.notification.data.url)
-        ? event.notification.data.url
+    /** @type {unknown} */
+    const notifData = event.notification.data;
+    const targetUrl = (isUrlBag(notifData) && typeof notifData.url === 'string')
+        ? notifData.url
         : LILMAIL_ORIGIN + '/inbox';
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (windowClients) {
             // Focus an existing LilMail tab if one is open.
-            for (var i = 0; i < windowClients.length; i++) {
-                var client = windowClients[i];
+            for (let i = 0; i < windowClients.length; i++) {
+                const client = windowClients[i];
                 if (client.url.startsWith(LILMAIL_ORIGIN) && 'focus' in client) {
                     return client.focus();
                 }
@@ -83,6 +121,19 @@ addEventListener('notificationclick', function (event) {
 // when no prior options are available.
 
 /**
+ * @typedef {Object} VapidPublicKeyResponse
+ * @property {string} publicKey
+ */
+
+/**
+ * @param {unknown} v
+ * @returns {v is VapidPublicKeyResponse}
+ */
+function isVapidPublicKeyResponse(v) {
+    return typeof v === 'object' && v !== null && typeof (/** @type {{ publicKey?: unknown }} */ (v)).publicKey === 'string';
+}
+
+/**
  * urlBase64ToUint8Array converts a base64url string to a Uint8Array for use
  * as the applicationServerKey in PushManager.subscribe(). Duplicated from
  * assets/js/push.js: this file has no bundler/shared-module mechanism to
@@ -91,11 +142,11 @@ addEventListener('notificationclick', function (event) {
  * @returns {Uint8Array<ArrayBuffer>}
  */
 function urlBase64ToUint8Array(base64String) {
-    var padding = '='.repeat((4 - base64String.length % 4) % 4);
-    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-    var rawData = atob(base64);
-    var outputArray = new Uint8Array(rawData.length);
-    for (var i = 0; i < rawData.length; ++i) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
         outputArray[i] = rawData.charCodeAt(i);
     }
     return outputArray;
@@ -103,11 +154,14 @@ function urlBase64ToUint8Array(base64String) {
 
 addEventListener('pushsubscriptionchange', function (event) {
     /** @type {Promise<PushSubscriptionOptionsInit>} */
-    var options = event.oldSubscription
+    const options = event.oldSubscription
         ? Promise.resolve(event.oldSubscription.options)
         : fetch('/api/push/vapid-public')
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                if (!isVapidPublicKeyResponse(data)) {
+                    throw new Error('Malformed VAPID public key response');
+                }
                 return {
                     userVisibleOnly: true,
                     applicationServerKey: urlBase64ToUint8Array(data.publicKey)
