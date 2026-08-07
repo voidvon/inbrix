@@ -135,6 +135,11 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 .gh:hover{border-color:var(--coral);color:var(--ink)}
 @media(max-width:1000px){.nav-links{display:none}}
 @media(max-width:560px){.gh span,.brand .tag{display:none}}
+/* Below 380 the bar still overhung by 8px: brand 71 + two icon buttons + the
+   Vulos mark + the GitHub link measure 212, and the gaps take it past 320. The
+   GitHub link goes last — the footer and the install section both link the
+   repository, so it is the one item here that is duplicated elsewhere. */
+@media(max-width:380px){.nav .gh{display:none}}
 #burger{display:none}
 @media(max-width:1000px){#burger{display:grid}}
 
