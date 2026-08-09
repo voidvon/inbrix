@@ -10,7 +10,46 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
-No unreleased changes.
+### Added
+
+- **The mail AI assistant can now run llmux in-process instead of calling a
+  gateway.** `[ai] mode = "embedded"` links llmux
+  (`github.com/vul-os/llmux`) into LilMail as a Go library: no gateway to
+  deploy, no completion hop, and llmux's routing, retries, failover,
+  sovereignty enforcement and BYOK all happen inside LilMail's own process from
+  llmux's own JSON config (`[ai] llmux_config`). `mode = "remote"` remains the
+  default and is unchanged — pointing at a central llmux or the Vulos OS
+  airouter is still a first-class deployment, and the `account_header` →
+  `Authorization: Bearer` forwarding it exists for is untouched. In embedded
+  mode that same account token is passed to the gateway's `Authorize`, which is
+  the single auth path llmux's own HTTP shell uses, so an in-process host can't
+  get a laxer check than a network client.
+
+  Whatever `llmux_config` says, LilMail overrides four things when it builds the
+  embedded gateway: no listener, no price-feed sync (an embedded gateway quietly
+  reaching openrouter.ai from inside a mail client is exactly the surprise this
+  removes), no Postgres or Redis (Postgres is the one thing llmux connects
+  eagerly, and it reads `DATABASE_URL`/`VULOS_DATABASE_URL` — so a shared DSN in
+  the environment would otherwise open a database pool for LLM key spend), and
+  **no response cache unless `[ai] llmux_cache = true`**.
+
+  That last one keeps a standing promise honest: embedding llmux brings its
+  cache into LilMail's process, where it would retain model output derived from
+  your mail after the request ended. It is off by default — the default holds
+  even when `llmux_config` enables the cache itself — and the opt-in is
+  documented for exactly what it retains (an in-memory, TTL- and size-bounded
+  LRU keyed by a hash of the request; never written to disk, since `redis` is
+  stripped on this path too).
+
+  A misconfigured embedded gateway now fails at startup — unreadable config, no
+  providers, or an unroutable `[ai] model` — instead of surfacing as a 502 on
+  the user's first summarize.
+
+  With `[ai] enabled = false` (still the default) **no completion backend is
+  constructed at all** in either mode. A test injects a recording
+  `http.RoundTripper` and asserts zero round trips and no extra goroutines
+  across every AI route, with the same recorder proven against both live modes
+  so the zero means something.
 
 ---
 

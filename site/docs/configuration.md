@@ -222,20 +222,28 @@ Real-time new-mail notifications. All keys are opt-in; setting
 AI mail assistant. All five AI routes return `404 {"error":"ai_disabled"}` when
 `enabled = false`.
 
-LilMail does **no local inference** — it forwards mail content to a configurable
-**OpenAI-compatible SSE chat-completion endpoint** (just a base URL + Bearer
-token). That endpoint can be a provider directly, the Vulos OS *airouter*
-(`/api/ai/chat`), or the central **llmux** gateway (`/v1/chat/completions`).
-There is no hard dependency on llmux: it is simply a URL you can point `endpoint`
-at.
+LilMail runs **no inference of its own**. `mode` picks where completions happen:
+
+- **`"remote"`** (the default) forwards mail content to a configurable
+  **OpenAI-compatible SSE chat-completion endpoint** (just a base URL + Bearer
+  token). That endpoint can be a provider directly, the Vulos OS *airouter*
+  (`/api/ai/chat`), or the central **llmux** gateway (`/v1/chat/completions`).
+  Nothing here is llmux-specific: it is simply a URL you point `endpoint` at.
+- **`"embedded"`** links **llmux** (`github.com/vul-os/llmux`) into LilMail as
+  an in-process Go library. There is no gateway to deploy and no completion
+  hop — llmux does the routing, retries, failover, sovereignty enforcement and
+  BYOK inside LilMail's own process, from **llmux's own JSON config**.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Master switch |
-| `endpoint` | string | `"http://localhost:8080/api/ai/chat"` | OpenAI-compatible SSE chat-completion endpoint. Set to llmux's `/v1/chat/completions` to route through the central gateway |
+| `enabled` | bool | `false` | Master switch. When false no completion backend is constructed at all, so the feature can emit no packets |
+| `mode` | string | `"remote"` | `"remote"` (call an endpoint) or `"embedded"` (run llmux in-process). Any other value is a startup error |
+| `endpoint` | string | `"http://localhost:8080/api/ai/chat"` | **remote only.** OpenAI-compatible SSE chat-completion endpoint. Set to llmux's `/v1/chat/completions` to route through the central gateway |
 | `api_key` | string | `""` | Static Bearer token sent as `Authorization: Bearer <key>` when no per-request account token is present. For llmux this is typically a standalone virtual key. Leave empty when the endpoint handles auth separately |
-| `account_header` | string | `""` | Inbound request header carrying the caller's account token. When set and present, its value is forwarded as `Authorization: Bearer <token>` so a central gateway (llmux) can resolve it to an account and apply BYOK-vs-central + metering. Falls back to `api_key` when absent. Leave empty for standalone |
-| `model` | string | `""` | Model slug forwarded to the endpoint. Empty = endpoint default |
+| `account_header` | string | `""` | Inbound request header carrying the caller's account token. When set and present, its value is forwarded as `Authorization: Bearer <token>` so a central gateway (llmux) can resolve it to an account and apply BYOK-vs-central + metering — or, in embedded mode, is passed to the in-process gateway's `Authorize`. Falls back to `api_key` when absent. Leave empty for standalone |
+| `model` | string | `""` | Model slug forwarded to the endpoint. Empty = endpoint default. **Required in embedded mode**, and must be routable by `llmux_config` |
+| `llmux_config` | string | `""` | **embedded only.** Path to llmux's own JSON config (providers, routes, virtual keys, BYOK). Empty = llmux's defaults plus its environment auto-detection (`OLLAMA_HOST`, `OPENAI_API_KEY`, …) |
+| `llmux_cache` | bool | `false` | **embedded only.** Opt in to llmux's in-memory response cache. Off by default for privacy — see below |
 
 ### Routing through the central llmux gateway (Vulos suite)
 
@@ -260,6 +268,53 @@ For **standalone / BYO** use, leave `account_header` empty and set `endpoint`
 straight at a provider (or airouter) with a static `api_key`. With
 `enabled = false` (the default) the feature is fully off and no AI routes are
 served.
+
+### Embedding llmux in-process (`mode = "embedded"`)
+
+```toml
+[ai]
+enabled      = true
+mode         = "embedded"
+model        = "llama3.1"                 # required; must be routable by llmux_config
+llmux_config = "/etc/lilmail/llmux.json"  # llmux's own config: providers, routes, keys
+llmux_cache  = false
+```
+
+LilMail builds the gateway and calls it directly; it never starts llmux's
+background work (`Run`/`Start`), so the embedded gateway makes **no outbound
+call that a mail action did not cause**. Whatever `llmux_config` says, LilMail
+overrides four things, because a mail client must not host them:
+
+| Overridden | Why |
+|-----------|-----|
+| No listener (`addr`, `socket_path`) | Nothing on this path serves HTTP |
+| No price-feed sync (`pricing.sources`, `azure_pricing`) | llmux's defaults are openrouter.ai and a GitHub raw URL. An embedded gateway quietly reaching a price feed from inside a mail client is exactly the surprise embedding is meant to remove. The built-in seed catalog still prices requests offline |
+| No `postgres`, no `redis` | Postgres is the one thing llmux connects **eagerly**, and it resolves its DSN from `DATABASE_URL` / `VULOS_DATABASE_URL` — so a shared DSN in the environment would otherwise have LilMail open a database pool for LLM key spend. Cross-replica key/spend state is a reason to run llmux as a service and use `mode = "remote"` |
+| No response cache unless `llmux_cache = true` | See below |
+
+Startup fails loudly — rather than 502-ing on the user's first summarize — when
+`llmux_config` cannot be read, resolves no providers, or cannot route `model`.
+
+Egress is still governed by llmux's own sovereignty gate: a provider whose base
+URL is off-box is **denied** unless that provider sets `allow_egress`.
+
+#### Privacy and the embedded cache
+
+Mail content is never written to any persistent store by LilMail, in either
+mode. In remote mode it is forwarded to `endpoint` and discarded. In embedded
+mode it is handed to the in-process gateway, dispatched to the provider llmux's
+config selects, and discarded.
+
+Embedding llmux does bring its **response cache** into LilMail's process, so
+LilMail builds the gateway with that cache **disabled by default** — nothing
+derived from a message outlives the request, and the default holds even if
+`llmux_config` enables the cache itself.
+
+Setting `llmux_cache = true` opts in explicitly. Model responses to your mail
+are then held in an in-memory, TTL-bounded, size-bounded LRU keyed by a SHA-256
+of the request, until they expire or are evicted. Even then nothing is written
+to disk: with `redis` and `postgres` stripped on this path, the network-backed
+cache and key stores are unreachable.
 
 ### AI routes (registered only when `enabled = true`)
 
