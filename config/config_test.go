@@ -284,3 +284,82 @@ func TestLoadConfig_IMAPTLSDefaultAndOverride(t *testing.T) {
 		t.Fatalf("IMAP.TLS with `tls = true` = false, want true")
 	}
 }
+
+// TestLoadConfig_AIMode covers the [ai] mode key that selects between the
+// remote completion endpoint and the in-process llmux gateway. A config written
+// before embedded mode existed has no `mode` key at all and must keep behaving
+// exactly as before (remote); a TYPO must not silently degrade to remote, which
+// would send mail to whatever endpoint happened to be configured instead of the
+// in-process gateway the operator asked for.
+func TestLoadConfig_AIMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantMode string
+		wantErr  bool
+	}{
+		{"absent [ai] block", minimalIMAP, AIModeRemote, false},
+		{"[ai] without mode", minimalIMAP + "\n[ai]\nenabled = true\n", AIModeRemote, false},
+		{"explicit remote", minimalIMAP + "\n[ai]\nmode = \"remote\"\n", AIModeRemote, false},
+		{"explicit embedded", minimalIMAP + "\n[ai]\nmode = \"embedded\"\n", AIModeEmbedded, false},
+		{"empty string", minimalIMAP + "\n[ai]\nmode = \"\"\n", AIModeRemote, false},
+		{"typo", minimalIMAP + "\n[ai]\nmode = \"embeded\"\n", "", true},
+		{"plausible-but-wrong", minimalIMAP + "\n[ai]\nmode = \"local\"\n", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := LoadConfig(writeTempConfig(t, tc.body))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("LoadConfig accepted mode from %q; an unknown mode must fail loudly", tc.body)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.AI.Mode != tc.wantMode {
+				t.Errorf("AI.Mode = %q, want %q", cfg.AI.Mode, tc.wantMode)
+			}
+			if got := cfg.AI.EmbeddedAI(); got != (tc.wantMode == AIModeEmbedded) {
+				t.Errorf("EmbeddedAI() = %v for mode %q", got, cfg.AI.Mode)
+			}
+		})
+	}
+}
+
+// TestLoadConfig_AIEmbeddedKeys verifies the embedded-mode keys are actually
+// parsed. llmux_cache in particular gates whether model output derived from
+// mail is retained in memory, so a key that silently did not bind would be a
+// privacy default nobody could turn off.
+func TestLoadConfig_AIEmbeddedKeys(t *testing.T) {
+	cfg, err := LoadConfig(writeTempConfig(t, minimalIMAP+`
+[ai]
+enabled      = true
+mode         = "embedded"
+model        = "llama3.1"
+llmux_config = "/etc/lilmail/llmux.json"
+llmux_cache  = true
+`))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.AI.EmbeddedAI() || cfg.AI.Model != "llama3.1" {
+		t.Errorf("AI = %+v", cfg.AI)
+	}
+	if cfg.AI.LLMuxConfig != "/etc/lilmail/llmux.json" {
+		t.Errorf("LLMuxConfig = %q", cfg.AI.LLMuxConfig)
+	}
+	if !cfg.AI.LLMuxCache {
+		t.Error("llmux_cache = true did not bind")
+	}
+
+	// Default: the cache opt-in is off.
+	def, err := LoadConfig(writeTempConfig(t, minimalIMAP+"\n[ai]\nenabled = true\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig (defaults): %v", err)
+	}
+	if def.AI.LLMuxCache {
+		t.Error("llmux_cache defaults to true; it must default to false")
+	}
+}
