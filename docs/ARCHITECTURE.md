@@ -43,8 +43,14 @@ lilmail/
 │   ├── css/mail.css         # Hand-written CSS (dark mode, responsive)
 │   ├── vendor/              # htmx.min.js, alpine.min.js (+ their .LICENSE files)
 │   └── sw.js                # Service worker (Web Push)
-├── scripts/                 # Developer tooling (Playwright screenshotter)
+├── scripts/                 # Developer tooling (Playwright screenshotter, demo seed)
 ├── docs/                    # Documentation and screenshots
+├── site/                    # The published site — landing, docs viewer, and
+│   ├── gen/                 #   site/gen: Go generator + the tests that gate it
+│   ├── assets/vendor/       #   vendored marked/highlight.js — no CDN at runtime
+│   └── screenshots/         #   captures mirrored from docs/screenshots/
+├── brand/                   # Logo source
+├── types/                   # TypeScript declarations for the service worker
 ├── .github/workflows/       # CI + release pipelines
 ├── config.toml.example
 ├── go.mod / go.sum
