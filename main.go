@@ -493,7 +493,8 @@ func main() {
 	// rather than surfacing it as a 502 on the first AI request.
 	aiHandler, aiErr := ai.NewHandler(config.AI)
 	if aiErr != nil {
-		log.Fatalf("ai: %v", aiErr)
+		// The error already carries an "ai:" prefix; don't double it.
+		log.Fatal(aiErr)
 	}
 	defer aiHandler.Close()
 	aiHandler.Register(apiRoutes)
