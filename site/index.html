@@ -718,6 +718,16 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
 .dl .ext{width:14px;height:14px;margin-left:auto;color:var(--slate-2)}
 .dl span{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--slate);min-width:0}
 .dl b{font-size:14px;color:var(--ink);font-weight:650}
+.not-head{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--slate-2);margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--rule)}
+.not-list{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:11px}
+.not-list li{font-size:13px;line-height:1.5;color:var(--slate);padding-left:17px;position:relative}
+.not-list li::before{content:"";position:absolute;left:0;top:.62em;width:9px;height:1.5px;background:var(--coral);border-radius:2px}
+.not-list b{color:var(--ink);font-weight:650}
+/* Explicit, not inherited. The page's global `code` rule is a relative .87em,
+   which off a 13px list item lands at 11.05px — under the minimum type size
+   check-render enforces, and it caught it. */
+.not-list code{font-size:12.5px}
 section[id]{scroll-margin-top:76px}
 </style>
 </head>
@@ -962,6 +972,20 @@ section[id]{scroll-margin-top:76px}
     <div class="index-grid">
       <div class="index-note rv">
         <p>One process, one file on disk, one thing to back up. lilmail is deliberately small: it doesn't index your mail into a second database, it doesn't run a queue, and it doesn't need a build step to serve a page.</p>
+
+        <!-- The headline promises two things and the rows beside this only
+             evidence one of them. This is the other half, and it is also what
+             fills a column that was otherwise 84% empty next to eight rows. -->
+        <p class="not-head">Nothing it doesn't</p>
+        <ul class="not-list">
+          <li><b>No database server.</b> Durable state is an embedded bbolt file. Postgres is optional, for shared or multi-instance deploys.</li>
+          <li><b>No build step.</b> Templates and vendored JS are compiled in with <code>embed.FS</code>; there is no bundler and no asset pipeline.</li>
+          <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary.</li>
+          <li><b>No lilmail account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
+          <li><b>No calendar or contacts unless you ask.</b> The CalDAV routes are gated on <code>[caldav] enabled</code>; off by default, they cost nothing.</li>
+          <li><b>No multi-account unless you ask.</b> Same shape — <code>[accounts] enabled</code>.</li>
+        </ul>
+
         <span class="stamp-note">8 subsystems · 1 binary · 0 services to run</span>
       </div>
       <div class="rows">
