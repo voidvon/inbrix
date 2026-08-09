@@ -41,7 +41,7 @@ mailbox; nothing is provisioned anywhere when you do.
 
 ## Features
 
-- **Single binary (~30 MB), no external database** — templates and vendored JS
+- **Single binary (~24 MB), no external database** — templates and vendored JS
   embedded with `embed.FS`; durable state uses an embedded [bbolt](https://github.com/etcd-io/bbolt)
   file by default (nothing to run), with an **optional Postgres backend** for
   shared / multi-instance deploys; runs fully offline/air-gapped with only `config.toml`
