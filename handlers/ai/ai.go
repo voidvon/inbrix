@@ -1,7 +1,6 @@
 // Package ai provides mail-specific AI endpoints for LilMail.
 //
-// It calls a configurable completion endpoint (default: the Vulos OS airouter
-// at http://localhost:8080/api/ai/chat) and exposes five Fiber routes:
+// It exposes five Fiber routes plus a capability probe:
 //
 //	POST /ai/compose           — smart compose / continue / rewrite
 //	POST /ai/summarize         — thread summary + key points + action items
@@ -10,24 +9,52 @@
 //	POST /ai/phishing          — phishing / suspicious / clean classification
 //
 // All routes are gated on AIConfig.Enabled. When disabled they return
-// {"error":"ai_disabled","hint":"set [ai] enabled=true in config.toml"}.
+// {"error":"ai_disabled","hint":"set [ai] enabled=true in config.toml"}, and
+// NO completion backend is constructed at all — with AI off this package holds
+// no client, no gateway and no goroutine, so it can emit no packets.
 //
-// The completion client speaks the OpenAI-compatible SSE wire format used by
-// both the Vulos airouter /api/ai/chat endpoint and the central llmux gateway's
-// /v1/chat/completions endpoint:
+// # Two modes
 //
-//	data: {"choices":[{"delta":{"content":"..."}}]}
-//	data: [DONE]
+// [ai] mode selects where completions happen. Both are first-class; neither is
+// a fallback for the other.
+//
+//   - "remote" (default, completionClient in this file) POSTs to a configurable
+//     OpenAI-compatible SSE endpoint — the Vulos OS airouter's /api/ai/chat, a
+//     central llmux's /v1/chat/completions, or a provider directly:
+//
+//     data: {"choices":[{"delta":{"content":"..."}}]}
+//     data: [DONE]
+//
+//   - "embedded" (embeddedClient, embedded.go) runs llmux in-process as a Go
+//     library. There is no gateway to deploy and no completion hop: llmux's own
+//     config decides which provider serves, and its sovereignty gate refuses any
+//     off-box provider the operator has not explicitly opted in.
 //
 // Account context: when [ai] account_header is configured, the value of that
-// inbound request header is forwarded as the "Authorization: Bearer <token>" so
-// a central gateway (llmux) can resolve it to an account and apply BYOK-vs-central
-// key selection plus metering. When no per-request token is present, the static
-// [ai] api_key is used. LilMail does not decide BYOK vs central — it only
-// forwards the account's token.
+// inbound request header is the caller's account token. In remote mode it is
+// forwarded as "Authorization: Bearer <token>" so a central gateway (llmux) can
+// resolve it to an account and apply BYOK-vs-central key selection plus
+// metering; in embedded mode it is handed to the in-process gateway's Authorize,
+// which is the same auth path llmux's HTTP shell runs. When no per-request token
+// is present, the static [ai] api_key is used. LilMail does not decide BYOK vs
+// central — it only forwards the account's token.
 //
-// Privacy: mail content is never written to any persistent store in this
-// package. It is forwarded to the configured endpoint and discarded.
+// # Privacy
+//
+// Mail content is never written to any persistent store in this package, in
+// either mode.
+//
+// In remote mode it is forwarded to the configured endpoint and discarded.
+//
+// In embedded mode it is handed to the in-process llmux gateway, dispatched to
+// the provider llmux's config selects, and discarded. Embedding llmux brings its
+// response cache into LilMail's process, so LilMail builds the gateway with that
+// cache DISABLED by default: nothing derived from a message outlives the request.
+// Setting [ai] llmux_cache = true opts in explicitly, and then model responses to
+// your mail are held in an in-memory, TTL-bounded, size-bounded LRU keyed by a
+// SHA-256 of the request until they expire or are evicted. Even then nothing is
+// written to disk: LilMail also strips llmux's Redis and Postgres settings on
+// this path, so the disk/network-backed cache and key stores are unreachable.
 package ai
 
 import (
@@ -71,18 +98,66 @@ var phishingPrompt string
 // Handler
 // ---------------------------------------------------------------------------
 
+// completer performs one completion, whatever the backend. The two
+// implementations are completionClient (remote HTTP endpoint) and embeddedClient
+// (in-process llmux). bearer is the caller's account token for this request.
+type completer interface {
+	complete(ctx context.Context, bearer, systemPrompt, userContent string) (string, error)
+	// Close releases whatever the backend holds open.
+	Close() error
+}
+
 // Handler serves the /ai/* endpoints.
 type Handler struct {
-	cfg    config.AIConfig
-	client *completionClient
+	cfg config.AIConfig
+	// client is nil when cfg.Enabled is false. That is the structural form of
+	// "AI off is silent": with no backend object there is nothing to call, so
+	// the disabled path cannot reach a network no matter what a route does.
+	client completer
 }
 
 // NewHandler creates a Handler backed by the given AI config.
-func NewHandler(cfg config.AIConfig) *Handler {
-	return &Handler{
-		cfg:    cfg,
-		client: newCompletionClient(cfg),
+//
+// With cfg.Enabled false it builds no backend and cannot fail. With AI on it
+// returns an error for a configuration that could not serve a request —
+// notably an embedded gateway with no providers, an unroutable model, or an
+// unreadable llmux config — so a misconfiguration surfaces at startup instead
+// of as a 502 on the user's first summarize.
+func NewHandler(cfg config.AIConfig) (*Handler, error) {
+	h := &Handler{cfg: cfg}
+	if !cfg.Enabled {
+		return h, nil
 	}
+	if cfg.EmbeddedAI() {
+		c, err := newEmbeddedClient(cfg)
+		if err != nil {
+			return nil, err
+		}
+		h.client = c
+		return h, nil
+	}
+	h.client = newCompletionClient(cfg)
+	return h, nil
+}
+
+// Close releases the completion backend (the embedded llmux gateway's Redis
+// client and key store, when one was built). Safe on a disabled handler.
+func (h *Handler) Close() error {
+	if h.client == nil {
+		return nil
+	}
+	return h.client.Close()
+}
+
+// complete runs one completion for an inbound request, forwarding the caller's
+// account token. It is the single place both modes are reached from.
+func (h *Handler) complete(c *fiber.Ctx, systemPrompt, userContent string) (string, error) {
+	if h.client == nil {
+		// Unreachable while every route checks cfg.Enabled first; kept so a
+		// future route that forgets the check fails closed instead of panicking.
+		return "", fmt.Errorf("ai: disabled — no completion backend")
+	}
+	return h.client.complete(c.Context(), h.resolveBearer(c), systemPrompt, userContent)
 }
 
 // resolveBearer determines the Bearer token to forward to the completion
@@ -109,10 +184,9 @@ func disabledResponse(c *fiber.Ctx) error {
 	})
 }
 
-// RegisterRoutes mounts all AI routes onto the given Fiber router group.
+// Register mounts all AI routes onto the given Fiber router group.
 // Call after applying the SessionMiddleware to the group.
-func RegisterRoutes(grp fiber.Router, cfg config.AIConfig) {
-	h := NewHandler(cfg)
+func (h *Handler) Register(grp fiber.Router) {
 	grp.Get("/ai/capabilities", h.HandleCapabilities)
 	grp.Post("/ai/compose", h.HandleCompose)
 	grp.Post("/ai/summarize", h.HandleSummarize)
@@ -177,7 +251,7 @@ func (h *Handler) HandleCompose(c *fiber.Ctx) error {
 		"{{INSTRUCTION}}", escapeForPrompt(req.Instruction),
 	).Replace(mailComposePrompt)
 
-	completion, err := h.client.complete(c.Context(), h.resolveBearer(c), prompt, "")
+	completion, err := h.complete(c, prompt, "")
 	if err != nil {
 		log.Printf("[mail_ai] compose error: %v", err)
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "service_unavailable"})
@@ -210,7 +284,7 @@ func (h *Handler) HandleSummarize(c *fiber.Ctx) error {
 	}
 
 	prompt := strings.ReplaceAll(mailSummarizePrompt, "{{THREAD}}", escapeForPrompt(req.Thread))
-	raw, err := h.client.complete(c.Context(), h.resolveBearer(c), prompt, "")
+	raw, err := h.complete(c, prompt, "")
 	if err != nil {
 		log.Printf("[mail_ai] summarize error: %v", err)
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "service_unavailable"})
@@ -259,7 +333,7 @@ func (h *Handler) HandleReply(c *fiber.Ctx) error {
 	}
 
 	prompt := strings.ReplaceAll(mailReplyPrompt, "{{THREAD}}", escapeForPrompt(req.Thread))
-	raw, err := h.client.complete(c.Context(), h.resolveBearer(c), prompt, "")
+	raw, err := h.complete(c, prompt, "")
 	if err != nil {
 		log.Printf("[mail_ai] reply error: %v", err)
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "service_unavailable"})
@@ -305,7 +379,7 @@ func (h *Handler) HandleExtractActions(c *fiber.Ctx) error {
 	}
 
 	prompt := strings.ReplaceAll(mailExtractActionsPrompt, "{{THREAD}}", escapeForPrompt(req.Thread))
-	raw, err := h.client.complete(c.Context(), h.resolveBearer(c), prompt, "")
+	raw, err := h.complete(c, prompt, "")
 	if err != nil {
 		log.Printf("[mail_ai] extract-actions error: %v", err)
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "service_unavailable"})
@@ -349,7 +423,7 @@ func (h *Handler) HandlePhishing(c *fiber.Ctx) error {
 	}
 
 	userContent := buildPhishingUserContent(req)
-	completion, err := h.client.complete(c.Context(), h.resolveBearer(c), phishingPrompt, userContent)
+	completion, err := h.complete(c, phishingPrompt, userContent)
 	if err != nil {
 		log.Printf("[mail_ai] phishing error: %v", err)
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "service_unavailable"})
@@ -473,6 +547,10 @@ func newCompletionClient(cfg config.AIConfig) *completionClient {
 		http:     &http.Client{Timeout: 90 * time.Second},
 	}
 }
+
+// Close implements completer. The remote client holds nothing to release: its
+// http.Client uses the shared default transport.
+func (c *completionClient) Close() error { return nil }
 
 // complete sends systemPrompt (and optional userContent) to the configured
 // endpoint and returns the concatenated completion text.

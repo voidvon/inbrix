@@ -486,7 +486,17 @@ func main() {
 		},
 	})
 	apiRoutes.Use("/ai", aiLimiter)
-	ai.RegisterRoutes(apiRoutes, config.AI)
+	// Build the completion backend before registering. With [ai] enabled = false
+	// this builds nothing at all; with mode = "embedded" it constructs the
+	// in-process llmux gateway and fails startup on a configuration that could
+	// not serve (no providers, an unroutable model, an unreadable llmux config)
+	// rather than surfacing it as a 502 on the first AI request.
+	aiHandler, aiErr := ai.NewHandler(config.AI)
+	if aiErr != nil {
+		log.Fatalf("ai: %v", aiErr)
+	}
+	defer aiHandler.Close()
+	aiHandler.Register(apiRoutes)
 
 	// Notifications routes — registered only when notifications.enabled = true.
 	// With enabled = false (the default) this block is never entered, so no

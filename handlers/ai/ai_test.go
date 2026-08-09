@@ -44,9 +44,15 @@ func mockSSEServer(t *testing.T, content string) *httptest.Server {
 }
 
 // buildTestApp creates a minimal Fiber app with the AI routes registered.
-func buildTestApp(cfg config.AIConfig) *fiber.App {
+func buildTestApp(t *testing.T, cfg config.AIConfig) *fiber.App {
+	t.Helper()
 	app := fiber.New()
-	RegisterRoutes(app.Group(""), cfg)
+	h, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	h.Register(app.Group(""))
 	return app
 }
 
@@ -83,7 +89,7 @@ func fiberGet(t *testing.T, app *fiber.App, path string) (int, string) {
 // ---------------------------------------------------------------------------
 
 func TestCapabilities_DisabledReturns404(t *testing.T) {
-	app := buildTestApp(config.AIConfig{Enabled: false})
+	app := buildTestApp(t, config.AIConfig{Enabled: false})
 	status, body := fiberGet(t, app, "/ai/capabilities")
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", status, body)
@@ -94,7 +100,7 @@ func TestCapabilities_DisabledReturns404(t *testing.T) {
 }
 
 func TestCapabilities_EnabledReturnsFlags(t *testing.T) {
-	app := buildTestApp(config.AIConfig{Enabled: true, Endpoint: "http://unused"})
+	app := buildTestApp(t, config.AIConfig{Enabled: true, Endpoint: "http://unused"})
 	status, body := fiberGet(t, app, "/ai/capabilities")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", status, body)
@@ -257,7 +263,7 @@ func TestAccountHeader_ForwardedAsBearer(t *testing.T) {
 		AccountHeader: "X-Vulos-Account-Token",
 		Model:         "m",
 	}
-	app := buildTestApp(cfg)
+	app := buildTestApp(t, cfg)
 
 	b, _ := json.Marshal(map[string]any{"context": "x", "draft_so_far": "y"})
 	req := httptest.NewRequest(http.MethodPost, "/ai/compose", bytes.NewReader(b))
@@ -293,7 +299,7 @@ func TestAccountHeader_FallsBackToAPIKey(t *testing.T) {
 		AccountHeader: "X-Vulos-Account-Token",
 		Model:         "m",
 	}
-	app := buildTestApp(cfg)
+	app := buildTestApp(t, cfg)
 
 	status, _ := fiberPost(t, app, "/ai/compose", map[string]any{"context": "x", "draft_so_far": "y"})
 	if status != http.StatusOK {
@@ -323,7 +329,7 @@ func TestCompletionClient_NoEndpoint_ReturnsError(t *testing.T) {
 
 func TestHandlers_DisabledReturns404(t *testing.T) {
 	cfg := config.AIConfig{Enabled: false}
-	app := buildTestApp(cfg)
+	app := buildTestApp(t, cfg)
 
 	endpoints := []struct {
 		path string
@@ -375,7 +381,7 @@ func TestCompose_ReturnsCompletionAndForwardsDraft(t *testing.T) {
 	var gotBody string
 	srv := capturingSSEServer(t, "look forward to your reply.", &gotBody)
 	defer srv.Close()
-	app := buildTestApp(config.AIConfig{Enabled: true, Endpoint: srv.URL, Model: "m"})
+	app := buildTestApp(t, config.AIConfig{Enabled: true, Endpoint: srv.URL, Model: "m"})
 
 	status, body := fiberPost(t, app, "/ai/compose", map[string]any{
 		"draft_so_far": "Thanks for the meeting today. I ",
@@ -406,7 +412,7 @@ func TestReply_ReturnsSuggestionsAndForwardsThread(t *testing.T) {
 	modelJSON := `{"suggestions":[{"tone":"concise","text":"Sounds good."},{"tone":"detailed","text":"Yes, that works for me — see you then."},{"tone":"decline","text":"Sorry, I can't make it."}]}`
 	srv := capturingSSEServer(t, modelJSON, &gotBody)
 	defer srv.Close()
-	app := buildTestApp(config.AIConfig{Enabled: true, Endpoint: srv.URL, Model: "m"})
+	app := buildTestApp(t, config.AIConfig{Enabled: true, Endpoint: srv.URL, Model: "m"})
 
 	status, body := fiberPost(t, app, "/ai/reply", map[string]any{
 		"thread": "From: bob\nAre you free Tuesday at 3pm?",
@@ -440,7 +446,7 @@ func TestHandler_EndpointDown_Returns502(t *testing.T) {
 		Enabled:  true,
 		Endpoint: "http://127.0.0.1:19999", // nothing listening
 	}
-	app := buildTestApp(cfg)
+	app := buildTestApp(t, cfg)
 	status, body := fiberPost(t, app, "/ai/summarize", map[string]any{"thread": "hello"})
 	if status != http.StatusBadGateway {
 		t.Errorf("down endpoint: expected 502, got %d (body=%s)", status, body)
