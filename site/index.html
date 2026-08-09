@@ -1022,7 +1022,7 @@ section[id]{scroll-margin-top:76px}
         </article>
         <article class="row rv">
           <span class="idx">08</span>
-          <div><h3>Security you don't configure</h3><p>JWT sessions, AES-256-GCM encrypted credentials at rest, a strict Content-Security-Policy, <code>SameSite=Lax</code> cookies, a sandboxed mail iframe, and CR/LF/NUL header-injection guards on everything outgoing.</p></div>
+          <div><h3>Security you don't configure</h3><p>JWT sessions, AES-256-GCM encrypted credentials at rest, a Content-Security-Policy that pins every origin to <code>self</code> (<code>object-src 'none'</code>, <code>base-uri 'self'</code>, no off-origin <code>connect-src</code>) — though not a script-strict one, because Alpine needs <code>unsafe-inline</code> and <code>unsafe-eval</code> — plus <code>SameSite=Lax</code> cookies, a mail iframe sandboxed without <code>allow-scripts</code>, and CR/LF/NUL header-injection guards on everything outgoing.</p></div>
         </article>
       </div>
     </div>
@@ -1197,7 +1197,7 @@ section[id]{scroll-margin-top:76px}
         </div>
         <div class="gside">
           <div class="gcap" data-shot="inbox"><h3>Three panes, no chrome in the way</h3><p>Folders, a threaded message list and the reading pane — with unread dots, attachment markers and per-sender avatars. HTMX swaps the panels; the page never reloads.</p></div>
-          <div class="gcap" data-shot="message" hidden><h3>HTML mail, safely contained</h3><p>Messages render inside a sandboxed iframe under a strict CSP. Reply, forward, archive, flag, print and delete sit in one row where you'd expect them.</p></div>
+          <div class="gcap" data-shot="message" hidden><h3>HTML mail, safely contained</h3><p>Messages render inside an iframe sandboxed without <code>allow-scripts</code>, so mail HTML cannot execute. Reply, forward, archive, flag, print and delete sit in one row where you'd expect them.</p></div>
           <div class="gcap" data-shot="compose" hidden><h3>Write, attach, schedule</h3><p>Plain-text or rich-text, file attachments as proper multipart MIME with inline <code>cid:</code> images, send-later scheduling, and drafts auto-saved every 30 seconds.</p></div>
           <div class="gcap" data-shot="search" hidden><h3>Straight to the server</h3><p>Search is executed by your IMAP server, not by a local index that has to be built and kept fresh. The same query is a <code>GET /v1/search</code> away.</p></div>
           <div class="gcap" data-shot="settings" hidden><h3>Signatures, identities, away messages</h3><p>Send-as identities, signatures, the vacation responder, notification keys and connected accounts — each one also reachable over <code>/v1/settings</code>.</p></div>
@@ -1364,7 +1364,7 @@ key = "a-32-character-encryption-key!!"</code></pre>
       <div class="pillar rv">
         <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4l6.5 2.6v5.2c0 4.4-2.7 7.3-6.5 8.6-3.8-1.3-6.5-4.2-6.5-8.6V6l6.5-2.6z"/><path d="M8.7 12l2.1 2.1 4.3-4.4"/></svg>Security-first</h4>
         <p>Sensible defaults rather than switches you have to remember, and a threat model written down in the docs.</p>
-        <ul><li>JWT sessions; AES-256-GCM credentials at rest</li><li>Strict CSP and <code>SameSite=Lax</code> cookies</li><li>Sandboxed mail iframe; header-injection guards</li></ul>
+        <ul><li>JWT sessions; AES-256-GCM credentials at rest</li><li>Origin-pinned CSP and <code>SameSite=Lax</code> cookies</li><li>Sandboxed mail iframe; header-injection guards</li></ul>
       </div>
     </div>
   </div></section>

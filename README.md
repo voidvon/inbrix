@@ -76,7 +76,7 @@ mailbox; nothing is provisioned anywhere when you do.
 - **Multiple accounts** — add/switch IMAP accounts and a unified inbox with
   concurrent fan-out and per-account error isolation — opt-in via `[accounts]`
 - **Security-first** — JWT sessions, AES-256-GCM encrypted credentials at rest,
-  strict Content-Security-Policy, `SameSite=Lax` cookies, sandboxed email iframe
+  an origin-pinned Content-Security-Policy, `SameSite=Lax` cookies, an email iframe sandboxed without `allow-scripts`
 - **Dark mode** — hand-written CSS, no CDN dependency
 - Builds and runs on **Linux, macOS, and Windows**
 
