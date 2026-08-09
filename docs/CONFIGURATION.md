@@ -10,6 +10,41 @@ cp config.toml.example config.toml
 All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[jwt]`, and
 `[encryption]` are **optional** and disabled by default.
 
+### How the file is located
+
+The path is the literal string `config.toml`, resolved against the process's
+current working directory. There is no `--config` flag, no `$LILMAIL_CONFIG`
+environment variable, and no search of `/etc` or `$HOME` — the only command-line
+flag lilmail accepts is `-version`, which prints the version and exits. If the
+file is missing or malformed the process exits immediately with
+`Failed to load config: …`.
+
+Several other paths default to being relative to the working directory too
+(`./cache`, `./sessions`, `./accounts.db`, `./vapid.json`), so **the working
+directory is part of your configuration**. If you run lilmail from a service
+manager, set the working directory explicitly — see
+[What lilmail writes to disk](CONFIGURATION.md#what-lilmail-writes-to-disk).
+
+### Config errors that stop startup, and warnings that do not
+
+| Condition | Result |
+|-----------|--------|
+| `config.toml` missing or not valid TOML | **fatal** |
+| `[ai] mode` is neither `remote` nor `embedded` | **fatal** (a typo must not silently fall back to `remote`) |
+| `[encryption] key` present but not 16, 24, or 32 bytes | **fatal** |
+| `[ssl] enabled = true` with a missing/unloadable cert or key | **fatal** |
+| `[ai] mode = "embedded"` that cannot resolve providers or route `model` | **fatal** |
+| `[accounts] enabled = true` and the store file cannot be opened | **fatal** |
+| `[encryption] key` empty | warning only — login will fail later |
+| `[jwt] secret` empty | warning only — tokens are not securely signed |
+| `[notifications] webpush = true` and VAPID key init fails | warning only — web push is disabled, the rest keeps running |
+| durable KV store cannot be opened — including `backend = "postgres"` with no `postgres_dsn`, an unknown backend name, or an unreachable database | warning only — the server starts, logs `scheduled send unavailable (store open failed)`, and every KV-backed surface reports `501` |
+
+That last row is worth reading twice: a **typo in `[storage]` does not stop the
+server**. It logs one line and silently downgrades scheduled send, the vacation
+responder, signatures, send-as identities and connected accounts to `501`. If
+you configure Postgres, check the log on first start.
+
 ---
 
 ## `[server]`
@@ -19,7 +54,31 @@ All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[jwt]`, and
 | `port` | int | `3000` | HTTP listen port |
 | `username_is_email` | bool | `true` | Send the full email address as the IMAP/SMTP login username |
 | `frame_ancestors` | string | `""` | Space-separated CSP `frame-ancestors` origins. Leave empty for same-origin only. Example: `"'self' http://localhost:8080"` |
-| `secure_cookies` | bool | `false` | Set the `Secure` flag on session cookies. Enable when serving over HTTPS (direct `[ssl]` or TLS reverse proxy) |
+| `secure_cookies` | bool | `false` | Set the `Secure` flag on the session and CSRF cookies. Enable when serving over HTTPS (direct `[ssl]` or TLS reverse proxy) |
+
+The session cookie is named `session_id`; it is `HttpOnly` and `SameSite=Lax`,
+and it holds only an opaque session id — never your mail password. A second,
+deliberately JS-readable cookie `_csrf` carries the double-submit CSRF token.
+
+**lilmail does not read `X-Forwarded-For`.** No proxy-header trust is configured,
+so the client IP used for rate limiting is the address of whatever connected
+directly. Behind a reverse proxy that is the proxy, which means the per-IP login,
+send and AI limits become **global** limits rather than per-client ones. If you
+need per-client limiting behind a proxy, enforce it in the proxy.
+
+---
+
+## `[auth]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allow_full_email_username` | bool | (inherits `[server] username_is_email`) | What to send as the IMAP/SMTP login username: `true` sends the full address (`alice@example.com`), `false` sends only the local part (`alice`) |
+
+`[auth] allow_full_email_username` and `[server] username_is_email` control the
+same thing. `[auth]` is the option going forward; when it is present it wins, and
+when it is absent the `[server]` value is used. Most hosted providers want the
+full address; some self-hosted Dovecot/Postfix setups authenticate the bare
+handle.
 
 ---
 
@@ -29,7 +88,16 @@ All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[jwt]`, and
 |-----|------|---------|-------------|
 | `server` | string | — | IMAP hostname |
 | `port` | int | `993` | IMAP port |
-| `tls` | bool | `true` | Use implicit TLS (recommended; use `false` for STARTTLS on port 143) |
+| `tls` | bool | `true` | `true` dials implicit TLS (imaps, port 993). `false` dials **plaintext IMAP** |
+
+**`tls = false` is not STARTTLS.** lilmail's IMAP path has no STARTTLS upgrade —
+setting `tls = false` opens an unencrypted connection and sends your password over
+it in the clear. It exists for a plain-IMAP server on a trusted local network (or
+a stunnel/sidecar that terminates TLS for you), and for nothing else. STARTTLS is
+implemented for **SMTP only** (`[smtp] use_starttls`).
+
+There is no `insecure_skip_verify` for IMAP. A self-signed IMAP certificate will
+fail the handshake; only the SMTP client exposes that escape hatch.
 
 ---
 
@@ -73,6 +141,24 @@ backend = "bolt"   # default; omit the section entirely for the same effect
 # backend = "postgres"
 # postgres_dsn = "postgres://lilmail:secret@localhost:5432/lilmail?sslmode=require"
 ```
+
+### What lilmail writes to disk
+
+Four paths, all relative to the process's working directory unless you set them
+to something absolute. This is why the working directory is part of your
+configuration.
+
+| Path | Default | Written when |
+|------|---------|--------------|
+| `./cache` | `[cache] folder` | Always — cached message bodies and metadata |
+| `./sessions` | not configurable | Always — server-side session records |
+| `accounts.db` | `[accounts] store_file` | Only with `[accounts] enabled = true` — bbolt database of extra accounts |
+| `vapid.json` | `[notifications] vapid_key_file` | Only with `[notifications] webpush = true` — the generated VAPID key pair |
+
+Back these up together, or none of them: `accounts.db` holds encrypted
+credentials that are useless without the `[encryption] key` from your
+`config.toml`, and `vapid.json` is the identity your push subscriptions are
+bound to — regenerate it and every existing subscription stops working.
 
 ### Shared object storage (`VULOS_STORAGE_BROKER_SECRET`)
 
