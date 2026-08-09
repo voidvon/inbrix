@@ -980,7 +980,7 @@ section[id]{scroll-margin-top:76px}
         <ul class="not-list">
           <li><b>No database server.</b> Durable state is an embedded bbolt file. Postgres is optional, for shared or multi-instance deploys.</li>
           <li><b>No build step.</b> Templates and vendored JS are compiled in with <code>embed.FS</code>; there is no bundler and no asset pipeline.</li>
-          <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary.</li>
+          <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary — and the render gate fails the build if any page fetches off-origin.</li>
           <li><b>No lilmail account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
           <li><b>No calendar or contacts unless you ask.</b> The CalDAV routes are gated on <code>[caldav] enabled</code>; off by default, they cost nothing.</li>
           <li><b>No multi-account unless you ask.</b> Same shape — <code>[accounts] enabled</code>.</li>

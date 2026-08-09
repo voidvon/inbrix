@@ -243,6 +243,26 @@ async function checkPage(browser, base, path, theme, vp) {
   page.on('response', r => { if (r.status() >= 400) console404.push(`${r.status()} ${r.url()}`); });
   page.on('pageerror', e => fail('js-error', where, e.message));
 
+  // Every subresource must come from the same origin as the page.
+  //
+  // The site says, in several places, that it uses no CDN and that an
+  // air-gapped box is a supported deployment. That was true and unenforced:
+  // nothing here would have noticed a <script src="https://cdn…"> or a
+  // Google Fonts @import, and both are the kind of thing that arrives in a
+  // hurry and stays. Fonts, highlight.js and marked are all vendored under
+  // site/assets/vendor/ precisely so this holds — so assert it.
+  //
+  // Scoped to real subresource loads: the page's own document, data: and
+  // blob: URLs, and about:blank are not fetches off the box.
+  const offOrigin = new Set();
+  page.on('request', r => {
+    const url = r.url();
+    if (r.resourceType() === 'document') return;
+    if (/^(data|blob|about|javascript):/.test(url)) return;
+    if (url.startsWith(base)) return;
+    offOrigin.add(`${r.resourceType()} ${url}`);
+  });
+
   await page.goto(`${base}/${path}`, { waitUntil: 'networkidle' });
   // reveal-on-scroll gates most of the page; force it so nothing is measured
   // while still at opacity 0 and translated.
@@ -298,6 +318,8 @@ async function checkPage(browser, base, path, theme, vp) {
     if (live === 0) fail('no-image-visible', where, `${p.scope}: nothing painted for the ${theme} theme`);
   });
   console404.forEach(u => fail('http-error', where, u));
+  offOrigin.forEach(u => fail('off-origin', where,
+    `${u} — the site must be self-contained; vendor it under site/assets/vendor/`));
 
   await ctx.close();
   return r;
@@ -405,13 +427,28 @@ async function checkDocsRoutes(browser, base) {
 // ---------------------------------------------------------------------------
 async function selftest(browser, base) {
   const cases = ['img-distorted', 'both-themes-visible', 'text-too-small',
-                 'h-overflow', 'screenshot-wrong-theme'];
+                 'h-overflow', 'screenshot-wrong-theme', 'off-origin'];
   let allCaught = true;
   for (const name of cases) {
     const ctx = await browser.newContext({
       viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: 'dark',
     });
     const page = await ctx.newPage();
+
+    // The off-origin check is a request listener rather than a DOM
+    // measurement, so this case cannot go through inspect() like the others.
+    // Watch the same way the real run does, then assert on what was seen.
+    const sawOffOrigin = new Set();
+    if (name === 'off-origin') {
+      page.on('request', r => {
+        const url = r.url();
+        if (r.resourceType() === 'document') return;
+        if (/^(data|blob|about|javascript):/.test(url)) return;
+        if (url.startsWith(base)) return;
+        sawOffOrigin.add(url);
+      });
+    }
+
     await page.goto(`${base}/index.html`, { waitUntil: 'networkidle' });
     await page.evaluate(() => document.querySelectorAll('.rv,.reveal').forEach(e => e.classList.add('in', 'is-in')));
     await page.waitForTimeout(500);
@@ -489,6 +526,15 @@ async function selftest(browser, base) {
         }
         return true;
       }
+      if (which === 'off-origin') {
+        // A pixel to a host that certainly is not this test server. It never
+        // has to load — the request leaving is the defect.
+        const im = document.createElement('img');
+        im.src = 'https://cdn.example.invalid/pixel.png';
+        im.alt = '';
+        document.body.appendChild(im);
+        return true;
+      }
       return false;
     }, name);
 
@@ -506,7 +552,8 @@ async function selftest(browser, base) {
       (name === 'text-too-small'      && r.smallText.length > 0) ||
       (name === 'h-overflow'          && (r.overflow.docW > r.overflow.winW + 1 || r.overflow.bleed.length > 0)) ||
       (name === 'screenshot-wrong-theme' &&
-         (r.themedShots.length > 0 || r.hiddenPairs.some(p => p.light > 0 && p.dark === 0)));
+         (r.themedShots.length > 0 || r.hiddenPairs.some(p => p.light > 0 && p.dark === 0))) ||
+      (name === 'off-origin'          && sawOffOrigin.size > 0);
     console.log(`  ${caught ? 'caught  ' : 'MISSED  '} ${name}`);
     if (!caught) allCaught = false;
     await ctx.close();
