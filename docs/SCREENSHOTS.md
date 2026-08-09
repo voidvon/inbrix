@@ -14,13 +14,25 @@ mode.
 | `docs/screenshots/message.png` | Message viewer | Real — demo mode |
 | `docs/screenshots/compose.png` | Compose modal with CC/BCC and attachment UI | Real — demo mode |
 | `docs/screenshots/search.png` | Search results filtered by query | Real — demo mode |
-| `docs/screenshots/calendar.png` | Calendar month view | Needs CalDAV (`[caldav]` enabled) |
+| `docs/screenshots/calendar.png` | Calendar month view | Needs a CalDAV server — `--with-calendar` starts one |
 | `docs/screenshots/settings.png` | Settings page | Real — demo mode |
 
 ## Demo mode (no credentials required)
 
 All screenshots except the calendar can be captured without any real email
 account. Demo mode runs an in-memory mail client seeded with realistic messages.
+
+The calendar is the exception because demo mode fakes IMAP and nothing else:
+`handlers/api/democlient.go` stands in for a mail server, but the calendar
+handlers take a concrete `*api.CalDAVClient` that speaks to a real one. The
+route is registered only when `[caldav] enabled` is set (`main.go:578`), so a
+plain capture run skips the calendar with a 404.
+
+Faking a CalDAV endpoint would have been the easy fix and the wrong one — the
+screenshot would then be a picture of the fake. `--with-calendar` runs
+[Radicale](https://radicale.org), an actual CalDAV server, seeds it with a
+week of events, and points lilmail at it over the wire. What you see in
+`calendar.png` was fetched by the same code path that talks to Fastmail.
 
 ```bash
 # From the lilmail repo root — builds binary and captures all demo screenshots:
@@ -76,8 +88,13 @@ message content and folder structure are stable.
 To reproduce exactly:
 
 ```bash
-scripts/seed-demo.sh --screenshots
+scripts/seed-demo.sh --screenshots                    # everything except the calendar
+scripts/seed-demo.sh --screenshots --with-calendar    # adds the calendar
 ```
+
+`--with-calendar` needs Python and Radicale (`pip install radicale`), which the
+rest of the pipeline does not — hence opt-in. Both the server and its data are
+torn down with everything else when the run ends.
 
 Or, to run the server and capture manually:
 

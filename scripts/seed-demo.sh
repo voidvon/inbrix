@@ -33,8 +33,62 @@ JWT_SECRET="${LILMAIL_JWT_SECRET:-lilmail-demo-jwt-secret-not-for-production}"
 ENC_KEY="${LILMAIL_ENC_KEY:-lilmail-demo-enc-key-32-bytes!!!}"  # exactly 32 chars
 
 DO_SCREENSHOTS=0
-if [[ "${1:-}" == "--screenshots" ]]; then
-  DO_SCREENSHOTS=1
+WITH_CALENDAR=0
+for arg in "$@"; do
+  case "$arg" in
+    --screenshots)   DO_SCREENSHOTS=1 ;;
+    --with-calendar) WITH_CALENDAR=1 ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Optional: a REAL CalDAV server, for the calendar screenshot.
+#
+# Demo mode fakes IMAP (handlers/api/democlient.go) but there is no fake
+# CalDAV: handlers take a concrete *api.CalDAVClient that speaks to a real
+# server, so the calendar route is registered only when [caldav] enabled is
+# set, and the capture run has always skipped it with a 404.
+#
+# Hand-rolling a fake CalDAV endpoint was the obvious shortcut and is the
+# wrong one — the screenshot would then be a picture of the fake, and this
+# repo's claim is that its screens are real captures. So this runs Radicale,
+# an actual CalDAV server, and lilmail talks to it over the wire exactly as
+# it would to Fastmail or a self-hosted box.
+#
+# Opt-in, because it needs Python and Radicale which the rest of the pipeline
+# does not: `--with-calendar`. Without it everything behaves as before.
+CALDAV_PORT="${LILMAIL_CALDAV_PORT:-5232}"
+CALDAV_URL="http://127.0.0.1:${CALDAV_PORT}/demo/work"
+CALDAV_PID=""
+
+if [[ "$WITH_CALENDAR" == "1" ]]; then
+  if ! python3 -c "import radicale" 2>/dev/null; then
+    echo "[seed-demo] --with-calendar needs Radicale: pip install radicale" >&2
+    exit 1
+  fi
+  echo "[seed-demo] Starting Radicale (real CalDAV) on port $CALDAV_PORT ..."
+  rm -rf "$TMP_DIR/caldav"
+  mkdir -p "$TMP_DIR/caldav/collections"
+  cat > "$TMP_DIR/radicale.conf" <<RCONF
+[server]
+hosts = 127.0.0.1:${CALDAV_PORT}
+[auth]
+type = none
+[storage]
+filesystem_folder = $TMP_DIR/caldav/collections
+RCONF
+  python3 -m radicale --config "$TMP_DIR/radicale.conf" > "$TMP_DIR/radicale.log" 2>&1 &
+  CALDAV_PID=$!
+  for _ in $(seq 1 30); do
+    if curl -s -o /dev/null -X PROPFIND "http://127.0.0.1:${CALDAV_PORT}/" -u demo:demo; then break; fi
+    sleep 0.3
+  done
+  curl -s -o /dev/null -X MKCOL "${CALDAV_URL}/" -u demo:demo \
+    -H "Content-Type: application/xml" --data '<?xml version="1.0" encoding="utf-8"?>
+<mkcol xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><set><prop>
+<resourcetype><collection/><C:calendar/></resourcetype><displayname>Work</displayname>
+</prop></set></mkcol>'
+  "$REPO/scripts/seed-calendar.sh" "$CALDAV_URL"
 fi
 
 # -----------------------------------------------------------------------
@@ -78,6 +132,18 @@ email    = "$DEMO_EMAIL"
 password = "$DEMO_PASSWORD"
 TOML
 
+if [[ "$WITH_CALENDAR" == "1" ]]; then
+  cat >> "$TMP_CFG" <<TOML
+
+[caldav]
+enabled  = true
+url      = "$CALDAV_URL"
+auth     = "basic"
+username = "demo"
+password = "demo"
+TOML
+fi
+
 echo "[seed-demo] Demo config written to $TMP_CFG"
 echo "[seed-demo] Demo login URL (no credentials needed): $BASE_URL/demo-login"
 echo "[seed-demo] Starting lilmail on $BASE_URL ..."
@@ -89,6 +155,11 @@ SERVER_PID=""
 cleanup() {
   if [[ -n "$SERVER_PID" ]]; then
     kill "$SERVER_PID" 2>/dev/null || true
+  fi
+  # Radicale too, when --with-calendar started one — otherwise it outlives the
+  # run and holds the port against the next capture.
+  if [[ -n "${CALDAV_PID:-}" ]]; then
+    kill "$CALDAV_PID" 2>/dev/null || true
   fi
   rm -rf "$TMP_DIR"
   echo "[seed-demo] Stopped."
