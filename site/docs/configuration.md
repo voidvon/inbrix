@@ -298,6 +298,14 @@ Startup fails loudly — rather than 502-ing on the user's first summarize — w
 Egress is still governed by llmux's own sovereignty gate: a provider whose base
 URL is off-box is **denied** unless that provider sets `allow_egress`.
 
+**Not available embedded: per-account BYOK and the llmux control plane.** llmux
+builds neither from its config file — its own composition root wires them — so a
+`byok` or `cp` block in `llmux_config` is inert here and every request uses the
+central provider keys that config holds. Virtual `keys` *do* work: a key listed
+there gates requests through `account_header` exactly as it would over HTTP. A
+deployment that needs each account's own keys, or central metering, wants
+`mode = "remote"` pointed at a full llmux.
+
 #### Privacy and the embedded cache
 
 Mail content is never written to any persistent store by LilMail, in either

@@ -31,6 +31,16 @@ import (
 // completion before answering (a summary, three reply suggestions, a phishing
 // verdict — none of them stream to the browser), so the streaming callback would
 // only reassemble what Chat already returns.
+//
+// Not available embedded: per-account BYOK and the llmux control-plane
+// integration. gateway.New does NOT build either from config — llmux's own
+// composition root wires them with SetBYOKStore / SetIdentity, and
+// integration/cp is a package the core deliberately never imports. So a `byok`
+// or `cp` block in llmux_config is inert here and every request uses the
+// central provider keys that config holds. A deployment that needs each
+// account's own keys, or central metering, wants mode = "remote" pointed at a
+// full llmux. TestEmbedded_NoBYOKOrControlPlane pins this so the claim cannot
+// go quietly stale under a future llmux.
 type embeddedClient struct {
 	gw    *gateway.Gateway
 	model string

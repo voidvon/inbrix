@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"lilmail/config"
+
+	"github.com/vul-os/llmux/core/gateway"
 )
 
 // ---------------------------------------------------------------------------
@@ -624,5 +626,38 @@ func TestEmbedded_ModeIsNotRemote(t *testing.T) {
 	}
 	if n := provider.calls.Load(); n != 1 {
 		t.Errorf("embedded provider calls = %d, want 1", n)
+	}
+}
+
+// TestEmbedded_NoBYOKOrControlPlane pins a documented LIMITATION rather than a
+// feature: gateway.New builds neither a BYOK store nor a control-plane identity
+// from config — llmux's own composition root wires those — so in embedded mode
+// a `byok` or `cp` block in llmux_config is inert and every request uses the
+// central provider keys. The docs say so; this fails if a future llmux quietly
+// makes it untrue, which would turn accurate documentation into a lie.
+func TestEmbedded_NoBYOKOrControlPlane(t *testing.T) {
+	isolateLLMuxEnv(t)
+	provider := newFakeProvider(t, "unused")
+	path := writeLLMuxConfig(t, provider, map[string]any{
+		"byok": map[string]any{"kek": strings.Repeat("a", 64)},
+		"cp":   map[string]any{"cp_url": "https://cp.example.invalid"},
+	})
+
+	c, err := newEmbeddedClient(config.AIConfig{
+		Enabled: true, Mode: config.AIModeEmbedded, Model: "test-model", LLMuxConfig: path,
+	})
+	if err != nil {
+		t.Fatalf("newEmbeddedClient: %v", err)
+	}
+	defer c.Close()
+
+	if c.gw.BYOK() != nil {
+		t.Error("a BYOK store is wired embedded — the docs claim it is not; update them")
+	}
+	if _, ok := c.gw.Identity().(gateway.StaticIdentity); !ok {
+		t.Errorf("identity resolver = %T, want the standalone gateway.StaticIdentity — no cp adapter is wired here", c.gw.Identity())
+	}
+	if c.gw.IdentityActive() {
+		t.Error("the authenticated path is active with no virtual keys configured")
 	}
 }
