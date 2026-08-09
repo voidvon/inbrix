@@ -235,4 +235,6 @@ files except `config.toml`.
 every push.
 
 `.github/workflows/release.yml` — triggered on `v*` tags; cross-compiles for
-Linux/macOS/Windows (amd64), packages archives, and publishes to GitHub Releases.
+Linux and macOS (`amd64` and `arm64`), packages the archives alongside a source
+zip and a `SHA256SUMS` manifest covering every asset, and publishes them to the
+[latest release](https://github.com/vul-os/lilmail/releases/latest).

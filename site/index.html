@@ -710,6 +710,14 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
   .route .flight{display:none}
   .route .flight-still{display:inline}
 }
+.dl{display:flex;align-items:center;gap:13px;margin-top:14px;padding:13px 15px;border-radius:12px;
+  border:1px solid var(--rule);background:var(--surface);text-decoration:none;color:inherit;
+  box-shadow:var(--shadow-sm);transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+.dl:hover{border-color:var(--coral);transform:translateY(-1px);box-shadow:var(--shadow-md);text-decoration:none}
+.dl>svg{width:20px;height:20px;flex:none;color:var(--coral)}
+.dl .ext{width:14px;height:14px;margin-left:auto;color:var(--slate-2)}
+.dl span{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--slate);min-width:0}
+.dl b{font-size:14px;color:var(--ink);font-weight:650}
 section[id]{scroll-margin-top:76px}
 </style>
 </head>
@@ -1208,12 +1216,21 @@ go run main.go        # or: make build && ./lilmail
         <div class="panel" id="p-bin" role="tabpanel" aria-labelledby="t-bin" hidden>
           <div class="term">
             <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/lilmail — run the release archive</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
-<pre><code class="language-bash"># download the archive for your OS from Releases,
+<pre><code class="language-bash"># grab the archive for your OS from the link below,
 # extract it, and put a config.toml beside the binary
 cp config.toml.example config.toml
 
 ./lilmail             # → http://localhost:3000
 ./lilmail -version    # print version and exit</code></pre>
+          <!-- /releases/latest, not a versioned asset URL: the archive names
+               embed the version (lilmail_1.14.0_linux_amd64.zip), so any link
+               specific enough to download a file directly is a link that goes
+               stale on the very next tag. This one cannot. -->
+          <a class="dl" href="https://github.com/vul-os/lilmail/releases/latest" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+            <span><b>Download the latest release</b>macOS and Linux · amd64 and arm64 · with SHA256SUMS</span>
+            <svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>
+          </a>
           </div>
         </div>
         <div class="panel" id="p-doc" role="tabpanel" aria-labelledby="t-doc" hidden>
@@ -1318,7 +1335,7 @@ key = "a-32-character-encryption-key!!"</code></pre>
       <div class="pillar rv">
         <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 17.4a4 4 0 0 1 .4-7.97 5.5 5.5 0 0 1 10.6.9A3.6 3.6 0 0 1 17.4 17.4H6.6z"/><path d="M3.5 3.5l17 17"/></svg>No external services</h4>
         <p>Frontend assets are embedded with <code>embed.FS</code> and durable state is a local bbolt file, so an offline box is a supported deployment.</p>
-        <ul><li>No CDN, no asset pipeline</li><li>No database server to provision</li><li>Linux, macOS and Windows builds</li></ul>
+        <ul><li>No CDN, no asset pipeline</li><li>No database server to provision</li><li>Prebuilt for Linux and macOS, amd64 and arm64; Windows builds from source</li></ul>
       </div>
       <div class="pillar rv">
         <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4l6.5 2.6v5.2c0 4.4-2.7 7.3-6.5 8.6-3.8-1.3-6.5-4.2-6.5-8.6V6l6.5-2.6z"/><path d="M8.7 12l2.1 2.1 4.3-4.4"/></svg>Security-first</h4>

@@ -4,7 +4,7 @@
 
 **A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary.**
 
-**[MIT OR Apache-2.0](LICENSE-MIT) · [Releases](https://github.com/vul-os/lilmail/releases) · [CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)**
+**[MIT OR Apache-2.0](LICENSE-MIT) · [Download](https://github.com/vul-os/lilmail/releases/latest) · [CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)**
 
 <br>
 
@@ -144,9 +144,10 @@ go run main.go            # or: make build && ./lilmail
 
 Open **http://localhost:3000** and sign in.
 
-Prefer a pre-built binary? Grab the latest archive from
-[Releases](https://github.com/vul-os/lilmail/releases) — only `config.toml`
-needs to be present alongside it.
+Prefer a pre-built binary? Grab the archive for your OS and CPU from the
+[latest release](https://github.com/vul-os/lilmail/releases/latest): macOS and
+Linux, `amd64` and `arm64`, plus a source zip and a `SHA256SUMS` manifest
+covering every asset. Only `config.toml` needs to be present alongside it.
 
 ### Verify a release before you run it
 
