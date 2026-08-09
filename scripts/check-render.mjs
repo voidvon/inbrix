@@ -368,13 +368,21 @@ async function checkDocsRoutes(browser, base) {
       return { err: !!c.querySelector('.err'), skeleton: !!c.querySelector('.skeleton'),
                blocks: c.querySelectorAll('pre > code').length, chars: c.textContent.trim().length,
                highlighted: c.querySelectorAll('code.hljs').length,
-               unlabelled: [...c.querySelectorAll('.code .lang')].filter(l => l.textContent === 'text').length };
+               // Blocks whose language chip reads "text". NOT a defect and not
+               // gated — some content genuinely is plain text: SIGNING.md's
+               // SigV4 pseudocode and canonical-request byte layouts, and
+               // ARCHITECTURE.md's directory tree. Reported because a sudden
+               // jump means a real fence lost its language, not because the
+               // number should be zero. It was previously called "unlabelled",
+               // which read like a defect count and sent someone hunting for a
+               // highlighting bug that did not exist.
+               plainText: [...c.querySelectorAll('.code .lang')].filter(l => l.textContent === 'text').length };
     });
     if (r.err || r.skeleton || r.chars < 400) {
       fail('doc-not-rendered', `docs.html#${slug}`,
         `err=${r.err} skeleton=${r.skeleton} textLength=${r.chars}`);
     } else {
-      note(`docs#${slug}: ${r.chars} chars, ${r.blocks} code blocks, ${r.highlighted} highlighted, ${r.unlabelled} unlabelled`);
+      note(`docs#${slug}: ${r.chars} chars, ${r.blocks} code blocks, ${r.highlighted} highlighted, ${r.plainText} plain-text`);
       if (r.blocks && r.highlighted < r.blocks) {
         fail('code-not-highlighted', `docs.html#${slug}`,
           `${r.blocks - r.highlighted} of ${r.blocks} code block(s) carry no hljs markup`);
