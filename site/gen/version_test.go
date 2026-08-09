@@ -142,6 +142,48 @@ func TestDocsFooterVersionMatchesVERSION(t *testing.T) {
 // skipping on missing history is not the same hollow-gate failure mode as
 // swallowing a real mismatch, because CI's checkout step is configured with
 // fetch-depth: 0 specifically so this job never hits the skip path there.
+// TestReadmeVersionMatchesVERSION covers the two places README.md pins a
+// version: the verify.sh --tag argument and the release archive name beside
+// it. Both are instructions a reader will copy and run.
+//
+// This existed nowhere until now. The landing and the docs footer were gated
+// and the README was not, so it could drift to a tag that no longer exists —
+// which is exactly what happened to a sibling repo in this suite: its README
+// told people to fetch a tag that had been deleted, and the first step of the
+// quickstart 404'd. Same shape as the checks above: assert the marker is found
+// EXACTLY once, so a restyle that stops matching fails loudly instead of
+// verifying nothing.
+func TestReadmeVersionMatchesVERSION(t *testing.T) {
+	r := root(t)
+	version := readVersion(t, r)
+
+	raw, err := os.ReadFile(filepath.Join(r, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v — the version-drift gate verified NOTHING", err)
+	}
+	readme := string(raw)
+
+	for _, c := range []struct {
+		name string
+		re   *regexp.Regexp
+		want string
+	}{
+		{"verify.sh --tag", regexp.MustCompile(`--tag v([0-9]+\.[0-9]+\.[0-9]+)`), version},
+		{"release archive", regexp.MustCompile(`lilmail_([0-9]+\.[0-9]+\.[0-9]+)_[a-z0-9]+_[a-z0-9]+\.zip`), version},
+	} {
+		m := c.re.FindAllStringSubmatch(readme, -1)
+		if len(m) != 1 {
+			t.Fatalf("found %d occurrence(s) of the %s version marker in README.md, want exactly 1 — "+
+				"the version was NOT verified. Looked for: %s", len(m), c.name, c.re.String())
+		}
+		if got := m[0][1]; got != c.want {
+			t.Errorf("README.md %s shows %s but VERSION says %s", c.name, got, c.want)
+		} else {
+			t.Logf("README %s: VERSION %q == README %q", c.name, c.want, got)
+		}
+	}
+}
+
 func TestVersionMatchesLatestTag(t *testing.T) {
 	r := root(t)
 	version := readVersion(t, r)
