@@ -242,7 +242,43 @@ async function run(browser, scheme, scale) {
       // type() so HTMX sees real keydown/keyup events; fill() fires neither.
       await page.type('input[type="search"], input[name="q"]', 'roadmap', { delay: 80 });
       await page.waitForTimeout(1400);   // 500 ms hx-trigger debounce + network
-      await shot(page, 'search', 'Search results for "roadmap"');
+      // Open the hit before capturing. Searching and then photographing an
+      // empty reading pane spent three quarters of the frame on the words
+      // "Select a message to read" — the shot showed the search box working
+      // and the product not. Reuses openBestMessage so the capture waits on
+      // .email-view actually existing rather than on a timeout.
+      // openBestMessage alone is not enough here: it deliberately skips
+      // thread rows, and the "roadmap" hit collapses into a thread, so the
+      // first attempt found nothing to open and photographed an empty pane
+      // anyway. Expand the thread and open its newest reply first, exactly
+      // as the message shot does, and only then fall back.
+      let opened = false;
+      const hit = await page.$('.email-row:has(.email-row__chevron)');
+      if (hit) {
+        await hit.click();
+        try {
+          await page.waitForSelector('.thread-msg', { timeout: 3000 });
+          const kids = [];
+          for (const el of await page.$$('.thread-msg')) {
+            if (await el.isVisible()) kids.push(el);
+          }
+          if (kids.length) {
+            await kids[kids.length - 1].click({ timeout: 4000 });
+            await page.waitForFunction(() => {
+              const pane = document.querySelector('#email-viewer-pane');
+              return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
+            }, { timeout: 5000 }).catch(() => {});
+            await page.waitForTimeout(900);
+            opened = await page.evaluate(
+              () => !!document.querySelector('#email-viewer-pane .email-view'));
+          }
+        } catch (_) {}
+      }
+      if (!opened) opened = await openBestMessage(page);
+      if (!opened) {
+        console.warn('  [warn] search — no result row to open; capturing the list alone');
+      }
+      await shot(page, 'search', 'Search results for "roadmap", with the match open');
     } else {
       console.warn('  [skip] search — no search input found');
     }
