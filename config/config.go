@@ -142,12 +142,22 @@ type CardDAVContactsConfig struct {
 	Password string `toml:"password"`
 }
 
+// AI completion modes. See AIConfig.Mode.
+const (
+	// AIModeRemote POSTs to a configurable OpenAI-compatible endpoint. Default.
+	AIModeRemote = "remote"
+	// AIModeEmbedded runs llmux in-process as a Go library — no gateway hop.
+	AIModeEmbedded = "embedded"
+)
+
 // AIConfig configures the mail-AI assistant endpoints.
 //
-// LilMail is a standalone mail client; all LLM inference is delegated to a
-// configurable OpenAI-compatible completion endpoint rather than performed
-// locally. The endpoint is just a base URL + Bearer token, so LilMail has no
-// hard dependency on any particular gateway:
+// LilMail performs no inference of its own. There are two ways to get
+// completions, selected by `mode`:
+//
+//   - mode = "remote" (default) — forward to a configurable OpenAI-compatible
+//     SSE chat endpoint (just a base URL + Bearer token), so LilMail has no
+//     hard dependency on any particular gateway:
 //
 //   - Standalone / BYO: point at any OpenAI-compatible SSE chat endpoint
 //     (the provider directly, the Vulos OS airouter's /api/ai/chat, etc.).
@@ -160,20 +170,39 @@ type CardDAVContactsConfig struct {
 //
 //     [ai]
 //     enabled        = true
+//     mode           = "remote"
 //     endpoint       = "http://llmux:4000/v1/chat/completions"  # or airouter /api/ai/chat
 //     api_key        = ""      # static Bearer token (e.g. an llmux virtual key) for standalone
 //     account_header = ""      # inbound request header whose value is forwarded as the Bearer (suite)
 //     model          = ""      # forwarded to the endpoint; leave empty to use endpoint default
+//
+//   - mode = "embedded" — run llmux (github.com/vul-os/llmux) as an in-process
+//     library. No gateway to deploy and no completion hop leaves the machine
+//     unless llmux's own provider config says so; llmux does the routing,
+//     failover, sovereignty enforcement and BYOK inside LilMail's process:
+//
+//     [ai]
+//     enabled      = true
+//     mode         = "embedded"
+//     model        = "llama3.1"                # REQUIRED: embedded llmux has no default model
+//     llmux_config = "/etc/lilmail/llmux.json" # llmux's own JSON config (providers/routes/keys)
+//     llmux_cache  = false                     # opt in to llmux's in-memory response cache
 type AIConfig struct {
 	// Enabled is the master switch. When false, all /api/ai/* routes return
-	// 404 {"error":"ai_disabled"}. Default: false (opt-in).
+	// 404 {"error":"ai_disabled"}, no completion backend is constructed at all
+	// (in particular no embedded llmux gateway exists), and the feature can
+	// emit no packets. Default: false (opt-in).
 	Enabled bool `toml:"enabled"`
 
-	// Endpoint is the URL of the OpenAI-compatible SSE chat-completion API.
-	// Defaults to the Vulos OS airouter URL so LilMail works out of the box
-	// when embedded in Vulos; set it to llmux's /v1/chat/completions to route
-	// through the central gateway, or to any OpenAI-compatible endpoint for
-	// standalone / BYO use.
+	// Mode selects the completion backend: "remote" (default) or "embedded".
+	// An empty value means "remote", so existing configs keep working verbatim.
+	Mode string `toml:"mode"`
+
+	// Endpoint is the URL of the OpenAI-compatible SSE chat-completion API
+	// (mode = "remote" only; ignored in embedded mode). Defaults to the Vulos
+	// OS airouter URL so LilMail works out of the box when embedded in Vulos;
+	// set it to llmux's /v1/chat/completions to route through the central
+	// gateway, or to any OpenAI-compatible endpoint for standalone / BYO use.
 	Endpoint string `toml:"endpoint"`
 
 	// APIKey is the static Bearer token sent as "Authorization: Bearer <key>"
@@ -194,8 +223,35 @@ type AIConfig struct {
 
 	// Model is the model slug forwarded to the completion endpoint.
 	// Leave empty to use the endpoint's configured default.
+	//
+	// In embedded mode it is REQUIRED and must be routable by the embedded
+	// llmux config: llmux rejects a request with no model, so an empty value
+	// would fail every AI call at runtime. Startup fails loudly instead.
 	Model string `toml:"model"`
+
+	// LLMuxConfig is the path to llmux's own JSON configuration file
+	// (providers, routes, virtual keys, BYOK — llmux's schema, not LilMail's),
+	// used only in embedded mode. Empty means llmux's built-in defaults plus
+	// its environment auto-detection (OLLAMA_HOST, OPENAI_API_KEY, ...).
+	//
+	// Whatever the file says, LilMail overrides four things when it builds the
+	// embedded gateway, because a mail client must not host them:
+	// no listener, no price-feed sync (no outbound calls of its own), no
+	// Postgres/Redis (the two things that would open sockets at construction),
+	// and no response cache unless LLMuxCache is set.
+	LLMuxConfig string `toml:"llmux_config"`
+
+	// LLMuxCache opts the embedded gateway into llmux's response cache: an
+	// in-memory, TTL-bounded, size-bounded LRU keyed by a SHA-256 of the
+	// request. It is OFF by default because it would retain model output
+	// derived from your mail in process memory after the request finishes.
+	// It is never written to disk on this path (llmux's Redis cache backend
+	// is unreachable here — see LLMuxConfig).
+	LLMuxCache bool `toml:"llmux_cache"`
 }
+
+// EmbeddedAI reports whether the AI assistant runs llmux in-process.
+func (c AIConfig) EmbeddedAI() bool { return c.Mode == AIModeEmbedded }
 
 // NotificationsConfig configures Phase-6 real-time notifications.
 // Everything is opt-in and default-disabled: with Enabled = false (the
@@ -349,10 +405,13 @@ func LoadConfig(filepath string) (*Config, error) {
 	// The default endpoint is the Vulos OS airouter so LilMail works without
 	// extra configuration when embedded in a Vulos installation.
 	config.AI.Enabled = false
+	config.AI.Mode = AIModeRemote
 	config.AI.Endpoint = "http://localhost:8080/api/ai/chat"
 	config.AI.APIKey = ""
 	config.AI.AccountHeader = ""
 	config.AI.Model = ""
+	config.AI.LLMuxConfig = ""
+	config.AI.LLMuxCache = false
 
 	// Default rate-limit configuration.
 	// Login: tight (brute-force surface). Send + AI: moderate (abuse/cost).
@@ -380,6 +439,20 @@ func LoadConfig(filepath string) (*Config, error) {
 	} else {
 		v := config.Server.UsernameIsEmail
 		config.Auth.AllowFullEmailUsername = &v
+	}
+
+	// Normalise + validate the AI mode. An empty mode (a config written before
+	// embedded mode existed) is "remote". A typo — "embeded", "local" — must
+	// not silently fall back to remote: it would send mail to whatever endpoint
+	// happened to be configured instead of the in-process gateway the operator
+	// asked for.
+	if config.AI.Mode == "" {
+		config.AI.Mode = AIModeRemote
+	}
+	switch config.AI.Mode {
+	case AIModeRemote, AIModeEmbedded:
+	default:
+		return nil, fmt.Errorf("[ai] mode must be %q or %q, got %q", AIModeRemote, AIModeEmbedded, config.AI.Mode)
 	}
 
 	// If SMTP server is not specified, derive it from IMAP server

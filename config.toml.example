@@ -135,17 +135,39 @@ use_pkce = true           # PKCE (S256); recommended
 #   POST /api/ai/extract-actions — action items with optional due dates
 #   POST /api/ai/phishing        — phishing / suspicious / clean classification
 #
-# All routes are gated on [ai] enabled. When false they return 404 {"error":"ai_disabled"}.
+# All routes are gated on [ai] enabled. When false they return 404 {"error":"ai_disabled"},
+# no completion backend is built at all, and the feature can emit no packets.
 #
+# mode = "remote" (the default) forwards to an OpenAI-compatible SSE endpoint.
 # The default endpoint is the Vulos OS airouter (/api/ai/chat) — no extra
 # configuration needed when LilMail is embedded in a Vulos installation.
 # For standalone use, point at any OpenAI-compatible SSE chat-completion API.
 #
 # [ai]
 # enabled  = false
+# mode     = "remote"
 # endpoint = "http://localhost:8080/api/ai/chat"  # Vulos OS airouter (default)
 # api_key  = ""    # Bearer token — leave empty for local Vulos airouter
 # model    = ""    # model slug forwarded to endpoint; empty = endpoint default
+#
+# mode = "embedded" runs llmux (github.com/vul-os/llmux) as an in-process Go
+# library instead: no gateway to deploy, no completion hop. llmux does the
+# routing, retries, failover, sovereignty enforcement and BYOK inside LilMail's
+# process, using its OWN JSON config (providers/routes/keys) at llmux_config.
+# LilMail overrides four things in it, whatever the file says: no listener, no
+# price-feed sync, no Postgres/Redis, and no response cache unless llmux_cache
+# is true. `model` is REQUIRED here and must be routable by that config.
+#
+# llmux_cache = true opts into llmux's in-memory TTL'd LRU: model output derived
+# from your mail is then retained in process memory until it expires or is
+# evicted (never written to disk). It is off by default.
+#
+# [ai]
+# enabled      = true
+# mode         = "embedded"
+# model        = "llama3.1"                 # required; must be routable by llmux_config
+# llmux_config = "/etc/lilmail/llmux.json"  # empty = llmux defaults + env auto-detection
+# llmux_cache  = false
 
 # Optional: per-IP rate limits for brute-force / abuse protection.
 # All limits are sane-defaulted in code; this section is purely for override.
