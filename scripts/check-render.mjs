@@ -416,6 +416,99 @@ async function checkDocsRoutes(browser, base) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-chapter docs checks.
+//
+// Everything else here measures docs.html on whichever chapter the router
+// happens to open first, which means seven of the eight are never looked at.
+// A wide table in API.md, a heading the outline builder drops, an off-origin
+// image pasted into one chapter — none of it is reachable from the default
+// route, so none of it was being checked. This visits every chapter and
+// asserts the three things that are per-chapter rather than per-page:
+//
+//   - the on-page outline is complete and live: every h2/h3 carries an id and
+//     is reachable from #rail, and no outline link points at nothing. An
+//     outline that silently omits half a chapter still looks fine;
+//   - nothing overflows sideways at the narrow end, where the shell collapses
+//     to one column and a wide <pre> or table has nowhere to go;
+//   - no chapter pulls a subresource off the box.
+// ---------------------------------------------------------------------------
+async function checkDocsOutline(browser, base, mutate) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  const offOrigin = new Set();
+  page.on('request', r => {
+    const url = r.url();
+    if (r.resourceType() === 'document') return;
+    if (/^(data|blob|about|javascript):/.test(url)) return;
+    if (url.startsWith(base)) return;
+    offOrigin.add(`${r.resourceType()} ${url}`);
+  });
+
+  await page.goto(`${base}/docs.html`, { waitUntil: 'networkidle' });
+  const slugs = await page.evaluate(() => DOCS.map(d => d.slug));
+  const problems = [];
+
+  for (const slug of slugs) {
+    await page.goto(`${base}/docs.html#${slug}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(600);
+    if (mutate) { await page.evaluate(mutate); await page.waitForTimeout(120); }
+
+    const r = await page.evaluate(() => {
+      const c = document.getElementById('content');
+      const heads = [...c.querySelectorAll('h2,h3')];
+      const outline = [...document.querySelectorAll('#rail a')].map(a => a.getAttribute('href') || '');
+      const seen = {};
+      document.querySelectorAll('[id]').forEach(e => { seen[e.id] = (seen[e.id] || 0) + 1; });
+      return {
+        noId: heads.filter(h => !h.id).map(h => h.textContent.trim().slice(0, 50)),
+        missing: heads.filter(h => h.id && !outline.includes('#' + h.id))
+                      .map(h => `${h.tagName} “${h.textContent.trim().slice(0, 50)}”`),
+        dead: outline.filter(h => h.startsWith('#') && !document.getElementById(h.slice(1))),
+        dupIds: Object.keys(seen).filter(k => seen[k] > 1),
+        heads: heads.length, outline: outline.length,
+      };
+    });
+    if (r.noId.length) problems.push(`docs#${slug}: ${r.noId.length} heading(s) carry no id: ${r.noId.join(' | ')}`);
+    if (r.missing.length) problems.push(`docs#${slug}: ${r.missing.length} of ${r.heads} heading(s) missing from the on-page outline: ${r.missing.join(' | ')}`);
+    if (r.dead.length) problems.push(`docs#${slug}: outline link(s) pointing at no element: ${r.dead.join(', ')}`);
+    if (r.dupIds.length) problems.push(`docs#${slug}: duplicate id(s): ${r.dupIds.join(', ')}`);
+
+    // Narrow end: the shell is one column and nothing may push the page sideways.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(160);
+    if (mutate) await page.evaluate(mutate);
+    const over = await page.evaluate(() => {
+      const de = document.documentElement;
+      const n = de.scrollWidth - de.clientWidth;
+      if (n <= 1) return null;
+      let worst = null;
+      for (const el of document.querySelectorAll('body *')) {
+        const cs = getComputedStyle(el);
+        if (cs.position === 'fixed') continue;
+        const b = el.getBoundingClientRect();
+        if (b.width <= 0 || b.right <= 0) continue;
+        let p = el.parentElement, inside = false;
+        while (p && p !== document.body) {
+          if (/auto|scroll|hidden|clip/.test(getComputedStyle(p).overflowX)) { inside = true; break; }
+          p = p.parentElement;
+        }
+        if (inside) continue;
+        if (b.right > window.innerWidth + 1 && (!worst || b.right > worst.right))
+          worst = { tag: el.tagName, cls: String(el.className).slice(0, 50), right: Math.round(b.right) };
+      }
+      return { n, worst };
+    });
+    if (over) problems.push(`docs#${slug} at 390px: ${over.n}px of horizontal overflow` +
+      (over.worst ? ` — widest offender ${over.worst.tag}.${over.worst.cls} reaching ${over.worst.right}px` : ''));
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+
+  offOrigin.forEach(u => problems.push(`docs chapters: ${u} — the site must be self-contained`));
+  await ctx.close();
+  return { problems, chapters: slugs.length };
+}
+
+// ---------------------------------------------------------------------------
 // App-shell stickiness — the landing is laid out AS the mail client, so its
 // folder rail and message list are position:sticky panes beside a long reader.
 // Two ways that silently breaks, both of which shipped and neither of which is
@@ -673,6 +766,31 @@ async function selftest(browser, base) {
     console.log(`  ${caught ? 'caught  ' : 'MISSED  '} ${name}`);
     if (!caught) allCaught = false;
   }
+
+  // The per-chapter docs checks, mutated the same way.
+  const docsCases = [
+    ['docs-outline-gap', () => {
+      // Drop one outline entry. A heading you cannot reach from the outline is
+      // the failure this exists for, and it is invisible unless counted.
+      const a = document.querySelector('#rail a');
+      if (a) a.remove();
+    }],
+    ['docs-chapter-overflow', () => {
+      // A wide block in the article, which is where a real one arrives — an
+      // un-wrapped table or a long <pre>.
+      if (document.getElementById('mutant-wide')) return;
+      const d = document.createElement('div');
+      d.id = 'mutant-wide';
+      d.style.cssText = 'width:3000px;height:12px;background:red';
+      document.getElementById('content').appendChild(d);
+    }],
+  ];
+  for (const [name, mutate] of docsCases) {
+    const r = await checkDocsOutline(browser, base, mutate);
+    const caught = r.problems.length > 0;
+    console.log(`  ${caught ? 'caught  ' : 'MISSED  '} ${name}`);
+    if (!caught) allCaught = false;
+  }
   return allCaught;
 }
 
@@ -707,6 +825,12 @@ async function main() {
     }
     await checkCrossPageAnchors(browser, base);
     await checkDocsRoutes(browser, base);
+
+    const outline = await checkDocsOutline(browser, base);
+    outline.problems.forEach(p => fail('docs-chapter', 'docs.html', p));
+    if (!outline.problems.length)
+      note(`docs outline: ${outline.chapters} chapters, every heading in the on-page outline, ` +
+           `no dead outline link, nothing overflowing at 390px, no off-origin request`);
 
     const shell = await checkAppShell(browser, base);
     if (!shell.applicable) {
