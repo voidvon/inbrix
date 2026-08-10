@@ -99,7 +99,14 @@ html[data-theme="dark"]{
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:84px;overflow-x:clip}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
-  font-size:16px;line-height:1.6;font-weight:380;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  font-size:16px;line-height:1.6;font-weight:380;-webkit-font-smoothing:antialiased;
+  /* `clip`, not `hidden`. A non-visible overflow-x on <body> forces overflow-y
+     to `auto`, which makes the body a scroll container — and every
+     position:sticky descendant then sticks to THAT container instead of the
+     viewport, so the folder rail and message list scrolled away with the page
+     instead of staying put. `clip` gives the same protection against sideways
+     bleed without creating a scroll container. html already uses it. */
+  overflow-x:clip}
 body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;background:
   radial-gradient(1000px 560px at 84% -10%, color-mix(in srgb,var(--coral) 12%, transparent), transparent 62%),
   radial-gradient(820px 480px at -8% 6%, color-mix(in srgb,var(--teal) 10%, transparent), transparent 58%)}
@@ -311,9 +318,8 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
 }
 
 /* the ticker reads as a torn-off tape stub, so it gets a perforated top edge
-   rather than a plain rule — the same punched-hole recipe footer.foot::before
-   already uses, just facing the other way: a dark strip (matching the ticker
-   it sits on) with paper-coloured circles cut through it. */
+   rather than a plain rule: a dark strip (matching the ticker it sits on) with
+   paper-coloured circles cut through it. */
 .tear{height:13px;margin-bottom:-1px;position:relative;z-index:1;background:
   radial-gradient(circle at 6.5px 6.5px, var(--paper) 5.6px, transparent 6px) 0 0/13px 13px repeat-x,
   var(--dark)}
@@ -568,18 +574,35 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
 .pillar ul{list-style:none;margin:0;padding:0;display:grid;gap:9px}
 .pillar li{position:relative;padding-left:18px;font-size:13.5px;color:var(--slate)}
 .pillar li::before{content:"";position:absolute;left:0;top:9px;width:10px;height:1.5px;background:var(--coral)}
-footer.foot{background:var(--surface);border-top:1px solid var(--rule);margin-top:clamp(50px,8vw,90px);position:relative}
-/* stamp perforation along the top edge */
-footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:18px;
-  background:radial-gradient(circle at 9px 9px, var(--paper) 8px, transparent 8.5px) 0 0/18px 18px repeat-x}
-.foot-in{display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between;padding:36px 0 26px}
-.foot-in .l{display:flex;align-items:center;gap:11px;color:var(--slate);font-size:13.5px}
-.foot-in .l img{width:22px;height:22px;border-radius:6px}
-.foot-in .links{display:flex;gap:24px;flex-wrap:wrap}
-.foot-in .links a{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate)}
-.foot-in .links a:hover{color:var(--coral)}
-.legal{border-top:1px dotted var(--rule);padding:14px 0 26px;display:flex;justify-content:space-between;gap:14px;
-  flex-wrap:wrap;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--slate-2)}
+/* — status bar ————————————————————————————————————————————————————
+   The strip along the bottom edge of a mail client's window, and nothing
+   more. What used to sit here was a marketing footer slab — logo line, four
+   uppercase links, a legal rule — and on a page that is laid out AS the
+   product it read as a second, differently-shaped website bolted under the
+   app. So: app chrome instead. One hairline, ~30px, the same uppercase mono
+   the message-list header already uses, and it says only things that are
+   actually true of the page — the open message and the message count, both
+   driven by the same state the rail and list are (see the status-bar block
+   in the script below), exactly like the search box that really searches.
+
+   It is a <footer> element because it is the last-line chrome of the
+   document, which is also what the suite chrome gate asserts a landing has.
+   The licence deliberately is NOT here: a status bar is not where a reader
+   looks for it, it lives in the hero slug, and the gate forbids it here. */
+footer.statusbar{grid-column:1/-1;display:flex;align-items:center;gap:9px;min-height:30px;
+  padding:0 var(--gut);border-top:1px solid var(--rule);background:var(--surface-alt);
+  font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--slate-2);white-space:nowrap}
+.statusbar .dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--teal);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 22%, transparent)}
+.statusbar .sep{opacity:.45}
+.statusbar .now{color:var(--slate);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.statusbar .sp{flex:1;min-width:9px}
+.statusbar .vulos-foot{font-size:11.5px;letter-spacing:.02em;text-transform:none;gap:7px;
+  color:var(--slate-2);flex:none}
+.statusbar .vulos-foot img{width:14px;height:14px;border-radius:4px}
+.statusbar .vulos-foot strong{font-weight:600}
+@media(max-width:560px){.statusbar .sep,.statusbar .now{display:none}}
 
 /* ---------------- legibility floor ----------------
    12px is the floor for anything that is read rather than scanned. This used
@@ -591,7 +614,6 @@ footer.foot::before{content:"";position:absolute;top:-9px;left:0;right:0;height:
 .spec dt,.spec dd{font-size:12px}
 .aside-links a span{font-size:12px}
 .warn code,.pillar li code,.route-stack code,.routes code{font-size:.92em}
-.legal,.legal span{font-size:12px}
 .tag{font-size:12px}
 .term .name{font-size:12px}
 .aside-run .p{font-size:12.5px}
@@ -814,6 +836,10 @@ section[id]{scroll-margin-top:76px}
     </a>
 
     <div class="railfoot">
+      <a class="fold" href="./docs.html#changelog">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+        Changelog
+      </a>
       <a class="fold" href="./docs.html#configuration">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         config.toml
@@ -1379,24 +1405,19 @@ key = "a-32-character-encryption-key!!"</code></pre>
     <p class="lb-cap"><span id="lb-name"></span><span id="lb-dim">2560 × 1600 · live capture</span></p>
   </dialog>
   </div><!-- /.reader -->
+
+  <!-- ═══ Status bar — the app's bottom strip ════════════════════════ -->
+  <footer class="statusbar">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="now" id="st-now">Inbox</span>
+    <span class="sep" aria-hidden="true">/</span>
+    <span class="now" id="st-msg">What’s inside</span>
+    <span class="sp"></span>
+    <a class="vulos-foot" href="https://vulos.org" target="_blank" rel="noopener"><img src="./assets/vulos-logo.png" alt="" width="14" height="14"><span>Part of <strong>Vulos</strong></span></a>
+  </footer>
 </div><!-- /.app -->
 </main>
 
-<footer class="foot">
-  <div class="sheet">
-    <div class="foot-in">
-      <a class="vulos-foot" href="https://vulos.org" target="_blank" rel="noopener"><img src="./assets/vulos-logo.png" alt="" width="18" height="18"><span>Part of <strong>Vulos</strong> — open, self-hostable software</span></a>
-      <div class="links">
-        <a href="./docs.html">Docs</a>
-        <a href="./docs.html#api">API</a>
-        <a href="./docs.html#changelog">Changelog</a>
-        <a href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener">GitHub</a>
-      </div>
-    </div>
-    <div class="legal"><span>© lilmail contributors</span><span>written in Go · served from one binary</span></div>
-  </div>
-  <div class="airmail"></div>
-</footer>
 
 <script src="./assets/vendor/highlight.min.js" defer></script>
 <script>
@@ -1499,11 +1520,20 @@ document.querySelectorAll('.copy').forEach(btn => btn.addEventListener('click', 
 
   if (!marks.length) return;
 
+  // The status bar names the open message. Same single source of truth as the
+  // rail and the list — one selection, three places showing it — so the strip
+  // along the bottom cannot drift into saying something the page is not doing.
+  const stMsg = document.getElementById('st-msg');
+
   const select = (id) => {
     marks.forEach(m => m.targets.forEach(t => {
       if (m.id === id) t.setAttribute('aria-current', 'true');
       else t.removeAttribute('aria-current');
     }));
+    if (stMsg) {
+      const from = document.querySelector(`[data-row="${id}"] .mfrom`);
+      if (from) stMsg.textContent = from.textContent.trim();
+    }
   };
 
   /* Which section am I reading? The one whose top has most recently passed
