@@ -416,6 +416,96 @@ async function checkDocsRoutes(browser, base) {
 }
 
 // ---------------------------------------------------------------------------
+// App-shell stickiness — the landing is laid out AS the mail client, so its
+// folder rail and message list are position:sticky panes beside a long reader.
+// Two ways that silently breaks, both of which shipped and neither of which is
+// visible in the source:
+//
+//   a) an ancestor becomes a scroll container and captures the sticky. A
+//      non-`visible` overflow-x forces overflow-y to `auto`, so a single
+//      `body{overflow-x:hidden}` — added to stop sideways bleed — made <body>
+//      a scroller and both panes scrolled away with the page. Measured
+//      rail.top: 68 → -1132 → -3932. The cure is `overflow-x:clip`.
+//
+//   b) the panes release too late and paint over what follows. Chrome clamps a
+//      sticky GRID ITEM to the bottom of the grid CONTAINER rather than to its
+//      own grid area, so putting the status bar in as a second grid row moved
+//      the release point 30px down and the rail covered the bar at the foot of
+//      the page (rail 60..900 against a bar at 870..900).
+//
+// Both are measured rather than asserted structurally: any future layout that
+// keeps the panes pinned and releases them cleanly passes, however it is built.
+// ---------------------------------------------------------------------------
+const shellGeometry = (page) => page.evaluate(() => {
+  const box = s => { const e = document.querySelector(s); if (!e) return null;
+    const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; };
+  const stick = s => { const e = document.querySelector(s); if (!e) return null;
+    const cs = getComputedStyle(e);
+    return cs.position === 'sticky' ? parseFloat(cs.top) : null; };
+  return {
+    y: window.scrollY,
+    maxScroll: document.documentElement.scrollHeight - window.innerHeight,
+    rail: box('.rail'), mlist: box('.mlist'), app: box('.app'), status: box('footer.statusbar'),
+    stickTop: { rail: stick('.rail'), mlist: stick('.mlist') },
+  };
+});
+
+async function checkAppShell(browser, base, mutate) {
+  const ctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+  const page = await ctx.newPage();
+  await page.goto(`${base}/index.html`, { waitUntil: 'networkidle' });
+  await page.evaluate(() => document.querySelectorAll('.rv,.reveal').forEach(e => e.classList.add('in')));
+  if (mutate) await page.evaluate(mutate);
+  await page.waitForTimeout(350);
+
+  const scrollTo = async (y) => {
+    await page.evaluate(yy => window.scrollTo({
+      top: yy === 'max' ? document.documentElement.scrollHeight - window.innerHeight : yy,
+      behavior: 'instant',
+    }), y);
+    await page.waitForTimeout(220);
+    return shellGeometry(page);
+  };
+
+  const problems = [];
+  const probe = await shellGeometry(page);
+  // A page too short to scroll would pass every assertion below without
+  // testing anything. Say so rather than banking a hollow pass.
+  if (probe.maxScroll < 3500 || !probe.rail || probe.stickTop.rail === null) {
+    await ctx.close();
+    return { problems, applicable: false };
+  }
+
+  const mid = await scrollTo(3000);
+  for (const pane of ['rail', 'mlist']) {
+    const m = mid[pane], want = mid.stickTop[pane];
+    if (!m || want === null) continue;
+    if (Math.abs(m.top - want) > 2) {
+      problems.push(`.${pane} is not pinned at scrollY=${Math.round(mid.y)}: it declares ` +
+        `top:${want}px but sits at ${Math.round(m.top)}px — an ancestor is a scroll ` +
+        `container and has captured the sticky (body{overflow-x:hidden} does exactly this; use clip)`);
+    }
+  }
+
+  const end = await scrollTo('max');
+  for (const pane of ['rail', 'mlist']) {
+    const m = end[pane];
+    if (!m) continue;
+    if (end.app && m.bottom > end.app.bottom + 2) {
+      problems.push(`.${pane} does not release with its container: at the bottom of the page it ` +
+        `ends at ${Math.round(m.bottom)}px, past .app's ${Math.round(end.app.bottom)}px`);
+    }
+    if (end.status && m.bottom > end.status.top + 1) {
+      problems.push(`.${pane} paints over the status bar: pane ends at ${Math.round(m.bottom)}px, ` +
+        `the bar starts at ${Math.round(end.status.top)}px (a sticky grid item clamps to the grid ` +
+        `CONTAINER, so the bar must not be a row inside .app)`);
+    }
+  }
+  await ctx.close();
+  return { problems, applicable: true };
+}
+
+// ---------------------------------------------------------------------------
 // Self-test: break each invariant on purpose and demand the check notices.
 // A gate that has quietly stopped failing looks exactly like one that works.
 //
@@ -558,6 +648,31 @@ async function selftest(browser, base) {
     if (!caught) allCaught = false;
     await ctx.close();
   }
+
+  // The two app-shell mutations reproduce the exact defects that shipped, so
+  // this pair is a regression test as much as a proof the check discriminates.
+  const shellCases = [
+    ['sticky-captured', () => {
+      // The original bug, verbatim: a non-visible overflow-x forces overflow-y
+      // to auto, <body> becomes a scroll container, and the panes stick to it.
+      document.body.style.setProperty('overflow-x', 'hidden', 'important');
+    }],
+    ['sticky-overlaps-statusbar', () => {
+      // Fold the status bar back in as a grid row of .app — the release point
+      // then follows the grid CONTAINER and the rail covers the bar.
+      const app = document.querySelector('.app'), bar = document.querySelector('footer.statusbar');
+      if (!app || !bar) return;
+      bar.style.gridColumn = '1/-1';
+      app.appendChild(bar);
+    }],
+  ];
+  for (const [name, mutate] of shellCases) {
+    const r = await checkAppShell(browser, base, mutate);
+    if (!r.applicable) { console.log(`  n/a      ${name} — no sticky shell on this page`); continue; }
+    const caught = r.problems.length > 0;
+    console.log(`  ${caught ? 'caught  ' : 'MISSED  '} ${name}`);
+    if (!caught) allCaught = false;
+  }
   return allCaught;
 }
 
@@ -592,6 +707,14 @@ async function main() {
     }
     await checkCrossPageAnchors(browser, base);
     await checkDocsRoutes(browser, base);
+
+    const shell = await checkAppShell(browser, base);
+    if (!shell.applicable) {
+      note('app-shell: index.html has no sticky rail to test at 1500×900');
+    } else {
+      shell.problems.forEach(p => fail('sticky-shell', 'index.html 1500×900', p));
+      if (!shell.problems.length) note('app-shell: rail and message list pin under the top bar and release cleanly at the end of .app');
+    }
 
     console.log(`\nchecked ${VIEWPORTS.length} viewports × 2 themes × 2 pages; ` +
                 `${sampled} rendered images measured\n`);

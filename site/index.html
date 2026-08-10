@@ -589,7 +589,7 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
    document, which is also what the suite chrome gate asserts a landing has.
    The licence deliberately is NOT here: a status bar is not where a reader
    looks for it, it lives in the hero slug, and the gate forbids it here. */
-footer.statusbar{grid-column:1/-1;display:flex;align-items:center;gap:9px;min-height:30px;
+footer.statusbar{display:flex;align-items:center;gap:9px;min-height:30px;
   padding:0 var(--gut);border-top:1px solid var(--rule);background:var(--surface-alt);
   font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
   color:var(--slate-2);white-space:nowrap}
@@ -602,7 +602,9 @@ footer.statusbar{grid-column:1/-1;display:flex;align-items:center;gap:9px;min-he
   color:var(--slate-2);flex:none}
 .statusbar .vulos-foot img{width:14px;height:14px;border-radius:4px}
 .statusbar .vulos-foot strong{font-weight:600}
-@media(max-width:560px){.statusbar .sep,.statusbar .now{display:none}}
+/* Narrow: drop the open message, keep the folder. The dot on its own read as
+   an orphaned bullet with nothing to label. */
+@media(max-width:560px){.statusbar .sep,.statusbar #st-msg{display:none}}
 
 /* ---------------- legibility floor ----------------
    12px is the floor for anything that is read rather than scanned. This used
@@ -1405,17 +1407,24 @@ key = "a-32-character-encryption-key!!"</code></pre>
     <p class="lb-cap"><span id="lb-name"></span><span id="lb-dim">2560 × 1600 · live capture</span></p>
   </dialog>
   </div><!-- /.reader -->
-
-  <!-- ═══ Status bar — the app's bottom strip ════════════════════════ -->
-  <footer class="statusbar">
-    <span class="dot" aria-hidden="true"></span>
-    <span class="now" id="st-now">Inbox</span>
-    <span class="sep" aria-hidden="true">/</span>
-    <span class="now" id="st-msg">What’s inside</span>
-    <span class="sp"></span>
-    <a class="vulos-foot" href="https://vulos.org" target="_blank" rel="noopener"><img src="./assets/vulos-logo.png" alt="" width="14" height="14"><span>Part of <strong>Vulos</strong></span></a>
-  </footer>
 </div><!-- /.app -->
+
+<!-- ═══ Status bar — the app's bottom strip ══════════════════════════════
+     Deliberately a SIBLING of .app, not a row inside it. Chrome clamps a
+     sticky grid item to the bottom of the grid CONTAINER, not to the bottom
+     of its own grid area, so with this strip as a second grid row the rail
+     and message list released 30px too late and painted over it at the foot
+     of the page (measured: rail 60..900 against a status bar at 870..900).
+     Outside the grid the release is exact — rail 30..870, bar 870..900.
+     scripts/check-render.mjs asserts this; do not fold it back in. -->
+<footer class="statusbar">
+  <span class="dot" aria-hidden="true"></span>
+  <span class="now">Inbox</span>
+  <span class="sep" aria-hidden="true">/</span>
+  <span class="now" id="st-msg">What’s inside</span>
+  <span class="sp"></span>
+  <a class="vulos-foot" href="https://vulos.org" target="_blank" rel="noopener"><img src="./assets/vulos-logo.png" alt="" width="14" height="14"><span>Part of <strong>Vulos</strong></span></a>
+</footer>
 </main>
 
 
