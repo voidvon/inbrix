@@ -8,7 +8,7 @@ common configuration scenarios.
 
 | Requirement | Notes |
 |-------------|-------|
-| Go 1.23+ | Only needed to build from source |
+| Go 1.25+ | Only needed to build from source (`go.mod` requires `go 1.25.0`) |
 | IMAP server | Any IMAP4rev1 server (port 993 TLS or 143 STARTTLS) |
 | SMTP server | Any SMTP server (port 587 STARTTLS or 465 implicit TLS) |
 
@@ -94,22 +94,24 @@ port 993 and does not expose this flag):
 insecure_skip_verify = true
 ```
 
-### HTTPS with your own certificate
+### HTTPS
+
+lilmail does not terminate TLS. It serves plain HTTP on `[server] port` and
+nothing else, so HTTPS means a reverse proxy in front of it (nginx, Caddy,
+Traefik — whatever you already run). Point the proxy at `http://127.0.0.1:3000`
+and give it the certificate.
+
+Then tell lilmail it is being served over HTTPS, so the session and CSRF
+cookies get the `Secure` flag:
 
 ```toml
-[ssl]
-enabled    = true
-cert_file  = "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
-key_file   = "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
-port       = 443
-http_port  = 80
-auto_redirect = true
-domain     = "yourdomain.com"
-hsts_max_age = 31536000
-
 [server]
 secure_cookies = true
 ```
+
+`[ssl]` is **not** how you serve HTTPS — it only validates a certificate pair
+at startup and switches on the `Strict-Transport-Security` header. See
+[the `[ssl]` section](CONFIGURATION.md#ssl) before enabling it.
 
 ### OAuth2 / OpenID Connect
 
@@ -131,19 +133,24 @@ your identity provider. Password login continues to work alongside OAuth2.
 
 ### Run behind a reverse proxy (nginx / Caddy)
 
-lilmail trusts standard `X-Forwarded-*` headers. Configure your proxy to pass
-them, set `[server] secure_cookies = true`, and let your proxy handle TLS
-termination instead of using `[ssl]`.
+Let the proxy handle TLS termination and set `[server] secure_cookies = true`.
+
+**lilmail does not read `X-Forwarded-For` or any other `X-Forwarded-*` header.**
+No proxy-header trust is configured, so the client address it sees is whatever
+connected to it directly — behind a proxy, that is the proxy. The practical
+consequence is that the per-IP login, send and AI rate limits collapse into
+**global** limits. If you need per-client limiting behind a proxy, enforce it in
+the proxy.
 
 ## Verifying the installation
 
 ```bash
 curl http://localhost:3000/health
-# {"status":"ok"}
+# OK
 ```
 
-The `/health` endpoint returns `200 {"status":"ok"}` when the server is running.
-It does not require authentication.
+The `/health` endpoint returns `200` with the plain-text body `OK` when the
+server is running. It is not JSON. It does not require authentication.
 
 ## Next steps
 

@@ -75,7 +75,7 @@ make screenshots
 | Tool | Version | Notes |
 |------|---------|-------|
 | Node.js | 18+ | Required to run the Playwright scripts |
-| Go 1.23+ | — | To build the lilmail binary |
+| Go 1.25+ | — | To build the lilmail binary (`go.mod` requires `go 1.25.0`) |
 
 Playwright Chromium is installed automatically on first run.
 

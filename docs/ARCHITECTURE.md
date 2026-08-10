@@ -23,7 +23,7 @@ lilmail/
 │   ├── calendar.go          # CalDAV event types
 │   └── contact.go           # CardDAV contact types
 ├── storage/
-│   ├── session.go           # bbolt-backed session/credential store
+│   ├── session.go           # File-backed fiber session store (one JSON file per key)
 │   ├── kv.go                # Durable KV seam + backend selector (Open)
 │   ├── bolt.go              # Embedded bbolt backend (default)
 │   ├── postgres.go          # Optional shared Postgres backend (opt-in)
@@ -90,7 +90,8 @@ flowchart TD
 ### Authentication
 
 `handlers/web/auth.go` (and `handlers/web/oauth.go`) handle login/logout.
-Credentials are encrypted with AES-256-GCM (`[encryption].key`) before being
+Credentials are encrypted with AES-GCM (`[encryption].key`; AES-128/192/256
+chosen by the key's 16/24/32-byte length) before being
 stored in the JWT session. The JWT is signed with `[jwt].secret` and stored in
 a `SameSite=Lax` HTTP-only cookie (`Secure` when `[server].secure_cookies =
 true`).
@@ -121,9 +122,13 @@ based on the sanitized username and folder name (path-traversal-safe).
 
 ### Conversation threading
 
-`storage/session.go` wraps a shared bbolt database per user (one file per
-session identity). Thread graphs are built using the JWZ algorithm over
-`Message-ID`, `References`, and `In-Reply-To` headers and stored in bbolt.
+Thread graphs are built using the JWZ algorithm over `Message-ID`, `References`
+and `In-Reply-To` headers, and stored in bbolt by `handlers/api/threadstore.go`,
+which opens its own database file directly.
+
+(`storage/session.go` is unrelated to threading despite the neighbouring name:
+it is `FileStorage`, the fiber session store, and it writes one JSON file per
+session key under `./sessions`. No bbolt is involved.)
 
 ### Durable storage seam
 
@@ -138,8 +143,11 @@ Vulos services that need to read the same store; it is never the default. See
 ### Shared object storage (supplementary only)
 
 lilmail's primary stores are **IMAP** (the mail itself — the durable source of
-truth) and the **KV seam** above (threads, recipients, push state). Neither
-needs object storage, so lilmail's participation in the Vulos unified object
+truth), the **KV seam** above (scheduled send, settings, connected accounts) and
+a handful of bbolt files opened directly rather than through the seam (thread
+graphs, recipient history, push subscriptions — so `backend = "postgres"` does
+**not** move those three). Neither needs object storage, so lilmail's
+participation in the Vulos unified object
 store is deliberately **light and supplementary**.
 
 `storage/object.go` adds an optional S3 `ObjectStore` seam that is used for one
@@ -226,7 +234,7 @@ The UI is server-rendered Go templates enhanced with
 [HTMX](https://htmx.org/) (partial page updates) and
 [Alpine.js](https://alpinejs.dev/) (inline interactivity). All vendor JS is
 checked in under `assets/vendor/` — there is no npm or build step. CSS is
-hand-written in `assets/css/mail.css` (~52 KB) with a dark-mode theme.
+hand-written in `assets/css/mail.css` (~77 KB) with a dark-mode theme.
 
 ## Build and embedding
 

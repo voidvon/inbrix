@@ -207,25 +207,39 @@ to set for standalone use.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `key` | string | — | 32-byte AES-GCM key for encrypting credentials/tokens at rest. **Must be exactly 32 bytes. Change in production.** |
+| `key` | string | — | AES-GCM key for encrypting credentials/tokens at rest. **Must be exactly 16, 24 or 32 bytes** (AES-128/192/256); any other non-empty length is fatal at startup. 32 is the recommended choice. **Change in production.** |
 
 ---
 
 ## `[ssl]`
 
-Enable HTTPS termination directly in lilmail (alternative: use a reverse proxy
-and set `[server] secure_cookies = true`).
+**lilmail does not terminate TLS.** There is one listener and it is plain HTTP
+on `[server] port` (`app.Listen` in `main.go`). Enabling this section does not
+open a socket on 443, does not redirect HTTP → HTTPS, and does not serve
+HTTPS. Terminate TLS in a reverse proxy.
+
+What `[ssl] enabled = true` actually does, and all it does:
+
+1. **Validates the key pair at startup.** `cert_file` and `key_file` must both
+   be set and must load as an X.509 pair, or the server exits (`ValidateSSL`).
+2. **Emits `Strict-Transport-Security`** — but only when `domain` is also set —
+   as `max-age=<hsts_max_age>; includeSubDomains`.
+
+So the section is, in practice, an HSTS switch with a cert-file sanity check in
+front of it. Use it when something in front of you *is* terminating TLS and you
+want lilmail to send HSTS itself; otherwise set the header in the proxy and
+leave this section alone.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable HTTPS |
-| `cert_file` | string | — | Path to TLS certificate (PEM) |
-| `key_file` | string | — | Path to TLS private key (PEM) |
-| `port` | int | `443` | HTTPS listen port |
-| `http_port` | int | `80` | HTTP listen port (for redirect when `auto_redirect = true`) |
-| `auto_redirect` | bool | `false` | Redirect HTTP → HTTPS |
-| `domain` | string | — | Domain for HSTS header |
-| `hsts_max_age` | int | `0` | HSTS `max-age` in seconds. `0` disables HSTS. Recommended: `31536000` (1 year) |
+| `enabled` | bool | `false` | Turn on the cert-pair check and (with `domain`) the HSTS header. **Does not enable HTTPS.** |
+| `cert_file` | string | — | Path to a TLS certificate (PEM). Required when `enabled`; only loaded to verify it parses |
+| `key_file` | string | — | Path to the matching private key (PEM). Required when `enabled`; only loaded to verify it parses |
+| `domain` | string | — | Required for HSTS. With `enabled` but no `domain`, no HSTS header is sent |
+| `hsts_max_age` | int | `31536000` | HSTS `max-age` in seconds (1 year). Only used when `enabled` **and** `domain` are set |
+| `port` | int | `443` | **Not read.** Defaulted and never used — nothing listens on it |
+| `http_port` | int | `80` | **Not read.** Defaulted and never used |
+| `auto_redirect` | bool | `true` | **Not read.** Defaulted and never used; there is no redirect listener |
 
 ---
 
@@ -413,6 +427,7 @@ cache and key stores are unreachable.
 
 | Route | Description |
 |-------|-------------|
+| `GET /api/ai/capabilities` | Which of the routes below are usable with the current `[ai]` config |
 | `POST /api/ai/compose` | Smart compose / continue / rewrite |
 | `POST /api/ai/summarize` | Thread summary + key points + action items |
 | `POST /api/ai/reply` | Three reply suggestions (concise / detailed / decline) |

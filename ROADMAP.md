@@ -81,7 +81,6 @@ service). This document tracks where we are and where we're going.
   `<object>`, `<link>`, inline/`<style>` `url()`/`@import`), not just `<img src>`
 - **BIMI verified sender brand logo** — DMARC-gated, SSRF-screened, SVG-sanitized,
   fails closed on every ambiguous case
-- Dependencies and toolchain tracked against `govulncheck`/Dependabot
 
 **UI/UX — Gmail-inspired, responsive, dark mode**
 - Responsive three-pane app shell (resizable, collapsible sidebar / mobile
