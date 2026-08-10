@@ -105,15 +105,25 @@ type EncryptionConfig struct {
 	Key string `toml:"key"` // 32-byte key for AES encryption
 }
 
+// SSLConfig does NOT make LilMail serve HTTPS. There is one listener and it is
+// plain HTTP on [server] port (app.Listen in main.go). Enabling this section
+// does exactly two things: ValidateSSL checks that cert_file and key_file load
+// as an X.509 pair (fatal at startup if they do not), and — when Domain is also
+// set — GetSecurityHeaders emits Strict-Transport-Security. Terminate TLS in a
+// reverse proxy.
+//
+// The section once also carried `port`, `http_port` and `auto_redirect`. They
+// were only ever defaulted, never read: nothing listened on them and no
+// redirect listener existed. They have been removed rather than left promising
+// control they never had. Existing config files that still set them keep
+// loading — toml.DecodeFile below discards the MetaData and so ignores unknown
+// keys (TestLoadConfig_UnknownSSLKeysAreIgnored proves it).
 type SSLConfig struct {
-	Enabled      bool   `toml:"enabled"`
-	CertFile     string `toml:"cert_file"`     // Path to fullchain.pem
-	KeyFile      string `toml:"key_file"`      // Path to privkey.pem
-	Port         int    `toml:"port"`          // HTTPS port (default 443)
-	HTTPPort     int    `toml:"http_port"`     // HTTP port for redirect (default 80)
-	AutoRedirect bool   `toml:"auto_redirect"` // Redirect HTTP to HTTPS
-	Domain       string `toml:"domain"`        // Domain name for HSTS
-	HSTSMaxAge   int    `toml:"hsts_max_age"`  // Max age for HSTS in seconds
+	Enabled    bool   `toml:"enabled"`
+	CertFile   string `toml:"cert_file"`    // Path to fullchain.pem
+	KeyFile    string `toml:"key_file"`     // Path to privkey.pem
+	Domain     string `toml:"domain"`       // Domain name for HSTS; required for the header to be sent
+	HSTSMaxAge int    `toml:"hsts_max_age"` // Max age for HSTS in seconds
 }
 
 // CalDAVConfig configures the optional CalDAV calendar integration.
@@ -372,11 +382,9 @@ func LoadConfig(filepath string) (*Config, error) {
 	// this and an absent key keeps the secure default. (Fixes #8.)
 	config.IMAP.TLS = true
 
-	// Default SSL configuration
-	config.SSL.Port = 443
-	config.SSL.HTTPPort = 80
+	// Default SSL configuration. Only the HSTS max-age is meaningful — see the
+	// comment on SSLConfig for why there is no port/redirect default here.
 	config.SSL.HSTSMaxAge = 31536000 // 1 year
-	config.SSL.AutoRedirect = true
 
 	// Default OAuth2 configuration
 	config.OAuth2.Mechanism = "xoauth2"

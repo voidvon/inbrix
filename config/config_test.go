@@ -363,3 +363,51 @@ llmux_cache  = true
 		t.Error("llmux_cache defaults to true; it must default to false")
 	}
 }
+
+// TestLoadConfig_UnknownSSLKeysAreIgnored is the safety proof behind removing
+// the `port`, `http_port` and `auto_redirect` fields from SSLConfig. They were
+// defaulted and never read, but they had been documented, so an operator's
+// config.toml may well still contain them. Deleting the struct fields is only
+// safe if the decoder tolerates keys it does not know about: a strict decoder
+// would turn an upgrade into a server that refuses to start, which is worse
+// than the dead knobs it removes.
+//
+// BurntSushi/toml reports unrecognised keys through the MetaData return value
+// rather than as an error, and LoadConfig discards that value — so unknown keys
+// are ignored. This test runs a config carrying all three removed keys (plus a
+// key that never existed at all) through the real LoadConfig and asserts it
+// loads, with the live neighbours in the same section still binding.
+func TestLoadConfig_UnknownSSLKeysAreIgnored(t *testing.T) {
+	cfg, err := LoadConfig(writeTempConfig(t, minimalIMAP+`
+[ssl]
+enabled       = false
+domain        = "mail.example.com"
+hsts_max_age  = 600
+port          = 443
+http_port     = 80
+auto_redirect = true
+never_existed = "whatever"
+`))
+	if err != nil {
+		t.Fatalf("LoadConfig rejected a config carrying removed [ssl] keys: %v\n"+
+			"The decoder is strict, so removing those fields breaks existing installs.", err)
+	}
+	if cfg.SSL.Domain != "mail.example.com" {
+		t.Errorf("SSL.Domain = %q, want mail.example.com", cfg.SSL.Domain)
+	}
+	if cfg.SSL.HSTSMaxAge != 600 {
+		t.Errorf("SSL.HSTSMaxAge = %d, want 600", cfg.SSL.HSTSMaxAge)
+	}
+}
+
+// TestGetSecurityHeaders_HSTSMaxAgeValue pins hsts_max_age as a live field.
+// TestGetSecurityHeaders_HSTSOnlyWhenSSLEnabledAndDomainSet above proves Domain
+// gates the header, but only asserts the header is present — it would still
+// pass if HSTSMaxAge were removed the way port/http_port/auto_redirect were.
+// This asserts the configured value reaches the header.
+func TestGetSecurityHeaders_HSTSMaxAgeValue(t *testing.T) {
+	c := &Config{SSL: SSLConfig{Enabled: true, Domain: "mail.example.com", HSTSMaxAge: 600}}
+	if got, want := c.GetSecurityHeaders()["Strict-Transport-Security"], "max-age=600; includeSubDomains"; got != want {
+		t.Errorf("HSTS = %q, want %q", got, want)
+	}
+}
