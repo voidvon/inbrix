@@ -194,7 +194,13 @@ html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{displ
 /* ---------- Right rail (on-page TOC) ---------- */
 .rail{position:sticky;top:90px;max-height:calc(100vh - 120px);overflow-y:auto;font-size:14px}
 .rail .label{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--slate-2);margin-bottom:12px}
+/* overflow-wrap:anywhere because these are HEADINGS, and a heading here can be
+   a single unbreakable token — "[storage] (VULOS_STORAGE_BROKER_SECRET)". The
+   two-line clamp only ellipsises when it runs out of LINES; a token wider than
+   the 218px rail overflows the line instead and was being sliced mid-word with
+   no ellipsis to say so. Breaking anywhere keeps the clamp meaningful. */
 .rail a{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  overflow-wrap:anywhere;
   padding:5px 0 5px 14px;color:var(--slate);border-left:1.5px solid var(--border);transition:.16s;line-height:1.45}
 .rail a.lvl3{padding-left:26px;font-size:13.4px}
 .rail a:hover{color:var(--ink);border-color:var(--border-strong)}
