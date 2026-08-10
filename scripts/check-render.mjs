@@ -477,10 +477,18 @@ async function checkDocsOutline(browser, base, mutate) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(160);
     if (mutate) await page.evaluate(mutate);
+    // Do NOT gate this on `documentElement.scrollWidth - clientWidth` first.
+    // That number is blind whenever <body> carries a non-visible overflow-x:
+    // measured on basin's docs page, injecting a 2400px child left
+    // documentElement.scrollWidth at 390 while body.scrollWidth read 2400, so
+    // an early return there would have skipped the scan entirely and printed a
+    // clean pass over content genuinely cut off at the viewport edge. (clip on
+    // <html> alone does not do this — lilmail's own pages report 2400 — but the
+    // check must not depend on which element happens to carry the property.)
+    // The geometric scan below needs no such gate: it reads the boxes directly.
     const over = await page.evaluate(() => {
       const de = document.documentElement;
-      const n = de.scrollWidth - de.clientWidth;
-      if (n <= 1) return null;
+      const n = Math.max(de.scrollWidth, document.body.scrollWidth) - de.clientWidth;
       let worst = null;
       for (const el of document.querySelectorAll('body *')) {
         const cs = getComputedStyle(el);
@@ -496,7 +504,7 @@ async function checkDocsOutline(browser, base, mutate) {
         if (b.right > window.innerWidth + 1 && (!worst || b.right > worst.right))
           worst = { tag: el.tagName, cls: String(el.className).slice(0, 50), right: Math.round(b.right) };
       }
-      return { n, worst };
+      return worst ? { n, worst } : null;
     });
     if (over) problems.push(`docs#${slug} at 390px: ${over.n}px of horizontal overflow` +
       (over.worst ? ` — widest offender ${over.worst.tag}.${over.worst.cls} reaching ${over.worst.right}px` : ''));
