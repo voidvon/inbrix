@@ -130,16 +130,20 @@ html[data-theme="dark"] .sun,.moon{display:none}
 html[data-theme="dark"] .moon{display:block}
 @media (prefers-color-scheme: dark){html:not([data-theme="light"]) .sun{display:none}html:not([data-theme="light"]) .moon{display:block}}
 html[data-theme="light"] .sun{display:block}html[data-theme="light"] .moon{display:none}
-.gh{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13.5px;padding:8px 14px;
+/* The mark alone carries the link now, so the pill is round rather than
+   word-shaped and is sized to the 38px icon-btn standing beside it. */
+.gh{display:grid;place-items:center;flex:none;width:38px;height:38px;
   border:1px solid var(--border);border-radius:var(--r-full);background:var(--surface);color:var(--slate);transition:.2s}
+.gh svg{display:block}
 .gh:hover{border-color:var(--coral);color:var(--ink)}
 @media(max-width:1000px){.nav-links{display:none}}
-@media(max-width:560px){.gh span,.brand .tag{display:none}}
-/* Below 380 the bar still overhung by 8px: brand 71 + two icon buttons + the
-   Vulos mark + the GitHub link measure 212, and the gaps take it past 320. The
-   GitHub link goes last — the footer and the install section both link the
-   repository, so it is the one item here that is duplicated elsewhere. */
-@media(max-width:380px){.nav .gh{display:none}}
+@media(max-width:560px){.brand .tag{display:none}}
+/* The word-shaped GitHub link used to be dropped below 380px, where it pushed
+   the bar past the viewport. As a 38px mark it now survives down to 360 — the
+   narrowest width the render gate measures — where the bar comes out exactly
+   full. Below that it is still the item that goes: the footer and the install
+   section both link the repository, so it is the one duplicated elsewhere. */
+@media(max-width:359px){.nav .gh{display:none}}
 #burger{display:none}
 @media(max-width:1000px){#burger{display:grid}}
 
@@ -390,9 +394,8 @@ footer.site{border-top:1px solid var(--border);background:var(--surface)}
     <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.2A8.2 8.2 0 0 1 9.8 4 8.4 8.4 0 1 0 20 14.2z"/></svg>
   </button>
   <a class="vulos-home" href="https://vulos.org" target="_blank" rel="noopener" title="Vulos — open, self-hostable software" aria-label="Vulos — open, self-hostable software"><img src="./assets/vulos-logo.png" alt="" width="22" height="22"></a>
-  <a class="gh" href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener">
+  <a class="gh" href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
     <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-    <span>GitHub</span>
   </a>
 </div></header>
 
