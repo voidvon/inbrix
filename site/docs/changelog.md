@@ -51,6 +51,26 @@ Versioning: [Semantic Versioning](https://semver.org/)
   across every AI route, with the same recorder proven against both live modes
   so the zero means something.
 
+### Removed
+
+- **`[ssl] port`, `[ssl] http_port` and `[ssl] auto_redirect` are gone.** All
+  three were assigned defaults (443, 80, true) and then read by nothing: LilMail
+  has one listener, plain HTTP on `[server] port`, so nothing ever listened on
+  443, nothing listened on 80, and there was no HTTP → HTTPS redirect to enable.
+  Documenting them as "not read" was a stopgap; a config key that names a port
+  is a promise, and these three could not keep it.
+
+  **No action is needed on upgrade.** A `config.toml` that still sets them loads
+  exactly as before — the TOML decoder reports unrecognised keys through a
+  metadata value that `LoadConfig` discards, so unknown keys are ignored rather
+  than rejected. That is asserted by a test that runs a config carrying all
+  three removed keys through the real load path, so the compatibility claim
+  fails loudly if the decoder is ever made strict.
+
+  `[ssl] enabled`, `cert_file`, `key_file`, `domain` and `hsts_max_age` are
+  unchanged and still do what they did: validate the certificate pair at startup
+  and emit `Strict-Transport-Security`.
+
 ---
 
 ## [1.14.0] - 2026-08-06

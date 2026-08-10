@@ -238,9 +238,12 @@ leave this section alone.
 | `key_file` | string | — | Path to the matching private key (PEM). Required when `enabled`; only loaded to verify it parses |
 | `domain` | string | — | Required for HSTS. With `enabled` but no `domain`, no HSTS header is sent |
 | `hsts_max_age` | int | `31536000` | HSTS `max-age` in seconds (1 year). Only used when `enabled` **and** `domain` are set |
-| `port` | int | `443` | **Not read.** Defaulted and never used — nothing listens on it |
-| `http_port` | int | `80` | **Not read.** Defaulted and never used |
-| `auto_redirect` | bool | `true` | **Not read.** Defaulted and never used; there is no redirect listener |
+
+Those five keys are the whole section. `port`, `http_port` and `auto_redirect`
+used to be listed here; they were never read by anything and have been removed
+rather than left implying a listener or a redirect that does not exist. If your
+`config.toml` still sets them you do not need to do anything — unknown keys are
+ignored by the decoder, so the file keeps loading unchanged.
 
 ---
 
