@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -325,6 +326,13 @@ func main() {
 	// a poll-based drain delivers them at their sendAt with restart catch-up. If
 	// the store cannot be opened we log and fall back to the storeless handler, so
 	// the rest of the API keeps working (only send-later is unavailable).
+	// The cache folder is otherwise created on first login, which is too late:
+	// this store is opened once, here, so on a fresh install bbolt failed on the
+	// missing directory and send-later stayed unavailable for the life of the
+	// process — until an operator happened to restart after logging in once.
+	if err := os.MkdirAll(config.Cache.Folder, 0o700); err != nil {
+		log.Printf("cache folder %q could not be created: %v", config.Cache.Folder, err)
+	}
 	scheduleDBPath := filepath.Join(config.Cache.Folder, "scheduled.db")
 	if kv, kvErr := storage.Open(config, scheduleDBPath); kvErr != nil {
 		log.Printf("scheduled send unavailable (store open failed): %v", kvErr)

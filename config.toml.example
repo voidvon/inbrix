@@ -60,15 +60,23 @@ port = 587
 use_starttls = true
 
 
+# LilMail does not terminate TLS. It serves plain HTTP on [server] port and is
+# meant to run behind a reverse proxy or host shell that holds the certificate.
+# Enabling this block does not give you HTTPS — the only thing it changes is
+# that a Strict-Transport-Security header is sent, which is why it also wants a
+# domain. Leave it off unless something in front of LilMail is doing TLS.
+#
+# Note that enabling it is fail-fast: cert_file and key_file must both be set
+# and must load as an X.509 pair, or the server exits at startup. Shipping this
+# block enabled with placeholder paths meant that copying this file verbatim —
+# which is exactly what the install docs tell you to do — produced an install
+# that would not boot.
 [ssl]
-enabled = true
-cert_file = "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
-key_file = "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
-port = 443
-http_port = 80
-auto_redirect = true
-domain = "yourdomain.com"
-hsts_max_age = 31536000  # 1 year in seconds
+enabled = false
+# cert_file = "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
+# key_file = "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
+# domain = "yourdomain.com"
+# hsts_max_age = 31536000  # 1 year in seconds
 
 # Optional: OAuth2 / OpenID Connect login. When enabled, a "Sign in with
 # OAuth2" button appears on the login page. The access token is presented to
