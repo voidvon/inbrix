@@ -45,6 +45,13 @@ func Render(c *fiber.Ctx, view string, data fiber.Map, layout ...string) error {
 }
 
 func RenderStatus(c *fiber.Ctx, status int, view string, data fiber.Map, layout ...string) error {
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		message, _ := data["Error"].(string)
+		if message == "" {
+			message = fiber.ErrInternalServerError.Message
+		}
+		return c.Status(status).JSON(fiber.Map{"error": message})
+	}
 	c.Status(status)
 	return Render(c, view, data, layout...)
 }

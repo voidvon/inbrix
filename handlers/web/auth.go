@@ -119,12 +119,18 @@ func (h *AuthHandler) HandleUserLogin(c *fiber.Ctx) error {
 		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Failed to create session"})
 	}
 	if len(accounts) == 0 {
+		if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+			return c.JSON(fiber.Map{"ok": true, "next": "/settings?setup=1"})
+		}
 		return c.Redirect("/settings?setup=1")
 	}
 	if h.syncer != nil {
 		for _, account := range accounts {
 			h.syncer.StartAccount(account.ID)
 		}
+	}
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		return c.JSON(fiber.Map{"ok": true, "next": "/inbox"})
 	}
 	return c.Redirect("/inbox")
 }
@@ -180,6 +186,9 @@ func (h *AuthHandler) HandleRegister(c *fiber.Ctx) error {
 	sess.SetExpiry(30 * 24 * 60 * 60 * time.Second)
 	if err := sess.Save(); err != nil {
 		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to create session"})
+	}
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "next": "/settings?setup=1"})
 	}
 	return c.Redirect("/settings?setup=1")
 }
@@ -316,6 +325,9 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 		h.syncer.StartAccount(mirrorAccount.ID)
 	}
 
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		return c.JSON(fiber.Map{"ok": true, "next": "/inbox"})
+	}
 	return c.Redirect("/inbox")
 }
 
@@ -346,9 +358,8 @@ func (h *AuthHandler) HandleLogout(c *fiber.Ctx) error {
 
 	// HTMX callers: use the HX-Redirect response header so the client performs
 	// a full-page navigation without swapping content into an element.
-	if c.Get("HX-Request") != "" {
-		c.Set("HX-Redirect", "/login")
-		return c.SendStatus(fiber.StatusOK)
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		return c.JSON(fiber.Map{"ok": true})
 	}
 	return c.Redirect("/login")
 }

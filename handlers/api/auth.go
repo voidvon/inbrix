@@ -201,7 +201,7 @@ func SessionMiddleware(store *session.Store) fiber.Handler {
 }
 
 func sessionAuthFailure(c *fiber.Ctx) error {
-	if strings.HasPrefix(c.Path(), "/api/") {
+	if strings.HasPrefix(c.Path(), "/api/") || strings.HasPrefix(c.Path(), "/v1/") || strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Authentication required",
 		})

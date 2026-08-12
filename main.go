@@ -2,32 +2,23 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
-	stdhtml "html"
-	"html/template"
 	"io/fs"
 	"lilmail/config"
 	"lilmail/handlers/ai"
 	"lilmail/handlers/api"
 	"lilmail/handlers/jsonapi"
 	"lilmail/handlers/web"
-	"lilmail/i18n"
 	"lilmail/mailstore"
 	"lilmail/storage"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/csrf"
@@ -36,98 +27,20 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/session"
-	"github.com/gofiber/template/html/v2"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=x.y.z".
 var Version = "dev"
-
-// titleCase converts the first letter of each word to upper-case.
-// It is used as a template function and replaces the deprecated strings.Title.
-func titleCase(s string) string {
-	var b strings.Builder
-	upper := true
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			upper = true
-			b.WriteRune(r)
-		} else if upper {
-			b.WriteRune(unicode.ToUpper(r))
-			upper = false
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// linkifyRe matches, in a single left-to-right pass, bare http(s) URLs, www.
-// hosts, and email addresses in plain text. A single combined pass means each
-// character is consumed once, so a URL containing "@" is never re-matched as an
-// email.
-var linkifyRe = regexp.MustCompile(
-	`(https?://[^\s<>"]+)` + // 1: absolute URL
-		`|(\bwww\.[^\s<>"]+)` + // 2: www. host
-		`|(\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b)`) // 3: email
-
-// linkifyText HTML-escapes a plain-text email body and converts bare URLs and
-// email addresses into safe anchors. The result is marked template.HTML so the
-// anchors render; everything else has already been escaped, so this does not
-// introduce an injection vector. Trailing sentence punctuation on URLs is kept
-// out of the link target so "see https://x.com." behaves sensibly. Newlines are
-// preserved by the white-space: pre-wrap CSS on the container.
-func linkifyText(s string) template.HTML {
-	// Some mail clients put HTML entities in the text/plain part. Decode them
-	// before escaping so the chat view shows the intended text, while the final
-	// HTML escape still keeps the message body inert.
-	esc := template.HTMLEscapeString(stdhtml.UnescapeString(s))
-
-	out := linkifyRe.ReplaceAllStringFunc(esc, func(m string) string {
-		if strings.Contains(m, "@") && !strings.Contains(m, "/") {
-			// Bare email address.
-			return `<a href="mailto:` + m + `" class="text-link">` + m + `</a>`
-		}
-		// URL — pull trailing sentence punctuation back out of the link.
-		trail := ""
-		for len(m) > 0 && strings.ContainsRune(".,;:!?)", rune(m[len(m)-1])) {
-			trail = string(m[len(m)-1]) + trail
-			m = m[:len(m)-1]
-		}
-		href := m
-		if strings.HasPrefix(strings.ToLower(m), "www.") {
-			href = "http://" + m
-		}
-		return `<a href="` + href + `" class="text-link" target="_blank" rel="noopener noreferrer">` + m + `</a>` + trail
-	})
-
-	return template.HTML(out)
-}
-
-//go:embed all:templates
-var templatesFS embed.FS
 
 //go:embed all:assets
 var assetsFS embed.FS
 
 // frontendFS contains the production Vite bundle. The repository keeps a
 // tracked dist placeholder so `go test` still compiles before npm build; the
-// runtime falls back to the server-rendered page until the bundle exists.
+// a frontend build is required before producing the Go binary.
 //
 //go:embed all:frontend/dist
 var frontendFS embed.FS
-
-// embeddedAssetVersion returns a short content fingerprint for cache-busted
-// asset URLs in rendered pages. Embedded assets are immutable for a running
-// process, so hashing on render is cheap and keeps browser caches safe across
-// releases without manually bumping a query-string version.
-func embeddedAssetVersion(path string) string {
-	data, err := assetsFS.ReadFile("assets/" + path)
-	if err != nil {
-		return Version
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:8])
-}
 
 // thirdPartyNotices is the generated attribution file for every third-party
 // component lilmail redistributes (Go modules linked into this binary and the
@@ -146,14 +59,8 @@ func isAPIRequest(c *fiber.Ctx) bool {
 		return false
 	}
 
-	// Check for HTMX request first
-	if c.Get("HX-Request") != "" {
-		return true
-	}
-
-	// Safely check if path starts with /api
 	path := c.Path()
-	return len(path) >= 4 && path[:4] == "/api"
+	return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/v1")
 }
 
 func main() {
@@ -189,133 +96,16 @@ func main() {
 		})
 	}
 
-	// Initialize template engine with embedded filesystem
-	tplSub, err := fs.Sub(templatesFS, "templates")
-	if err != nil {
-		log.Fatal("Failed to sub templates FS:", err)
-	}
-	engine := html.NewFileSystem(http.FS(tplSub), ".html")
-
-	// String manipulation functions
-	engine.AddFunc("split", strings.Split)
-	engine.AddFunc("join", strings.Join)
-	engine.AddFunc("lower", strings.ToLower)
-	engine.AddFunc("upper", strings.ToUpper)
-	engine.AddFunc("title", titleCase)
-	engine.AddFunc("trim", strings.TrimSpace)
-	engine.AddFunc("hasPrefix", strings.HasPrefix)
-	engine.AddFunc("urlEncode", url.QueryEscape)
-	engine.AddFunc("assetVersion", embeddedAssetVersion)
-	engine.AddFunc("t", i18n.TranslateDictionary)
-	engine.AddFunc("json", func(value interface{}) template.JS {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return template.JS("{}")
-		}
-		return template.JS(encoded)
-	})
-	engine.AddFunc("folderLabel", i18n.FolderLabel)
-	engine.AddFunc("monthTitle", i18n.FormatMonthTitle)
-	engine.AddFunc("weekTitle", i18n.FormatWeekTitle)
-	engine.AddFunc("calendarDate", i18n.FormatCalendarDate)
-	engine.AddFunc("weekdayName", i18n.WeekdayName)
-
-	// linkify HTML-escapes a plain-text body and turns bare URLs and email
-	// addresses into clickable links. Newlines are preserved by the
-	// white-space: pre-wrap CSS on the container, so we only inject anchors.
-	engine.AddFunc("linkify", linkifyText)
-
-	// Date formatting function
-	engine.AddFunc("formatDate", func(args ...interface{}) string {
-		locale := i18n.LocaleEnglish
-		var value time.Time
-		if len(args) == 1 {
-			value, _ = args[0].(time.Time)
-		} else if len(args) >= 2 {
-			locale, _ = args[0].(string)
-			value, _ = args[1].(time.Time)
-		}
-		return i18n.FormatDate(locale, value)
-	})
-
-	// File size formatting function. Accepts int (models.Attachment.Size) — the
-	// template passes an int, and text/template will not coerce int -> int64.
-	engine.AddFunc("formatSize", func(sizeInt int) string {
-		size := int64(sizeInt)
-		const unit = 1024
-		if size < unit {
-			return fmt.Sprintf("%d B", size)
-		}
-		div, exp := int64(unit), 0
-		for n := size / unit; n >= unit; n /= unit {
-			div *= unit
-			exp++
-		}
-		return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
-	})
-
-	// initial returns the first letter (unicode-safe, upper-cased) of the
-	// preferred name, falling back to the email, for avatar bubbles.
-	engine.AddFunc("initial", func(name, email string) string {
-		s := strings.TrimSpace(name)
-		if s == "" {
-			s = strings.TrimSpace(email)
-		}
-		for _, r := range s {
-			return strings.ToUpper(string(r))
-		}
-		return "?"
-	})
-
-	// caldavEnabled is a zero-argument template func so templates can show/hide
-	// calendar navigation without threading a flag through every handler.
-	engine.AddFunc("caldavEnabled", func() bool {
-		return config.CalDAV.Enabled
-	})
-
-	// notificationsEnabled is a zero-argument template func so templates can
-	// conditionally emit the SSE client script.  It is always registered (so
-	// the template parse step never fails) but returns false by default.
-	engine.AddFunc("notificationsEnabled", func() bool {
-		return config.Notifications.Enabled
-	})
-
-	// webPushEnabled tells templates whether to register the service worker and
-	// expose the "Enable push notifications" button.
-	engine.AddFunc("webPushEnabled", func() bool {
-		return config.Notifications.Enabled && config.Notifications.WebPush
-	})
-
-	// accountsEnabled tells templates whether to show the account-switcher UI.
-	engine.AddFunc("accountsEnabled", func() bool {
-		return config.Accounts.Enabled
-	})
-
-	engine.Reload(false) // embedded — no disk reload needed
-
-	// Initialize Fiber with template engine
+	// Initialize Fiber as an API server plus static React host.
 	app := fiber.New(fiber.Config{
-		Views:       engine,
-		ViewsLayout: "layouts/main",   // Default layout
-		BodyLimit:   25 * 1024 * 1024, // 25 MiB — guards compose form uploads
+		BodyLimit: 25 * 1024 * 1024, // 25 MiB — guards compose form uploads
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			if e, ok := err.(*fiber.Error); ok {
 				code = e.Code
 			}
 
-			// Handle API requests differently
-			if isAPIRequest(c) {
-				return c.Status(code).JSON(fiber.Map{
-					"error": err.Error(),
-				})
-			}
-
-			// Render error page for regular requests
-			return web.Render(c, "error", fiber.Map{
-				"Error": err.Error(),
-				"Code":  code,
-			})
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		},
 	})
 
@@ -351,6 +141,15 @@ func main() {
 		MaxAge:       int(24 * time.Hour / time.Second),
 		NotFoundFile: "",
 	}))
+	serveSPA := func(c *fiber.Ctx) error {
+		index, readErr := frontendFS.ReadFile("frontend/dist/index.html")
+		if readErr != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "frontend bundle is not built"})
+		}
+		c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+		c.Set(fiber.HeaderCacheControl, "no-cache")
+		return c.Send(index)
+	}
 
 	// Service worker must be served at the root scope (not under /assets/)
 	// so that it can intercept fetch requests and show push notifications for
@@ -401,7 +200,6 @@ func main() {
 	webAuthHandler.SetMailMirror(mailMirror, mailSync)
 	webEmailHandler := web.NewEmailHandler(store, config, webAuthHandler)
 	webEmailHandler.SetMailMirror(mailMirror)
-	webCalendarHandler := web.NewCalendarHandler(store, config, webAuthHandler)
 
 	// JSON/REST API (/v1/*) — machine-readable contract for rich JSON clients
 	// (e.g. the Vulos OS mail surface). Additive: reuses the same engine +
@@ -440,22 +238,18 @@ func main() {
 			return c.IP()
 		},
 		LimitReached: func(c *fiber.Ctx) error {
-			view := "login"
-			if c.Path() == "/user-login" {
-				view = "user-login"
-			}
-			return web.Render(c, view, fiber.Map{
-				"Error": "Too many login attempts. Please wait and try again.",
-			})
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many login attempts. Please wait and try again."})
 		},
 	})
 
-	// Public routes
-	app.Get("/login", webAuthHandler.ShowLogin)
+	// React owns every browser page. The shell is public; data endpoints remain
+	// session-gated and return JSON when the user is not authenticated.
+	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/settings", "/calendar", "/calendar/week"} {
+		app.Get(path, serveSPA)
+	}
+	app.Get("/folder/*", serveSPA)
 	app.Post("/login", loginLimiter, webAuthHandler.HandleLogin)
-	app.Get("/user-login", webAuthHandler.ShowUserLogin)
 	app.Post("/user-login", loginLimiter, webAuthHandler.HandleUserLogin)
-	app.Get("/register", webAuthHandler.ShowRegister)
 	app.Post("/register", webAuthHandler.HandleRegister)
 	app.Get("/language", web.HandleLanguage)
 
@@ -480,18 +274,6 @@ func main() {
 	// /health here keeps it public (no 302 to /login) for liveness probes.
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.SendString("OK")
-	})
-
-	// Auth-gated root: logged-in users go to the inbox, logged-out visitors to
-	// sign-in. (The marketing landing lives on vulos.org.)
-	app.Get("/", func(c *fiber.Ctx) error {
-		sess, err := store.Get(c)
-		if err == nil {
-			if v := sess.Get("authenticated"); v == true {
-				return c.Redirect("/inbox")
-			}
-		}
-		return c.Redirect("/login")
 	})
 
 	// CSRF middleware for all web (cookie-session) protected routes.
@@ -542,6 +324,9 @@ func main() {
 		}
 		sess, err := store.Get(c)
 		if err != nil {
+			if isAPIRequest(c) {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Application account required"})
+			}
 			return c.Redirect("/user-login")
 		}
 		ownerID, _ := sess.Get("user_id").(string)
@@ -557,6 +342,9 @@ func main() {
 			if optionalMailboxPath {
 				return c.Next()
 			}
+			if isAPIRequest(c) {
+				return c.Status(fiber.StatusPreconditionRequired).JSON(fiber.Map{"error": "mailbox setup required"})
+			}
 			return c.Redirect("/settings?setup=1")
 		}
 		account, accountErr := mailMirror.GetAccount(c.UserContext(), accountID)
@@ -566,6 +354,9 @@ func main() {
 			_ = sess.Save()
 			if optionalMailboxPath {
 				return c.Next()
+			}
+			if isAPIRequest(c) {
+				return c.Status(fiber.StatusPreconditionRequired).JSON(fiber.Map{"error": "mailbox setup required"})
 			}
 			return c.Redirect("/settings?setup=1")
 		}
@@ -579,23 +370,9 @@ func main() {
 	// (CSRF attack). Placed in the protected group so CSRF middleware covers it.
 	protected.Post("/logout", webAuthHandler.HandleLogout)
 
-	// Main web routes
-	protected.Get("/inbox", func(c *fiber.Ctx) error {
-		index, readErr := frontendFS.ReadFile("frontend/dist/index.html")
-		if readErr != nil {
-			return webEmailHandler.HandleInbox(c)
-		}
-		c.Set("Content-Type", "text/html; charset=utf-8")
-		return c.Send(index)
-	})
-	protected.Get("/folder/:name", webEmailHandler.HandleFolder)
-
-	// API routes - Keep these paths exactly as they were before
+	// JSON endpoints used by the React client during the /v1 migration.
 	apiRoutes := protected.Group("/api")
 	{
-		// Email routes
-		apiRoutes.Get("/email/:id", webEmailHandler.HandleEmailView)
-		apiRoutes.Delete("/email/:id", webEmailHandler.HandleDeleteEmail)
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
@@ -603,24 +380,7 @@ func main() {
 		// Attachment download (ID encodes folder + UID + MIME part)
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)
 
-		// Folder routes - This is the important fix
-		apiRoutes.Get("/folder/:name/emails", webEmailHandler.HandleFolderEmails) // Match the path in HTML
-
-		// Composition routes
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
-
-		// Drafts
-		apiRoutes.Post("/draft", webEmailHandler.HandleSaveDraft)
-		apiRoutes.Get("/drafts", webEmailHandler.HandleListDrafts)
-
-		// Recipient autocomplete (recent senders + optional CardDAV)
-		apiRoutes.Get("/autocomplete", webEmailHandler.HandleAutocomplete)
-
-		// Mark-as-unread: removes the \Seen flag from a message.
-		apiRoutes.Patch("/email/:id/unread", webEmailHandler.HandleMarkUnread)
-
-		// Search: IMAP SEARCH returning an email-list partial.
-		apiRoutes.Get("/search", webEmailHandler.HandleSearch)
 	}
 
 	// AI mail-assistant routes — registered always (gated internally on config.AI.Enabled).
@@ -718,47 +478,9 @@ func main() {
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}
-	// Settings page — always registered so users can reach it even without extras.
-	// When accounts.enabled = false the settings page shows a placeholder panel.
-	if acctHandler != nil {
-		protected.Get("/settings", acctHandler.HandleSettings)
-	} else {
-		// Minimal settings handler when accounts are disabled.
-		protected.Get("/settings", func(c *fiber.Ctx) error {
-			username, _ := c.Locals("username").(string)
-			email, _ := c.Locals("email").(string)
-			sess, _ := store.Get(c)
-			token, _ := sess.Get("token").(string)
-			return web.Render(c, "settings", fiber.Map{
-				"Title":           "Settings",
-				"Username":        username,
-				"Email":           email,
-				"Token":           token,
-				"AccountsEnabled": false,
-			})
-		})
-	}
-
-	// Calendar routes — registered only when CalDAV is enabled.
-	if config.CalDAV.Enabled {
-		protected.Get("/calendar", webCalendarHandler.HandleCalendarMonth)
-		protected.Get("/calendar/week", webCalendarHandler.HandleCalendarWeek)
-		protected.Get("/calendar/event/:uid", webCalendarHandler.HandleEventDetail)
-		protected.Post("/calendar/event", webCalendarHandler.HandleCreateEvent)
-		protected.Post("/calendar/rsvp", webCalendarHandler.HandleRSVP)
-	}
-
 	// 404 Handler for undefined routes
 	app.Use(func(c *fiber.Ctx) error {
-		if isAPIRequest(c) {
-			return c.Status(404).JSON(fiber.Map{
-				"error": "Not Found",
-			})
-		}
-		return web.Render(c, "error", fiber.Map{
-			"Error": "Page not found",
-			"Code":  404,
-		})
+		return c.Status(404).JSON(fiber.Map{"error": "Not Found"})
 	})
 
 	// Start server

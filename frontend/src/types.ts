@@ -84,3 +84,28 @@ export type ConversationListResponse = {
 export type ConversationDetailResponse = {
   conversation: ConversationDetail;
 };
+
+export type MailMessage = Omit<ConversationMessage, "outgoing"> & {
+  accountEmail?: string;
+};
+
+export type ConnectedAccount = {
+  email: string;
+  label: string;
+  color?: string;
+  imapServer: string;
+  imapPort?: number;
+  smtpServer?: string;
+  smtpPort?: number;
+};
+
+export type CalendarEvent = {
+  uid: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  path?: string;
+};
