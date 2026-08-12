@@ -34,8 +34,8 @@ import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
-import { ApiError, getConversation, getConversations, sendMessage, signIn, signOut, switchLanguage } from "./lib/api";
-import { cn, formatFullDate, formatMailDate, formatSize, initials, isSentMailbox, linkifyText } from "./lib/utils";
+import { ApiError, getConversation, getConversations, resyncAttachments, sendMessage, signIn, signOut, switchLanguage } from "./lib/api";
+import { cn, formatFullDate, formatMailDate, formatSize, initials, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -78,6 +78,10 @@ const zh = {
   retry: "重试",
   unread: "未读",
   noBody: "邮件没有正文",
+  showQuoted: "显示引用内容",
+  quotedOnly: "邮件正文仅包含引用内容",
+  resyncAttachments: "重新同步附件",
+  resyncQueued: "附件重新同步已加入队列",
 };
 
 const en = {
@@ -112,6 +116,10 @@ const en = {
   retry: "Retry",
   unread: "unread",
   noBody: "This email has no body",
+  showQuoted: "Show quoted content",
+  quotedOnly: "This email only contains quoted content",
+  resyncAttachments: "Resync attachments",
+  resyncQueued: "Attachment resync queued",
 };
 
 type Copy = typeof zh;
@@ -153,6 +161,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeDefaults, setComposeDefaults] = useState({ to: "", subject: "" });
+  const [resyncNotice, setResyncNotice] = useState("");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const debouncedSearch = useDebouncedValue(search, 250);
 
@@ -197,12 +206,21 @@ function App() {
     openCompose({ to: latest?.from || conversation.peerEmail || "", subject: replySubject });
   };
 
+  const resync = useMutation({
+    mutationFn: resyncAttachments,
+    onSuccess: () => {
+      setResyncNotice(locale.resyncQueued);
+      window.setTimeout(() => setResyncNotice(""), 4000);
+      void conversations.refetch();
+    },
+  });
+
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
   if (authenticated) return <LoginScreen copy={locale} />;
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <Topbar copy={locale} email={conversations.data?.accountEmail || ""} search={search} onSearch={setSearch} onMenu={() => setSidebarOpen(true)} onCompose={() => openCompose()} />
+      <Topbar copy={locale} email={conversations.data?.accountEmail || ""} search={search} onSearch={setSearch} onMenu={() => setSidebarOpen(true)} onCompose={() => openCompose()} onResync={() => resync.mutate()} resyncing={resync.isPending} />
       <div className="flex h-[calc(100vh-3.5rem)] min-h-[32.5rem] overflow-hidden">
         {sidebarOpen && <button className="fixed inset-x-0 top-14 bottom-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
         <Sidebar copy={locale} folders={conversations.data?.folders || []} onCompose={() => openCompose()} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
@@ -233,12 +251,13 @@ function App() {
           />
         </main>
       </div>
+      {resyncNotice && <div className="fixed right-4 bottom-4 z-50 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground shadow-lg">{resyncNotice}</div>}
       <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
     </div>
   );
 }
 
-function Topbar({ copy, email, search, onSearch, onMenu, onCompose }: { copy: Copy; email: string; search: string; onSearch: (value: string) => void; onMenu: () => void; onCompose: () => void }) {
+function Topbar({ copy, email, search, onSearch, onMenu, onCompose, onResync, resyncing }: { copy: Copy; email: string; search: string; onSearch: (value: string) => void; onMenu: () => void; onCompose: () => void; onResync: () => void; resyncing: boolean }) {
   return (
     <header className="relative z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-card px-3 lg:px-5">
       <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
@@ -257,6 +276,7 @@ function Topbar({ copy, email, search, onSearch, onMenu, onCompose }: { copy: Co
           <Button variant={copy === zh ? "secondary" : "ghost"} size="sm" onClick={() => switchLanguage("zh-CN")}>简体中文</Button>
           <Button variant={copy === en ? "secondary" : "ghost"} size="sm" onClick={() => switchLanguage("en")}>English</Button>
         </div>
+        <Button variant="ghost" size="icon" onClick={onResync} disabled={resyncing} aria-label={copy.resyncAttachments} title={copy.resyncAttachments}><RefreshCw className={cn(resyncing && "animate-spin")} /></Button>
         <Button variant="ghost" size="icon" onClick={() => window.location.assign("/settings")} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
         <Button variant="link" size="sm" className="px-2 text-primary" onClick={() => { void signOut().then(() => window.location.assign("/user-login")); }}>{copy.signOut}</Button>
       </div>
@@ -318,7 +338,7 @@ function ConversationRow({ copy, conversation, selected, onClick }: { copy: Copy
     <button className={cn("relative flex w-full items-start gap-3 border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:z-10 focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")} onClick={onClick} type="button">
       <MailAvatar label={initials(conversation.title, conversation.peerEmail)} />
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatMailDate(conversation.date, "zh-CN")}</time></span>
+        <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatMailDate(conversation.date, "zh-CN")}</time></span>
         <span className="mt-1 block truncate text-xs text-muted-foreground">{conversation.subject || copy.noSubject}</span>
         <span className="mt-1 block truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
       </span>
@@ -369,7 +389,8 @@ function ChatView({ copy, detail, onBack, onReply }: { copy: Copy; detail: Conve
 
 function MessageBubble({ copy, message, accountEmail }: { copy: Copy; message: ConversationMessage; accountEmail?: string }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from;
-  const parts = linkifyText(message.body || message.preview || copy.noBody);
+  const split = splitQuotedText(message.body || message.preview || copy.noBody);
+  const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
   const outgoing = message.outgoing;
   return (
     <article className="mx-auto mb-5 max-w-3xl">
@@ -377,14 +398,35 @@ function MessageBubble({ copy, message, accountEmail }: { copy: Copy; message: C
       <div className={cn("flex items-end gap-2", outgoing && "justify-end")}>
         {!outgoing && <MailAvatar small label={initials(message.fromName, message.from)} />}
         <div className={cn("max-w-[80%] overflow-hidden rounded-xl border px-3 py-2 text-sm leading-relaxed sm:max-w-[70ch]", outgoing ? "border-transparent bg-secondary text-secondary-foreground" : "border-border bg-background text-foreground")}>
-          <div className="[overflow-wrap:anywhere] whitespace-pre-wrap">{parts.map((part, index) => typeof part === "string" ? <span key={index}>{part}</span> : <a className="text-foreground underline underline-offset-3" key={index} href={part.href} target={part.href.startsWith("mailto:") ? undefined : "_blank"} rel="noreferrer">{part.value}</a>)}</div>
-          {message.hasAttachments && message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((attachment) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={attachment.id} href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{attachment.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small></a>)}</div></> : null}
+          {message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} /> : <div className="[overflow-wrap:anywhere] whitespace-pre-wrap">{renderLinkifiedText(visibleText)}</div>}
+          {!message.html && split.quoted && <details className="mt-2 border-t border-border/60 pt-2 text-muted-foreground">
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs [&::-webkit-details-marker]:hidden"><ChevronDown className="size-3.5" />{copy.showQuoted}</summary>
+            <div className="mt-2 max-h-80 overflow-y-auto border-l-2 border-border pl-2 [overflow-wrap:anywhere] whitespace-pre-wrap">{renderLinkifiedText(split.quoted)}</div>
+          </details>}
+          {message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((attachment) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={attachment.id} href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{attachment.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small></a>)}</div></> : null}
         </div>
         {outgoing && <MailAvatar small label={initials("", accountEmail)} />}
       </div>
       <time className={cn("mt-1 block px-3 text-xs text-muted-foreground", outgoing ? "text-right" : "")} title={formatFullDate(message.date, "zh-CN")}>{formatFullDate(message.date, "zh-CN")}</time>
     </article>
   );
+}
+
+function EmailHTMLFrame({ html, title }: { html: string; title: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const resize = () => {
+    const frame = frameRef.current;
+    const document = frame?.contentDocument;
+    if (!frame || !document) return;
+    frame.style.height = `${Math.min(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 48), 720)}px`;
+  };
+  return <iframe ref={frameRef} className="block min-h-12 w-full border-0 bg-transparent" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={html} title={title} onLoad={resize} />;
+}
+
+function renderLinkifiedText(text: string) {
+  return linkifyText(text).map((part, index) => typeof part === "string"
+    ? <span key={index}>{part}</span>
+    : <a className="text-foreground underline underline-offset-3" key={index} href={part.href} target={part.href.startsWith("mailto:") ? undefined : "_blank"} rel="noreferrer">{part.value}</a>);
 }
 
 function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSent }: { copy: Copy; open: boolean; defaults: { to: string; subject: string }; accountEmail: string; onOpenChange: (value: boolean) => void; onSent: () => void }) {

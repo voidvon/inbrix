@@ -316,6 +316,16 @@ func (d *DemoClient) FetchSingleMessage(folderName, uid string) (models.Email, e
 	return models.Email{}, fmt.Errorf("demo: message %s not found", uid)
 }
 
+// FetchAttachmentMetadata returns the seeded attachment list without any
+// content transfer, matching the real client's BODYSTRUCTURE-only operation.
+func (d *DemoClient) FetchAttachmentMetadata(folderName, uid string) ([]models.Attachment, error) {
+	email, err := d.FetchSingleMessage(folderName, uid)
+	if err != nil {
+		return nil, err
+	}
+	return email.Attachments, nil
+}
+
 // SearchMessages filters seed inbox messages whose Subject, From, or Body
 // contains the query string (case-insensitive).
 func (d *DemoClient) SearchMessages(folderName, query string, limit uint32) ([]models.Email, error) {

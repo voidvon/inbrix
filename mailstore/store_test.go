@@ -206,6 +206,93 @@ func TestMessagesPreserveCachedBodyAndSupportSearch(t *testing.T) {
 	}
 }
 
+func TestMessageMetadataRefreshPreservesCachedAttachments(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "attachments@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "attachments@example.com", true)
+
+	// The list fetch intentionally has no BODYSTRUCTURE, so it has no
+	// attachment metadata even though the complete fetch will find one.
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{{
+		ID: "42", Subject: "Report", Date: time.Unix(1_700_000_000, 0),
+	}}); err != nil {
+		t.Fatalf("metadata upsert: %v", err)
+	}
+	attachment := models.Attachment{
+		ID: "attachment-token", PartID: "2", Filename: "report.pdf", ContentType: "application/pdf", Size: 1234,
+	}
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{
+			ID: "42", Subject: "Report", BodyCached: true, HasAttachments: true,
+			Attachments: []models.Attachment{attachment}, Date: time.Unix(1_700_000_000, 0),
+		},
+	}); err != nil {
+		t.Fatalf("full message upsert: %v", err)
+	}
+
+	// A later lightweight refresh must update ordinary metadata without
+	// erasing the attachment list or its derived flag.
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{
+			ID: "42", Subject: "Report (updated flags)", Flags: []string{`\Seen`}, Date: time.Unix(1_700_000_000, 0),
+		},
+	}); err != nil {
+		t.Fatalf("metadata refresh: %v", err)
+	}
+	got, err := s.GetMessage(ctx, account.ID, "INBOX", "42")
+	if err != nil {
+		t.Fatalf("GetMessage: %v", err)
+	}
+	if !got.HasAttachments || len(got.Attachments) != 1 || got.Attachments[0].Filename != "report.pdf" {
+		t.Fatalf("cached attachments were lost: has=%v attachments=%+v", got.HasAttachments, got.Attachments)
+	}
+}
+
+func TestAttachmentMetadataCanBeRefreshedWithoutBody(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "metadata-refresh@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "metadata-refresh@example.com", true)
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{{
+		ID: "7", Subject: "Legacy", Body: "already cached", BodyCached: true, Date: time.Unix(1_700_000_000, 0),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := s.ListMessageUIDsMissingAttachmentMetadata(ctx, account.ID, "INBOX")
+	if err != nil || len(missing) != 1 || missing[0] != "7" {
+		t.Fatalf("pending metadata UIDs = %v, err=%v", missing, err)
+	}
+	attachments := []models.Attachment{{ID: "token", PartID: "2", Filename: "legacy.pdf", Size: 12}}
+	if err := s.UpdateAttachmentMetadata(ctx, account.ID, "INBOX", "7", attachments); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetMessage(ctx, account.ID, "INBOX", "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body != "already cached" || !got.BodyCached || !got.AttachmentMetadataCached || !got.HasAttachments || len(got.Attachments) != 1 {
+		t.Fatalf("body or attachment metadata was not preserved: %+v", got)
+	}
+	missing, err = s.ListMessageUIDsMissingAttachmentMetadata(ctx, account.ID, "INBOX")
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("metadata still pending: %v, err=%v", missing, err)
+	}
+	if err := s.ResetAttachmentMetadata(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	missing, err = s.ListMessageUIDsMissingAttachmentMetadata(ctx, account.ID, "INBOX")
+	if err != nil || len(missing) != 1 || missing[0] != "7" {
+		t.Fatalf("reset did not queue metadata refresh: %v, err=%v", missing, err)
+	}
+}
+
 func TestListMessagesForFoldersPreservesSourceFolder(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

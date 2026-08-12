@@ -108,6 +108,42 @@ func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+// HandleResyncAttachments invalidates the local MIME attachment markers for
+// the active mailbox and wakes its background worker. The work is intentionally
+// asynchronous: a mailbox can contain thousands of messages, and the request
+// should return as soon as the repair has been queued.
+func (h *AccountsHandler) HandleResyncAttachments(c *fiber.Ctx) error {
+	if h.mailDB == nil || h.syncer == nil {
+		return fiber.NewError(fiber.StatusNotFound, "mail mirror sync is not enabled")
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	accountID, _ := sess.Get("account_id").(string)
+	if accountID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "no active mailbox")
+	}
+	account, err := h.mailDB.GetAccount(c.UserContext(), accountID)
+	if err != nil || account.OwnerID != owner {
+		return fiber.ErrForbidden
+	}
+	if err := h.mailDB.ResetAttachmentMetadata(c.UserContext(), account.ID); err != nil {
+		log.Printf("accounts: reset attachment metadata for %s: %v", account.Email, err)
+		return fiber.ErrInternalServerError
+	}
+	h.syncer.Trigger(account.ID)
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"ok":      true,
+		"queued":  true,
+		"account": account.Email,
+	})
+}
+
 type mirrorSafeAccount struct {
 	ID         string `json:"id"`
 	Email      string `json:"email"`

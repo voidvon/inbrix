@@ -1,6 +1,11 @@
-.PHONY: build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest check clean
+.PHONY: dev build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest check clean
 
-# Build the lilmail binary
+# Local React/Vite development. Vite owns :3000 and proxies backend requests
+# to Go on :3001, so the browser never renders the embedded frontend/dist copy.
+dev:
+	bash scripts/dev.sh
+
+# Build the frontend and embed it into the lilmail binary
 build:
 	npm run build
 	go build -o lilmail .

@@ -118,6 +118,8 @@ table { max-width: 100%; }
 a { color: #0e9384; }
 pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 blockquote { border-left: 3px solid #d7d2cc; margin: 12px 0; padding-left: 14px; color: #6b7280; }
+.lilmail-quoted { margin-top: 10px; color: #6b7280; }
+.lilmail-quoted > summary { cursor: pointer; font-size: 12px; }
 /* Keep wide content scrollable rather than blowing out the frame width. */
 * { max-width: 100%; }
 @media (prefers-color-scheme: dark) {

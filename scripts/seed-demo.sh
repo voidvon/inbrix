@@ -12,7 +12,7 @@
 #   scripts/seed-demo.sh --screenshots # start, capture screenshots, then stop
 #
 # Requirements:
-#   - Go toolchain (to build the binary if missing)
+#   - Go toolchain and Node/npm (to build the binary if missing)
 #   - Node 18+ and 'npm install' run once in scripts/ (for --screenshots)
 #   - Playwright Chromium: cd scripts && npx playwright install chromium
 
@@ -95,8 +95,8 @@ fi
 # Build binary if needed
 # -----------------------------------------------------------------------
 if [[ ! -f "$BINARY" ]]; then
-  echo "[seed-demo] Building lilmail binary..."
-  cd "$REPO" && go build -o lilmail .
+  echo "[seed-demo] Building frontend and lilmail binary..."
+  cd "$REPO" && npm run build && go build -o lilmail .
 fi
 
 # -----------------------------------------------------------------------

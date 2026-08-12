@@ -158,6 +158,7 @@ func isAPIRequest(c *fiber.Ctx) bool {
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	portOverride := flag.Int("port", 0, "HTTP listen port (overrides [server] port)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("lilmail", Version)
@@ -168,6 +169,9 @@ func main() {
 	config, err := config.LoadConfig("config.toml")
 	if err != nil {
 		log.Fatal("Failed to load config:", err)
+	}
+	if *portOverride > 0 {
+		config.Server.Port = *portOverride
 	}
 
 	// Initialize session store now that we have the config (CookieSecure needs it).
@@ -699,6 +703,7 @@ func main() {
 
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
+		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}
@@ -709,6 +714,7 @@ func main() {
 		acctHandler.SetMailMirror(mailMirror, mailSync)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
+		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}

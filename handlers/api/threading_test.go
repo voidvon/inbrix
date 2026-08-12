@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"lilmail/models"
 	"testing"
 	"time"
@@ -195,6 +196,42 @@ func TestThreadMessages_Empty(t *testing.T) {
 	threads := ThreadMessages(nil)
 	if threads != nil {
 		t.Errorf("expected nil for empty input, got %v", threads)
+	}
+}
+
+func TestThreadMessages_MissingAncestorIsDeterministicAndComplete(t *testing.T) {
+	emails := []models.Email{
+		makeEmail("1", "<first@host>", "<missing@host>", []string{"<missing@host>"}, "Topic", t0),
+		makeEmail("2", "<second@host>", "<first@host>", []string{"<missing@host>", "<first@host>"}, "Re: Topic", t1),
+		makeEmail("3", "<unrelated@host>", "", nil, "Other", t2),
+		makeEmail("4", "<subject-only@host>", "", nil, "Re: Other", t3),
+	}
+
+	var baseline string
+	for run := 0; run < 100; run++ {
+		threads := ThreadMessages(append([]models.Email(nil), emails...))
+		raw, err := json.Marshal(threads)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run == 0 {
+			baseline = string(raw)
+		} else if string(raw) != baseline {
+			t.Fatalf("run %d produced nondeterministic threads\nfirst: %s\nthis:  %s", run, baseline, raw)
+		}
+
+		seen := make(map[string]bool)
+		for _, thread := range threads {
+			for _, message := range thread.Messages {
+				if seen[message.ID] {
+					t.Fatalf("run %d duplicated message %s", run, message.ID)
+				}
+				seen[message.ID] = true
+			}
+		}
+		if len(seen) != len(emails) {
+			t.Fatalf("run %d lost messages: got %v", run, seen)
+		}
 	}
 }
 

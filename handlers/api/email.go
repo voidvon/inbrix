@@ -352,6 +352,40 @@ func (c *Client) FetchSingleMessage(folderName, uid string) (models.Email, error
 	return c.processMessage(msg, folderName)
 }
 
+// FetchAttachmentMetadata reads only BODYSTRUCTURE for one message. It is
+// used by the local mirror repair pass so attachment names/types/sizes can be
+// recovered without downloading the message body or any attachment bytes.
+func (c *Client) FetchAttachmentMetadata(folderName, uid string) ([]models.Attachment, error) {
+	uidNum, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid UID: %v", err)
+	}
+	if _, err := c.client.Select(folderName, true); err != nil {
+		return nil, fmt.Errorf("error selecting folder %s: %v", folderName, err)
+	}
+
+	seqSet := new(imap.SeqSet)
+	seqSet.AddNum(uint32(uidNum))
+	messages := make(chan *imap.Message, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.UidFetch(seqSet, []imap.FetchItem{imap.FetchBodyStructure, imap.FetchUid}, messages)
+	}()
+
+	var msg *imap.Message
+	for fetched := range messages {
+		msg = fetched
+		break
+	}
+	if err := <-done; err != nil {
+		return nil, fmt.Errorf("fetch attachment metadata: %v", err)
+	}
+	if msg == nil {
+		return nil, fmt.Errorf("message not found")
+	}
+	return c.processAttachments(msg, folderName), nil
+}
+
 // DeleteMessage deletes a specific message by its UID
 func (c *Client) DeleteMessage(folderName, uid string) error {
 	uidNum, err := parseUID(uid)
@@ -484,6 +518,7 @@ func (c *Client) processAttachments(msg *imap.Message, folderName string) []mode
 				ContentType: fmt.Sprintf("%s/%s", strings.ToLower(part.MIMEType), strings.ToLower(part.MIMESubType)),
 				Size:        int(part.Size),
 				IsInline:    strings.EqualFold(part.Disposition, "inline"),
+				ContentID:   strings.Trim(strings.TrimSpace(part.Id), "<>"),
 			})
 		}
 		return true // keep walking children
@@ -504,6 +539,15 @@ func isAttachmentPart(bs *imap.BodyStructure) bool {
 	}
 	if fn, _ := bs.Filename(); fn != "" {
 		return true
+	}
+	return false
+}
+
+func hasRegularAttachments(attachments []models.Attachment) bool {
+	for _, attachment := range attachments {
+		if !attachment.IsInline {
+			return true
+		}
 	}
 	return false
 }
@@ -672,8 +716,9 @@ func decodeContent(raw []byte, encoding string) ([]byte, error) {
 
 func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Email, error) {
 	email := models.Email{
-		ID:    fmt.Sprintf("%d", msg.Uid),
-		Flags: msg.Flags,
+		ID:                       fmt.Sprintf("%d", msg.Uid),
+		Flags:                    msg.Flags,
+		AttachmentMetadataCached: true,
 	}
 
 	// Process body
@@ -731,7 +776,7 @@ func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Em
 	// Attachment metadata (content is fetched on demand by FetchAttachment).
 	attachments := c.processAttachments(msg, folderName)
 	email.Attachments = attachments
-	email.HasAttachments = len(attachments) > 0
+	email.HasAttachments = hasRegularAttachments(attachments)
 
 	// iMIP: detect a text/calendar part and, if it carries an iTIP METHOD, attach
 	// the parsed invite so the reading pane can render an RSVP card. The raw

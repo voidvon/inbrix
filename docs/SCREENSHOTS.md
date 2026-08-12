@@ -40,7 +40,7 @@ make demo-screenshots
 ```
 
 This will:
-1. Build the lilmail binary (`go build -o lilmail`)
+1. Build the frontend and lilmail binary (`make build`)
 2. Install Playwright Chromium if not already present (first run only)
 3. Write a temporary `config.toml` with `[demo] enabled = true`
 4. Start lilmail, log in as the demo user, capture all screenshots

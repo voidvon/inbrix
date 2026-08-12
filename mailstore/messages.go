@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const messageColumns = `account_id, folder_name, uid, date_unix, from_addr, from_name, to_addrs, to_names_json, cc, subject, preview, body, html, flags_json, attachments_json, message_id, in_reply_to, references_json, has_attachments, body_cached, auth_json, unsubscribe_json, invite_json, brand_json`
+const messageColumns = `account_id, folder_name, uid, date_unix, from_addr, from_name, to_addrs, to_names_json, cc, subject, preview, body, html, flags_json, attachments_json, message_id, in_reply_to, references_json, has_attachments, body_cached, attachment_metadata_cached, auth_json, unsubscribe_json, invite_json, brand_json`
 
 // UpsertMessages stores list metadata and preserves a previously cached full
 // body when the incoming record only came from the lightweight IMAP list fetch.
@@ -28,13 +28,18 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 
 	query := `
 		INSERT INTO messages(` + messageColumns + `, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(account_id, folder_name, uid) DO UPDATE SET
 			date_unix=excluded.date_unix, from_addr=excluded.from_addr, from_name=excluded.from_name,
 			to_addrs=excluded.to_addrs, to_names_json=excluded.to_names_json, cc=excluded.cc,
 			subject=excluded.subject, preview=excluded.preview, flags_json=excluded.flags_json,
-			attachments_json=CASE WHEN excluded.attachments_json <> '[]' THEN excluded.attachments_json ELSE messages.attachments_json END,
-			has_attachments=excluded.has_attachments, message_id=excluded.message_id,
+			-- The lightweight IMAP list fetch does not include BODYSTRUCTURE, so
+			-- it necessarily writes an empty attachment list and has_attachments=0.
+			-- Do not let that metadata refresh erase attachment information learned
+			-- by the full MIME fetch. A full MIME fetch is authoritative for both
+			-- fields and can also intentionally clear stale metadata.
+			attachments_json=CASE WHEN excluded.attachment_metadata_cached = 1 THEN excluded.attachments_json ELSE messages.attachments_json END,
+			has_attachments=CASE WHEN excluded.attachment_metadata_cached = 1 THEN excluded.has_attachments ELSE messages.has_attachments END, message_id=excluded.message_id,
 			in_reply_to=excluded.in_reply_to, references_json=excluded.references_json,
 			auth_json=CASE WHEN excluded.auth_json <> '' THEN excluded.auth_json ELSE messages.auth_json END,
 			unsubscribe_json=CASE WHEN excluded.unsubscribe_json <> '' THEN excluded.unsubscribe_json ELSE messages.unsubscribe_json END,
@@ -42,7 +47,8 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 			brand_json=CASE WHEN excluded.brand_json <> '' THEN excluded.brand_json ELSE messages.brand_json END,
 			body=CASE WHEN excluded.body_cached = 1 THEN excluded.body ELSE messages.body END,
 			html=CASE WHEN excluded.body_cached = 1 THEN excluded.html ELSE messages.html END,
-			body_cached=MAX(messages.body_cached, excluded.body_cached), updated_at=excluded.updated_at`
+			body_cached=MAX(messages.body_cached, excluded.body_cached),
+			attachment_metadata_cached=MAX(messages.attachment_metadata_cached, excluded.attachment_metadata_cached), updated_at=excluded.updated_at`
 	stmt, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("mailstore: prepare message upsert: %w", err)
@@ -56,12 +62,14 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 			continue
 		}
 		bodyCached := email.BodyCached || email.Body != "" || email.HTML != ""
+		attachmentMetadataCached := email.AttachmentMetadataCached || len(email.Attachments) > 0
+		hasAttachments := email.HasAttachments || hasRegularAttachment(email.Attachments)
 		_, err = stmt.ExecContext(ctx,
 			accountID, folderName, uid, unixOrZero(email.Date), email.From, email.FromName,
 			email.To, marshalJSON(email.ToNames, "[]"), email.Cc, email.Subject, email.Preview,
 			email.Body, email.HTML, marshalJSON(email.Flags, "[]"), marshalJSON(email.Attachments, "[]"),
-			email.MessageID, email.InReplyTo, marshalJSON(email.References, "[]"), boolInt(email.HasAttachments),
-			boolInt(bodyCached), optionalJSON(email.Auth), optionalJSON(email.Unsubscribe), optionalJSON(email.Invite),
+			email.MessageID, email.InReplyTo, marshalJSON(email.References, "[]"), boolInt(hasAttachments),
+			boolInt(bodyCached), boolInt(attachmentMetadataCached), optionalJSON(email.Auth), optionalJSON(email.Unsubscribe), optionalJSON(email.Invite),
 			optionalJSON(email.Brand), now,
 		)
 		if err != nil {
@@ -71,6 +79,29 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("mailstore: commit message upsert: %w", err)
+	}
+	return nil
+}
+
+// UpdateAttachmentMetadata updates only MIME attachment metadata. This is
+// intentionally separate from UpsertMessages because a BODYSTRUCTURE-only
+// IMAP fetch does not contain the message headers or body and must not erase
+// either from the local mirror.
+func (s *Store) UpdateAttachmentMetadata(ctx context.Context, accountID, folderName, uid string, attachments []models.Attachment) error {
+	if accountID == "" || folderName == "" {
+		return fmt.Errorf("mailstore: message account and folder are required")
+	}
+	n, err := parseUIDString(uid)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE messages
+		SET attachments_json = ?, has_attachments = ?, attachment_metadata_cached = 1, updated_at = ?
+		WHERE account_id = ? AND folder_name = ? AND uid = ?`,
+		marshalJSON(attachments, "[]"), boolInt(hasRegularAttachment(attachments)), time.Now().Unix(), accountID, folderName, n)
+	if err != nil {
+		return fmt.Errorf("mailstore: update attachment metadata %s/%s/%s: %w", accountID, folderName, uid, err)
 	}
 	return nil
 }
@@ -88,30 +119,35 @@ func decodeMessage(
 	dateUnix int64,
 	fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON,
 	messageID, inReplyTo, referencesJSON string,
-	hasAttachments, bodyCached int,
+	hasAttachments, bodyCached, attachmentMetadataCached int,
 	authJSON, unsubscribeJSON, inviteJSON, brandJSON string,
 ) models.Email {
 	email := models.Email{
-		ID:             fmt.Sprintf("%d", uid),
-		Folder:         folderName,
-		From:           fromAddr,
-		FromName:       fromName,
-		To:             toAddrs,
-		Cc:             cc,
-		Subject:        subject,
-		Preview:        preview,
-		Body:           body,
-		HTML:           html,
-		BodyCached:     intBool(bodyCached),
-		Date:           timeFromUnix(dateUnix),
-		HasAttachments: intBool(hasAttachments),
-		MessageID:      messageID,
-		InReplyTo:      inReplyTo,
+		ID:                       fmt.Sprintf("%d", uid),
+		Folder:                   folderName,
+		From:                     fromAddr,
+		FromName:                 fromName,
+		To:                       toAddrs,
+		Cc:                       cc,
+		Subject:                  subject,
+		Preview:                  preview,
+		Body:                     body,
+		HTML:                     html,
+		BodyCached:               intBool(bodyCached),
+		AttachmentMetadataCached: intBool(attachmentMetadataCached),
+		Date:                     timeFromUnix(dateUnix),
+		HasAttachments:           intBool(hasAttachments),
+		MessageID:                messageID,
+		InReplyTo:                inReplyTo,
 	}
 	unmarshalJSON(toNamesJSON, "[]", &email.ToNames)
 	unmarshalJSON(flagsJSON, "[]", &email.Flags)
 	unmarshalJSON(attachmentsJSON, "[]", &email.Attachments)
 	unmarshalJSON(referencesJSON, "[]", &email.References)
+	// Older mirror rows may have retained attachments_json while a later
+	// lightweight refresh reset has_attachments. Keep the model self-consistent
+	// when those rows are read, even before they are rewritten by a new sync.
+	email.HasAttachments = email.HasAttachments || hasRegularAttachment(email.Attachments)
 	if authJSON != "" {
 		var v models.AuthResults
 		if err := unmarshalOptional(authJSON, &v); err == nil {
@@ -139,6 +175,15 @@ func decodeMessage(
 	return email
 }
 
+func hasRegularAttachment(attachments []models.Attachment) bool {
+	for _, attachment := range attachments {
+		if !attachment.IsInline {
+			return true
+		}
+	}
+	return false
+}
+
 func unmarshalOptional(raw string, dst any) error {
 	if strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("empty JSON")
@@ -157,13 +202,13 @@ func scanMessage(scanner interface{ Scan(...any) error }) (models.Email, error) 
 	var uid, dateUnix int64
 	var fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON string
 	var messageID, inReplyTo, referencesJSON string
-	var hasAttachments, bodyCached int
+	var hasAttachments, bodyCached, attachmentMetadataCached int
 	var authJSON, unsubscribeJSON, inviteJSON, brandJSON string
-	err := scanner.Scan(&accountID, &folderName, &uid, &dateUnix, &fromAddr, &fromName, &toAddrs, &toNamesJSON, &cc, &subject, &preview, &body, &html, &flagsJSON, &attachmentsJSON, &messageID, &inReplyTo, &referencesJSON, &hasAttachments, &bodyCached, &authJSON, &unsubscribeJSON, &inviteJSON, &brandJSON)
+	err := scanner.Scan(&accountID, &folderName, &uid, &dateUnix, &fromAddr, &fromName, &toAddrs, &toNamesJSON, &cc, &subject, &preview, &body, &html, &flagsJSON, &attachmentsJSON, &messageID, &inReplyTo, &referencesJSON, &hasAttachments, &bodyCached, &attachmentMetadataCached, &authJSON, &unsubscribeJSON, &inviteJSON, &brandJSON)
 	if err != nil {
 		return models.Email{}, err
 	}
-	return decodeMessage(accountID, folderName, uid, dateUnix, fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON, messageID, inReplyTo, referencesJSON, hasAttachments, bodyCached, authJSON, unsubscribeJSON, inviteJSON, brandJSON), nil
+	return decodeMessage(accountID, folderName, uid, dateUnix, fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON, messageID, inReplyTo, referencesJSON, hasAttachments, bodyCached, attachmentMetadataCached, authJSON, unsubscribeJSON, inviteJSON, brandJSON), nil
 }
 
 func (s *Store) ListMessages(ctx context.Context, accountID, folderName string, limit, offset int) ([]models.Email, error) {
@@ -254,6 +299,44 @@ func (s *Store) MaxMessageUID(ctx context.Context, accountID, folderName string)
 		return 0, fmt.Errorf("mailstore: message UID exceeds uint32: %d", max.Int64)
 	}
 	return uint32(max.Int64), nil
+}
+
+// ListMessageUIDsMissingAttachmentMetadata returns locally mirrored messages
+// whose MIME structure has not been inspected yet. The lightweight header
+// sync deliberately leaves these rows pending, so the background worker can
+// repair old mailboxes as well as newly discovered messages.
+func (s *Store) ListMessageUIDsMissingAttachmentMetadata(ctx context.Context, accountID, folderName string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT uid FROM messages WHERE account_id = ? AND folder_name = ? AND attachment_metadata_cached = 0 ORDER BY uid ASC`, accountID, folderName)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list messages missing attachment metadata: %w", err)
+	}
+	defer rows.Close()
+	var uids []string
+	for rows.Next() {
+		var uid int64
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("mailstore: scan message UID missing attachment metadata: %w", err)
+		}
+		uids = append(uids, fmt.Sprintf("%d", uid))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mailstore: list messages missing attachment metadata: %w", err)
+	}
+	return uids, nil
+}
+
+// ResetAttachmentMetadata marks all mirrored messages for an account as
+// pending. It is used by the explicit repair action so a user can request a
+// fresh MIME-structure scan even when the previous attempt was interrupted.
+func (s *Store) ResetAttachmentMetadata(ctx context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("mailstore: account is required to reset attachment metadata")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET attachment_metadata_cached = 0, updated_at = ? WHERE account_id = ?`, time.Now().Unix(), accountID)
+	if err != nil {
+		return fmt.Errorf("mailstore: reset attachment metadata: %w", err)
+	}
+	return nil
 }
 
 // UpdateFolderStats derives counts from the local mirror after a sync. The

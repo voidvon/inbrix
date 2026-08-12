@@ -1,14 +1,16 @@
 # Getting Started with lilmail
 
-lilmail is a single Go binary — there is no frontend build step or external
-database service to provision. The default local SQLite file is created on first
-start. This guide covers installation, first-run, and common deployment cases.
+lilmail runs as a single Go binary in production, with no external database
+service to provision. The default local SQLite file is created on first start.
+When developing the React frontend, Vite can run separately with hot reload;
+that workflow is described below.
 
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
 | Go 1.25+ | Only needed to build from source (`go.mod` requires `go 1.25.0`) |
+| Node.js + npm | Needed for frontend development and source builds |
 | IMAP server | Any IMAP4rev1 server (port 993 TLS or 143 STARTTLS) |
 | SMTP server | Any SMTP server (port 587 STARTTLS or 465 implicit TLS) |
 
@@ -35,6 +37,8 @@ installation required to run it.
 ```bash
 git clone https://github.com/vul-os/lilmail.git
 cd lilmail
+npm install
+npm run build
 go build -o lilmail
 ```
 
@@ -83,7 +87,7 @@ key = "a-32-character-encryption-key!!"
 
 ```bash
 ./lilmail
-# or: go run main.go
+# or: go run main.go (after `npm run build`)
 ```
 
 Open **http://localhost:3000** in your browser. You can sign in directly with a
@@ -97,6 +101,34 @@ served from the local SQLite mirror. The worker refreshes folders, metadata, and
 full message bodies every `mail_sync.interval` seconds. Back up `cache/mail.db`,
 `sessions/`, `cache/`, and `config.toml` together. The encryption key in
 `config.toml` is required to decrypt stored mailbox credentials.
+
+## Frontend development
+
+`go run main.go` is the production-style single-process path: Go serves the
+embedded `frontend/dist` bundle. For React/Vite hot reload, run both processes
+with the project helper:
+
+```bash
+npm install                 # first run only
+make dev                    # Vite :3000, Go backend :3001
+```
+
+Open **http://localhost:3000**. Vite serves `frontend/src` and proxies API,
+authentication, and other backend routes to Go, so the browser uses the same
+origin during development. The Go process uses `-port 3001` without changing
+the `[server] port` used by the normal single-binary mode.
+
+The equivalent manual setup is:
+
+```bash
+# terminal 1
+go run main.go -port 3001
+
+# terminal 2
+npm run dev
+```
+
+Set `VITE_BACKEND_URL` when the backend is not at `http://127.0.0.1:3001`.
 
 ## Common scenarios
 

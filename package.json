@@ -7,7 +7,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config frontend/vite.config.ts",
+    "dev:backend": "go run main.go -port 3001",
+    "dev:all": "bash scripts/dev.sh",
     "build": "tsc -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "postbuild": "node scripts/ensure-dist-placeholder.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p frontend/tsconfig.json",
     "lint": "eslint ."
   },

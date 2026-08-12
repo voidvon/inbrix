@@ -77,3 +77,33 @@ export function linkifyText(text: string) {
   if (lastIndex < text.length) parts.push(text.slice(lastIndex));
   return parts;
 }
+
+export type SplitQuotedTextResult = {
+  visible: string;
+  quoted: string;
+};
+
+// Email clients use several plain-text conventions for the previous message.
+// Keep the heuristic intentionally line-oriented: it preserves normal prose
+// and moves only the trailing quoted section behind a native <details> block.
+export function splitQuotedText(text: string): SplitQuotedTextResult {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const quoteLine = /^\s*>+\s?/;
+  const attributionLine = /^\s*(?:on\s+.+\bwrote\s*:|(?:在|於)\s*.+(?:写道|寫道)\s*[:：])\s*$/i;
+  const originalMarker = /^\s*(?:[-_]{2,}\s*)?(?:original(?:\s+message)?|forwarded\s+message|原始邮件|原始郵件|转发邮件|轉發郵件)\s*[-_:：]?\s*[-_]*\s*$/i;
+
+  let boundary = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (originalMarker.test(line) || attributionLine.test(line) || quoteLine.test(line)) {
+      boundary = index;
+      break;
+    }
+  }
+
+  if (boundary < 0) return { visible: text, quoted: "" };
+  return {
+    visible: lines.slice(0, boundary).join("\n").trimEnd(),
+    quoted: lines.slice(boundary).join("\n").trim(),
+  };
+}

@@ -670,7 +670,7 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 			if obj.ContentType != "" {
 				c.Set("Content-Type", obj.ContentType)
 			}
-			c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", obj.Meta["filename"]))
+			c.Set("Content-Disposition", attachmentDisposition(c, obj.Meta["filename"]))
 			return c.SendStream(bytes.NewReader(obj.Body), len(obj.Body))
 		} else if cerr != storage.ErrNotFound {
 			// Cache trouble must never break downloads — log and fall through.
@@ -710,8 +710,16 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 	if contentType != "" {
 		c.Set("Content-Type", contentType)
 	}
-	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	c.Set("Content-Disposition", attachmentDisposition(c, filename))
 	return c.SendStream(bytes.NewReader(content), len(content))
+}
+
+func attachmentDisposition(c *fiber.Ctx, filename string) string {
+	disposition := "attachment"
+	if c.QueryBool("inline", false) {
+		disposition = "inline"
+	}
+	return fmt.Sprintf("%s; filename=%q", disposition, filename)
 }
 
 // HandleDeleteEmail handles the email deletion request

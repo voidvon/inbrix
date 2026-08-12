@@ -22,11 +22,16 @@ type Email struct {
 	// BodyCached distinguishes a synchronized empty-body message from a header
 	// row that still needs its MIME body fetched. It is local storage state and
 	// is intentionally never exposed in the JSON API.
-	BodyCached     bool         `json:"-"`
-	Date           time.Time    `json:"date"`
-	HasAttachments bool         `json:"hasAttachments"`
-	Flags          []string     `json:"flags,omitempty"`
-	Attachments    []Attachment `json:"attachments,omitempty"`
+	BodyCached bool `json:"-"`
+	// AttachmentMetadataCached is separate from BodyCached because the
+	// lightweight header fetch cannot discover MIME attachments. It lets the
+	// mirror repair old rows without downloading and caching every message body
+	// again. This is local synchronization state, not part of the public API.
+	AttachmentMetadataCached bool         `json:"-"`
+	Date                     time.Time    `json:"date"`
+	HasAttachments           bool         `json:"hasAttachments"`
+	Flags                    []string     `json:"flags,omitempty"`
+	Attachments              []Attachment `json:"attachments,omitempty"`
 	// Threading headers (JWZ)
 	MessageID  string   `json:"messageId,omitempty"`
 	InReplyTo  string   `json:"inReplyTo,omitempty"`
@@ -139,6 +144,7 @@ type Attachment struct {
 	ContentType string `json:"contentType"`
 	Size        int    `json:"size"`
 	IsInline    bool   `json:"isInline"`
+	ContentID   string `json:"contentId,omitempty"`
 	Content     []byte `json:"-"`
 }
 

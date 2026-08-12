@@ -19,6 +19,7 @@ export type Attachment = {
   contentType: string;
   size: number;
   isInline: boolean;
+  contentId?: string;
 };
 
 export type ConversationSummary = {
@@ -46,6 +47,7 @@ export type ConversationMessage = {
   subject: string;
   preview: string;
   body: string;
+  html?: string;
   date: string;
   hasAttachments: boolean;
   flags?: string[];

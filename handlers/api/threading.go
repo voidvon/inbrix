@@ -160,6 +160,9 @@ func ThreadMessages(emails []models.Email) []models.Thread {
 			roots = append(roots, c)
 		}
 	}
+	sort.SliceStable(roots, func(i, j int) bool {
+		return containerOrderKey(roots[i]) < containerOrderKey(roots[j])
+	})
 
 	// ------------------------------------------------------------------ step 4
 	// Prune empty containers recursively.
@@ -201,9 +204,14 @@ func ThreadMessages(emails []models.Email) []models.Thread {
 // pruneEmpties removes containers that carry no message and have no children,
 // and hoists children of empty containers up to their grandparent.
 func pruneEmpties(roots []*container) []*container {
+	return pruneContainers(roots, nil)
+}
+
+func pruneContainers(nodes []*container, parent *container) []*container {
 	var out []*container
-	for _, c := range roots {
-		c.children = pruneEmpties(c.children)
+	for _, c := range nodes {
+		c.parent = parent
+		c.children = pruneContainers(c.children, c)
 		if c.msg == nil {
 			if len(c.children) == 0 {
 				// Discard entirely.
@@ -211,6 +219,9 @@ func pruneEmpties(roots []*container) []*container {
 			}
 			if len(c.children) == 1 || c.parent != nil {
 				// Promote single child (or all children) up.
+				for _, child := range c.children {
+					child.parent = parent
+				}
 				out = append(out, c.children...)
 				continue
 			}
@@ -239,28 +250,14 @@ func groupBySubject(roots []*container) []*container {
 		isReply bool // subject started with Re:/Fwd: etc.
 	}
 	tbl := make(map[string]*entry, len(roots))
+	positions := make(map[string]int, len(roots))
+	out := make([]*container, 0, len(roots))
 
 	for _, c := range roots {
-		subj := ""
-		if c.msg != nil {
-			subj = normalizeSubject(c.msg.Subject)
-		} else if len(c.children) > 0 {
-			// Find first non-nil message in children.
-			var findSubj func(*container) string
-			findSubj = func(x *container) string {
-				if x.msg != nil {
-					return normalizeSubject(x.msg.Subject)
-				}
-				for _, ch := range x.children {
-					if s := findSubj(ch); s != "" {
-						return s
-					}
-				}
-				return ""
-			}
-			subj = findSubj(c)
-		}
+		subj := containerSubject(c)
 		if subj == "" {
+			c.parent = nil
+			out = append(out, c)
 			continue
 		}
 		isReply := false
@@ -271,33 +268,44 @@ func groupBySubject(roots []*container) []*container {
 			// Merge c into existing.
 			if existing.isReply && !isReply {
 				// existing is a reply, c is the root — make c the new root.
-				existing.c.parent = c
-				c.children = append(c.children, existing.c)
+				c.parent = nil
+				c.addChild(existing.c)
 				tbl[subj] = &entry{c: c, isReply: false}
+				out[positions[subj]] = c
 			} else {
 				existing.c.addChild(c)
 			}
 		} else {
+			c.parent = nil
 			tbl[subj] = &entry{c: c, isReply: isReply}
-		}
-	}
-
-	// Collect merged roots (containers still without a parent).
-	var out []*container
-	for _, e := range tbl {
-		if e.c.parent == nil {
-			out = append(out, e.c)
-		}
-	}
-	// Any root whose subject was empty goes in as-is.
-	for _, c := range roots {
-		subj := ""
-		if c.msg != nil {
-			subj = normalizeSubject(c.msg.Subject)
-		}
-		if subj == "" && c.parent == nil {
+			positions[subj] = len(out)
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+func containerSubject(c *container) string {
+	if c.msg != nil {
+		return normalizeSubject(c.msg.Subject)
+	}
+	for _, child := range c.children {
+		if subject := containerSubject(child); subject != "" {
+			return subject
+		}
+	}
+	return ""
+}
+
+func containerOrderKey(c *container) string {
+	if c.msg != nil {
+		return c.msg.Date.UTC().Format("20060102150405.000000000") + "\x00" + c.msg.MessageID + "\x00" + c.msg.ID
+	}
+	best := "~"
+	for _, child := range c.children {
+		if key := containerOrderKey(child); key < best {
+			best = key
+		}
+	}
+	return best
 }

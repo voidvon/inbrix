@@ -147,6 +147,19 @@ func isUnread(email models.Email) bool {
 	return true
 }
 
+// messageHasAttachments is deliberately derived from both fields. Older
+// mirror rows can contain attachment metadata while their boolean marker was
+// reset by a later lightweight list refresh; the metadata is enough to render
+// the attachment links and is the more useful source of truth here.
+func messageHasAttachments(email models.Email) bool {
+	for _, attachment := range email.Attachments {
+		if !attachment.IsInline {
+			return true
+		}
+	}
+	return false
+}
+
 func conversationID(accountID string, thread models.Thread) string {
 	h := sha256.New()
 	h.Write([]byte(accountID))
@@ -254,7 +267,7 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 			if !outgoing && isUnread(email) {
 				conversation.UnreadCount++
 			}
-			if email.HasAttachments {
+			if messageHasAttachments(email) {
 				conversation.HasAttachments = true
 			}
 		}

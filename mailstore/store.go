@@ -188,6 +188,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			references_json TEXT NOT NULL DEFAULT '[]',
 			has_attachments INTEGER NOT NULL DEFAULT 0,
 			body_cached INTEGER NOT NULL DEFAULT 0,
+			attachment_metadata_cached INTEGER NOT NULL DEFAULT 0,
 			auth_json TEXT NOT NULL DEFAULT '',
 			unsubscribe_json TEXT NOT NULL DEFAULT '',
 			invite_json TEXT NOT NULL DEFAULT '',
@@ -203,6 +204,39 @@ func (s *Store) migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("mailstore: migrate: %w", err)
 		}
+	}
+	// The messages table predates attachment_metadata_cached. CREATE TABLE IF
+	// NOT EXISTS cannot alter that existing table, so add the column lazily for
+	// users upgrading an existing mirror database.
+	if err := s.ensureMessageAttachmentMetadataColumn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureMessageAttachmentMetadataColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(messages)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect messages schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan messages schema: %w", err)
+		}
+		if name == "attachment_metadata_cached" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect messages schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN attachment_metadata_cached INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("mailstore: add attachment metadata column: %w", err)
 	}
 	return nil
 }

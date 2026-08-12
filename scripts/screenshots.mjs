@@ -106,7 +106,7 @@ let serverProc = null;
 
 function startServer() {
   if (!existsSync(BINARY)) {
-    console.error(`Binary not found at ${BINARY}. Run: go build -o lilmail`);
+    console.error(`Binary not found at ${BINARY}. Run: make build`);
     process.exit(1);
   }
   writeTempConfig();

@@ -43,6 +43,10 @@ export function getConversation(id: string) {
   return apiFetch<ConversationDetailResponse>(`/api/conversations/${encodeURIComponent(id)}`);
 }
 
+export function resyncAttachments() {
+  return apiFetch<{ ok: boolean; queued: boolean; account: string }>("/api/accounts/resync-attachments", { method: "POST" });
+}
+
 export function sendMessage(form: FormData) {
   return apiFetch<{ success: boolean; message: string }>("/api/compose", {
     method: "POST",

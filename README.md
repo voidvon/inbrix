@@ -18,10 +18,10 @@
 
 lilmail is a self-hostable **PIM client** — mail, calendar, and contacts — that
 connects to the **user's own** IMAP/SMTP + CalDAV + CardDAV account and ships as
-**one self-contained Go binary**. The UI is server-rendered HTML (Go templates +
-HTMX + Alpine.js) with every frontend asset embedded via `embed.FS` — no build
-step, no CDN, and no external services to run by default. Drop the binary next to
-a `config.toml` and it runs, comfortably, on 64 MB of RAM.
+**one self-contained Go binary**. The production React/Vite bundle, Go templates,
+and browser assets are embedded via `embed.FS` — no CDN or external services to
+run by default. Drop the binary next to a `config.toml` and it runs,
+comfortably, on 64 MB of RAM.
 
 Log in with a classic username/password or **OAuth2 / OpenID Connect** (full
 PKCE flow with XOAUTH2 and OAUTHBEARER SASL and automatic token refresh).
@@ -88,10 +88,10 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
 
 ## How it works
 
-lilmail is a server-rendered [Fiber](https://gofiber.io/) application. There is
-no SPA and no asset pipeline — HTML templates and vendored JS/CSS are compiled
-into the binary at build time, and HTMX swaps in server-rendered partials so the
-page never does a full reload.
+lilmail is a [Fiber](https://gofiber.io/) application. The main inbox is a React
+SPA, while authentication, settings, and legacy mail pages remain Go-rendered
+HTML enhanced with HTMX and Alpine.js. The release build embeds both the Vite
+bundle and the server assets into the Go binary.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
@@ -146,8 +146,8 @@ cd lilmail
 # Configure — copy the example and fill in your mail server details + secrets
 cp config.toml.example config.toml   # then edit
 
-# Run
-go run main.go            # or: make build && ./lilmail
+# Build and run the single-process production-style server
+make build && ./lilmail
 ```
 
 Open **http://localhost:3000** and sign in.
@@ -243,17 +243,27 @@ regenerate screenshots.
 ## Development
 
 ```bash
-make build         # go build -o lilmail .
+npm install
+make dev             # Vite HMR on :3000; Go API/auth server on :3001
+make build         # build frontend + Go binary
 make test          # go test ./...
 make vet           # go vet ./...
 make check         # build + vet + test
-go run main.go     # run (requires config.toml)
+go run main.go     # single-process run (after npm run build for React UI)
 ./lilmail -version # print version and exit
 ```
+
+During frontend development, open **http://localhost:3000** after `make dev`.
+Vite serves the React source with HMR and proxies `/api`, `/v1`, authentication,
+and other backend routes to Go on `3001`; `go run main.go` by itself serves the
+embedded `frontend/dist` bundle and therefore does not provide HMR. To run the
+two processes manually, use `go run main.go -port 3001` in one terminal and
+`npm run dev` in another. Set `VITE_BACKEND_URL` if the Go server runs elsewhere.
 
 Cross-compile for any supported platform:
 
 ```bash
+npm run build
 GOOS=linux   GOARCH=amd64 go build -o lilmail-linux-amd64
 GOOS=darwin  GOARCH=arm64 go build -o lilmail-darwin-arm64
 GOOS=windows GOARCH=amd64 go build -o lilmail-windows-amd64.exe
@@ -276,7 +286,7 @@ Contributions are welcome. Please open an issue to discuss substantial changes
 before sending a pull request, and make sure the following passes first:
 
 ```bash
-make check   # go build ./... && go vet ./... && go test ./...
+make check   # frontend build + go build + go vet + go test
 ```
 
 ## Brand
