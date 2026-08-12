@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Locale}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,11 +26,30 @@
     <meta name="twitter:description" content="A lightweight, database-free webmail client that connects to any IMAP/SMTP mailbox.">
     <meta name="twitter:image" content="/assets/og-image.png">
 
-    <link rel="stylesheet" href="/assets/css/mail.css">
+    <link rel="stylesheet" href="/assets/css/mail.css?v={{assetVersion "css/mail.css"}}">
     <!-- HTMX -->
     <script src="/assets/vendor/htmx.min.js"></script>
     <!-- Alpine.js -->
     <script defer src="/assets/vendor/alpine.min.js"></script>
+    <script>
+        window.lilmailLocale = {{printf "%q" .Locale}};
+        window.lilmailI18n = {{json .Translations}};
+        window.lmT = window.lmT || function (key) {
+            return (window.lilmailI18n && window.lilmailI18n[key]) || key;
+        };
+
+        // Keep native fetch and HTMX requests working even while an older
+        // cached app.js is being replaced.
+        window.lilmailCSRFHeaders = window.lilmailCSRFHeaders || function (headers) {
+            var output = Object.assign({}, headers || {});
+            var csrfMatch = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+            if (csrfMatch) output['X-CSRF-Token'] = decodeURIComponent(csrfMatch[1]);
+            return output;
+        };
+        document.addEventListener('htmx:configRequest', function (evt) {
+            evt.detail.headers = window.lilmailCSRFHeaders(evt.detail.headers);
+        });
+    </script>
 </head>
 <body>
 
@@ -40,16 +59,16 @@
 <!-- TOP BAR -->
 <header class="topbar" x-data>
     <!-- Hamburger (mobile) -->
-    <button class="topbar__hamburger"
+            <button class="topbar__hamburger"
             @click="$store.ui.sidebarOpen = !$store.ui.sidebarOpen"
-            aria-label="Toggle sidebar">
+            aria-label="{{t .Translations "Toggle sidebar"}}">
         <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
         </svg>
     </button>
 
     <!-- Logo -->
-    <a href="/inbox" class="topbar__logo" aria-label="lilmail — go to inbox">
+    <a href="/inbox" class="topbar__logo" aria-label="{{t .Translations "lilmail — go to inbox"}}">
         <img src="/assets/lilmail-favicon.svg" alt="" class="topbar__logo-img" aria-hidden="true">
         <span class="topbar__logo-word">lilmail</span>
     </a>
@@ -59,21 +78,55 @@
         <svg class="topbar__search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/>
         </svg>
-        <input type="search" placeholder="Search mail"
+        <input type="search" placeholder="{{t .Translations "Search mail"}}"
                class="topbar__search-input"
-               aria-label="Search mail"
+               aria-label="{{t .Translations "Search mail"}}"
                name="q"
-               hx-get="/api/search"
+               hx-get="{{if .ConversationMode}}/api/conversations/search{{if .Unified}}?unified=1{{end}}{{else}}/api/search{{end}}"
                hx-trigger="search, keyup changed delay:500ms"
-               hx-target="#email-list-inner"
+               hx-target="#{{if .ConversationMode}}conversation-list-inner{{else}}email-list-inner{{end}}"
                hx-swap="innerHTML"
                hx-include="[name='q']">
     </div>
 
     <!-- Account -->
     <div class="topbar__account">
+        {{if .MailAccounts}}
+        <details class="topbar__mailbox">
+            <summary class="topbar__mailbox-trigger" aria-label="{{t .Translations "Switch mailbox"}}">
+                {{if .Email}}<span class="topbar__mailbox-dot" aria-hidden="true"></span>{{end}}
+                <span class="topbar__mailbox-label">{{if .Email}}{{.Email}}{{else}}{{t .Translations "Current mailbox"}}{{end}}</span>
+                <svg class="topbar__mailbox-chevron" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m7 10 5 5 5-5"/>
+                </svg>
+            </summary>
+            <div class="topbar__mailbox-menu">
+                <div class="topbar__mailbox-heading">{{t .Translations "Switch mailbox"}}</div>
+                {{range .MailAccounts}}
+                {{if .IsActive}}
+                <div class="topbar__mailbox-item is-active" aria-current="page">
+                    {{if .Color}}<span class="account-dot" style="background:{{.Color}}"></span>{{else}}<span class="topbar__mailbox-dot"></span>{{end}}
+                    <span class="topbar__mailbox-item-text"><strong>{{.Label}}</strong><small>{{.Email}}</small></span>
+                    <svg class="topbar__mailbox-check" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m5 12 4 4L19 6"/></svg>
+                </div>
+                {{else}}
+                <button type="button" class="topbar__mailbox-item"
+                        hx-post="/api/accounts/{{urlEncode .Email}}/switch" hx-swap="none">
+                    {{if .Color}}<span class="account-dot" style="background:{{.Color}}"></span>{{else}}<span class="topbar__mailbox-dot"></span>{{end}}
+                    <span class="topbar__mailbox-item-text"><strong>{{.Label}}</strong><small>{{.Email}}</small></span>
+                </button>
+                {{end}}
+                {{end}}
+                <a class="topbar__mailbox-manage" href="/settings">{{t .Translations "Manage mailboxes"}}</a>
+            </div>
+        </details>
+        {{end}}
         <span class="topbar__username">{{.Username}}</span>
-        <a href="/settings" class="topbar__settings" title="Settings">
+        <div class="language-switcher" aria-label="{{t .Translations "Language"}}">
+            <a href="/language?locale=zh-CN&next={{urlEncode .CurrentPath}}" class="{{if eq .Locale "zh-CN"}}is-active{{end}}">简体中文</a>
+            <a href="/language?locale=en&next={{urlEncode .CurrentPath}}" class="{{if eq .Locale "en"}}is-active{{end}}">English</a>
+        </div>
+        <a href="/settings" class="topbar__settings" title="{{t .Translations "Settings"}}">
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -83,13 +136,13 @@
         <button type="button" class="topbar__logout"
                 hx-post="/logout"
                 hx-swap="none"
-                title="Sign out">Sign out</button>
+                title="{{t .Translations "Sign out"}}">{{t .Translations "Sign out"}}</button>
     </div>
 </header>
 {{end}}
 
 <!-- token carrier for JS fetch calls in compose / autocomplete -->
-{{if .Token}}<span id="app-token" data-token="{{.Token}}" hidden></span>{{end}}
+{{if .Token}}<span id="app-token" data-token="{{.Token}}" data-locale="{{.Locale}}" hidden></span>{{end}}
 
 <!-- MAIN CONTENT -->
 <div class="{{if .Username}}app-body{{end}}"
@@ -136,16 +189,16 @@
 
 {{if notificationsEnabled}}
 {{if .Username}}
-<script src="/assets/js/notifications.js"></script>
+<script src="/assets/js/notifications.js?v={{assetVersion "js/notifications.js"}}"></script>
 {{end}}
 {{end}}
 
 {{if webPushEnabled}}
 {{if .Username}}
-<script src="/assets/js/push.js"></script>
+<script src="/assets/js/push.js?v={{assetVersion "js/push.js"}}"></script>
 {{end}}
 {{end}}
 
-<script src="/assets/js/app.js"></script>
+<script src="/assets/js/app.js?v={{assetVersion "js/app.js"}}"></script>
 </body>
 </html>

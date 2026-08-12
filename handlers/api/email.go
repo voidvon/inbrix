@@ -14,31 +14,28 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/emersion/go-imap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // reMessageID matches RFC 2822 message-id tokens of the form <...>.
 var reMessageID = regexp.MustCompile(`<[^>]+>`)
 
-// previewSection is the IMAP body section used to fetch a small text snippet
-// for the message list. BODY.PEEK[TEXT]<0.4096> fetches the head of the message
-// text body without implicitly setting the \Seen flag. 4096 rather than 512
-// because an HTML mail opens with a <style> block that routinely runs past the
-// first kilobyte, leaving no prose in a shorter window.
-var previewSection = &imap.BodySectionName{
-	BodyPartName: imap.BodyPartName{Specifier: imap.TextSpecifier},
-	Peek:         true,
-	Partial:      []int{0, 4096},
-}
-
-// referencesSection fetches the References header line without marking seen.
-var referencesSection = &imap.BodySectionName{
+// listHeadersSection fetches the headers needed to render a message list and
+// build conversation metadata. QQ enterprise mail can return a malformed
+// ENVELOPE response, so list synchronization deliberately reads RFC 5322
+// headers instead of requesting ENVELOPE.
+var listHeadersSection = &imap.BodySectionName{
 	BodyPartName: imap.BodyPartName{
 		Specifier: imap.HeaderSpecifier,
-		Fields:    []string{"References"},
+		Fields: []string{
+			"Date", "Subject", "From", "To", "Cc", "Message-ID",
+			"In-Reply-To", "References",
+		},
 	},
 	Peek: true,
 }
@@ -74,12 +71,9 @@ func (c *Client) FetchMessagesPaged(folderName string, limit, offset uint32) ([]
 
 	messages := make(chan *imap.Message, limit)
 	items := []imap.FetchItem{
-		imap.FetchEnvelope,
 		imap.FetchFlags,
-		imap.FetchBodyStructure,
 		imap.FetchUid,
-		previewSection.FetchItem(),    // partial TEXT body for preview snippet
-		referencesSection.FetchItem(), // References header for JWZ threading
+		listHeadersSection.FetchItem(), // message metadata without ENVELOPE
 	}
 
 	done := make(chan error, 1)
@@ -104,75 +98,206 @@ func (c *Client) FetchMessagesPaged(folderName string, limit, offset uint32) ([]
 	return emails, nil
 }
 
-// processListMessage builds an Email from a list-fetch message. It only
-// populates envelope/flags/attachments and derives a short preview from the
-// partial TEXT body section. It does NOT parse the full body or HTML.
+// FetchMessagesSinceUID retrieves list metadata for UIDs newer than afterUID.
+// It uses the IMAP UID SEARCH extension defined by RFC 3501 rather than
+// sequence offsets, so new mail can be discovered without re-reading the
+// entire mailbox on every polling cycle.
+func (c *Client) FetchMessagesSinceUID(folderName string, afterUID, limit uint32) ([]models.Email, error) {
+	if afterUID == ^uint32(0) {
+		return []models.Email{}, nil
+	}
+	if _, err := c.client.Select(folderName, true); err != nil {
+		return nil, fmt.Errorf("error selecting folder %s: %v", folderName, err)
+	}
+
+	criteria := imap.NewSearchCriteria()
+	uidSet := new(imap.SeqSet)
+	uidSet.AddRange(afterUID+1, 0)
+	criteria.Uid = uidSet
+	uids, err := c.client.UidSearch(criteria)
+	if err != nil {
+		return nil, fmt.Errorf("error searching folder %s for new messages: %v", folderName, err)
+	}
+	if len(uids) == 0 {
+		return []models.Email{}, nil
+	}
+	// UidSearch normally returns ascending UIDs. Sort explicitly because the
+	// protocol does not make response ordering a useful application contract.
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	if limit > 0 && uint32(len(uids)) > limit {
+		// Keep the oldest page first. The sync worker advances its cursor and
+		// calls this method again when more than one batch arrived.
+		uids = uids[:int(limit)]
+	}
+
+	seqSet := new(imap.SeqSet)
+	for _, uid := range uids {
+		seqSet.AddNum(uid)
+	}
+	items := []imap.FetchItem{
+		imap.FetchFlags,
+		imap.FetchUid,
+		listHeadersSection.FetchItem(),
+	}
+	messages := make(chan *imap.Message, len(uids))
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.UidFetch(seqSet, items, messages)
+	}()
+
+	emails := make([]models.Email, 0, len(uids))
+	for msg := range messages {
+		email, err := c.processListMessage(msg, folderName)
+		if err != nil {
+			log.Printf("email: processListMessage uid=%d: %v", msg.Uid, err)
+			continue
+		}
+		emails = append(emails, email)
+	}
+	if err := <-done; err != nil {
+		return emails, fmt.Errorf("error during incremental fetch: %v", err)
+	}
+	sort.Slice(emails, func(i, j int) bool {
+		if emails[i].Date.Equal(emails[j].Date) {
+			left, _ := strconv.ParseUint(emails[i].ID, 10, 32)
+			right, _ := strconv.ParseUint(emails[j].ID, 10, 32)
+			return left < right
+		}
+		return emails[i].Date.Before(emails[j].Date)
+	})
+	return emails, nil
+}
+
+// FetchMessageUIDs returns the current UID set for a folder without fetching
+// message headers or bodies. The mirror uses it during incremental sync to
+// remove records for messages that were deleted remotely.
+func (c *Client) FetchMessageUIDs(folderName string) ([]uint32, error) {
+	if _, err := c.client.Select(folderName, true); err != nil {
+		return nil, fmt.Errorf("error selecting folder %s: %v", folderName, err)
+	}
+	uids, err := c.client.UidSearch(imap.NewSearchCriteria())
+	if err != nil {
+		return nil, fmt.Errorf("error searching folder %s UIDs: %v", folderName, err)
+	}
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	return uids, nil
+}
+
+// processListMessage builds an Email from the minimal list-fetch response. It
+// only populates RFC 5322 headers and flags; bodies, previews, and attachment
+// metadata are fetched on demand so provider-specific fetch extensions cannot
+// block the mailbox mirror.
 func (c *Client) processListMessage(msg *imap.Message, folderName string) (models.Email, error) {
 	email := models.Email{
 		ID:    fmt.Sprintf("%d", msg.Uid),
 		Flags: msg.Flags,
 	}
 
-	if msg.Envelope != nil {
-		email.Subject = msg.Envelope.Subject
-		email.Date = msg.Envelope.Date
-
-		if len(msg.Envelope.From) > 0 && msg.Envelope.From[0] != nil {
-			email.From = msg.Envelope.From[0].Address()
-			email.FromName = msg.Envelope.From[0].PersonalName
+	if r := msg.GetBody(listHeadersSection); r != nil {
+		header, err := readMessageHeaders(r)
+		if err != nil {
+			return email, fmt.Errorf("parse message headers: %v", err)
 		}
-
-		if len(msg.Envelope.To) > 0 {
-			var toAddresses []string
-			var toNames []string
-			for _, addr := range msg.Envelope.To {
-				if addr != nil {
-					toAddresses = append(toAddresses, addr.Address())
-					if addr.PersonalName != "" {
-						toNames = append(toNames, addr.PersonalName)
-					}
-				}
-			}
-			email.To = strings.Join(toAddresses, ", ")
-			email.ToNames = toNames
-		}
-
-		// Threading headers from the envelope.
-		email.MessageID = msg.Envelope.MessageId
-		email.InReplyTo = msg.Envelope.InReplyTo
+		populateEmailHeaders(&email, header)
 	}
-
-	// References is not in the envelope — extract from the header section.
-	if r := msg.GetBody(referencesSection); r != nil {
-		if raw, err := io.ReadAll(r); err == nil {
-			email.References = reMessageID.FindAllString(string(raw), -1)
-		}
+	if email.Date.IsZero() {
+		email.Date = msg.InternalDate
 	}
-
-	// Build preview from the partial TEXT section if available.
-	if r := msg.GetBody(previewSection); r != nil {
-		if raw, err := io.ReadAll(r); err == nil && len(raw) > 0 {
-			text := string(raw)
-			// Strip any residual MIME headers that appear before the actual body.
-			if idx := strings.Index(text, "\r\n\r\n"); idx >= 0 {
-				text = text[idx+4:]
-			} else if idx := strings.Index(text, "\n\n"); idx >= 0 {
-				text = text[idx+2:]
-			}
-			// These bytes are still transfer-encoded: base64 shows up as gibberish
-			// and quoted-printable leaks "=E2=80=94" and "=" soft line breaks.
-			text = string(decodeTransferBytes([]byte(text), previewEncoding(msg.BodyStructure)))
-			text = stripHTML(text)
-			email.Preview = createPreview(text)
-		}
-	}
-
-	// Attachment metadata (content fetched on-demand).
-	attachments := c.processAttachments(msg, folderName)
-	email.Attachments = attachments
-	email.HasAttachments = len(attachments) > 0
 
 	return email, nil
+}
+
+// readMessageHeaders parses an IMAP header section or a complete RFC 5322
+// message and returns its decoded header map.
+func readMessageHeaders(r io.Reader) (mail.Header, error) {
+	m, err := mail.ReadMessage(r)
+	if err != nil {
+		return nil, err
+	}
+	return m.Header, nil
+}
+
+// populateEmailHeaders copies the common metadata fields from RFC 5322
+// headers. Keeping this independent of IMAP ENVELOPE is important for
+// providers that return incomplete ENVELOPE tuples.
+func populateEmailHeaders(email *models.Email, header mail.Header) {
+	email.Subject = decodeMIMEHeader(header.Get("Subject"))
+	if date, err := mail.ParseDate(header.Get("Date")); err == nil {
+		email.Date = date
+	}
+
+	from := parseAddressHeader(header.Get("From"))
+	if len(from) > 0 {
+		email.From = from[0].Address
+		email.FromName = from[0].Name
+	}
+
+	to := parseAddressHeader(header.Get("To"))
+	if len(to) > 0 {
+		addresses := make([]string, 0, len(to))
+		names := make([]string, 0, len(to))
+		for _, address := range to {
+			addresses = append(addresses, address.Address)
+			if address.Name != "" {
+				names = append(names, address.Name)
+			}
+		}
+		email.To = strings.Join(addresses, ", ")
+		email.ToNames = names
+	}
+
+	cc := parseAddressHeader(header.Get("Cc"))
+	if len(cc) > 0 {
+		addresses := make([]string, 0, len(cc))
+		for _, address := range cc {
+			addresses = append(addresses, address.Address)
+		}
+		email.Cc = strings.Join(addresses, ", ")
+	}
+
+	email.MessageID = header.Get("Message-ID")
+	email.InReplyTo = header.Get("In-Reply-To")
+	email.References = reMessageID.FindAllString(header.Get("References"), -1)
+}
+
+func parseAddressHeader(raw string) []*mail.Address {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	decoder := messageWordDecoder()
+	addresses, err := (&mail.AddressParser{WordDecoder: decoder}).ParseList(raw)
+	if err == nil {
+		return addresses
+	}
+	address, err := (&mail.AddressParser{WordDecoder: decoder}).Parse(raw)
+	if err != nil {
+		return nil
+	}
+	return []*mail.Address{address}
+}
+
+func decodeMIMEHeader(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	decoded, err := messageWordDecoder().DecodeHeader(raw)
+	if err != nil {
+		return raw
+	}
+	return decoded
+}
+
+func messageWordDecoder() *mime.WordDecoder {
+	return &mime.WordDecoder{
+		CharsetReader: func(charset string, input io.Reader) (io.Reader, error) {
+			switch strings.ToLower(strings.TrimSpace(charset)) {
+			case "gb18030", "gb2312", "gbk", "x-gbk":
+				return simplifiedchinese.GB18030.NewDecoder().Reader(input), nil
+			default:
+				return nil, fmt.Errorf("unsupported message charset %q", charset)
+			}
+		},
+	}
 }
 
 func (c *Client) FetchSingleMessage(folderName, uid string) (models.Email, error) {
@@ -196,10 +321,10 @@ func (c *Client) FetchSingleMessage(folderName, uid string) (models.Email, error
 	}
 
 	items := []imap.FetchItem{
-		imap.FetchEnvelope,
 		imap.FetchFlags,
 		imap.FetchBodyStructure,
 		imap.FetchUid,
+		imap.FetchInternalDate,
 		section.FetchItem(),
 	}
 
@@ -551,49 +676,6 @@ func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Em
 		Flags: msg.Flags,
 	}
 
-	// Process envelope information
-	if msg.Envelope != nil {
-		email.Subject = msg.Envelope.Subject
-		email.Date = msg.Envelope.Date
-
-		// Process From addresses
-		if len(msg.Envelope.From) > 0 && msg.Envelope.From[0] != nil {
-			email.From = msg.Envelope.From[0].Address()
-			email.FromName = msg.Envelope.From[0].PersonalName
-		}
-
-		// Process To addresses
-		if len(msg.Envelope.To) > 0 {
-			var toAddresses []string
-			var toNames []string
-			for _, addr := range msg.Envelope.To {
-				if addr != nil {
-					toAddresses = append(toAddresses, addr.Address())
-					if addr.PersonalName != "" {
-						toNames = append(toNames, addr.PersonalName)
-					}
-				}
-			}
-			email.To = strings.Join(toAddresses, ", ")
-			email.ToNames = toNames
-		}
-
-		// Process CC addresses
-		if len(msg.Envelope.Cc) > 0 {
-			var ccAddresses []string
-			for _, addr := range msg.Envelope.Cc {
-				if addr != nil {
-					ccAddresses = append(ccAddresses, addr.Address())
-				}
-			}
-			email.Cc = strings.Join(ccAddresses, ", ")
-		}
-
-		// Threading headers from the envelope.
-		email.MessageID = msg.Envelope.MessageId
-		email.InReplyTo = msg.Envelope.InReplyTo
-	}
-
 	// Process body
 	var section imap.BodySectionName
 	r := msg.GetBody(&section)
@@ -609,11 +691,9 @@ func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Em
 		if err != nil {
 			return email, fmt.Errorf("error parsing message: %v", err)
 		}
+		email.BodyCached = true
 
-		// Extract References header for threading (envelope doesn't carry it).
-		if refsHdr := m.Header.Get("References"); refsHdr != "" {
-			email.References = reMessageID.FindAllString(refsHdr, -1)
-		}
+		populateEmailHeaders(&email, m.Header)
 
 		// Surface the receiving server's SPF/DKIM/DMARC verdict (RFC 8601). A
 		// message may carry several Authentication-Results headers (one per hop);
@@ -719,23 +799,6 @@ func base64PrefixLen(b []byte) int {
 		}
 	}
 	return len(b)
-}
-
-// previewEncoding reports the Content-Transfer-Encoding that applies to the
-// bytes IMAP returns for BODY[TEXT]: the message encoding for a single-part
-// message, or the first leaf part's for a multipart one (BODY[TEXT] hands back
-// the raw MIME body, whose first part is what the preview text is sliced from).
-func previewEncoding(bs *imap.BodyStructure) string {
-	if bs == nil {
-		return ""
-	}
-	if strings.EqualFold(bs.MIMEType, "multipart") {
-		if len(bs.Parts) == 0 {
-			return ""
-		}
-		return previewEncoding(bs.Parts[0])
-	}
-	return bs.Encoding
 }
 
 // collectBodies fills email.Body (text/plain) and email.HTML (text/html) from a

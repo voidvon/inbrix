@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+func TestEmailBodyCachedRecognizesEmptyCachedBody(t *testing.T) {
+	if !emailBodyCached(models.Email{BodyCached: true}) {
+		t.Fatal("explicit body cache state should be sufficient for an empty MIME body")
+	}
+	if emailBodyCached(models.Email{}) {
+		t.Fatal("header-only message must not be treated as body-cached")
+	}
+}
+
 // ─── Thread store / buildThreads ─────────────────────────────────────────────
 
 // TestBuildThreadsInMemory verifies that buildThreads falls back to

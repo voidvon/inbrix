@@ -3,16 +3,19 @@ package web
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"lilmail/config"
 	"lilmail/handlers/api"
 	"lilmail/handlers/htmlsafe"
+	"lilmail/mailstore"
 	"lilmail/models"
 	"lilmail/storage"
 	"lilmail/utils"
 	"log"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -36,6 +39,7 @@ type EmailHandler struct {
 	config    *config.Config
 	auth      *AuthHandler
 	acctStore *AccountStore // nil when accounts.enabled = false
+	mailDB    *mailstore.Store
 
 	// threadStores caches one open bbolt handle per user so we don't open the
 	// single-writer file on every request (which would cause lock contention).
@@ -56,6 +60,270 @@ func NewEmailHandler(store *session.Store, config *config.Config, auth *AuthHand
 // unified fetches.  Called from main.go after the store is opened.
 func (h *EmailHandler) SetAccountStore(s *AccountStore) {
 	h.acctStore = s
+}
+
+func (h *EmailHandler) SetMailMirror(s *mailstore.Store) {
+	h.mailDB = s
+}
+
+type mailAccountOption struct {
+	Email    string
+	Label    string
+	Color    string
+	IsActive bool
+}
+
+func (h *EmailHandler) mailAccountOptions(c *fiber.Ctx) []mailAccountOption {
+	activeEmail := strings.TrimSpace(h.auth.GetSessionEmail(c))
+	options := make([]mailAccountOption, 0)
+	seen := make(map[string]struct{})
+	appendOption := func(email, label, color string) {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			return
+		}
+		key := strings.ToLower(email)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		if label == "" {
+			label = email
+		}
+		seen[key] = struct{}{}
+		options = append(options, mailAccountOption{
+			Email:    email,
+			Label:    label,
+			Color:    color,
+			IsActive: strings.EqualFold(email, activeEmail),
+		})
+	}
+
+	if h.mailDB != nil {
+		sess, err := h.store.Get(c)
+		if err == nil {
+			owner, _ := sess.Get("user_id").(string)
+			if owner != "" {
+				if accounts, listErr := h.mailDB.ListAccounts(c.UserContext(), owner); listErr == nil {
+					for _, account := range accounts {
+						appendOption(account.Email, account.Label, account.Color)
+					}
+				}
+			}
+		}
+		if len(options) == 0 {
+			appendOption(activeEmail, activeEmail, "")
+		}
+		return options
+	}
+
+	appendOption(activeEmail, activeEmail, "")
+	if h.acctStore != nil && h.config.Accounts.Enabled {
+		username, _ := c.Locals("username").(string)
+		if entries, err := h.acctStore.List(username); err == nil {
+			for _, entry := range entries {
+				appendOption(entry.Email, entry.Label, entry.Color)
+			}
+		}
+	}
+	return options
+}
+
+func (h *EmailHandler) currentMirrorAccount(c *fiber.Ctx) (mailstore.Account, bool) {
+	if h.mailDB == nil {
+		return mailstore.Account{}, false
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return mailstore.Account{}, false
+	}
+	if id, _ := sess.Get("account_id").(string); id != "" {
+		account, err := h.mailDB.GetAccount(c.UserContext(), id)
+		return account, err == nil
+	}
+	if owner, _ := sess.Get("user_id").(string); owner != "" {
+		accounts, err := h.mailDB.ListAccounts(c.UserContext(), owner)
+		if err == nil && len(accounts) > 0 {
+			return accounts[0], true
+		}
+	}
+	return mailstore.Account{}, false
+}
+
+func mirrorMailboxInfos(folders []mailstore.Folder) []*api.MailboxInfo {
+	out := make([]*api.MailboxInfo, 0, len(folders))
+	for _, folder := range folders {
+		out = append(out, &api.MailboxInfo{
+			Name:        folder.Name,
+			Delimiter:   folder.Delimiter,
+			Attributes:  append([]string(nil), folder.Attributes...),
+			UnreadCount: folder.UnreadCount,
+		})
+	}
+	return out
+}
+
+func tagMirrorEmails(emails []models.Email, account mailstore.Account) []models.Email {
+	for i := range emails {
+		emails[i].AccountEmail = account.Email
+		emails[i].AccountLabel = account.Label
+		emails[i].AccountColor = account.Color
+	}
+	return emails
+}
+
+func (h *EmailHandler) localMessages(c *fiber.Ctx, account mailstore.Account, folder string, limit int) ([]models.Email, bool, error) {
+	state, stateErr := h.mailDB.GetSyncState(c.UserContext(), account.ID, folder)
+	emails, err := h.mailDB.ListMessages(c.UserContext(), account.ID, folder, limit, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	// A non-empty mirror is useful even while a capped initial sync is still
+	// running. An empty folder becomes authoritative only after a completed
+	// sync marker is written.
+	ready := len(emails) > 0 || (stateErr == nil && state.SyncComplete)
+	return tagMirrorEmails(emails, account), ready, nil
+}
+
+func (h *EmailHandler) mirrorAccounts(c *fiber.Ctx) ([]mailstore.Account, bool, error) {
+	if h.mailDB == nil {
+		return nil, false, nil
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return nil, false, err
+	}
+	owner, _ := sess.Get("user_id").(string)
+	if owner == "" {
+		return nil, false, nil
+	}
+	accounts, err := h.mailDB.ListAccounts(c.UserContext(), owner)
+	return accounts, true, err
+}
+
+// localUnifiedMessages merges synchronized mail without opening any IMAP
+// connections. A slow or unavailable remote mailbox therefore cannot block a
+// page that already has local data.
+func (h *EmailHandler) localUnifiedMessages(c *fiber.Ctx, accounts []mailstore.Account, folder string, limit int) ([]models.Email, []AccountFetchResult, error) {
+	var merged []models.Email
+	results := make([]AccountFetchResult, 0, len(accounts))
+	for _, account := range accounts {
+		result := AccountFetchResult{AccountEmail: account.Email, AccountLabel: account.Label, AccountColor: account.Color}
+		if result.AccountLabel == "" {
+			result.AccountLabel = account.Email
+		}
+		emails, err := h.mailDB.ListMessages(c.UserContext(), account.ID, folder, limit, 0)
+		if err != nil {
+			result.Err = err
+			results = append(results, result)
+			continue
+		}
+		result.Emails = tagMirrorEmails(emails, account)
+		merged = append(merged, result.Emails...)
+		results = append(results, result)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Date.Equal(merged[j].Date) {
+			return merged[i].ID > merged[j].ID
+		}
+		return merged[i].Date.After(merged[j].Date)
+	})
+	max := limit * len(accounts)
+	if max > 200 {
+		max = 200
+	}
+	if max > 0 && len(merged) > max {
+		merged = merged[:max]
+	}
+	return merged, results, nil
+}
+
+func (h *EmailHandler) localUserWithoutMailbox(c *fiber.Ctx) bool {
+	if h.mailDB == nil {
+		return false
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return false
+	}
+	userID, _ := sess.Get("user_id").(string)
+	if userID == "" {
+		return false
+	}
+	authType, _ := sess.Get("auth_type").(string)
+	return authType != demoAuthType
+}
+
+func (h *EmailHandler) mirrorAccountForEmail(c *fiber.Ctx, email string) (mailstore.Account, bool) {
+	if h.mailDB == nil || strings.TrimSpace(email) == "" {
+		return mailstore.Account{}, false
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return mailstore.Account{}, false
+	}
+	owner, _ := sess.Get("user_id").(string)
+	if owner == "" {
+		return mailstore.Account{}, false
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
+	return account, err == nil
+}
+
+// requestAccountEmail identifies the source mailbox for a message operation.
+// Unified-inbox rows carry this in a header; the query-string fallback keeps
+// direct links and attachment-style callers compatible.
+func requestAccountEmail(c *fiber.Ctx) string {
+	accountEmail := strings.TrimSpace(c.Get("X-Account-Email"))
+	if accountEmail == "" {
+		accountEmail = strings.TrimSpace(c.Query("account_email"))
+	}
+	return accountEmail
+}
+
+// messageClientForAccount opens the IMAP connection for a message operation
+// and returns the owner-scoped mirror account when one exists. The account
+// email is never trusted by itself: mirrorAccountForEmail verifies that it
+// belongs to the authenticated application user before any network call.
+func (h *EmailHandler) messageClientForAccount(c *fiber.Ctx, accountEmail string) (api.MailClient, mailstore.Account, error) {
+	if accountEmail != "" {
+		if h.mailDB != nil {
+			account, ok := h.mirrorAccountForEmail(c, accountEmail)
+			if !ok {
+				return nil, mailstore.Account{}, fmt.Errorf("account %s not found", accountEmail)
+			}
+			client, err := h.auth.CreateIMAPClientForMirrorAccount(account)
+			return client, account, err
+		}
+
+		// Legacy bbolt multi-account mode has no mirror account ID, so resolve
+		// the requested mailbox against the current user's stored entries.
+		sessionEmail := h.auth.GetSessionEmail(c)
+		if strings.EqualFold(accountEmail, sessionEmail) {
+			client, err := h.auth.CreateIMAPClient(c)
+			return client, mailstore.Account{}, err
+		}
+		if h.acctStore != nil && h.config.Accounts.Enabled {
+			username, _ := c.Locals("username").(string)
+			entries, err := h.acctStore.List(username)
+			if err != nil {
+				return nil, mailstore.Account{}, err
+			}
+			for _, entry := range entries {
+				if strings.EqualFold(entry.Email, accountEmail) {
+					client, clientErr := h.auth.CreateIMAPClientForAccount(entry)
+					return client, mailstore.Account{}, clientErr
+				}
+			}
+		}
+		return nil, mailstore.Account{}, fmt.Errorf("account %s not found", accountEmail)
+	}
+
+	if account, ok := h.currentMirrorAccount(c); ok {
+		client, err := h.auth.CreateIMAPClientForMirrorAccount(account)
+		return client, account, err
+	}
+	client, err := h.auth.CreateIMAPClient(c)
+	return client, mailstore.Account{}, err
 }
 
 // getThreadStore returns the shared ThreadStore for the given user, opening it
@@ -93,93 +361,9 @@ func (h *EmailHandler) buildThreads(username, folder string, emails []models.Ema
 	return api.ThreadMessages(emails)
 }
 
-// HandleInbox renders the main inbox page.
-// When [accounts] is enabled and the user has additional accounts, and the
-// "unified" query parameter is set to "1" (or the user had it set last time),
-// it fans out to all accounts and shows a merged view.
+// HandleInbox renders the merged inbox/sent conversation view.
 func (h *EmailHandler) HandleInbox(c *fiber.Ctx) error {
-	username := c.Locals("username")
-	if username == nil {
-		return c.Redirect("/login")
-	}
-
-	userStr, ok := username.(string)
-	if !ok {
-		return c.Redirect("/login")
-	}
-	sessionEmail, _ := c.Locals("email").(string)
-
-	// Load folders from cache
-	userCacheFolder := filepath.Join(h.config.Cache.Folder, api.SanitizeUsername(userStr))
-	var folders []*api.MailboxInfo
-	if err := utils.LoadCache(filepath.Join(userCacheFolder, "folders.json"), &folders); err != nil {
-		return c.Status(500).SendString("Error loading folders")
-	}
-
-	// Get JWT token for API requests
-	token, err := api.GetSessionToken(c, h.store)
-	if err != nil {
-		return c.Redirect("/login")
-	}
-
-	// Determine whether unified mode is requested.
-	unified := c.Query("unified") == "1"
-
-	// Check if multi-account is available.
-	var additionalAccounts []AccountEntry
-	if h.acctStore != nil && h.config.Accounts.Enabled {
-		additionalAccounts, _ = h.acctStore.List(userStr)
-	}
-	unifiedAvailable := len(additionalAccounts) > 0
-
-	// Get primary IMAP client — needed in all cases.
-	client, err := h.auth.CreateIMAPClient(c)
-	if err != nil {
-		return c.Status(500).SendString("Error connecting to email server")
-	}
-	defer client.Close()
-
-	var emails []models.Email
-	var accountErrors []AccountFetchResult
-
-	if unified && unifiedAvailable {
-		// Fan out to all accounts.
-		emails, accountErrors = FetchUnified(
-			client,
-			sessionEmail, "", "", // primary has no badge in unified when label is ""
-			additionalAccounts,
-			h.auth,
-			"INBOX",
-			50,
-		)
-	} else {
-		// Single-account path — unchanged behaviour.
-		emails, err = client.FetchMessages("INBOX", 50)
-		if err != nil {
-			return c.Status(500).SendString("Error fetching emails")
-		}
-	}
-
-	// Build JWZ threads.  In unified mode we bucket by account+folder to avoid
-	// UID collisions between different servers.
-	threadKey := "INBOX"
-	if unified && unifiedAvailable {
-		threadKey = "UNIFIED/INBOX"
-	}
-	threads := h.buildThreads(userStr, threadKey, emails)
-
-	return c.Render("inbox", fiber.Map{
-		"Username":         userStr,
-		"Email":            sessionEmail,
-		"Folders":          folders,
-		"Emails":           emails,
-		"Threads":          threads,
-		"CurrentFolder":    "INBOX",
-		"Token":            token,
-		"Unified":          unified && unifiedAvailable,
-		"UnifiedAvailable": unifiedAvailable,
-		"AccountErrors":    accountErrors,
-	})
+	return h.HandleConversations(c)
 }
 
 // HandleFolder displays emails from a specific folder
@@ -193,28 +377,46 @@ func (h *EmailHandler) HandleFolder(c *fiber.Ctx) error {
 	if !ok {
 		return c.Redirect("/login")
 	}
+	sessionEmail, _ := c.Locals("email").(string)
 
 	folderName, err := url.QueryUnescape(c.Params("name"))
 	if folderName == "" {
 		return c.Redirect("/inbox")
 	}
+	if isConversationMailboxName(folderName) {
+		return c.Redirect("/inbox")
+	}
 
-	// Load folders for sidebar
+	// Load folders for sidebar, preferring the synchronized mirror.
 	userCacheFolder := filepath.Join(h.config.Cache.Folder, api.SanitizeUsername(userStr))
 	var folders []*api.MailboxInfo
-	if err := utils.LoadCache(filepath.Join(userCacheFolder, "folders.json"), &folders); err != nil {
-		return c.Status(500).SendString("Error loading folders")
+	account, hasMirrorAccount := h.currentMirrorAccount(c)
+	if !hasMirrorAccount && h.localUserWithoutMailbox(c) {
+		return c.Redirect("/settings?setup=1")
+	}
+	if hasMirrorAccount {
+		if mirroredFolders, folderErr := h.mailDB.ListFolders(c.UserContext(), account.ID); folderErr == nil && len(mirroredFolders) > 0 {
+			folders = mirrorMailboxInfos(mirroredFolders)
+		}
+	}
+	if len(folders) == 0 && !hasMirrorAccount {
+		if err := utils.LoadCache(filepath.Join(userCacheFolder, "folders.json"), &folders); err != nil {
+			return c.Status(500).SendString("Error loading folders")
+		}
 	}
 
-	// Get IMAP client
-	client, err := h.auth.CreateIMAPClient(c)
-	if err != nil {
-		return c.Status(500).SendString("Error connecting to email server")
+	var emails []models.Email
+	if hasMirrorAccount {
+		emails, _, err = h.localMessages(c, account, folderName, 50)
 	}
-	defer client.Close()
-
-	// Fetch folder emails
-	emails, err := client.FetchMessages(folderName, 50)
+	if !hasMirrorAccount {
+		client, clientErr := h.auth.CreateIMAPClient(c)
+		if clientErr != nil {
+			return c.Status(500).SendString("Error connecting to email server")
+		}
+		emails, err = client.FetchMessages(folderName, 50)
+		_ = client.Close()
+	}
 	if err != nil {
 		return c.Status(500).SendString("Error fetching emails")
 	}
@@ -228,8 +430,10 @@ func (h *EmailHandler) HandleFolder(c *fiber.Ctx) error {
 	// Build JWZ threads using the shared bbolt store.
 	threads := h.buildThreads(userStr, folderName, emails)
 
-	return c.Render("inbox", fiber.Map{
+	return Render(c, "inbox", fiber.Map{
 		"Username":      userStr,
+		"Email":         sessionEmail,
+		"MailAccounts":  h.mailAccountOptions(c),
 		"Folders":       folders,
 		"Emails":        emails,
 		"Threads":       threads,
@@ -267,8 +471,51 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 
 	var client api.MailClient
 	var err error
+	var email models.Email
+	usedMirror := false
+	var mirrorAccount mailstore.Account
+	if accountEmail == "" {
+		if account, ok := h.currentMirrorAccount(c); ok {
+			mirrorAccount = account
+			cached, dbErr := h.mailDB.GetMessage(c.UserContext(), account.ID, folderName, emailID)
+			if dbErr != nil {
+				if errors.Is(dbErr, mailstore.ErrNotFound) {
+					return mailBodyNotReady(c)
+				}
+				log.Printf("mail mirror: read message %s/%s: %v", folderName, emailID, dbErr)
+				return c.Status(500).JSON(fiber.Map{"error": "Error reading local email cache"})
+			}
+			if !emailBodyCached(cached) {
+				return mailBodyNotReady(c)
+			}
+			email = cached
+			usedMirror = true
+		}
+	} else if account, ok := h.mirrorAccountForEmail(c, accountEmail); ok {
+		mirrorAccount = account
+		cached, dbErr := h.mailDB.GetMessage(c.UserContext(), account.ID, folderName, emailID)
+		if dbErr != nil {
+			if errors.Is(dbErr, mailstore.ErrNotFound) {
+				return mailBodyNotReady(c)
+			}
+			log.Printf("mail mirror: read message %s/%s: %v", folderName, emailID, dbErr)
+			return c.Status(500).JSON(fiber.Map{"error": "Error reading local email cache"})
+		}
+		if !emailBodyCached(cached) {
+			return mailBodyNotReady(c)
+		}
+		email = cached
+		usedMirror = true
+	}
+	if mirrorAccount.ID != "" && !usedMirror {
+		return mailBodyNotReady(c)
+	}
 
-	if accountEmail != "" && h.acctStore != nil && h.config.Accounts.Enabled {
+	if !usedMirror && accountEmail != "" && mirrorAccount.ID != "" {
+		client, err = h.auth.CreateIMAPClientForMirrorAccount(mirrorAccount)
+	} else if !usedMirror && accountEmail != "" && h.mailDB != nil {
+		err = fmt.Errorf("account %s not found", accountEmail)
+	} else if !usedMirror && accountEmail != "" && h.acctStore != nil && h.config.Accounts.Enabled {
 		// Try to find this account in the store.
 		username, _ := c.Locals("username").(string)
 		sessionEmail, _ := c.Locals("email").(string)
@@ -291,24 +538,36 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 				err = fmt.Errorf("account %s not found", accountEmail)
 			}
 		}
-	} else {
+	} else if !usedMirror {
 		client, err = h.auth.CreateIMAPClient(c)
 	}
 
-	if err != nil {
+	if !usedMirror && err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error connecting to email server",
 		})
 	}
-	defer client.Close()
+	if !usedMirror {
+		defer client.Close()
 
-	// Fetch the email
-	email, err := client.FetchSingleMessage(folderName, emailID)
-	if err != nil {
-		log.Printf("Error fetching email %s from folder %s: %v", emailID, folderName, err)
-		return c.Status(500).JSON(fiber.Map{
-			"error": fmt.Sprintf("Error fetching email: %v", err),
-		})
+		// Fetch the email from IMAP and populate the local body cache.
+		email, err = client.FetchSingleMessage(folderName, emailID)
+		if err != nil {
+			log.Printf("Error fetching email %s from folder %s: %v", emailID, folderName, err)
+			return c.Status(500).JSON(fiber.Map{
+				"error": fmt.Sprintf("Error fetching email: %v", err),
+			})
+		}
+		if mirrorAccount.ID != "" {
+			if dbErr := h.mailDB.UpsertMessages(c.UserContext(), mirrorAccount.ID, folderName, []models.Email{email}); dbErr != nil {
+				log.Printf("mail mirror: cache body %s/%s: %v", folderName, emailID, dbErr)
+			}
+		}
+	}
+	if mirrorAccount.ID != "" {
+		email.AccountEmail = mirrorAccount.Email
+		email.AccountLabel = mirrorAccount.Label
+		email.AccountColor = mirrorAccount.Color
 	}
 	// Detect Drafts folder so the template can show "Edit Draft" instead of Reply/Forward.
 	isDrafts := strings.Contains(strings.ToLower(folderName), "draft")
@@ -345,7 +604,7 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 	editableHTML := editableDraftHTML(email.HTML)
 
 	// Important: Set empty layout and only render the partial
-	return c.Render("partials/email-viewer", fiber.Map{
+	return Render(c, "partials/email-viewer", fiber.Map{
 		"Email":         email,
 		"EmailHTML":     preparedHTML,
 		"EditableHTML":  editableHTML,
@@ -355,6 +614,17 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 		"IsDrafts":      isDrafts,
 		"Layout":        "", // This is crucial to prevent full HTML rendering
 	}, "") // Add empty string as second argument to explicitly disable layout
+}
+
+func emailBodyCached(email models.Email) bool {
+	return email.BodyCached || email.Body != "" || email.HTML != ""
+}
+
+func mailBodyNotReady(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"error": "message body is still synchronizing locally",
+		"code":  "mail_body_not_ready",
+	})
 }
 
 // HandleAttachment streams a single attachment to the browser. The attachment
@@ -373,6 +643,16 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 
 	// Enforce a 25 MiB limit on attachment downloads to avoid unbounded memory use.
 	const maxAttachmentBytes = 25 * 1024 * 1024
+	var mirrorAccount mailstore.Account
+	if accountEmail := c.Query("account_email"); accountEmail != "" {
+		var ok bool
+		mirrorAccount, ok = h.mirrorAccountForEmail(c, accountEmail)
+		if !ok && h.mailDB != nil {
+			return c.Status(404).SendString("Account not found")
+		}
+	} else if account, ok := h.currentMirrorAccount(c); ok {
+		mirrorAccount = account
+	}
 
 	// Optional supplementary cache: when the Vulos OS gateway has provisioned an
 	// object bucket for this request (and the seam is enabled), serve immutable
@@ -380,7 +660,11 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 	// Absent the headers this is a no-op and behaviour is identical to before.
 	// IMAP remains the source of truth; the bucket is a pure read-through cache.
 	objStore, useCache := storage.ObjectStoreFromHeaders(func(k string) string { return c.Get(k) })
-	cacheKey := "attachments/" + id
+	cachePrefix := mirrorAccount.ID
+	if cachePrefix == "" {
+		cachePrefix = "session"
+	}
+	cacheKey := "attachments/" + cachePrefix + "/" + id
 	if useCache {
 		if obj, cerr := objStore.Get(c.UserContext(), cacheKey); cerr == nil {
 			if obj.ContentType != "" {
@@ -394,7 +678,12 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 		}
 	}
 
-	client, err := h.auth.CreateIMAPClient(c)
+	var client api.MailClient
+	if mirrorAccount.ID != "" {
+		client, err = h.auth.CreateIMAPClientForMirrorAccount(mirrorAccount)
+	} else {
+		client, err = h.auth.CreateIMAPClient(c)
+	}
 	if err != nil {
 		return c.Status(500).SendString("Error connecting to email server")
 	}
@@ -453,8 +742,9 @@ func (h *EmailHandler) HandleDeleteEmail(c *fiber.Ctx) error {
 		return c.Status(400).SendString("Email ID required")
 	}
 
-	// Get IMAP client
-	client, err := h.auth.CreateIMAPClient(c)
+	// Open the source mailbox. Unified-inbox requests must identify the
+	// account because UIDs are only unique within one IMAP mailbox.
+	client, account, err := h.messageClientForAccount(c, requestAccountEmail(c))
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Error connecting to email server",
@@ -468,6 +758,11 @@ func (h *EmailHandler) HandleDeleteEmail(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{
 			"error": fmt.Sprintf("Error deleting email: %v", err),
 		})
+	}
+	if account.ID != "" {
+		if dbErr := h.mailDB.DeleteMessage(c.UserContext(), account.ID, folderName, emailID); dbErr != nil {
+			log.Printf("mail mirror: delete %s/%s: %v", folderName, emailID, dbErr)
+		}
 	}
 
 	return c.JSON(fiber.Map{
@@ -484,6 +779,9 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "Invalid folder name",
 		})
+	}
+	if isConversationMailboxName(folderName) {
+		return h.HandleConversationList(c)
 	}
 
 	username := c.Locals("username")
@@ -505,24 +803,38 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 
 	unified := c.Query("unified") == "1"
 	var additionalAccounts []AccountEntry
-	if h.acctStore != nil && h.config.Accounts.Enabled {
+	var mirrorAccounts []mailstore.Account
+	if h.mailDB != nil {
+		mirrorAccounts, _, _ = h.mirrorAccounts(c)
+	}
+	if h.mailDB == nil && h.acctStore != nil && h.config.Accounts.Enabled {
 		additionalAccounts, _ = h.acctStore.List(userStr)
 	}
-	unifiedAvailable := len(additionalAccounts) > 0
-
-	// Get IMAP client
-	client, err := h.auth.CreateIMAPClient(c)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Error connecting to email server",
-		})
-	}
-	defer client.Close()
+	unifiedAvailable := len(mirrorAccounts) > 1 || len(additionalAccounts) > 0
 
 	var emails []models.Email
 	var accountErrors []AccountFetchResult
+	account, hasMirrorAccount := h.currentMirrorAccount(c)
+	usedLocal := false
+	if !unified && hasMirrorAccount {
+		emails, _, err = h.localMessages(c, account, folderName, 50)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Error loading local mail mirror"})
+		}
+		usedLocal = true
+	}
 
-	if unified && unifiedAvailable && folderName == "INBOX" {
+	if !usedLocal && unified && len(mirrorAccounts) > 1 && folderName == "INBOX" {
+		emails, accountErrors, err = h.localUnifiedMessages(c, mirrorAccounts, folderName, 50)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Error loading local mail mirror"})
+		}
+		usedLocal = true
+	} else if !usedLocal && unified && unifiedAvailable && folderName == "INBOX" {
+		client, clientErr := h.auth.CreateIMAPClient(c)
+		if clientErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Error connecting to email server"})
+		}
 		emails, accountErrors = FetchUnified(
 			client,
 			sessionEmail, "", "",
@@ -531,8 +843,14 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 			folderName,
 			50,
 		)
-	} else {
+		_ = client.Close()
+	} else if !usedLocal {
+		client, clientErr := h.auth.CreateIMAPClient(c)
+		if clientErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Error connecting to email server"})
+		}
 		emails, err = client.FetchMessages(folderName, 50)
+		_ = client.Close()
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{
 				"error": fmt.Sprintf("Error fetching emails: %v", err),
@@ -546,7 +864,7 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 	}
 	threads := h.buildThreads(userStr, threadKey, emails)
 
-	return c.Render("partials/email-list", fiber.Map{
+	return Render(c, "partials/email-list", fiber.Map{
 		"Emails":           emails,
 		"Threads":          threads,
 		"CurrentFolder":    folderName,
@@ -578,9 +896,14 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		})
 	}
 
-	// If only HTML body is provided, generate a minimal plain-text version.
-	if plainBody == "" && htmlBody != "" {
-		plainBody = stripHTMLForPlain(htmlBody)
+	var normalizeErr error
+	plainBody, htmlBody, normalizeErr = htmlsafe.NormalizeComposeBodies(plainBody, htmlBody)
+	if normalizeErr != nil {
+		log.Printf("compose: normalize HTML body: %v", normalizeErr)
+		return c.Status(400).JSON(fiber.Map{"error": "HTML body is invalid or too large"})
+	}
+	if strings.TrimSpace(plainBody) == "" && strings.TrimSpace(htmlBody) == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "To, subject and body are required"})
 	}
 
 	// Collect file attachments from the multipart form.
@@ -664,24 +987,29 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 
 	// Create SMTP client — use the specific account when replying from unified view.
 	var smtpClient *api.SMTPClient
-	if replyAccountEmail != "" && replyAccountEmail != h.auth.GetSessionEmail(c) &&
-		h.acctStore != nil && h.config.Accounts.Enabled {
-		// Find the additional account entry.
-		username, _ := c.Locals("username").(string)
-		entries, listErr := h.acctStore.List(username)
-		if listErr == nil {
-			for _, e := range entries {
-				if e.Email == replyAccountEmail {
-					smtpClient, err = h.auth.CreateSMTPClientForAccount(e)
-					break
+	if replyAccountEmail != "" && replyAccountEmail != h.auth.GetSessionEmail(c) {
+		if account, ok := h.mirrorAccountForEmail(c, replyAccountEmail); ok {
+			smtpClient, err = h.auth.CreateSMTPClientForMirrorAccount(account)
+		} else if h.mailDB != nil {
+			err = fmt.Errorf("account %s not found", replyAccountEmail)
+		} else if h.acctStore != nil && h.config.Accounts.Enabled {
+			// Legacy bbolt account path.
+			username, _ := c.Locals("username").(string)
+			entries, listErr := h.acctStore.List(username)
+			if listErr == nil {
+				for _, e := range entries {
+					if e.Email == replyAccountEmail {
+						smtpClient, err = h.auth.CreateSMTPClientForAccount(e)
+						break
+					}
 				}
 			}
-		}
-		if smtpClient == nil && err == nil {
-			err = fmt.Errorf("account %s not found", replyAccountEmail)
+			if smtpClient == nil && err == nil {
+				err = fmt.Errorf("account %s not found", replyAccountEmail)
+			}
 		}
 	}
-	if smtpClient == nil {
+	if smtpClient == nil && err == nil {
 		smtpClient, err = h.auth.CreateSMTPClient(c)
 	}
 	if err != nil {
@@ -715,20 +1043,25 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 
 	// Save to Sent folder (best effort) — use the reply account's IMAP if needed.
 	var imapClient api.MailClient
-	if replyAccountEmail != "" && replyAccountEmail != h.auth.GetSessionEmail(c) &&
-		h.acctStore != nil && h.config.Accounts.Enabled {
-		username, _ := c.Locals("username").(string)
-		entries, listErr := h.acctStore.List(username)
-		if listErr == nil {
-			for _, e := range entries {
-				if e.Email == replyAccountEmail {
-					imapClient, err = h.auth.CreateIMAPClientForAccount(e)
-					break
+	if replyAccountEmail != "" && replyAccountEmail != h.auth.GetSessionEmail(c) {
+		if account, ok := h.mirrorAccountForEmail(c, replyAccountEmail); ok {
+			imapClient, err = h.auth.CreateIMAPClientForMirrorAccount(account)
+		} else if h.mailDB != nil {
+			err = fmt.Errorf("account %s not found", replyAccountEmail)
+		} else if h.acctStore != nil && h.config.Accounts.Enabled {
+			username, _ := c.Locals("username").(string)
+			entries, listErr := h.acctStore.List(username)
+			if listErr == nil {
+				for _, e := range entries {
+					if e.Email == replyAccountEmail {
+						imapClient, err = h.auth.CreateIMAPClientForAccount(e)
+						break
+					}
 				}
 			}
 		}
 	}
-	if imapClient == nil {
+	if imapClient == nil && err == nil {
 		imapClient, err = h.auth.CreateIMAPClient(c)
 	}
 	if err != nil {
@@ -769,16 +1102,23 @@ func (h *EmailHandler) HandleSaveDraft(c *fiber.Ctx) error {
 	inReplyTo := c.FormValue("in_reply_to")
 	references := c.FormValue("references")
 	oldUID := c.FormValue("draft_uid")
+	accountEmail := strings.TrimSpace(c.FormValue("account_email"))
 
 	if subject == "" && plainBody == "" && htmlBody == "" && to == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "Draft is empty"})
 	}
 
-	if plainBody == "" && htmlBody != "" {
-		plainBody = stripHTMLForPlain(htmlBody)
+	var normalizeErr error
+	plainBody, htmlBody, normalizeErr = htmlsafe.NormalizeComposeBodies(plainBody, htmlBody)
+	if normalizeErr != nil {
+		log.Printf("draft: normalize HTML body: %v", normalizeErr)
+		return c.Status(400).JSON(fiber.Map{"error": "HTML body is invalid or too large"})
 	}
 
 	fromEmail := h.auth.GetSessionEmail(c)
+	if accountEmail != "" {
+		fromEmail = accountEmail
+	}
 
 	mimeOpts := api.MIMEMessageOptions{
 		From:       fromEmail,
@@ -799,7 +1139,7 @@ func (h *EmailHandler) HandleSaveDraft(c *fiber.Ctx) error {
 		))
 	}
 
-	imapClient, err := h.auth.CreateIMAPClient(c)
+	imapClient, _, err := h.messageClientForAccount(c, accountEmail)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to connect to mail server"})
 	}
@@ -847,7 +1187,7 @@ func (h *EmailHandler) HandleListDrafts(c *fiber.Ctx) error {
 
 	threads := h.buildThreads(username, draftsFolder, emails)
 
-	return c.Render("partials/email-list", fiber.Map{
+	return Render(c, "partials/email-list", fiber.Map{
 		"Emails":        emails,
 		"Threads":       threads,
 		"CurrentFolder": draftsFolder,
@@ -965,7 +1305,7 @@ func (h *EmailHandler) HandleMarkUnread(c *fiber.Ctx) error {
 		}
 	}
 
-	client, err := h.auth.CreateIMAPClient(c)
+	client, account, err := h.messageClientForAccount(c, requestAccountEmail(c))
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Error connecting to email server"})
 	}
@@ -975,6 +1315,19 @@ func (h *EmailHandler) HandleMarkUnread(c *fiber.Ctx) error {
 	if err := client.SetMessageFlag(folderName, emailID, `\Seen`, false); err != nil {
 		log.Printf("HandleMarkUnread: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Failed to mark unread: %v", err)})
+	}
+	if account.ID != "" {
+		if email, dbErr := h.mailDB.GetMessage(c.UserContext(), account.ID, folderName, emailID); dbErr == nil {
+			var flags []string
+			for _, flag := range email.Flags {
+				if flag != `\Seen` {
+					flags = append(flags, flag)
+				}
+			}
+			if dbErr := h.mailDB.UpdateFlags(c.UserContext(), account.ID, folderName, emailID, flags); dbErr != nil {
+				log.Printf("mail mirror: mark unread %s/%s: %v", folderName, emailID, dbErr)
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"success": true, "message": "Marked as unread"})
@@ -1005,13 +1358,26 @@ func (h *EmailHandler) HandleSearch(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid session"})
 	}
 
-	client, err := h.auth.CreateIMAPClient(c)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Error connecting to email server"})
+	var emails []models.Email
+	account, hasMirrorAccount := h.currentMirrorAccount(c)
+	usedLocal := false
+	if hasMirrorAccount {
+		var localFolder string
+		emails, localFolder, err = h.mailDB.SearchMessages(c.UserContext(), account.ID, folderName, query, 50)
+		if err == nil {
+			folderName = localFolder
+			emails = tagMirrorEmails(emails, account)
+			usedLocal = true
+		}
 	}
-	defer client.Close()
-
-	emails, err := client.SearchMessages(folderName, query, 50)
+	if !usedLocal {
+		client, clientErr := h.auth.CreateIMAPClient(c)
+		if clientErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Error connecting to email server"})
+		}
+		emails, err = client.SearchMessages(folderName, query, 50)
+		_ = client.Close()
+	}
 	if err != nil {
 		log.Printf("HandleSearch: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Search failed: %v", err)})
@@ -1019,7 +1385,7 @@ func (h *EmailHandler) HandleSearch(c *fiber.Ctx) error {
 
 	threads := h.buildThreads(userStr, folderName+":search:"+query, emails)
 
-	return c.Render("partials/email-list", fiber.Map{
+	return Render(c, "partials/email-list", fiber.Map{
 		"Emails":        emails,
 		"Threads":       threads,
 		"CurrentFolder": folderName,

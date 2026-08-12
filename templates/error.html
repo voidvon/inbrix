@@ -24,14 +24,14 @@
             {{end}}
         </div>
 
-        <div class="error-code">Error {{.Code}}</div>
+        <div class="error-code">{{t .Translations "Error"}} {{.Code}}</div>
 
         <h1 class="error-title">
-            {{if eq .Code 404}}Page not found
-            {{else if eq .Code 401}}Authentication required
-            {{else if eq .Code 403}}Access forbidden
-            {{else if eq .Code 500}}Server error
-            {{else}}Something went wrong
+            {{if eq .Code 404}}{{t .Translations "Page not found"}}
+            {{else if eq .Code 401}}{{t .Translations "Authentication required"}}
+            {{else if eq .Code 403}}{{t .Translations "Access forbidden"}}
+            {{else if eq .Code 500}}{{t .Translations "Server error"}}
+            {{else}}{{t .Translations "Something went wrong"}}
             {{end}}
         </h1>
 
@@ -39,11 +39,11 @@
             {{if .Error}}
                 {{.Error}}
             {{else}}
-                {{if eq .Code 404}}Sorry, we couldn't find the page you're looking for.
-                {{else if eq .Code 401}}Please log in to access this page.
-                {{else if eq .Code 403}}You don't have permission to access this page.
-                {{else if eq .Code 500}}An unexpected error occurred. Please try again later.
-                {{else}}An error occurred while processing your request.
+                {{if eq .Code 404}}{{t .Translations "Sorry, we couldn't find the page you're looking for."}}
+                {{else if eq .Code 401}}{{t .Translations "Please log in to access this page."}}
+                {{else if eq .Code 403}}{{t .Translations "You don't have permission to access this page."}}
+                {{else if eq .Code 500}}{{t .Translations "An unexpected error occurred. Please try again later."}}
+                {{else}}{{t .Translations "An error occurred while processing your request."}}
                 {{end}}
             {{end}}
         </p>
@@ -51,7 +51,7 @@
         <div class="error-actions">
             {{if or (eq .Code 401) (eq .Code 403)}}
             <a href="/login" class="btn-primary" style="width:auto;display:inline-flex;gap:6px;padding:8px 18px;font-size:13px;border-radius:6px;">
-                Go to login
+                {{t .Translations "Go to login"}}
                 <svg style="width:13px;height:13px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
                 </svg>
@@ -62,7 +62,7 @@
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                 </svg>
-                Go back
+                {{t .Translations "Go back"}}
             </button>
 
             <a href="/inbox" class="btn-ghost">
@@ -70,18 +70,18 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
                 </svg>
-                Home
+                {{t .Translations "Home"}}
             </a>
         </div>
 
         {{if .Development}}
         <details class="error-details">
-            <summary>Technical Details</summary>
-            <pre>Status: {{.Code}}
-Path: {{.Path}}
-Error: {{.Error}}
+            <summary>{{t .Translations "Technical Details"}}</summary>
+            <pre>{{t .Translations "Status"}}: {{.Code}}
+{{t .Translations "Path"}}: {{.Path}}
+{{t .Translations "Error"}}: {{.Error}}
 {{if .Stack}}
-Stack:
+{{t .Translations "Stack"}}:
 {{.Stack}}{{end}}</pre>
         </details>
         {{end}}

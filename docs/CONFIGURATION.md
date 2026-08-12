@@ -7,8 +7,9 @@ lilmail reads `config.toml` from the current working directory at startup. Copy
 cp config.toml.example config.toml
 ```
 
-All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[jwt]`, and
-`[encryption]` are **optional** and disabled by default.
+All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[mail_sync]`,
+`[jwt]`, and `[encryption]` are **optional**. The local SQLite mail mirror is
+enabled by default.
 
 ### How the file is located
 
@@ -118,6 +119,30 @@ fail the handshake; only the SMTP client exposes that escape hatch.
 |-----|------|---------|-------------|
 | `folder` | string | `"./cache"` | Directory for the on-disk email cache **and outbound attachment staging** (`POST /v1/attachments`). Created automatically. If unset/unwritable, composing with attachments returns `503 attachment staging unavailable` while downloads still work |
 
+## `[mail_sync]`
+
+The local SQLite mirror keeps IMAP as the authoritative source while allowing
+normal inbox, folder, and local-search requests to read from disk. A polling
+worker is started for every stored mailbox and restored automatically after a
+restart. The first sync stores message headers and full MIME bodies, so detail
+reads can remain local. Set `sync_bodies = false` to opt out of background body
+caching.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Open the SQLite mirror and enable local application accounts/mailbox workers |
+| `database` | string | `"./cache/mail.db"` | SQLite database path; parent directories are created with mode `0700` |
+| `interval` | int | `60` | Poll interval in seconds |
+| `batch_size` | int | `200` | IMAP metadata page size and incremental UID batch size |
+| `max_messages_per_folder` | int | `5000` | Initial per-folder cap; `0` means no cap |
+| `sync_bodies` | bool | `true` | Fetch and cache full MIME bodies during background sync; set `false` to defer body fetching until an uncached message is opened |
+
+SQLite uses WAL mode and a busy timeout so web reads and the background writer
+can share one process safely. Deleting or flagging a message updates the remote
+mailbox first and then updates the local mirror. Sending, attachment downloads,
+and other mailbox mutations still require an IMAP/SMTP connection; message
+details are served locally after background body synchronization completes.
+
 ---
 
 ## `[storage]`
@@ -144,21 +169,23 @@ backend = "bolt"   # default; omit the section entirely for the same effect
 
 ### What lilmail writes to disk
 
-Four paths, all relative to the process's working directory unless you set them
+Five paths, all relative to the process's working directory unless you set them
 to something absolute. This is why the working directory is part of your
 configuration.
 
 | Path | Default | Written when |
 |------|---------|--------------|
 | `./cache` | `[cache] folder` | Always — cached message bodies and metadata |
+| `./cache/mail.db` | `[mail_sync] database` | When the local SQLite mirror is enabled — users, encrypted mailbox credentials, folders, message metadata, and cached bodies |
 | `./sessions` | not configurable | Always — server-side session records |
-| `accounts.db` | `[accounts] store_file` | Only with `[accounts] enabled = true` — bbolt database of extra accounts |
+| `accounts.db` | `[accounts] store_file` | Only when the legacy bbolt multi-account path is enabled while `[mail_sync]` is disabled |
 | `vapid.json` | `[notifications] vapid_key_file` | Only with `[notifications] webpush = true` — the generated VAPID key pair |
 
-Back these up together, or none of them: `accounts.db` holds encrypted
-credentials that are useless without the `[encryption] key` from your
-`config.toml`, and `vapid.json` is the identity your push subscriptions are
-bound to — regenerate it and every existing subscription stops working.
+Back up `cache/mail.db`, `sessions/`, `config.toml`, and any enabled bbolt/VAPID
+files together. `mail.db` contains encrypted mailbox credentials that are
+useless without the `[encryption] key` from `config.toml`; `vapid.json` is the
+identity your push subscriptions are bound to, so regenerating it invalidates
+existing subscriptions.
 
 ### Shared object storage (`VULOS_STORAGE_BROKER_SECRET`)
 
@@ -441,15 +468,18 @@ cache and key stores are unreachable.
 
 ## `[accounts]`
 
-Multi-account support. When enabled, users can add and switch between additional
-IMAP/SMTP accounts from the Settings page.
+Legacy bbolt-backed multi-account support. With the default `[mail_sync]`
+`enabled = true`, use the local lilmail application-account flow instead: open
+`/register`, sign in at `/user-login`, and add mailboxes from Settings. The
+SQLite path is always owner-scoped and supports switching plus a local unified
+inbox. This section is only used when the SQLite mirror is disabled.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Master switch |
+| `enabled` | bool | `false` | Enable the legacy bbolt path when SQLite mail sync is disabled |
 | `store_file` | string | `"accounts.db"` | bbolt database for encrypted additional-account credentials (auto-created) |
 
-### Account routes (registered only when `enabled = true`)
+### Account routes
 
 | Route | Description |
 |-------|-------------|
@@ -457,6 +487,13 @@ IMAP/SMTP accounts from the Settings page.
 | `POST /api/accounts` | Add an account (validates IMAP credentials; JSON body) |
 | `DELETE /api/accounts/:email` | Remove an account |
 | `POST /api/accounts/:email/switch` | Switch the active session to this account |
+
+### Application-account routes
+
+| Route | Description |
+|-------|-------------|
+| `GET /register` / `POST /register` | Create a lilmail application account with a local password |
+| `GET /user-login` / `POST /user-login` | Sign in to the application account and select its default mailbox |
 
 ---
 

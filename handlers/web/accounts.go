@@ -5,7 +5,8 @@
 // The primary account is always the one stored in the session.  Additional
 // accounts are stored in AccountStore (bbolt) and rendered in a Settings panel.
 //
-// Routes (registered only when accounts.enabled = true):
+// Routes are registered for the SQLite mirror by default, or for the legacy
+// bbolt path when [mail_sync] is disabled and [accounts] is enabled:
 //
 //	GET  /api/accounts              → JSON list of additional accounts
 //	POST /api/accounts              → add an account (validate IMAP, store encrypted)
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"lilmail/config"
 	"lilmail/handlers/api"
+	"lilmail/mailstore"
 	"log"
 	"strings"
 
@@ -31,6 +33,22 @@ type AccountsHandler struct {
 	config    *config.Config
 	auth      *AuthHandler
 	acctStore *AccountStore
+	mailDB    *mailstore.Store
+	syncer    *mailstore.SyncManager
+}
+
+func (h *AccountsHandler) SetMailMirror(db *mailstore.Store, syncer *mailstore.SyncManager) {
+	h.mailDB = db
+	h.syncer = syncer
+}
+
+func (h *AccountsHandler) mirrorOwner(c *fiber.Ctx) string {
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return ""
+	}
+	owner, _ := sess.Get("user_id").(string)
+	return owner
 }
 
 // NewAccountsHandler creates a handler. acctStore must be non-nil.
@@ -45,6 +63,17 @@ func NewAccountsHandler(store *session.Store, cfg *config.Config, auth *AuthHand
 
 // HandleListAccounts returns the list of additional accounts for the current user.
 func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		owner := h.mirrorOwner(c)
+		if owner == "" {
+			return fiber.ErrUnauthorized
+		}
+		entries, err := h.mailDB.ListAccounts(c.UserContext(), owner)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		return c.JSON(mirrorSafeAccounts(entries))
+	}
 	owner, _ := c.Locals("username").(string)
 	if owner == "" {
 		return fiber.ErrUnauthorized
@@ -79,6 +108,36 @@ func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+type mirrorSafeAccount struct {
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	Label      string `json:"label"`
+	Color      string `json:"color,omitempty"`
+	IMAPServer string `json:"imap_server"`
+	IMAPPort   int    `json:"imap_port"`
+	SMTPServer string `json:"smtp_server"`
+	SMTPPort   int    `json:"smtp_port"`
+	IsDefault  bool   `json:"is_default"`
+}
+
+func mirrorSafeAccounts(entries []mailstore.Account) []mirrorSafeAccount {
+	out := make([]mirrorSafeAccount, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, mirrorSafeAccount{
+			ID:         entry.ID,
+			Email:      entry.Email,
+			Label:      entry.Label,
+			Color:      entry.Color,
+			IMAPServer: entry.IMAPServer,
+			IMAPPort:   entry.IMAPPort,
+			SMTPServer: entry.SMTPServer,
+			SMTPPort:   entry.SMTPPort,
+			IsDefault:  entry.IsDefault,
+		})
+	}
+	return out
+}
+
 // HandleAddAccount validates the new account credentials against the IMAP
 // server and, if successful, stores the account in AccountStore.
 //
@@ -95,6 +154,9 @@ func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
 //	  "smtp_port":   587
 //	}
 func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		return h.handleAddMirrorAccount(c)
+	}
 	owner, _ := c.Locals("username").(string)
 	if owner == "" {
 		return fiber.ErrUnauthorized
@@ -147,7 +209,7 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 	}
 
 	// Validate credentials by opening and immediately closing an IMAP connection.
-	client, err := api.NewClient(req.IMAPServer, req.IMAPPort, username, req.Password)
+	client, err := api.NewClientTLS(req.IMAPServer, req.IMAPPort, username, req.Password, h.config.IMAP.TLS)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, fmt.Sprintf("IMAP login failed: %v", err))
 	}
@@ -182,8 +244,157 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 	})
 }
 
+func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	var req struct {
+		Email      string `json:"email"`
+		Password   string `json:"password"`
+		Label      string `json:"label"`
+		Color      string `json:"color"`
+		IMAPServer string `json:"imap_server"`
+		IMAPPort   int    `json:"imap_port"`
+		SMTPServer string `json:"smtp_server"`
+		SMTPPort   int    `json:"smtp_port"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
+	if req.Email == "" || req.Password == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "email and password required")
+	}
+	if req.IMAPServer == "" {
+		req.IMAPServer = h.config.IMAP.Server
+	}
+	if req.IMAPPort == 0 {
+		req.IMAPPort = h.config.IMAP.Port
+	}
+	if req.SMTPServer == "" {
+		req.SMTPServer = h.config.SMTP.Server
+	}
+	if req.SMTPPort == 0 {
+		req.SMTPPort = h.config.SMTP.GetPort()
+	}
+	if req.Label == "" {
+		req.Label = req.Email
+	}
+	username := req.Email
+	if !h.config.Server.UsernameIsEmail {
+		username = api.GetUsernameFromEmail(req.Email)
+	}
+	if username == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email format")
+	}
+	client, err := api.NewClientTLS(req.IMAPServer, req.IMAPPort, username, req.Password, h.config.IMAP.TLS)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, fmt.Sprintf("IMAP login failed: %v", err))
+	}
+	_ = client.Close()
+	encPwd, err := api.EncryptJSON(req.Password, h.config.Encryption.Key)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	account, err := h.mailDB.UpsertAccount(c.UserContext(), mailstore.Account{
+		OwnerID:           owner,
+		Email:             req.Email,
+		Username:          username,
+		Label:             req.Label,
+		Color:             req.Color,
+		IMAPServer:        req.IMAPServer,
+		IMAPPort:          req.IMAPPort,
+		IMAPTLS:           h.config.IMAP.TLS,
+		SMTPServer:        req.SMTPServer,
+		SMTPPort:          req.SMTPPort,
+		SMTPStartTLS:      h.config.SMTP.UseSTARTTLS,
+		EncryptedPassword: encPwd,
+		AuthType:          "password",
+		IsDefault:         false,
+	})
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	// A newly registered application user has no active mailbox yet. Make the
+	// first successfully added account immediately usable by the current
+	// session; otherwise inbox rendering can find it through the owner query
+	// while IMAP/SMTP handlers still have no account credentials in session.
+	activeID, _ := sess.Get("account_id").(string)
+	if activeID == "" {
+		if err := h.setMirrorSession(c, sess, owner, account); err != nil {
+			return fiber.ErrInternalServerError
+		}
+		if err := sess.Save(); err != nil {
+			return fiber.ErrInternalServerError
+		}
+	}
+	if h.syncer != nil {
+		h.syncer.StartAccount(account.ID)
+		h.syncer.Trigger(account.ID)
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "id": account.ID, "email": account.Email, "label": account.Label})
+}
+
 // HandleDeleteAccount removes an additional account.
 func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		owner := h.mirrorOwner(c)
+		if owner == "" {
+			return fiber.ErrUnauthorized
+		}
+		account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+		if err != nil {
+			return fiber.ErrNotFound
+		}
+		if h.syncer != nil {
+			h.syncer.StopAccount(account.ID)
+		}
+		sess, sessErr := h.store.Get(c)
+		if sessErr != nil {
+			return fiber.ErrInternalServerError
+		}
+		if err := h.mailDB.DeleteAccount(c.UserContext(), owner, account.ID); err != nil {
+			return fiber.ErrInternalServerError
+		}
+		// If the active mailbox was removed, move the session to the next
+		// deterministic default. The user can still reach Settings when no
+		// accounts remain and add a new mailbox.
+		activeID, _ := sess.Get("account_id").(string)
+		if activeID != account.ID {
+			return c.JSON(fiber.Map{"ok": true})
+		}
+		remaining, listErr := h.mailDB.ListAccounts(c.UserContext(), owner)
+		if listErr != nil {
+			return fiber.ErrInternalServerError
+		}
+		if len(remaining) == 0 {
+			user, userErr := h.mailDB.GetUser(c.UserContext(), owner)
+			if userErr != nil {
+				return fiber.ErrInternalServerError
+			}
+			token, tokenErr := api.GenerateToken(user.Login, user.Login, h.config.JWT.Secret)
+			if tokenErr != nil {
+				return fiber.ErrInternalServerError
+			}
+			sess.Delete("account_id")
+			sess.Delete("credentials")
+			sess.Set("username", user.Login)
+			sess.Set("email", user.Login)
+			sess.Set("token", token)
+		} else if err := h.setMirrorSession(c, sess, owner, remaining[0]); err != nil {
+			return fiber.ErrInternalServerError
+		}
+		if err := sess.Save(); err != nil {
+			return fiber.ErrInternalServerError
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
 	owner, _ := c.Locals("username").(string)
 	if owner == "" {
 		return fiber.ErrUnauthorized
@@ -204,6 +415,9 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 // account credentials are saved as an additional account under the NEW owner so
 // the user can switch back.
 func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		return h.handleSwitchMirrorAccount(c)
+	}
 	owner, _ := c.Locals("username").(string)
 	if owner == "" {
 		return fiber.ErrUnauthorized
@@ -313,8 +527,65 @@ func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
 	return c.Redirect("/inbox")
 }
 
+func (h *AccountsHandler) handleSwitchMirrorAccount(c *fiber.Ctx) error {
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	if err != nil {
+		return fiber.ErrNotFound
+	}
+	user, err := h.mailDB.GetUser(c.UserContext(), owner)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if err := h.setMirrorSession(c, sess, user.Login, account); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if err := h.mailDB.SetDefaultAccount(c.UserContext(), owner, account.ID); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if err := sess.Save(); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if h.syncer != nil {
+		h.syncer.StartAccount(account.ID)
+		h.syncer.Trigger(account.ID)
+	}
+	if c.Get("HX-Request") != "" {
+		c.Set("HX-Redirect", "/inbox")
+		return c.SendStatus(fiber.StatusOK)
+	}
+	return c.Redirect("/inbox")
+}
+
+func (h *AccountsHandler) setMirrorSession(c *fiber.Ctx, sess *session.Session, username string, account mailstore.Account) error {
+	token, err := api.GenerateToken(username, account.Email, h.config.JWT.Secret)
+	if err != nil {
+		return err
+	}
+	sess.Set("authenticated", true)
+	sess.Set("user_id", account.OwnerID)
+	sess.Set("username", username)
+	sess.Set("email", account.Email)
+	sess.Set("account_id", account.ID)
+	sess.Set("credentials", account.EncryptedPassword)
+	sess.Set("token", token)
+	sess.Delete("auth_type")
+	sess.Delete("oauth_token")
+	return nil
+}
+
 // HandleSettings renders the settings page with the accounts panel.
 func (h *AccountsHandler) HandleSettings(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		return h.handleMirrorSettings(c)
+	}
 	owner, _ := c.Locals("username").(string)
 	email, _ := c.Locals("email").(string)
 
@@ -345,12 +616,32 @@ func (h *AccountsHandler) HandleSettings(c *fiber.Ctx) error {
 	sess, _ := h.store.Get(c)
 	token, _ := sess.Get("token").(string)
 
-	return c.Render("settings", fiber.Map{
+	return Render(c, "settings", fiber.Map{
 		"Title":           "Settings",
 		"Username":        owner,
 		"Email":           email,
 		"Token":           token,
 		"Accounts":        safe,
 		"AccountsEnabled": h.config.Accounts.Enabled,
+	})
+}
+
+func (h *AccountsHandler) handleMirrorSettings(c *fiber.Ctx) error {
+	owner := h.mirrorOwner(c)
+	email, _ := c.Locals("email").(string)
+	entries, err := h.mailDB.ListAccounts(c.UserContext(), owner)
+	if err != nil {
+		return c.Status(500).SendString("Failed to load mail accounts")
+	}
+	sess, _ := h.store.Get(c)
+	token, _ := sess.Get("token").(string)
+	return Render(c, "settings", fiber.Map{
+		"Title":             "Settings",
+		"Username":          c.Locals("username"),
+		"Email":             email,
+		"Token":             token,
+		"Accounts":          mirrorSafeAccounts(entries),
+		"AccountsEnabled":   true,
+		"MailMirrorEnabled": true,
 	})
 }

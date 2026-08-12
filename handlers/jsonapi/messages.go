@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"lilmail/handlers/api"
+	"lilmail/handlers/htmlsafe"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -92,9 +93,14 @@ func (h *Handler) handleSend(c *fiber.Ctx) error {
 		return fail(c, fiber.StatusBadRequest, "to, subject and a text or html body are required")
 	}
 
-	plain := body.Text
-	if plain == "" && body.HTML != "" {
-		plain = stripHTMLForPlain(body.HTML)
+	plain, normalizedHTML, normalizeErr := htmlsafe.NormalizeComposeBodies(body.Text, body.HTML)
+	if normalizeErr != nil {
+		return fail(c, fiber.StatusBadRequest, "invalid or oversized HTML body")
+	}
+	body.HTML = normalizedHTML
+	body.Text = plain
+	if strings.TrimSpace(plain) == "" && strings.TrimSpace(body.HTML) == "" {
+		return fail(c, fiber.StatusBadRequest, "to, subject and a text or html body are required")
 	}
 
 	atts, err := h.resolveAttachments(c, body.Attachments)
@@ -188,10 +194,12 @@ func (h *Handler) handleSaveDraft(c *fiber.Ctx) error {
 		return fail(c, fiber.StatusBadRequest, "draft is empty")
 	}
 
-	plain := body.Text
-	if plain == "" && body.HTML != "" {
-		plain = stripHTMLForPlain(body.HTML)
+	plain, normalizedHTML, normalizeErr := htmlsafe.NormalizeComposeBodies(body.Text, body.HTML)
+	if normalizeErr != nil {
+		return fail(c, fiber.StatusBadRequest, "invalid or oversized HTML body")
 	}
+	body.HTML = normalizedHTML
+	body.Text = plain
 
 	atts, err := h.resolveAttachments(c, body.Attachments)
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"lilmail/handlers/api"
+	"lilmail/handlers/htmlsafe"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -199,9 +200,9 @@ func (s *scheduler) fire(rec *scheduledSend) {
 // reusing api.BuildMIMEMessage — so validateHeaderValue (wave-49) and the cid:
 // inline-attachment handling (wave-44) both run here at fire time.
 func buildScheduledMIME(rec *scheduledSend) (raw []byte, rcpts []string, err error) {
-	plain := rec.Text
-	if plain == "" && rec.HTML != "" {
-		plain = stripHTMLForPlain(rec.HTML)
+	plain, normalizedHTML, err := htmlsafe.NormalizeComposeBodies(rec.Text, rec.HTML)
+	if err != nil {
+		return nil, nil, err
 	}
 	raw, err = api.BuildMIMEMessage(api.MIMEMessageOptions{
 		From:        rec.From,
@@ -210,7 +211,7 @@ func buildScheduledMIME(rec *scheduledSend) (raw []byte, rcpts []string, err err
 		Subject:     rec.Subject,
 		InReplyTo:   rec.InReplyTo,
 		PlainBody:   plain,
-		HTMLBody:    rec.HTML,
+		HTMLBody:    normalizedHTML,
 		Attachments: rec.Attachments,
 	})
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"lilmail/config"
 	"lilmail/handlers/api"
+	"lilmail/i18n"
 	"lilmail/models"
 	"log"
 	"strconv"
@@ -97,8 +98,8 @@ func (h *CalendarHandler) HandleCalendarMonth(c *fiber.Ctx) error {
 		nextYear++
 	}
 
-	return c.Render("calendar", fiber.Map{
-		"Title":     fmt.Sprintf("%s %d", month.String(), year),
+	return Render(c, "calendar", fiber.Map{
+		"Title":     i18n.FormatMonthTitle(CurrentLocale(c), int(month), year),
 		"Year":      year,
 		"Month":     int(month),
 		"MonthName": month.String(),
@@ -153,8 +154,8 @@ func (h *CalendarHandler) HandleCalendarWeek(c *fiber.Ctx) error {
 	prevMonday := monday.AddDate(0, 0, -7)
 	nextMonday := monday.AddDate(0, 0, 7)
 
-	return c.Render("calendar-week", fiber.Map{
-		"Title":    fmt.Sprintf("Week of %s", monday.Format("Jan 2, 2006")),
+	return Render(c, "calendar-week", fiber.Map{
+		"Title":    i18n.FormatWeekTitle(CurrentLocale(c), monday),
 		"Monday":   monday,
 		"Days":     days,
 		"PrevWeek": prevMonday.Format("2006-01-02"),
@@ -190,7 +191,7 @@ func (h *CalendarHandler) HandleEventDetail(c *fiber.Ctx) error {
 
 	for _, ev := range events {
 		if ev.UID == uid {
-			return c.Render("partials/calendar-event", fiber.Map{
+			return Render(c, "partials/calendar-event", fiber.Map{
 				"Event": ev,
 			}, "") // no layout — HTMX partial
 		}

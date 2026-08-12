@@ -2,9 +2,11 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"lilmail/config"
 	"lilmail/handlers/api"
+	"lilmail/mailstore"
 	"lilmail/utils"
 	"log"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // demoAuthType is the session auth_type value used when demo mode is active.
@@ -22,6 +25,8 @@ const demoAuthType = "demo"
 type AuthHandler struct {
 	store  *session.Store
 	config *config.Config
+	mirror *mailstore.Store
+	syncer *mailstore.SyncManager
 }
 
 // NewAuthHandler creates a new instance of AuthHandler
@@ -32,8 +37,22 @@ func NewAuthHandler(store *session.Store, config *config.Config) *AuthHandler {
 	}
 }
 
+// SetMailMirror wires the persistent account/mirror layer. It is optional so
+// unit tests and embedded JSON API callers can keep the legacy session-only
+// authentication path.
+func (h *AuthHandler) SetMailMirror(mirror *mailstore.Store, syncer *mailstore.SyncManager) {
+	h.mirror = mirror
+	h.syncer = syncer
+}
+
 // ShowLogin renders the login page
 func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
+	// The SQLite mirror is the canonical account system. Direct mailbox login
+	// remains available only when the mirror is explicitly disabled, so an old
+	// bookmark cannot silently send the request back to IMAP.
+	if h.mirror != nil {
+		return c.Redirect("/user-login")
+	}
 	sess, err := h.store.Get(c)
 	if err == nil {
 		authenticated := sess.Get("authenticated")
@@ -41,13 +60,135 @@ func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
 			return c.Redirect("/inbox")
 		}
 	}
-	return c.Render("login", fiber.Map{
+	return Render(c, "login", fiber.Map{
 		"OAuth2Enabled": h.config.OAuth2.Enabled,
 	})
 }
 
+func (h *AuthHandler) ShowUserLogin(c *fiber.Ctx) error {
+	return Render(c, "user-login", nil)
+}
+
+func (h *AuthHandler) ShowRegister(c *fiber.Ctx) error {
+	return Render(c, "register", nil)
+}
+
+// HandleUserLogin authenticates a lilmail application user. Mailbox
+// credentials are never used as the application password; the selected
+// mailbox is loaded separately from the encrypted account table.
+func (h *AuthHandler) HandleUserLogin(c *fiber.Ctx) error {
+	if h.mirror == nil {
+		return c.Status(fiber.StatusNotFound).SendString("Local user accounts are not enabled")
+	}
+	login := strings.TrimSpace(strings.ToLower(c.FormValue("login")))
+	password := c.FormValue("password")
+	user, err := h.mirror.GetUserByLogin(c.UserContext(), login)
+	if err != nil || user.PasswordHash == "" || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+		return RenderStatus(c, fiber.StatusUnauthorized, "user-login", fiber.Map{"Error": "Invalid application login"})
+	}
+	accounts, err := h.mirror.ListAccounts(c.UserContext(), user.ID)
+	if err != nil {
+		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Failed to load mail accounts"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Session error"})
+	}
+	email := user.Login
+	sess.Delete("auth_type")
+	sess.Delete("oauth_token")
+	sess.Set("authenticated", true)
+	sess.Set("user_id", user.ID)
+	sess.Set("username", user.Login)
+	if len(accounts) > 0 {
+		email = accounts[0].Email
+		sess.Set("account_id", accounts[0].ID)
+		sess.Set("credentials", accounts[0].EncryptedPassword)
+	} else {
+		sess.Delete("account_id")
+		sess.Delete("credentials")
+	}
+	token, err := api.GenerateToken(user.Login, email, h.config.JWT.Secret)
+	if err != nil {
+		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Failed to create authentication token"})
+	}
+	sess.Set("email", email)
+	sess.Set("token", token)
+	sess.SetExpiry(30 * 24 * 60 * 60 * time.Second)
+	if err := sess.Save(); err != nil {
+		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Failed to create session"})
+	}
+	if len(accounts) == 0 {
+		return c.Redirect("/settings?setup=1")
+	}
+	if h.syncer != nil {
+		for _, account := range accounts {
+			h.syncer.StartAccount(account.ID)
+		}
+	}
+	return c.Redirect("/inbox")
+}
+
+// HandleRegister creates an application user. A legacy user automatically
+// created by direct mailbox login can claim the same login by setting a local
+// password here; the mailbox account remains unchanged.
+func (h *AuthHandler) HandleRegister(c *fiber.Ctx) error {
+	if h.mirror == nil {
+		return c.Status(fiber.StatusNotFound).SendString("Local user accounts are not enabled")
+	}
+	login := strings.TrimSpace(strings.ToLower(c.FormValue("login")))
+	displayName := strings.TrimSpace(c.FormValue("display_name"))
+	password := c.FormValue("password")
+	confirmation := c.FormValue("password_confirm")
+	if login == "" || len(password) < 8 || password != confirmation {
+		return RenderStatus(c, fiber.StatusBadRequest, "register", fiber.Map{"Error": "Login and matching password of at least 8 characters are required", "Login": login, "DisplayName": displayName})
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to secure application password"})
+	}
+	user, err := h.mirror.GetUserByLogin(c.UserContext(), login)
+	if err == nil {
+		if user.PasswordHash != "" {
+			return RenderStatus(c, fiber.StatusConflict, "register", fiber.Map{"Error": "An application account with this login already exists", "Login": login, "DisplayName": displayName})
+		}
+		if err := h.mirror.SetUserPassword(c.UserContext(), user.ID, string(hash)); err != nil {
+			return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to save application account"})
+		}
+	} else if errors.Is(err, mailstore.ErrNotFound) {
+		user, err = h.mirror.CreateUser(c.UserContext(), login, displayName, string(hash))
+		if err != nil {
+			return RenderStatus(c, fiber.StatusConflict, "register", fiber.Map{"Error": "Could not create application account", "Login": login, "DisplayName": displayName})
+		}
+	} else {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to load application account"})
+	}
+
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Session error"})
+	}
+	token, err := api.GenerateToken(user.Login, user.Login, h.config.JWT.Secret)
+	if err != nil {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to create authentication token"})
+	}
+	sess.Set("authenticated", true)
+	sess.Set("user_id", user.ID)
+	sess.Set("username", user.Login)
+	sess.Set("email", user.Login)
+	sess.Set("token", token)
+	sess.SetExpiry(30 * 24 * 60 * 60 * time.Second)
+	if err := sess.Save(); err != nil {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to create session"})
+	}
+	return c.Redirect("/settings?setup=1")
+}
+
 // HandleLogin processes the login form
 func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
+	if h.mirror != nil {
+		return c.Redirect("/user-login")
+	}
 	sess, err := h.store.Get(c)
 	if err != nil {
 		return c.Status(500).SendString("Session error")
@@ -57,7 +198,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 	password := strings.TrimSpace(c.FormValue("password"))
 
 	if email == "" || password == "" {
-		return c.Status(400).Render("login", fiber.Map{
+		return RenderStatus(c, 400, "login", fiber.Map{
 			"Error": "Email and password are required",
 			"Email": email,
 		})
@@ -70,7 +211,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 		username = api.GetUsernameFromEmail(email)
 	}
 	if username == "" {
-		return c.Status(400).Render("login", fiber.Map{
+		return RenderStatus(c, 400, "login", fiber.Map{
 			"Error": "Invalid email format",
 			"Email": email,
 		})
@@ -84,7 +225,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 		h.config.IMAP.TLS,
 	)
 	if err != nil {
-		return c.Status(401).Render("login", fiber.Map{
+		return RenderStatus(c, 401, "login", fiber.Map{
 			"Error": "Invalid credentials or server error",
 			"Email": email,
 		})
@@ -93,7 +234,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 
 	userCacheFolder := filepath.Join(h.config.Cache.Folder, api.SanitizeUsername(username))
 	if err := h.ensureUserCacheFolder(userCacheFolder); err != nil {
-		return c.Status(500).Render("login", fiber.Map{
+		return RenderStatus(c, 500, "login", fiber.Map{
 			"Error": "Server error occurred during setup",
 			"Email": email,
 		})
@@ -101,7 +242,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 
 	token, err := api.GenerateToken(username, email, h.config.JWT.Secret)
 	if err != nil {
-		return c.Status(500).Render("login", fiber.Map{
+		return RenderStatus(c, 500, "login", fiber.Map{
 			"Error": "Failed to create authentication token",
 			"Email": email,
 		})
@@ -109,10 +250,43 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 
 	encryptedCreds, err := api.EncryptJSON(&api.Credentials{Email: email, Password: password}, h.config.Encryption.Key)
 	if err != nil {
-		return c.Status(500).Render("login", fiber.Map{
+		return RenderStatus(c, 500, "login", fiber.Map{
 			"Error": "Failed to secure credentials",
 			"Email": email,
 		})
+	}
+
+	var mirrorUser mailstore.User
+	var mirrorAccount mailstore.Account
+	if h.mirror != nil {
+		mirrorPassword, passwordErr := api.EncryptJSON(password, h.config.Encryption.Key)
+		if passwordErr != nil {
+			log.Printf("auth: encrypt mirror password for %s: %v", email, passwordErr)
+		} else {
+			mirrorUser, err = h.mirror.EnsureLegacyUser(c.UserContext(), email)
+			if err != nil {
+				log.Printf("auth: register local mirror user for %s: %v", email, err)
+			} else {
+				mirrorAccount, err = h.mirror.UpsertAccount(c.UserContext(), mailstore.Account{
+					OwnerID:           mirrorUser.ID,
+					Email:             email,
+					Username:          username,
+					Label:             email,
+					IMAPServer:        h.config.IMAP.Server,
+					IMAPPort:          h.config.IMAP.Port,
+					IMAPTLS:           h.config.IMAP.TLS,
+					SMTPServer:        h.config.SMTP.Server,
+					SMTPPort:          h.config.SMTP.GetPort(),
+					SMTPStartTLS:      h.config.SMTP.UseSTARTTLS,
+					EncryptedPassword: mirrorPassword,
+					AuthType:          "password",
+					IsDefault:         true,
+				})
+				if err != nil {
+					log.Printf("auth: register mirror account for %s: %v", email, err)
+				}
+			}
+		}
 	}
 
 	sess.Set("authenticated", true)
@@ -120,10 +294,16 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 	sess.Set("username", username)
 	sess.Set("token", token)
 	sess.Set("credentials", encryptedCreds)
+	if mirrorUser.ID != "" {
+		sess.Set("user_id", mirrorUser.ID)
+	}
+	if mirrorAccount.ID != "" {
+		sess.Set("account_id", mirrorAccount.ID)
+	}
 	sess.SetExpiry(24 * 60 * 60 * time.Second)
 
 	if err := sess.Save(); err != nil {
-		return c.Status(500).Render("login", fiber.Map{
+		return RenderStatus(c, 500, "login", fiber.Map{
 			"Error": "Failed to create session",
 			"Email": email,
 		})
@@ -131,6 +311,9 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 
 	if err := h.fetchInitialData(client, userCacheFolder); err != nil {
 		log.Printf("auth: fetchInitialData for %s: %v", username, err)
+	}
+	if h.syncer != nil && mirrorAccount.ID != "" {
+		h.syncer.StartAccount(mirrorAccount.ID)
 	}
 
 	return c.Redirect("/inbox")
@@ -257,6 +440,17 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 		)
 	}
 
+	if h.mirror != nil {
+		if accountID, _ := sess.Get("account_id").(string); accountID != "" {
+			account, err := h.mirror.GetAccount(c.UserContext(), accountID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load mail account: %v", err)
+			}
+			return h.CreateIMAPClientForMirrorAccount(account)
+		}
+		return nil, fmt.Errorf("no active local mail account in session")
+	}
+
 	encryptedCreds := sess.Get("credentials")
 	if encryptedCreds == nil {
 		return nil, fmt.Errorf("no credentials found in session")
@@ -293,6 +487,19 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 		creds.Password,
 		h.config.IMAP.TLS,
 	)
+}
+
+// CreateIMAPClientForMirrorAccount opens a connection for an owner-scoped
+// SQLite mailbox. Callers must close the returned client.
+func (h *AuthHandler) CreateIMAPClientForMirrorAccount(account mailstore.Account) (api.MailClient, error) {
+	if strings.EqualFold(account.AuthType, "oauth2") {
+		return nil, fmt.Errorf("OAuth2 mirror accounts are not supported by background mailbox selection")
+	}
+	var password string
+	if err := api.DecryptJSON(account.EncryptedPassword, &password, h.config.Encryption.Key); err != nil {
+		return nil, fmt.Errorf("failed to decrypt account credentials: %v", err)
+	}
+	return api.NewClientTLS(account.IMAPServer, account.IMAPPort, account.Username, password, account.IMAPTLS)
 }
 
 // HandleDemoLogin establishes a demo session without contacting any IMAP server.
@@ -365,7 +572,7 @@ func (h *AuthHandler) CreateIMAPClientForAccount(entry AccountEntry) (api.MailCl
 		return nil, fmt.Errorf("invalid email format for account %s", entry.Email)
 	}
 
-	return api.NewClient(entry.IMAPServer, entry.IMAPPort, username, password)
+	return api.NewClientTLS(entry.IMAPServer, entry.IMAPPort, username, password, h.config.IMAP.TLS)
 }
 
 // CreateSMTPClientForAccount opens an SMTP connection for a stored additional
@@ -439,6 +646,17 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 		return nil, fmt.Errorf("failed to get session: %v", err)
 	}
 
+	if h.mirror != nil {
+		if accountID, _ := sess.Get("account_id").(string); accountID != "" {
+			account, err := h.mirror.GetAccount(c.UserContext(), accountID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load mail account: %v", err)
+			}
+			return h.CreateSMTPClientForMirrorAccount(account)
+		}
+		return nil, fmt.Errorf("no active local mail account in session")
+	}
+
 	// OAuth2 sessions authenticate with a (possibly refreshed) bearer token.
 	if authType, _ := sess.Get("auth_type").(string); authType == "oauth2" {
 		_, token, err := h.validOAuthToken(c)
@@ -476,5 +694,28 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 	}
 	client.SetInsecureSkipVerify(h.config.SMTP.InsecureSkipVerify)
 
+	return client, nil
+}
+
+// CreateSMTPClientForMirrorAccount opens SMTP using a SQLite mailbox's own
+// server overrides. Callers must close the returned client.
+func (h *AuthHandler) CreateSMTPClientForMirrorAccount(account mailstore.Account) (*api.SMTPClient, error) {
+	var password string
+	if err := api.DecryptJSON(account.EncryptedPassword, &password, h.config.Encryption.Key); err != nil {
+		return nil, fmt.Errorf("failed to decrypt account credentials: %v", err)
+	}
+	smtpServer := account.SMTPServer
+	if smtpServer == "" {
+		smtpServer = h.config.SMTP.Server
+	}
+	smtpPort := account.SMTPPort
+	if smtpPort == 0 {
+		smtpPort = h.config.SMTP.GetPort()
+	}
+	client := api.NewSMTPClient(smtpServer, smtpPort, account.Email, password, account.SMTPStartTLS)
+	if client == nil {
+		return nil, fmt.Errorf("failed to create SMTP client")
+	}
+	client.SetInsecureSkipVerify(h.config.SMTP.InsecureSkipVerify)
 	return client, nil
 }

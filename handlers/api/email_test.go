@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/emersion/go-imap"
 )
 
 // ---------------------------------------------------------------------------
@@ -139,5 +142,59 @@ func TestEncodeAttachmentIDNoNullBytes(t *testing.T) {
 	}
 	if id == "" {
 		t.Error("encoded attachment ID must not be empty")
+	}
+}
+
+func TestProcessListMessageUsesRFCHeadersWithoutEnvelope(t *testing.T) {
+	msg := imap.NewMessage(17, []imap.FetchItem{
+		imap.FetchFlags,
+		imap.FetchUid,
+		listHeadersSection.FetchItem(),
+	})
+	msg.Uid = 17
+	msg.Flags = []string{imap.SeenFlag}
+	// Server responses omit the PEEK marker in the section name; GetBody
+	// normalizes the requested section the same way.
+	responseSection := *listHeadersSection
+	responseSection.Peek = false
+	msg.Body[&responseSection] = bytes.NewReader([]byte(
+		"Date: Tue, 11 Aug 2026 09:10:11 +0800\r\n" +
+			"Subject: =?UTF-8?B?5L2g5aW9?=\r\n" +
+			"From: =?UTF-8?B?5rWL6K+V?= <sender@example.com>\r\n" +
+			"To: recipient@example.com\r\n" +
+			"Cc: copy@example.com\r\n" +
+			"Message-ID: <message-17@example.com>\r\n" +
+			"In-Reply-To: <message-16@example.com>\r\n" +
+			"References: <message-15@example.com> <message-16@example.com>\r\n" +
+			"\r\n"))
+
+	got, err := (&Client{}).processListMessage(msg, "INBOX")
+	if err != nil {
+		t.Fatalf("processListMessage: %v", err)
+	}
+	if got.Subject != "你好" {
+		t.Errorf("subject = %q, want %q", got.Subject, "你好")
+	}
+	if got.From != "sender@example.com" || got.FromName != "测试" {
+		t.Errorf("from = %q / %q", got.From, got.FromName)
+	}
+	if got.To != "recipient@example.com" || got.Cc != "copy@example.com" {
+		t.Errorf("recipients = %q / %q", got.To, got.Cc)
+	}
+	if got.MessageID != "<message-17@example.com>" || got.InReplyTo != "<message-16@example.com>" {
+		t.Errorf("thread headers = %q / %q", got.MessageID, got.InReplyTo)
+	}
+	if len(got.References) != 2 {
+		t.Fatalf("references = %#v, want two message IDs", got.References)
+	}
+	wantDate := time.Date(2026, time.August, 11, 9, 10, 11, 0, time.FixedZone("+0800", 8*60*60))
+	if !got.Date.Equal(wantDate) {
+		t.Errorf("date = %v, want %v", got.Date, wantDate)
+	}
+}
+
+func TestDecodeMIMEHeaderGB18030(t *testing.T) {
+	if got := decodeMIMEHeader("=?gb18030?B?xOO6ww==?="); got != "你好" {
+		t.Errorf("decoded GB18030 subject = %q, want %q", got, "你好")
 	}
 }

@@ -34,6 +34,11 @@ function isVapidPublicKeyResponse(v) {
         return el instanceof HTMLElement && el.dataset.token ? el.dataset.token : '';
     }
 
+    function serviceWorkerURL() {
+        const locale = window.lilmailLocale || '';
+        return '/sw.js' + (locale ? '?locale=' + encodeURIComponent(locale) : '');
+    }
+
     /**
      * urlBase64ToUint8Array converts a base64url string to a Uint8Array for
      * use as the applicationServerKey in PushManager.subscribe().
@@ -59,16 +64,16 @@ function isVapidPublicKeyResponse(v) {
      */
     function registerAndSubscribe() {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-            return Promise.reject(new Error('Push not supported in this browser'));
+            return Promise.reject(new Error(window.lmT('Push not supported in this browser')));
         }
-        return navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        return navigator.serviceWorker.register(serviceWorkerURL(), { scope: '/' })
             .then(function (reg) {
                 // Fetch VAPID public key.
                 return fetch('/api/push/vapid-public')
                     .then(function (r) { return r.json(); })
                     .then(function (data) {
                         if (!isVapidPublicKeyResponse(data)) {
-                            throw new Error('Malformed VAPID public key response');
+                            throw new Error(window.lmT('Malformed VAPID public key response'));
                         }
                         const key = urlBase64ToUint8Array(data.publicKey);
                         return reg.pushManager.subscribe({
@@ -88,7 +93,7 @@ function isVapidPublicKeyResponse(v) {
                     },
                     body: JSON.stringify(subJson)
                 }).then(function (r) {
-                    if (!r.ok) throw new Error('Server rejected subscription');
+                    if (!r.ok) throw new Error(window.lmT('Server rejected subscription'));
                     return subJson;
                 });
             });
@@ -123,7 +128,7 @@ function isVapidPublicKeyResponse(v) {
     window.lilmailPush = {
         enable: function () {
             return Notification.requestPermission().then(function (perm) {
-                if (perm !== 'granted') throw new Error('Notification permission denied');
+                if (perm !== 'granted') throw new Error(window.lmT('Notification permission denied'));
                 return registerAndSubscribe();
             });
         },
@@ -144,6 +149,6 @@ function isVapidPublicKeyResponse(v) {
     // Fire-and-forget: registration failures here have nothing to surface to —
     // there is no UI on screen yet to show an error in.
     if ('serviceWorker' in navigator) {
-        void navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        void navigator.serviceWorker.register(serviceWorkerURL(), { scope: '/' });
     }
 })();

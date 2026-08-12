@@ -18,7 +18,7 @@
 
         <form action="/login" method="POST">
             <div class="form-group">
-                <label for="email" class="form-label">Email address</label>
+            <label for="email" class="form-label">{{t .Translations "Email address"}}</label>
                 <input id="email" name="email" type="email" autocomplete="email" required
                        value="{{.Email}}"
                        placeholder="you@example.com"
@@ -27,7 +27,7 @@
             </div>
 
             <div class="form-group">
-                <label for="password" class="form-label">Password</label>
+            <label for="password" class="form-label">{{t .Translations "Password"}}</label>
                 <input id="password" name="password" type="password" autocomplete="current-password" required
                        placeholder="••••••••"
                        class="form-input"
@@ -37,7 +37,7 @@
             <div class="form-group" style="margin-bottom: 18px;">
                 <label class="form-check">
                     <input id="remember_me" name="remember_me" type="checkbox">
-                    Remember me for 30 days
+                    {{t .Translations "Remember me for 30 days"}}
                 </label>
             </div>
 
@@ -46,19 +46,24 @@
                     <circle style="opacity:.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                     <path style="opacity:.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
                 </svg>
-                <span x-text="loading ? 'Signing in…' : 'Sign in'">Sign in</span>
+                <span x-text="loading ? lmT('Signing in…') : lmT('Sign in')">{{t .Translations "Sign in"}}</span>
             </button>
         </form>
 
         {{if .OAuth2Enabled}}
-        <div class="divider">or</div>
-        <a href="/auth/oauth/login" class="btn-secondary">Continue with OAuth2</a>
+        <div class="divider">{{t .Translations "or"}}</div>
+        <a href="/auth/oauth/login" class="btn-secondary">{{t .Translations "Continue with OAuth2"}}</a>
         {{end}}
 
-        <p class="form-hint">Requires IMAP server credentials</p>
+        <p class="form-hint">{{t .Translations "Requires IMAP server credentials"}}</p>
+        <p class="form-hint"><a href="/user-login">{{t .Translations "Sign in with a lilmail account"}}</a> · <a href="/register">{{t .Translations "Create an application account"}}</a></p>
         <p class="form-hint">
-            <a href="/licenses.txt" target="_blank" rel="noopener">Open-source licences</a>
+            <a href="/licenses.txt" target="_blank" rel="noopener">{{t .Translations "Open-source licences"}}</a>
         </p>
+        <div class="language-switcher language-switcher--login" aria-label="{{t .Translations "Language"}}">
+            <a href="/language?locale=zh-CN&next={{urlEncode .CurrentPath}}" class="{{if eq .Locale "zh-CN"}}is-active{{end}}">简体中文</a>
+            <a href="/language?locale=en&next={{urlEncode .CurrentPath}}" class="{{if eq .Locale "en"}}is-active{{end}}">English</a>
+        </div>
     </div>
 
     <!-- Loading overlay -->

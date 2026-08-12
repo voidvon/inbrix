@@ -74,6 +74,7 @@ func NewClientScreened(server string, port int, email, password string) (*Client
 		log.Printf("DialTLS(screened) %s:%d connection err: %v", server, port, err)
 		return nil, fmt.Errorf("connection error: %v", err)
 	}
+	c.Timeout = screenedDialTimeout
 	if err := c.Login(email, password); err != nil {
 		c.Logout()
 		log.Printf("IMAP Login %s/xxx login err: %v", email, err)

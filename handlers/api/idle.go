@@ -28,8 +28,8 @@ import (
 // WatchInbox selects INBOX on the receiver's underlying IMAP connection, then
 // watches for new messages using IMAP IDLE (with a NOOP-poll fallback).
 //
-// When the message count in INBOX increases, WatchInbox fetches the envelope of
-// the newest message and calls onNewMail.  The function blocks until stop is
+// When the message count in INBOX increases, WatchInbox fetches the headers of
+// the newest message and calls onNewMail. The function blocks until stop is
 // closed or the IMAP connection is terminated.
 //
 // The caller is responsible for closing the *Client when done — typically by
@@ -94,13 +94,18 @@ func (c *Client) WatchInbox(stop <-chan struct{}, onNewMail func(email models.Em
 	}
 }
 
-// fetchEnvelopes fetches lightweight envelopes (From, Subject, Date) for
-// messages fromSeq..toSeq in the currently selected mailbox.
+// fetchEnvelopes fetches lightweight RFC 5322 headers (From, Subject, Date)
+// for messages fromSeq..toSeq in the currently selected mailbox. The historical
+// function name is kept because it is part of the local watcher flow.
 func (c *Client) fetchEnvelopes(raw *imapClient.Client, fromSeq, toSeq uint32) ([]models.Email, error) {
 	seqSet := new(imap.SeqSet)
 	seqSet.AddRange(fromSeq, toSeq)
 
-	items := []imap.FetchItem{imap.FetchEnvelope}
+	items := []imap.FetchItem{
+		imap.FetchFlags,
+		imap.FetchUid,
+		listHeadersSection.FetchItem(),
+	}
 	ch := make(chan *imap.Message, int(toSeq-fromSeq+1))
 	done := make(chan error, 1)
 	go func() {
@@ -109,24 +114,24 @@ func (c *Client) fetchEnvelopes(raw *imapClient.Client, fromSeq, toSeq uint32) (
 
 	var emails []models.Email
 	for msg := range ch {
-		if msg.Envelope == nil {
+		r := msg.GetBody(listHeadersSection)
+		if r == nil {
 			continue
 		}
-		env := msg.Envelope
-		from := ""
-		if len(env.From) > 0 {
-			addr := env.From[0]
-			if addr.PersonalName != "" {
-				from = addr.PersonalName
-			} else {
-				from = addr.MailboxName + "@" + addr.HostName
-			}
+		header, err := readMessageHeaders(r)
+		if err != nil {
+			return emails, fmt.Errorf("parse message headers: %w", err)
 		}
-		emails = append(emails, models.Email{
-			From:    from,
-			Subject: env.Subject,
-			Date:    env.Date,
-		})
+		email := models.Email{
+			ID:    fmt.Sprintf("%d", msg.Uid),
+			Flags: msg.Flags,
+			Date:  msg.InternalDate,
+		}
+		populateEmailHeaders(&email, header)
+		if email.Date.IsZero() {
+			email.Date = msg.InternalDate
+		}
+		emails = append(emails, email)
 	}
 	if err := <-done; err != nil {
 		return emails, err

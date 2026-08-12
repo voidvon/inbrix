@@ -12,6 +12,22 @@
 'use strict';
 
 const LILMAIL_ORIGIN = self.location.origin;
+const SW_LOCALE = (new URL(self.location.href).searchParams.get('locale') || navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+/** @type {Record<string, string>} */
+const SW_TRANSLATIONS = {
+    'New mail from': '新邮件，发件人：',
+    'unknown': '未知发件人',
+    '(no subject)': '（无主题）',
+    'Malformed VAPID public key response': 'VAPID 公钥响应格式错误',
+};
+
+/**
+ * @param {string} key
+ * @returns {string}
+ */
+function swT(key) {
+    return SW_LOCALE === 'zh-CN' ? (SW_TRANSLATIONS[key] || key) : key;
+}
 
 /**
  * @typedef {Object} PushPayload
@@ -54,7 +70,7 @@ function isUrlBag(v) {
 
 addEventListener('push', function (event) {
     /** @type {PushPayload} */
-    let data = { from: 'Unknown sender', subject: '(no subject)', tag: 'newmail' };
+    let data = { from: swT('unknown'), subject: swT('(no subject)'), tag: 'newmail' };
     if (event.data) {
         try {
             /** @type {unknown} */
@@ -65,9 +81,9 @@ addEventListener('push', function (event) {
         }
     }
 
-    const title = 'New mail from ' + (data.from || 'unknown');
+    const title = swT('New mail from') + ' ' + (data.from || swT('unknown'));
     const options = {
-        body: data.subject || '(no subject)',
+        body: data.subject || swT('(no subject)'),
         icon: '/assets/icon.png',
         badge: '/assets/icon.png',
         tag: data.tag || 'newmail',          // collapse multiple notifications
@@ -160,7 +176,7 @@ addEventListener('pushsubscriptionchange', function (event) {
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (!isVapidPublicKeyResponse(data)) {
-                    throw new Error('Malformed VAPID public key response');
+                    throw new Error(swT('Malformed VAPID public key response'));
                 }
                 return {
                     userVisibleOnly: true,

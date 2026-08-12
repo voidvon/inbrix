@@ -71,6 +71,7 @@ func ThreadMessages(emails []models.Email) []models.Thread {
 	// ------------------------------------------------------------------ step 1
 	// Build id_table.  For duplicate Message-IDs keep the first real message.
 	idTable := make(map[string]*container, len(emails))
+	anonymous := make([]*container, 0)
 
 	getOrCreate := func(id string) *container {
 		if id == "" {
@@ -102,6 +103,7 @@ func ThreadMessages(emails []models.Email) []models.Thread {
 		} else {
 			// No Message-ID: create an anonymous container not in the id_table.
 			c = &container{msg: e}
+			anonymous = append(anonymous, c)
 		}
 
 		// ---------------------------------------------------------------- step 2
@@ -152,11 +154,10 @@ func ThreadMessages(emails []models.Email) []models.Thread {
 		}
 	}
 	// Also include anonymous containers (no Message-ID) that aren't in idTable.
-	// They were skipped above; add them directly as roots.
-	for i := range emails {
-		e := &emails[i]
-		if e.MessageID == "" {
-			roots = append(roots, &container{msg: e})
+	// Reuse the containers created in step 1 so each message appears once.
+	for _, c := range anonymous {
+		if c.parent == nil {
+			roots = append(roots, c)
 		}
 	}
 

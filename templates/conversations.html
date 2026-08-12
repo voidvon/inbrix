@@ -1,0 +1,118 @@
+<!-- conversations.html — merged INBOX + Sent Messages chat view -->
+<div class="app-shell conversation-page">
+
+    <div x-show="$store.ui && $store.ui.sidebarOpen"
+         x-cloak
+         class="sidebar-backdrop"
+         @click="$store.ui.sidebarOpen = false"></div>
+
+    <aside class="sidebar" :class="{ 'is-open': $store.ui && $store.ui.sidebarOpen }">
+        <div class="sidebar__compose">
+            <button class="btn-compose" @click="showComposeModal = true">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+                {{t .Translations "Compose"}}
+            </button>
+        </div>
+
+        <nav class="sidebar__nav" x-data="{ foldersOpen: true }">
+            {{if caldavEnabled}}
+            <a href="/calendar" class="nav-item">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5v12a2 2 0 002 2z"/>
+                </svg>
+                <span class="nav-item__label">{{t .Translations "Calendar"}}</span>
+            </a>
+            {{end}}
+
+            <a href="/inbox"
+               hx-get="/api/conversations"
+               hx-target="#conversation-list-inner"
+               hx-swap="innerHTML"
+               @click="activeConversation = '{{.SelectedConversationID}}'; chatOpen = true; if($store.ui) $store.ui.sidebarOpen = false"
+               class="nav-item is-active">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M20 11.5a7.5 7.5 0 01-8 7.5 8.7 8.7 0 01-3.8-.9L4 19l1.2-3.5A7.4 7.4 0 014.5 11 7.5 7.5 0 1112 18.5"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11h.01M12 11h.01M16 11h.01"/>
+                </svg>
+                <span class="nav-item__label">{{t .Translations "Conversations"}}</span>
+                {{if gt .ConversationUnreadCount 0}}<span class="nav-item__badge">{{.ConversationUnreadCount}}</span>{{end}}
+            </a>
+
+            <button class="nav-section" @click="foldersOpen = !foldersOpen" aria-label="{{t .Translations "Folders"}}">
+                <svg class="nav-section__chevron" :class="{ 'is-open': foldersOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                </svg>
+                <span class="nav-section__label">{{t .Translations "Folders"}}</span>
+            </button>
+
+            <div x-show="foldersOpen" class="nav-tree">
+            {{range .NavigationFolders}}
+            <a href="/folder/{{.Name | urlEncode}}"
+               class="nav-item"
+               @click="if($store.ui) $store.ui.sidebarOpen = false">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    {{if eq .Name "Drafts"}}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    {{else if or (eq .Name "Deleted Items") (eq .Name "Deleted Messages") (eq .Name "Trash")}}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    {{else if or (eq .Name "Junk Mail") (eq .Name "Junk") (eq .Name "Spam")}}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    {{else}}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    {{end}}
+                </svg>
+                <span class="nav-item__label">{{folderLabel $.Locale .Name}}</span>
+                {{if gt .UnreadCount 0}}<span class="nav-item__badge nav-item__badge--muted">{{.UnreadCount}}</span>{{end}}
+            </a>
+            {{end}}
+            </div>
+
+            <a href="/settings" class="nav-item nav-item--footer">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426.608-2.296.07-2.572-1.065z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                <span class="nav-item__label">{{t .Translations "Settings"}}</span>
+            </a>
+        </nav>
+    </aside>
+
+    <div class="conversation-layout" x-data="{ chatOpen: {{if .Conversation}}(window.innerWidth > 1023 || new URLSearchParams(window.location.search).has('conversation')){{else}}false{{end}}, activeConversation: '{{.SelectedConversationID}}' }" :class="{ 'chat-open': chatOpen }">
+        <section class="conversation-list-panel">
+            <div class="conversation-toolbar">
+                <div>
+                    <h1 class="conversation-toolbar__title">{{t .Translations "Conversations"}}</h1>
+                    <span class="conversation-toolbar__sub">{{len .Conversations}} {{t .Translations "conversations"}}</span>
+                </div>
+                <button class="list-ctrl-btn" hx-get="/api/conversations{{if .Unified}}?unified=1{{end}}" hx-target="#conversation-list-inner" hx-swap="innerHTML" title="{{t .Translations "Refresh conversations"}}" aria-label="{{t .Translations "Refresh conversations"}}">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 10-2.34 5.66M20 4v7h-7"/></svg>
+                </button>
+                <div id="conversation-spinner" class="htmx-indicator" aria-hidden="true"><div class="htmx-indicator-inner"></div></div>
+            </div>
+            <div id="conversation-list-inner" class="conversation-list-scroll">
+                {{template "conversation-list" .}}
+            </div>
+        </section>
+
+        <section class="chat-panel" id="chat-pane">
+            {{if .Conversation}}
+            {{template "conversation-chat" .}}
+            {{else}}
+            <div class="chat-placeholder">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4" d="M20 11.5a7.5 7.5 0 01-8 7.5 8.7 8.7 0 01-3.8-.9L4 19l1.2-3.5A7.4 7.4 0 014.5 11 7.5 7.5 0 1112 18.5"/>
+                </svg>
+                <p>{{t .Translations "Select a conversation"}}</p>
+            </div>
+            {{end}}
+        </section>
+    </div>
+
+    {{template "compose-modal" .}}
+    {{template "toast" .}}
+</div>

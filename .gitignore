@@ -42,3 +42,8 @@ config.toml
 # Root devDependency-only npm project (typecheck/lint for assets/js + sw.js).
 # scripts/ has its own node_modules covered by scripts/.gitignore.
 /node_modules/
+
+# Vite production output is embedded during the build and regenerated from
+# frontend/src. Keep only the empty directory marker in source control.
+/frontend/dist/*
+!/frontend/dist/.gitkeep

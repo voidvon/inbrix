@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"lilmail/handlers/htmlsafe"
 	"math/rand"
 	"mime"
 	"mime/multipart"
@@ -86,6 +87,18 @@ type MIMEMessageOptions struct {
 //     When there are no regular attachments the outer mixed is elided and the
 //     related container is the top-level body.
 func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
+	// Normalize at the MIME boundary as a final defense for every delivery path,
+	// including scheduled sends and callers outside the web handlers.
+	if opts.HTMLBody != "" {
+		normalized, err := htmlsafe.NormalizeHTML(opts.HTMLBody)
+		if err != nil {
+			return nil, fmt.Errorf("normalize HTML body: %w", err)
+		}
+		opts.HTMLBody = normalized
+		if opts.PlainBody == "" && normalized != "" {
+			opts.PlainBody = htmlsafe.PlainTextFromHTML(normalized)
+		}
+	}
 	if opts.PlainBody == "" && opts.HTMLBody == "" {
 		return nil, fmt.Errorf("message must have at least a plain or HTML body")
 	}

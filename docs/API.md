@@ -3,8 +3,10 @@
 `/v1` is lilmail's stable, machine-readable **contract**: JSON mail + calendar +
 contacts served over one HTTP surface. lilmail is a standalone PIM client — it
 connects to the **user's own** IMAP/SMTP/CalDAV/CardDAV account and exposes what
-it reads/writes there as `/v1`. It hosts no mail itself and depends on no central
-server.
+it reads/writes there as `/v1`. It hosts no mail server and depends on no central
+server. When the local SQLite mirror is enabled, one application account may own
+several mailboxes; the active mailbox selected in the session scopes each `/v1`
+mail request.
 
 `/v1` is the shared source of truth other UIs build on:
 
@@ -23,22 +25,20 @@ same engine + authentication — using `/v1` never changes the standalone UI.
 
 ## Authentication
 
-lilmail has **no account system**. There is no sign-up, no user table, no
-password of its own, no tenant, and no server-side identity beyond "whichever
-mailbox this request is authenticated to". The *only* credential in play is the
-one for the **user's own** mailbox (IMAP/SMTP password, or an OAuth2 access token
-for their provider). "Logging in" means *connecting a mailbox*; "logging out"
-means dropping the session that held it. Nothing is provisioned or reserved
-anywhere when a new person uses lilmail. Consequently every `/v1` route is
-implicitly scoped to that one mailbox: there is no account/tenant/user path
-segment or query parameter anywhere in the surface, and none can be added by a
-caller to reach someone else's data.
+lilmail can be used without an application account through direct mailbox login.
+With the local SQLite mirror enabled, it also provides a local application
+account (`/register` and `/user-login`) whose password is separate from mailbox
+passwords. A user can attach several own mailboxes and switch the active one;
+every `/v1` route remains owner-scoped by the server-side session and there is
+no account/tenant/user path segment or caller-controlled mailbox selector. The
+*only* remote credentials are still the user's own IMAP/SMTP password or an
+OAuth2 access token for their provider.
 
 There are exactly **two** ways a request can be authenticated:
 
 | Mode | How the caller proves itself | Who uses it |
 |------|------------------------------|-------------|
-| **Session cookie** (default) | The cookie set by `POST /login` or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's own HTMX UI |
+| **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's own HTMX UI |
 | **Injected credentials** (opt-in, off by default) | `X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers | an embedding host that already holds the user's mailbox credentials |
 
 Both resolve to the same thing — one mailbox connection for the duration of one
@@ -46,7 +46,10 @@ request. There is no API-key or bearer-token scheme, no refresh endpoint of
 lilmail's own, and no way to mint a long-lived credential from `/v1`.
 
 The API reuses lilmail's session cookie — the **same** session established by
-`POST /login` or the OAuth2 flow. There is no separate API token scheme.
+`POST /login`, `POST /user-login`, or the OAuth2 flow. There is no separate API
+token scheme. The local SQLite mirror is used by the HTML inbox path; `/v1`
+continues to expose the live mail engine contract and is not a second database
+API.
 
 The one behavioural difference from the HTMX routes: when the session is missing
 or unauthenticated, the API responds **`401` with a JSON body** (the HTMX UI

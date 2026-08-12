@@ -5,16 +5,24 @@ import (
 )
 
 type Email struct {
-	ID             string       `json:"id"`
-	From           string       `json:"from"`
-	FromName       string       `json:"fromName,omitempty"`
-	To             string       `json:"to"`
-	ToNames        []string     `json:"toNames,omitempty"`
-	Cc             string       `json:"cc,omitempty"`
-	Subject        string       `json:"subject"`
-	Preview        string       `json:"preview"`
-	Body           string       `json:"body"`           // Plain text
-	HTML           string       `json:"html,omitempty"` // Raw HTML body; auto-escaped by html/template
+	ID string `json:"id"`
+	// Folder identifies the source IMAP mailbox when a view combines multiple
+	// folders. It is populated by the local mail mirror and is not part of the
+	// message's persisted payload.
+	Folder   string   `json:"folder,omitempty"`
+	From     string   `json:"from"`
+	FromName string   `json:"fromName,omitempty"`
+	To       string   `json:"to"`
+	ToNames  []string `json:"toNames,omitempty"`
+	Cc       string   `json:"cc,omitempty"`
+	Subject  string   `json:"subject"`
+	Preview  string   `json:"preview"`
+	Body     string   `json:"body"`           // Plain text
+	HTML     string   `json:"html,omitempty"` // Raw HTML body; auto-escaped by html/template
+	// BodyCached distinguishes a synchronized empty-body message from a header
+	// row that still needs its MIME body fetched. It is local storage state and
+	// is intentionally never exposed in the JSON API.
+	BodyCached     bool         `json:"-"`
 	Date           time.Time    `json:"date"`
 	HasAttachments bool         `json:"hasAttachments"`
 	Flags          []string     `json:"flags,omitempty"`

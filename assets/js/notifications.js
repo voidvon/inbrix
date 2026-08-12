@@ -44,6 +44,7 @@ function tryParseJSON(raw) {
 (function () {
     /** @type {boolean} Whether the Notification API exists in this browser. */
     const notificationSupported = typeof Notification !== 'undefined';
+    const translate = window.lmT || function (key) { return key; };
 
     function startSSE() {
         if (!window.EventSource) return;
@@ -65,8 +66,8 @@ function tryParseJSON(raw) {
             // ReferenceError, which this branch is reached precisely when the
             // API is absent (see the fallback call to startSSE() below).
             if (notificationSupported && Notification.permission === 'granted') {
-                new Notification('New mail from ' + (parsed.from || 'unknown'), {
-                    body: parsed.subject || '(no subject)',
+                new Notification(translate('New mail from') + ' ' + (parsed.from || translate('unknown')), {
+                    body: parsed.subject || translate('(no subject)'),
                     icon: '/assets/icon.png'
                 });
             }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gofiber/template/html/v2"
+	"lilmail/i18n"
 )
 
 // TestTemplatesParse ensures every template in ./templates parses with the
@@ -22,8 +23,16 @@ func TestTemplatesParse(t *testing.T) {
 	engine.AddFunc("trim", strings.TrimSpace)
 	engine.AddFunc("hasPrefix", strings.HasPrefix)
 	engine.AddFunc("urlEncode", func(s string) string { return s })
+	engine.AddFunc("assetVersion", func(string) string { return "test" })
+	engine.AddFunc("t", i18n.TranslateDictionary)
+	engine.AddFunc("json", func(interface{}) string { return "{}" })
+	engine.AddFunc("folderLabel", i18n.FolderLabel)
+	engine.AddFunc("monthTitle", i18n.FormatMonthTitle)
+	engine.AddFunc("weekTitle", i18n.FormatWeekTitle)
+	engine.AddFunc("calendarDate", i18n.FormatCalendarDate)
+	engine.AddFunc("weekdayName", i18n.WeekdayName)
 	engine.AddFunc("linkify", linkifyText)
-	engine.AddFunc("formatDate", func(tm time.Time) string { return tm.String() })
+	engine.AddFunc("formatDate", func(...interface{}) string { return time.Time{}.String() })
 	engine.AddFunc("formatSize", func(n int) string { return fmt.Sprintf("%d", n) })
 	engine.AddFunc("initial", func(name, email string) string { return "?" })
 	engine.AddFunc("caldavEnabled", func() bool { return false })

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	filepathpkg "path/filepath"
 
 	"github.com/BurntSushi/toml"
 )
@@ -86,6 +87,27 @@ type OAuth2Config struct {
 
 type CacheConfig struct {
 	Folder string `toml:"folder"`
+}
+
+// MailSyncConfig controls the local SQLite mail mirror. The mirror stores
+// message metadata and full MIME bodies during background sync by default, so
+// normal reads do not need to contact IMAP. Set SyncBodies to false to opt out
+// of background body caching.
+//
+//	[mail_sync]
+//	enabled                 = true
+//	database                = "./cache/mail.db"
+//	interval                = 60
+//	batch_size              = 200
+//	max_messages_per_folder = 5000
+//	sync_bodies             = true
+type MailSyncConfig struct {
+	Enabled              bool   `toml:"enabled"`
+	Database             string `toml:"database"`
+	Interval             int    `toml:"interval"`                // seconds
+	BatchSize            int    `toml:"batch_size"`              // IMAP page size
+	MaxMessagesPerFolder int    `toml:"max_messages_per_folder"` // 0 = all
+	SyncBodies           bool   `toml:"sync_bodies"`
 }
 
 // StorageConfig selects the durable key-value backend used for caches and
@@ -344,6 +366,7 @@ type Config struct {
 	SMTP          SMTPConfig            `toml:"smtp"`
 	JWT           JWTConfig             `toml:"jwt"`
 	Cache         CacheConfig           `toml:"cache"`
+	MailSync      MailSyncConfig        `toml:"mail_sync"`
 	Storage       StorageConfig         `toml:"storage"`
 	Encryption    EncryptionConfig      `toml:"encryption"`
 	SSL           SSLConfig             `toml:"ssl"`
@@ -373,6 +396,12 @@ func LoadConfig(filepath string) (*Config, error) {
 	// "attachments are broken" even though received mail attaches fine. A config
 	// file may still override it via [cache] folder.
 	config.Cache.Folder = "./cache"
+	config.MailSync.Enabled = true
+	config.MailSync.Database = filepathpkg.Join(config.Cache.Folder, "mail.db")
+	config.MailSync.Interval = 60
+	config.MailSync.BatchSize = 200
+	config.MailSync.MaxMessagesPerFolder = 5000
+	config.MailSync.SyncBodies = true
 	// Set default values
 	config.SMTP.Port = 587 // Default to STARTTLS port
 	config.SMTP.UseSTARTTLS = true
@@ -435,6 +464,18 @@ func LoadConfig(filepath string) (*Config, error) {
 	_, err := toml.DecodeFile(filepath, &config)
 	if err != nil {
 		return nil, err
+	}
+	if config.MailSync.Database == "" {
+		config.MailSync.Database = filepathpkg.Join(config.Cache.Folder, "mail.db")
+	}
+	if config.MailSync.Interval <= 0 {
+		config.MailSync.Interval = 60
+	}
+	if config.MailSync.BatchSize <= 0 {
+		config.MailSync.BatchSize = 200
+	}
+	if config.MailSync.MaxMessagesPerFolder < 0 {
+		return nil, fmt.Errorf("[mail_sync] max_messages_per_folder cannot be negative")
 	}
 
 	// Reconcile the [auth] allow_full_email_username key with the legacy

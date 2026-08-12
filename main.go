@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
+	stdhtml "html"
 	"html/template"
 	"io/fs"
 	"lilmail/config"
@@ -11,6 +16,8 @@ import (
 	"lilmail/handlers/api"
 	"lilmail/handlers/jsonapi"
 	"lilmail/handlers/web"
+	"lilmail/i18n"
+	"lilmail/mailstore"
 	"lilmail/storage"
 	"log"
 	"net/http"
@@ -70,7 +77,10 @@ var linkifyRe = regexp.MustCompile(
 // out of the link target so "see https://x.com." behaves sensibly. Newlines are
 // preserved by the white-space: pre-wrap CSS on the container.
 func linkifyText(s string) template.HTML {
-	esc := template.HTMLEscapeString(s)
+	// Some mail clients put HTML entities in the text/plain part. Decode them
+	// before escaping so the chat view shows the intended text, while the final
+	// HTML escape still keeps the message body inert.
+	esc := template.HTMLEscapeString(stdhtml.UnescapeString(s))
 
 	out := linkifyRe.ReplaceAllStringFunc(esc, func(m string) string {
 		if strings.Contains(m, "@") && !strings.Contains(m, "/") {
@@ -98,6 +108,26 @@ var templatesFS embed.FS
 
 //go:embed all:assets
 var assetsFS embed.FS
+
+// frontendFS contains the production Vite bundle. The repository keeps a
+// tracked dist placeholder so `go test` still compiles before npm build; the
+// runtime falls back to the server-rendered page until the bundle exists.
+//
+//go:embed all:frontend/dist
+var frontendFS embed.FS
+
+// embeddedAssetVersion returns a short content fingerprint for cache-busted
+// asset URLs in rendered pages. Embedded assets are immutable for a running
+// process, so hashing on render is cheap and keeps browser caches safe across
+// releases without manually bumping a query-string version.
+func embeddedAssetVersion(path string) string {
+	data, err := assetsFS.ReadFile("assets/" + path)
+	if err != nil {
+		return Version
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
 
 // thirdPartyNotices is the generated attribution file for every third-party
 // component lilmail redistributes (Go modules linked into this binary and the
@@ -171,6 +201,20 @@ func main() {
 	engine.AddFunc("trim", strings.TrimSpace)
 	engine.AddFunc("hasPrefix", strings.HasPrefix)
 	engine.AddFunc("urlEncode", url.QueryEscape)
+	engine.AddFunc("assetVersion", embeddedAssetVersion)
+	engine.AddFunc("t", i18n.TranslateDictionary)
+	engine.AddFunc("json", func(value interface{}) template.JS {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return template.JS("{}")
+		}
+		return template.JS(encoded)
+	})
+	engine.AddFunc("folderLabel", i18n.FolderLabel)
+	engine.AddFunc("monthTitle", i18n.FormatMonthTitle)
+	engine.AddFunc("weekTitle", i18n.FormatWeekTitle)
+	engine.AddFunc("calendarDate", i18n.FormatCalendarDate)
+	engine.AddFunc("weekdayName", i18n.WeekdayName)
 
 	// linkify HTML-escapes a plain-text body and turns bare URLs and email
 	// addresses into clickable links. Newlines are preserved by the
@@ -178,8 +222,16 @@ func main() {
 	engine.AddFunc("linkify", linkifyText)
 
 	// Date formatting function
-	engine.AddFunc("formatDate", func(t time.Time) string {
-		return t.Format("Jan 02, 2006 15:04")
+	engine.AddFunc("formatDate", func(args ...interface{}) string {
+		locale := i18n.LocaleEnglish
+		var value time.Time
+		if len(args) == 1 {
+			value, _ = args[0].(time.Time)
+		} else if len(args) >= 2 {
+			locale, _ = args[0].(string)
+			value, _ = args[1].(time.Time)
+		}
+		return i18n.FormatDate(locale, value)
 	})
 
 	// File size formatting function. Accepts int (models.Attachment.Size) — the
@@ -256,7 +308,7 @@ func main() {
 			}
 
 			// Render error page for regular requests
-			return c.Status(code).Render("error", fiber.Map{
+			return web.Render(c, "error", fiber.Map{
 				"Error": err.Error(),
 				"Code":  code,
 			})
@@ -282,6 +334,16 @@ func main() {
 	}
 	app.Use("/assets", filesystem.New(filesystem.Config{
 		Root:         http.FS(assetsSub),
+		MaxAge:       int(24 * time.Hour / time.Second),
+		NotFoundFile: "",
+	}))
+
+	frontendSub, err := fs.Sub(frontendFS, "frontend/dist")
+	if err != nil {
+		log.Fatal("Failed to sub frontend FS:", err)
+	}
+	app.Use("/app", filesystem.New(filesystem.Config{
+		Root:         http.FS(frontendSub),
 		MaxAge:       int(24 * time.Hour / time.Second),
 		NotFoundFile: "",
 	}))
@@ -313,8 +375,28 @@ func main() {
 	})
 
 	// Initialize web handlers
+	var mailMirror *mailstore.Store
+	var mailSync *mailstore.SyncManager
+	if config.MailSync.Enabled {
+		mailMirror, err = mailstore.Open(config.MailSync.Database)
+		if err != nil {
+			log.Fatal("Failed to initialize mail mirror:", err)
+		}
+		mailSync = mailstore.NewSyncManager(mailMirror, config.Encryption.Key, config.MailSync)
+		if accounts, listErr := mailMirror.ListAllAccounts(context.Background()); listErr != nil {
+			log.Printf("mail sync: could not restore accounts: %v", listErr)
+		} else {
+			mailSync.StartAll(accounts)
+		}
+		// Stop workers before closing SQLite so an in-flight sync cannot
+		// write through a closed database handle during shutdown.
+		defer mailMirror.Close()
+		defer mailSync.Stop()
+	}
 	webAuthHandler := web.NewAuthHandler(store, config)
+	webAuthHandler.SetMailMirror(mailMirror, mailSync)
 	webEmailHandler := web.NewEmailHandler(store, config, webAuthHandler)
+	webEmailHandler.SetMailMirror(mailMirror)
 	webCalendarHandler := web.NewCalendarHandler(store, config, webAuthHandler)
 
 	// JSON/REST API (/v1/*) — machine-readable contract for rich JSON clients
@@ -354,7 +436,11 @@ func main() {
 			return c.IP()
 		},
 		LimitReached: func(c *fiber.Ctx) error {
-			return c.Status(fiber.StatusTooManyRequests).Render("login", fiber.Map{
+			view := "login"
+			if c.Path() == "/user-login" {
+				view = "user-login"
+			}
+			return web.Render(c, view, fiber.Map{
 				"Error": "Too many login attempts. Please wait and try again.",
 			})
 		},
@@ -363,6 +449,11 @@ func main() {
 	// Public routes
 	app.Get("/login", webAuthHandler.ShowLogin)
 	app.Post("/login", loginLimiter, webAuthHandler.HandleLogin)
+	app.Get("/user-login", webAuthHandler.ShowUserLogin)
+	app.Post("/user-login", loginLimiter, webAuthHandler.HandleUserLogin)
+	app.Get("/register", webAuthHandler.ShowRegister)
+	app.Post("/register", webAuthHandler.HandleRegister)
+	app.Get("/language", web.HandleLanguage)
 
 	// Demo / screenshot mode — registered only when [demo] enabled = true.
 	// Both GET and POST /demo-login immediately establish a demo session
@@ -436,15 +527,63 @@ func main() {
 		},
 	})
 
-	// Protected routes group — session-gated + CSRF-protected
-	protected := app.Group("", api.SessionMiddleware(store), csrfMiddleware)
+	// When the SQLite mirror is enabled it is the canonical account system. Do
+	// not let an old direct-mailbox session fall through to the legacy IMAP
+	// handlers: that makes the inbox look slow and defeats the local mirror.
+	// Settings and account-management routes remain available without an active
+	// mailbox so a newly registered user can attach the first one.
+	mirrorSessionMiddleware := func(c *fiber.Ctx) error {
+		if mailMirror == nil || c.Path() == "/logout" {
+			return c.Next()
+		}
+		sess, err := store.Get(c)
+		if err != nil {
+			return c.Redirect("/user-login")
+		}
+		ownerID, _ := sess.Get("user_id").(string)
+		if ownerID == "" {
+			if isAPIRequest(c) {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Application account required"})
+			}
+			return c.Redirect("/user-login")
+		}
+		accountID, _ := sess.Get("account_id").(string)
+		optionalMailboxPath := c.Path() == "/settings" || strings.HasPrefix(c.Path(), "/api/accounts")
+		if accountID == "" {
+			if optionalMailboxPath {
+				return c.Next()
+			}
+			return c.Redirect("/settings?setup=1")
+		}
+		account, accountErr := mailMirror.GetAccount(c.UserContext(), accountID)
+		if accountErr != nil || account.OwnerID != ownerID {
+			sess.Delete("account_id")
+			sess.Delete("credentials")
+			_ = sess.Save()
+			if optionalMailboxPath {
+				return c.Next()
+			}
+			return c.Redirect("/settings?setup=1")
+		}
+		return c.Next()
+	}
+
+	// Protected routes group — session-gated, mirror-session-gated, and CSRF-protected.
+	protected := app.Group("", api.SessionMiddleware(store), mirrorSessionMiddleware, csrfMiddleware)
 
 	// Logout MUST be POST to prevent forced-logout via a crafted GET link
 	// (CSRF attack). Placed in the protected group so CSRF middleware covers it.
 	protected.Post("/logout", webAuthHandler.HandleLogout)
 
 	// Main web routes
-	protected.Get("/inbox", webEmailHandler.HandleInbox) // Explicit inbox route
+	protected.Get("/inbox", func(c *fiber.Ctx) error {
+		index, readErr := frontendFS.ReadFile("frontend/dist/index.html")
+		if readErr != nil {
+			return webEmailHandler.HandleInbox(c)
+		}
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.Send(index)
+	})
 	protected.Get("/folder/:name", webEmailHandler.HandleFolder)
 
 	// API routes - Keep these paths exactly as they were before
@@ -453,6 +592,9 @@ func main() {
 		// Email routes
 		apiRoutes.Get("/email/:id", webEmailHandler.HandleEmailView)
 		apiRoutes.Delete("/email/:id", webEmailHandler.HandleDeleteEmail)
+		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
+		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
+		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
 
 		// Attachment download (ID encodes folder + UID + MIME part)
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)
@@ -545,7 +687,7 @@ func main() {
 
 	// Multi-account routes — registered only when accounts.enabled = true.
 	var acctHandler *web.AccountsHandler
-	if config.Accounts.Enabled {
+	if config.Accounts.Enabled && mailMirror == nil {
 		acctStore, err := web.OpenAccountStore(config.Accounts.StoreFile)
 		if err != nil {
 			log.Fatalf("accounts: open store: %v", err)
@@ -555,6 +697,16 @@ func main() {
 
 		acctHandler = web.NewAccountsHandler(store, config, webAuthHandler, acctStore)
 
+		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
+		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
+		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
+		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
+	}
+	if mailMirror != nil {
+		if acctHandler == nil {
+			acctHandler = web.NewAccountsHandler(store, config, webAuthHandler, nil)
+		}
+		acctHandler.SetMailMirror(mailMirror, mailSync)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
@@ -571,7 +723,7 @@ func main() {
 			email, _ := c.Locals("email").(string)
 			sess, _ := store.Get(c)
 			token, _ := sess.Get("token").(string)
-			return c.Render("settings", fiber.Map{
+			return web.Render(c, "settings", fiber.Map{
 				"Title":           "Settings",
 				"Username":        username,
 				"Email":           email,
@@ -597,7 +749,7 @@ func main() {
 				"error": "Not Found",
 			})
 		}
-		return c.Status(404).Render("error", fiber.Map{
+		return web.Render(c, "error", fiber.Map{
 			"Error": "Page not found",
 			"Code":  404,
 		})

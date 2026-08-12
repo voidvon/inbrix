@@ -19,12 +19,12 @@ export {};
 interface LilmailMailStore {
   pane: string;
   density: string;
-  selection: string[];
+  selection: Array<{ id: string; accountEmail: string }>;
   activeId: string | null;
   setPane(p: string): void;
   toggleDensity(): void;
-  isSelected(id: string): boolean;
-  toggleSelect(id: string): void;
+  isSelected(id: string, accountEmail?: string): boolean;
+  toggleSelect(item: { id: string; accountEmail?: string }): void;
   clearSelection(): void;
 }
 
@@ -48,6 +48,10 @@ declare global {
   }
 
   interface Window {
+    lilmailLocale: string;
+    lilmailI18n: Record<string, string>;
+    lmT: (key: string) => string;
+    lilmailCSRFHeaders: (headers?: Record<string, string>) => Record<string, string>;
     lilmailPush: {
       /** Requests Notification permission, then registers + subscribes. */
       enable: () => Promise<PushSubscriptionJSON>;

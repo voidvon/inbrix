@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"lilmail/models"
 	"log"
+	"net"
 	"strings"
 	"time"
 
@@ -57,12 +58,9 @@ func (c *Client) SearchMessages(folderName, query string, limit uint32) ([]model
 
 	messages := make(chan *imap.Message, len(uids))
 	items := []imap.FetchItem{
-		imap.FetchEnvelope,
 		imap.FetchFlags,
-		imap.FetchBodyStructure,
 		imap.FetchUid,
-		previewSection.FetchItem(),
-		referencesSection.FetchItem(),
+		listHeadersSection.FetchItem(),
 	}
 	fetchDone := make(chan error, 1)
 	go func() {
@@ -90,6 +88,20 @@ type Client struct {
 	username string // Add username field
 }
 
+// imapOperationTimeout bounds both the TCP/TLS greeting and each IMAP
+// command. A provider that drops connections or never completes a greeting
+// must not be able to hold an HTTP request open indefinitely.
+const imapOperationTimeout = 10 * time.Second
+
+func imapDialer() *net.Dialer {
+	return &net.Dialer{Timeout: imapOperationTimeout}
+}
+
+func configureIMAPClient(c *client.Client) *client.Client {
+	c.Timeout = imapOperationTimeout
+	return c
+}
+
 // dialIMAP opens an IMAP connection to server:port. When useTLS is true it uses
 // implicit TLS (imaps); when false it dials plain IMAP (e.g. port 143). Fixes #8
 // — plain-IMAP servers previously failed with "tls: first record does not look
@@ -97,19 +109,19 @@ type Client struct {
 func dialIMAP(server string, port int, useTLS bool) (*client.Client, error) {
 	addr := fmt.Sprintf("%s:%d", server, port)
 	if useTLS {
-		c, err := client.DialTLS(addr, nil)
+		c, err := client.DialWithDialerTLS(imapDialer(), addr, nil)
 		if err != nil {
 			log.Printf("DialTLS %s connection err: %v", addr, err)
 			return nil, fmt.Errorf("connection error: %v", err)
 		}
-		return c, nil
+		return configureIMAPClient(c), nil
 	}
-	c, err := client.Dial(addr)
+	c, err := client.DialWithDialer(imapDialer(), addr)
 	if err != nil {
 		log.Printf("Dial (plain IMAP) %s connection err: %v", addr, err)
 		return nil, fmt.Errorf("connection error: %v", err)
 	}
-	return c, nil
+	return configureIMAPClient(c), nil
 }
 
 // NewClient creates a new implicit-TLS IMAP client. Backward-compatible default;
@@ -140,11 +152,12 @@ func NewClientTLS(server string, port int, email, password string, useTLS bool) 
 // NewClientOAuth creates a new IMAP client authenticated with an OAuth2 access
 // token using the XOAUTH2 (default) or OAUTHBEARER SASL mechanism.
 func NewClientOAuth(server string, port int, username, accessToken, mechanism string) (*Client, error) {
-	c, err := client.DialTLS(fmt.Sprintf("%s:%d", server, port), nil)
+	c, err := client.DialWithDialerTLS(imapDialer(), fmt.Sprintf("%s:%d", server, port), nil)
 	if err != nil {
 		log.Printf("DialTLS %s:%d connection err: %v", server, port, err)
 		return nil, fmt.Errorf("connection error: %v", err)
 	}
+	configureIMAPClient(c)
 
 	var auth sasl.Client
 	switch strings.ToLower(mechanism) {
@@ -243,7 +256,8 @@ func (c *Client) discoverSentFolder() (string, error) {
 		}
 		lc := strings.ToLower(mb.Name)
 		if lc == "sent" || strings.HasSuffix(lc, "/sent") ||
-			lc == "sent items" || lc == "sent mail" {
+			lc == "sent items" || lc == "sent mail" || lc == "sent messages" ||
+			strings.HasSuffix(lc, "/sent messages") {
 			candidates = append(candidates, mb.Name)
 		}
 	}
@@ -259,7 +273,7 @@ func (c *Client) discoverSentFolder() (string, error) {
 	}
 
 	// Phase 2: try selecting common names in order.
-	for _, name := range []string{"Sent", "Sent Items", "Sent Mail"} {
+	for _, name := range []string{"Sent", "Sent Items", "Sent Mail", "Sent Messages"} {
 		if _, err := c.client.Select(name, false); err == nil {
 			return name, nil
 		}

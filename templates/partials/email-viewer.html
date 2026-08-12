@@ -27,12 +27,12 @@
                         <span class="email-view__from-addr">&lt;{{.Email.From}}&gt;</span>
                         {{end}}
                     </div>
-                    <span class="email-view__date">{{formatDate .Email.Date}}</span>
+            <span class="email-view__date">{{formatDate .Locale .Email.Date}}</span>
                 </div>
                 <div class="email-view__to">
-                    To: <em>{{.Email.To}}</em>
+                    {{t .Translations "To"}}: <em>{{.Email.To}}</em>
                     {{with .Email.Cc}}
-                    &nbsp;·&nbsp; CC: <em>{{.}}</em>
+                    &nbsp;·&nbsp; {{t $.Translations "CC"}}: <em>{{.}}</em>
                     {{end}}
                 </div>
             </div>
@@ -43,36 +43,39 @@
              data-from="{{.Email.From}}"
              data-fromname="{{if .Email.FromName}}{{.Email.FromName}}{{else}}{{.Email.From}}{{end}}"
              data-subject="{{.Email.Subject}}"
-             data-date="{{formatDate .Email.Date}}"
+             data-date="{{formatDate .Locale .Email.Date}}"
              data-body="{{.Email.Body}}"
              data-html="{{.EditableHTML}}"
              data-messageid="{{.Email.MessageID}}"
              data-inreplyto="{{.Email.InReplyTo}}"
-             data-references="{{join .Email.References " "}}"
-             data-emailid="{{.Email.ID}}"
-             data-to="{{.Email.To}}"
+			 data-references="{{join .Email.References " "}}"
+			 data-emailid="{{.Email.ID}}"
+			 data-accountemail="{{.Email.AccountEmail}}"
+			 data-to="{{.Email.To}}"
              data-attachments="{{range $i, $a := .Email.Attachments}}{{if $i}}, {{end}}{{$a.Filename}}{{end}}"
              x-data="{
                  quoted() {
                      const d = $root.dataset;
                      const lines = (d.body || '').split('\n').map(l => '> ' + l).join('\n');
-                     return '\n\nOn ' + d.date + ', ' + d.fromname + ' wrote:\n' + lines;
+                     return '\n\n' + lmT('On') + ' ' + d.date + ', ' + d.fromname + ' ' + lmT('wrote') + ':\n' + lines;
                  },
-                 fill(to, subject, body, inReplyTo, refs, draftUID, htmlBody) {
-                     showComposeModal = true;
-                     $nextTick(() => {
+				 fill(to, subject, body, inReplyTo, refs, draftUID, htmlBody) {
+					 showComposeModal = true;
+					 $nextTick(() => {
                          const t = document.getElementById('compose-to');
                          const s = document.getElementById('compose-subject');
                          const b = document.getElementById('compose-body');
                          const irt = document.getElementById('compose-in-reply-to');
-                         const rfr = document.getElementById('compose-references');
-                         const du = document.getElementById('compose-draft-uid');
+						 const rfr = document.getElementById('compose-references');
+						 const du = document.getElementById('compose-draft-uid');
+						 const ae = document.getElementById('compose-account-email');
                          if (t) t.value = to;
                          if (s) s.value = subject;
                          if (b) { b.value = body; b.focus(); }
                          if (irt) irt.value = inReplyTo || '';
-                         if (rfr) rfr.value = refs || '';
-                         if (du) du.value = draftUID || '';
+						 if (rfr) rfr.value = refs || '';
+						 if (du) du.value = draftUID || '';
+						 if (ae) ae.value = $root.dataset.accountemail || '';
                          // If HTML body: switch to rich mode.
                          if (htmlBody) {
                              const ed = document.getElementById('compose-rich-body');
@@ -90,16 +93,16 @@
              }">
             {{if .IsDrafts}}
             <!-- Edit Draft button — only shown when viewing a draft (wired) -->
-            <button class="rt-btn rt-btn--primary" data-action="reply" @click="restoreDraft()" title="Edit draft (r)">
+            <button class="rt-btn rt-btn--primary" data-action="reply" @click="restoreDraft()" title="{{t .Translations "Edit draft"}} (r)">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                 </svg>
-                <span class="rt-btn__label">Edit Draft</span>
+                <span class="rt-btn__label">{{t .Translations "Edit Draft"}}</span>
             </button>
             {{else}}
             <!-- Reply (wired) -->
-            <button class="rt-btn rt-btn--primary" data-action="reply" title="Reply (r)"
+            <button class="rt-btn rt-btn--primary" data-action="reply" title="{{t .Translations "Reply"}} (r)"
                     @click="const d = $root.dataset;
                             const mid = d.messageid || '';
                             const existingRefs = d.references || '';
@@ -110,11 +113,11 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
                 </svg>
-                <span class="rt-btn__label">Reply</span>
+                <span class="rt-btn__label">{{t .Translations "Reply"}}</span>
             </button>
 
             <!-- Reply All (wired: To = from, Cc = original To+Cc) -->
-            <button class="rt-btn" data-action="reply-all" title="Reply all"
+            <button class="rt-btn" data-action="reply-all" title="{{t .Translations "Reply all"}}"
                     @click="const d = $root.dataset;
                             const mid = d.messageid || '';
                             const existingRefs = d.references || '';
@@ -145,84 +148,84 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10H5a8 8 0 00-3 6m6-6L4 6m4 4L4 14m11-4h2a8 8 0 018 8v0M15 10l-4-4m4 4l-4 4"/>
                 </svg>
-                <span class="rt-btn__label">Reply All</span>
+                <span class="rt-btn__label">{{t .Translations "Reply All"}}</span>
             </button>
 
             <!-- Forward (wired) -->
-            <button class="rt-btn" data-action="forward" title="Forward"
+            <button class="rt-btn" data-action="forward" title="{{t .Translations "Forward"}}"
                     @click="const d = $root.dataset;
-                            const att = d.attachments ? '\nAttachments: ' + d.attachments : '';
+                            const att = d.attachments ? '\n' + lmT('Attachments') + ': ' + d.attachments : '';
                             fill('',
                                  /^fwd:/i.test(d.subject) ? d.subject : 'Fwd: ' + d.subject,
-                                 '\n\n---------- Forwarded message ----------\nFrom: ' + d.fromname + '\nDate: ' + d.date + '\nSubject: ' + d.subject + '\nTo: ' + (d.to || '') + att + '\n\n' + (d.body || ''),
+                                 '\n\n---------- ' + lmT('Forwarded message') + ' ----------\n' + lmT('From') + ': ' + d.fromname + '\n' + lmT('Date') + ': ' + d.date + '\n' + lmT('Subject') + ': ' + d.subject + '\n' + lmT('To') + ': ' + (d.to || '') + att + '\n\n' + (d.body || ''),
                                  '', '', '', '')">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
                 </svg>
-                <span class="rt-btn__label">Forward</span>
+                <span class="rt-btn__label">{{t .Translations "Forward"}}</span>
             </button>
             {{end}}
 
             <span class="rt-sep"></span>
 
             <!-- Archive (laid out — IMAP move not yet supported by backend) -->
-            <button class="rt-btn" data-action="archive" title="Archive (coming soon)"
-                    @click="$dispatch('show-toast', { type:'info', title:'Archive', message:'Folder moves are not available in this build yet.' })">
+            <button class="rt-btn" data-action="archive" title="{{t .Translations "Archive (coming soon)"}}"
+                    @click="$dispatch('show-toast', { type:'info', title:lmT('Archive'), message:lmT('Folder moves are not available in this build yet.') })">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
                 </svg>
-                <span class="rt-btn__label">Archive</span>
+                <span class="rt-btn__label">{{t .Translations "Archive"}}</span>
             </button>
 
             <!-- Mark unread (wired) -->
-            <button class="rt-btn" data-action="unread" title="Mark as unread (u)"
+            <button class="rt-btn" data-action="unread" title="{{t .Translations "Mark as unread (u)"}}"
                     hx-patch="/api/email/{{.Email.ID}}/unread"
-                    hx-swap="none"
-                    hx-headers='{"X-Folder": "{{.CurrentFolder}}"}'
+					 hx-swap="none"
+					 hx-headers='{"X-Folder": "{{.CurrentFolder}}"{{if .Email.AccountEmail}}, "X-Account-Email": "{{.Email.AccountEmail}}"{{end}}}'
                     hx-on::after-request="htmx.ajax('GET', '/api/folder/{{.CurrentFolder | urlEncode}}/emails', {target:'#email-list-inner', swap:'innerHTML'})">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                 </svg>
-                <span class="rt-btn__label">Unread</span>
+                <span class="rt-btn__label">{{t .Translations "Mark unread"}}</span>
             </button>
 
             <!-- Flag / Star (visual toggle — local) -->
-            <button class="rt-btn" data-action="flag" title="Flag" x-data="{ on: false }" :class="{ 'is-on': on }" @click="on = !on">
+            <button class="rt-btn" data-action="flag" title="{{t .Translations "Flag"}}" x-data="{ on: false }" :class="{ 'is-on': on }" @click="on = !on">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" :fill="on ? 'currentColor' : 'none'">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 2H21l-3 6 3 6h-8.5l-1-2H5a2 2 0 00-2 2z"/>
                 </svg>
-                <span class="rt-btn__label">Flag</span>
+                <span class="rt-btn__label">{{t .Translations "Flag"}}</span>
             </button>
 
             <span class="rt-sep"></span>
 
             <!-- Junk (laid out — IMAP move not yet supported by backend) -->
-            <button class="rt-btn" data-action="junk" title="Mark as junk (coming soon)"
-                    @click="$dispatch('show-toast', { type:'info', title:'Junk', message:'Folder moves are not available in this build yet.' })">
+            <button class="rt-btn" data-action="junk" title="{{t .Translations "Mark as junk (coming soon)"}}"
+                    @click="$dispatch('show-toast', { type:'info', title:lmT('Junk'), message:lmT('Folder moves are not available in this build yet.') })">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                 </svg>
-                <span class="rt-btn__label">Junk</span>
+                <span class="rt-btn__label">{{t .Translations "Junk"}}</span>
             </button>
 
             <!-- Print (laid out) -->
-            <button class="rt-btn" data-action="print" title="Print" @click="window.print()">
+            <button class="rt-btn" data-action="print" title="{{t .Translations "Print"}}" @click="window.print()">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
                 </svg>
-                <span class="rt-btn__label">Print</span>
+                <span class="rt-btn__label">{{t .Translations "Print"}}</span>
             </button>
 
             <!-- Delete (wired) -->
-            <button class="rt-btn rt-btn--danger" data-action="delete" title="Delete (Del)"
-                    hx-delete="/api/email/{{.Email.ID}}"
-                    hx-swap="none"
-                    hx-headers='{"X-Folder": "{{.CurrentFolder}}"}'
+            <button class="rt-btn rt-btn--danger" data-action="delete" title="{{t .Translations "Delete (Del)"}}"
+					 hx-delete="/api/email/{{.Email.ID}}"
+					 hx-swap="none"
+					 hx-headers='{"X-Folder": "{{.CurrentFolder}}"{{if .Email.AccountEmail}}, "X-Account-Email": "{{.Email.AccountEmail}}"{{end}}}'
                     hx-on::after-request="showEmailViewer = false; htmx.ajax('GET', '/api/folder/{{.CurrentFolder | urlEncode}}/emails', {target:'#email-list-inner', swap:'innerHTML'})">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                 </svg>
-                <span class="rt-btn__label">Delete</span>
+                <span class="rt-btn__label">{{t .Translations "Delete"}}</span>
             </button>
         </div>
     </div>
@@ -239,47 +242,47 @@
                 </svg>
             </div>
             <div class="cal-banner__content">
-                <div class="cal-banner__title">Calendar Invite</div>
-                <div class="cal-banner__sub">This email contains a calendar invitation.</div>
+                <div class="cal-banner__title">{{t $.Translations "Calendar Invite"}}</div>
+                <div class="cal-banner__sub">{{t $.Translations "This email contains a calendar invitation."}}</div>
                 <div x-show="!rsvpDone" class="cal-banner__actions">
                     <button class="btn-rsvp btn-rsvp--accept"
                             hx-post="/calendar/rsvp"
                             hx-vals='{"status":"accepted","uid":"{{$.Email.ID}}","organizer":"{{$.Email.From}}"}'
                             hx-swap="none"
-                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg='Accepted'}else{rsvpMsg='Error sending RSVP';rsvpDone=true}">
+                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg=lmT('Accepted')}else{rsvpMsg=lmT('Error sending RSVP');rsvpDone=true}">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                         </svg>
-                        Accept
+                        {{t $.Translations "Accept"}}
                     </button>
                     <button class="btn-rsvp btn-rsvp--tentative"
                             hx-post="/calendar/rsvp"
                             hx-vals='{"status":"tentative","uid":"{{$.Email.ID}}","organizer":"{{$.Email.From}}"}'
                             hx-swap="none"
-                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg='Tentative'}else{rsvpMsg='Error sending RSVP';rsvpDone=true}">
+                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg=lmT('Tentative')}else{rsvpMsg=lmT('Error sending RSVP');rsvpDone=true}">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        Tentative
+                        {{t $.Translations "Tentative"}}
                     </button>
                     <button class="btn-rsvp btn-rsvp--decline"
                             hx-post="/calendar/rsvp"
                             hx-vals='{"status":"declined","uid":"{{$.Email.ID}}","organizer":"{{$.Email.From}}"}'
                             hx-swap="none"
-                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg='Declined'}else{rsvpMsg='Error sending RSVP';rsvpDone=true}">
+                            hx-on::after-request="if(event.detail.successful){rsvpDone=true;rsvpMsg=lmT('Declined')}else{rsvpMsg=lmT('Error sending RSVP');rsvpDone=true}">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
-                        Decline
+                        {{t $.Translations "Decline"}}
                     </button>
                 </div>
                 <div x-show="rsvpDone" x-cloak style="font-size:12px;color:var(--c-accent-text);font-weight:600;">
-                    Response: <span x-text="rsvpMsg"></span>
+                    {{t $.Translations "Response"}}: <span x-text="rsvpMsg"></span>
                 </div>
             </div>
             <div class="cal-banner__dl">
-                <a href="/api/attachment/{{.ID}}" class="btn-rsvp-link">
+                <a href="/api/attachment/{{.ID}}{{if $.Email.AccountEmail}}?account_email={{urlEncode $.Email.AccountEmail}}{{end}}" class="btn-rsvp-link">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -296,7 +299,7 @@
     {{if .Email.Attachments}}
     <div class="attach-strip">
         {{range .Email.Attachments}}
-        <a href="/api/attachment/{{.ID}}" class="attach-chip">
+        <a href="/api/attachment/{{.ID}}{{if $.Email.AccountEmail}}?account_email={{urlEncode $.Email.AccountEmail}}{{end}}" class="attach-chip">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
@@ -371,8 +374,8 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
-            <span class="remote-img-banner__text">Images in this message are blocked to protect your privacy.</span>
-            <button type="button" class="remote-img-banner__btn" @click="loadImages()">Display images</button>
+            <span class="remote-img-banner__text">{{t .Translations "Images in this message are blocked to protect your privacy."}}</span>
+            <button type="button" class="remote-img-banner__btn" @click="loadImages()">{{t .Translations "Display images"}}</button>
         </div>
 
         <iframe
@@ -380,7 +383,7 @@
             class="email-iframe"
             sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
             srcdoc="{{.EmailHTML}}"
-            title="Email content"
+            title="{{t .Translations "Email content"}}"
             referrerpolicy="no-referrer"
             @load="onLoad()"
         ></iframe>

@@ -2,7 +2,7 @@
 
 <img src="docs/assets/lilmail-wordmark.png" alt="lilmail" height="56">
 
-**A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary.**
+**A lightweight self-hostable PIM client — mail + calendar + contacts — in a single Go binary.**
 
 **[MIT OR Apache-2.0](LICENSE-MIT) · [Download](https://github.com/vul-os/lilmail/releases/latest) · [CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)**
 
@@ -25,26 +25,32 @@ a `config.toml` and it runs, comfortably, on 64 MB of RAM.
 
 Log in with a classic username/password or **OAuth2 / OpenID Connect** (full
 PKCE flow with XOAUTH2 and OAUTHBEARER SASL and automatic token refresh).
-Everything beyond core mail — CalDAV calendar, CardDAV contacts, an AI mail
-assistant, real-time notifications, Web Push, and multi-account support — is
-opt-in via config keys and adds zero overhead when disabled.
+The core mail path includes a local SQLite mirror enabled by default: a
+background worker polls IMAP, while inbox pages read synchronized metadata from
+SQLite. CalDAV calendar, CardDAV contacts, an AI mail assistant, real-time
+notifications, and Web Push remain opt-in via config keys.
 
 lilmail is a fully **independent project** — think Evolution + Evolution-Data-
 Server for the web. It talks to the **user's own** accounts (Gmail, Outlook, any
 IMAP/CalDAV/CardDAV) over OAuth/password and exposes a stable **`/v1`** JSON API
 (mail + `/v1/calendar` + `/v1/contacts`) that any rich client can build on.
 
-**Bring your own mailbox.** lilmail hosts no mail and has **no account system**:
-no sign-up, no user table, no tenant, no password of its own. The only credential
-it ever handles is the one for your own mailbox. "Logging in" means connecting a
-mailbox; nothing is provisioned anywhere when you do.
+**Bring your own mailbox.** lilmail hosts no mail server. You can either sign in
+directly with a mailbox, or create a local lilmail application account and attach
+multiple IMAP/SMTP mailboxes to it. Application passwords and mailbox passwords
+are separate; mailbox credentials are encrypted with `[encryption].key`.
 
 ## Features
 
-- **Single binary (~24 MB), no external database** — templates and vendored JS
+- **Single binary (~24 MB), no external database service** — templates and vendored JS
   embedded with `embed.FS`; durable state uses an embedded [bbolt](https://github.com/etcd-io/bbolt)
-  file by default (nothing to run), with an **optional Postgres backend** for
-  shared / multi-instance deploys; runs fully offline/air-gapped with only `config.toml`
+  file by default and the mail mirror uses pure-Go SQLite; an **optional Postgres
+  backend** remains available for shared KV state; runs fully offline/air-gapped
+  with only `config.toml`
+- **Local mail mirror** — IMAP headers and full MIME messages are synchronized
+  in the background to `./cache/mail.db`; normal inbox, folder, search, and
+  message-detail reads do not wait on IMAP. Set `sync_bodies = false` only when
+  reducing local disk/network use is more important than offline detail reads.
 - **IMAP** mailbox browsing and **SMTP** sending
 - **JSON API** (`/v1`) — a clean REST surface (folders/labels, paginated
   messages, search, flags, move/archive/spam, delete, snooze, compose + drafts,
@@ -73,8 +79,8 @@ mailbox; nothing is provisioned anywhere when you do.
 - **AI mail assistant** — smart compose, thread summaries, reply suggestions,
   action-item extraction, and phishing detection via any OpenAI-compatible
   endpoint — opt-in via `[ai]`
-- **Multiple accounts** — add/switch IMAP accounts and a unified inbox with
-  concurrent fan-out and per-account error isolation — opt-in via `[accounts]`
+- **Multiple accounts** — register one lilmail application account, attach and
+  switch several IMAP/SMTP mailboxes, and use a local unified inbox
 - **Security-first** — JWT sessions, AES-256-GCM encrypted credentials at rest,
   an origin-pinned Content-Security-Policy, `SameSite=Lax` cookies, an email iframe sandboxed without `allow-scripts`
 - **Dark mode** — hand-written CSS, no CDN dependency
@@ -106,11 +112,13 @@ flowchart TD
     class IMAP,Store,Services backend
 ```
 
-State that must survive a restart (conversation threads, recent recipients,
-extra-account credentials, VAPID keys, scheduled sends) lives in the durable
-store — an embedded bbolt file by default, or a shared Postgres database when
-configured; session credentials are AES-256-GCM encrypted. The same mail engine
-backs both the server-rendered HTMX UI and the `/v1` JSON API. See
+State that must survive a restart (local users, mailbox credentials, folders,
+message metadata, cached bodies, conversation threads, recent recipients, VAPID
+keys, scheduled sends) lives in `cache/mail.db`, bbolt, or the optional shared
+Postgres store depending on the subsystem. IMAP remains the source of truth;
+SQLite is a local mirror, not a replacement mail server. Session and stored
+mailbox credentials are AES-256-GCM encrypted. The same mail engine backs both
+the server-rendered HTMX UI and the `/v1` JSON API. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request lifecycle and
 [docs/API.md](docs/API.md) for the JSON API reference.
 
@@ -201,7 +209,8 @@ key = "your-32-character-encryption-key"   # exactly 32 chars (AES-256)
 ```
 
 Optional sections — `[oauth2]`, `[ssl]`, `[notifications]`, `[caldav]`,
-`[carddav]`, `[ai]`, `[accounts]` — are all default-disabled. See
+`[carddav]`, `[ai]` — are default-disabled. `[mail_sync]` is enabled by default
+and provides the local user/multi-mailbox flow. See
 [`config.toml.example`](config.toml.example) for an annotated reference of every
 key, or [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full walkthrough.
 

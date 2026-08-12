@@ -38,6 +38,18 @@ tls = true
 [cache]
 folder = "./cache"
 
+# Local SQLite mail mirror. The background worker synchronizes headers and full
+# MIME bodies here so inbox/list/detail/search requests do not need to contact
+# IMAP. Set sync_bodies = false to reduce local disk/network use at the cost of
+# an IMAP request when an uncached message is opened.
+[mail_sync]
+enabled = true
+database = "./cache/mail.db"
+interval = 60
+batch_size = 200
+max_messages_per_folder = 5000 # 0 = all messages
+sync_bodies = true
+
 # Durable key-value store for caches and shared state (thread metadata,
 # recipients, push subscriptions). Optional — omit this whole section to use the
 # default embedded bbolt backend (single binary, no external services).
@@ -188,28 +200,26 @@ use_pkce = true           # PKCE (S256); recommended
 # ai_max       = 20    # /api/ai/* routes — requests per window per IP
 # ai_window    = 60
 
-# Optional: Multi-account support. When enabled, users can add and switch
-# between multiple IMAP/SMTP accounts from the Settings page (GET /settings).
-# Credentials for each additional account are validated on add and stored
-# encrypted (AES-256-GCM, same key as session credentials) in a bbolt database.
+# Legacy multi-account support used only when [mail_sync] is disabled. With the
+# default SQLite mirror, create a lilmail application account at /register and
+# add/switch mailboxes from Settings. Mailbox credentials are stored encrypted
+# (AES-256-GCM, using the same key as session credentials) in cache/mail.db.
 #
 # Routes added when enabled:
-#   GET    /api/accounts              — list additional accounts (no passwords)
+#   GET    /api/accounts              — list attached accounts (no passwords)
 #   POST   /api/accounts              — add an account (validates IMAP credentials)
 #   DELETE /api/accounts/:email       — remove an account
 #   POST   /api/accounts/:email/switch — switch the active session to this account
 #
 # Unified inbox:
-#   Once accounts are added, a "Unified" toggle appears in the inbox toolbar.
-#   Clicking it fans out to all accounts concurrently and merges results sorted
-#   newest-first. Each row shows a colour badge from the account's configured
-#   colour. One failing account does not break the others — a per-account error
-#   indicator appears in the toolbar instead.
+#   Once two accounts are added, a "Unified" toggle appears in the inbox toolbar.
+#   With SQLite enabled it merges the local mirrors without opening IMAP.
+#   Each row shows a colour badge from the account's configured colour.
 #   Access directly: GET /inbox?unified=1
 #   HTMX partial:    GET /api/folder/INBOX/emails?unified=1
 #   Reply/send from a unified-view message uses the correct account's SMTP
 #   credentials automatically (pass account_email in the compose form).
 #
 # [accounts]
-# enabled    = false          # master switch; default false
-# store_file = "accounts.db"  # bbolt database for encrypted extra-account creds
+# enabled    = false          # legacy bbolt path; default false
+# store_file = "accounts.db"  # used only when mail_sync.enabled = false

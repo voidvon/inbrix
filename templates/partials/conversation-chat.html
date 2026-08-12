@@ -1,0 +1,47 @@
+{{define "conversation-chat"}}
+{{with .Conversation}}
+<div class="chat-view" data-conversation-id="{{.ID}}">
+    <header class="chat-header">
+        <button type="button" class="chat-header__back" @click="chatOpen = false" title="{{t $.Translations "Back"}}" aria-label="{{t $.Translations "Back"}}">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+        <span class="chat-header__avatar avatar">{{initial .Title .PeerEmail}}</span>
+        <div class="chat-header__identity">
+            <h2>{{if eq .Title "Conversation"}}{{t $.Translations "Conversation"}}{{else}}{{.Title}}{{end}}</h2>
+            <p>{{if eq .Subject "(no subject)"}}{{t $.Translations "(no subject)"}}{{else}}{{.Subject}}{{end}} · {{.Count}} {{t $.Translations "messages"}}</p>
+        </div>
+    </header>
+
+    <div class="chat-scroll" id="chat-scroll-{{.ID}}">
+        {{range .Messages}}
+        <article class="chat-message {{if .Outgoing}}chat-message--outgoing{{else}}chat-message--incoming{{end}}">
+            <div class="chat-message__sender">
+                {{if .Outgoing}}{{t $.Translations "Me"}}{{else}}{{if .Email.FromName}}{{.Email.FromName}}{{else}}{{.Email.From}}{{end}}{{end}}
+            </div>
+            <div class="chat-message__line">
+                {{if not .Outgoing}}<span class="chat-message__avatar avatar avatar--sm">{{initial .Email.FromName .Email.From}}</span>{{end}}
+                <div class="chat-bubble">
+                    <div class="chat-bubble__text">
+                        {{if .Email.Body}}{{linkify .Email.Body}}{{else if .Email.Preview}}{{.Email.Preview}}{{else}}{{t $.Translations "Email content"}}{{end}}
+                    </div>
+                    {{if .Email.HasAttachments}}
+                    <div class="chat-bubble__attachments">
+                        {{range .Email.Attachments}}
+                        <a class="chat-attachment" href="/api/attachment/{{.ID}}?account_email={{urlEncode $.Conversation.AccountEmail}}" title="{{.Filename}}">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                            <span>{{.Filename}}</span>
+                            <small>{{formatSize .Size}}</small>
+                        </a>
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+                {{if .Outgoing}}<span class="chat-message__avatar avatar avatar--sm">{{initial $.Conversation.AccountLabel $.Conversation.AccountEmail}}</span>{{end}}
+            </div>
+            <time class="chat-message__time">{{formatDate $.Locale .Email.Date}}</time>
+        </article>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{end}}

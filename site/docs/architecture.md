@@ -19,6 +19,7 @@ lilmail/
 │   ├── api/                 # Mail ENGINE: IMAP/SMTP client, MIME, threading, CalDAV
 │   ├── jsonapi/             # /v1 JSON REST API over the engine (for external UIs)
 │   └── web/                 # HTML page handlers (inbox, viewer, settings, …) — HTMX
+├── mailstore/               # Pure-Go SQLite users, mailbox mirror, and sync workers
 ├── models/
 │   ├── email.go             # Email, Attachment, Thread, Invite model types
 │   ├── calendar.go          # CalDAV event types
@@ -75,6 +76,8 @@ flowchart TD
     Server --> API["API routes → handlers/api/"]
     API --> JSON["JSON response"]
     API --> Clients["IMAP/SMTP clients (created per request from session creds)"]
+    Server --> Mirror["mailstore: SQLite mirror + polling workers"]
+    Mirror --> IMAP
     Server --> AI["AI routes → handlers/ai/"]
     AI --> Proxy["proxies to configured SSE endpoint"]
     Server --> SSE["SSE route → IMAP IDLE watcher"]
@@ -97,6 +100,14 @@ stored in the JWT session. The JWT is signed with `[jwt].secret` and stored in
 a `SameSite=Lax` HTTP-only cookie (`Secure` when `[server].secure_cookies =
 true`).
 
+When `[mail_sync].enabled` is true, application users and their mailbox
+accounts live in `mailstore`'s SQLite database. `/register` creates the local
+application password; `/user-login` selects the user's default mailbox. A
+mailbox password is encrypted separately with the same application encryption
+key and is never used as the local application password. Direct mailbox login
+remains supported and creates a legacy local user record so that mailbox users
+can later claim the same login with an application password.
+
 OAuth2: lilmail runs the full authorization-code flow with PKCE. After callback,
 the access + refresh tokens are encrypted and stored in the session exactly like
 passwords. Token refresh happens transparently on the next IMAP/SMTP operation
@@ -115,11 +126,28 @@ assembled by `handlers/api/mime_builder.go` (multipart/mixed + multipart/related
 NUL injection). The SASL mechanism (plain, XOAUTH2, or OAUTHBEARER) is chosen
 based on `[oauth2].mechanism`.
 
-### Caching
+### Local mail mirror
 
-Fetched email metadata is written to the on-disk cache (`[cache].folder`) as
-JSON files, one per folder. MIME bodies are cached separately. Cache keys are
-based on the sanitized username and folder name (path-traversal-safe).
+`mailstore/` opens a pure-Go SQLite database at `[mail_sync].database` (default
+`./cache/mail.db`) with WAL mode. One polling worker runs per persisted mailbox:
+
+1. The first pass discovers folders and fetches up to
+   `max_messages_per_folder` newest message headers and full MIME bodies.
+2. Later passes refresh a recent metadata window and use IMAP UID SEARCH to walk
+   every UID after the local high-water mark, so bursts larger than one batch are
+   not skipped.
+3. The web inbox, folders, local search, SQLite unified inbox, and message detail
+   views read from the mirror. Downloading an attachment, sending, or mutating a
+   remote flag still uses IMAP/SMTP and then updates SQLite.
+
+Full MIME body synchronization is enabled by default because it makes message
+detail reads independent of IMAP. Set `sync_bodies = false` to reduce disk or
+network use, accepting that an uncached first open then needs IMAP. IMAP remains
+the source of truth, and `mail.db` is a local read-optimized mirror rather than
+a replacement mail server.
+
+The older JSON cache under `[cache].folder` remains as a compatibility fallback
+for demo mode and sessions created before the mirror was enabled.
 
 ### Conversation threading
 

@@ -80,8 +80,12 @@ func SanitizeSnippet(in string) string {
 	if in == "" {
 		return ""
 	}
-	if len(in) > maxSnippetBytes {
-		in = in[:maxSnippetBytes]
+	return sanitize(in, maxSnippetBytes)
+}
+
+func sanitize(in string, maxBytes int) string {
+	if len(in) > maxBytes {
+		in = in[:maxBytes]
 	}
 	out := in
 	// Decode numeric character references FIRST so an entity-obfuscated scheme

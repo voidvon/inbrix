@@ -96,6 +96,28 @@ func TestBuildMIMEMessage_HTMLAndPlain(t *testing.T) {
 	}
 }
 
+func TestBuildMIMEMessage_NormalizesHTMLBody(t *testing.T) {
+	raw, err := BuildMIMEMessage(MIMEMessageOptions{
+		From:      "sender@example.com",
+		To:        "recipient@example.com",
+		Subject:   "safe HTML",
+		PlainBody: "Hello link",
+		HTMLBody:  `<div style="display:none"><strong>Hello</strong><script>alert(1)</script><a href="javascript:alert(1)">link</a></div>`,
+	})
+	if err != nil {
+		t.Fatalf("BuildMIMEMessage: %v", err)
+	}
+	lower := strings.ToLower(string(raw))
+	for _, banned := range []string{"<script", "javascript:", "style=", "onerror="} {
+		if strings.Contains(lower, banned) {
+			t.Errorf("MIME body contains %q: %q", banned, string(raw))
+		}
+	}
+	if !strings.Contains(string(raw), "<strong>Hello</strong>") {
+		t.Fatalf("normalized formatting missing from MIME body: %q", string(raw))
+	}
+}
+
 func TestBuildMIMEMessage_WithAttachments(t *testing.T) {
 	att := OutgoingAttachment{
 		Filename:    "test.pdf",

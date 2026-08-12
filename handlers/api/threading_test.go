@@ -185,8 +185,8 @@ func TestThreadMessages_NoMessageID(t *testing.T) {
 	for _, th := range threads {
 		total += th.Count
 	}
-	if total < 2 {
-		t.Errorf("expected at least 2 messages across threads, got %d", total)
+	if total != 2 {
+		t.Errorf("expected exactly 2 messages across threads, got %d", total)
 	}
 }
 

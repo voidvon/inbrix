@@ -1,8 +1,8 @@
 # Getting Started with lilmail
 
-lilmail is a single Go binary — there is no build step for the frontend and no
-database to provision. This guide covers installation, first-run, and the most
-common configuration scenarios.
+lilmail is a single Go binary — there is no frontend build step or external
+database service to provision. The default local SQLite file is created on first
+start. This guide covers installation, first-run, and common deployment cases.
 
 ## Prerequisites
 
@@ -60,6 +60,14 @@ use_starttls = true
 [cache]
 folder = "./cache"
 
+[mail_sync]
+enabled = true
+database = "./cache/mail.db"
+interval = 60
+batch_size = 200
+max_messages_per_folder = 5000
+sync_bodies = true
+
 [jwt]
 secret = "change-me-to-a-long-random-string"
 
@@ -78,9 +86,17 @@ key = "a-32-character-encryption-key!!"
 # or: go run main.go
 ```
 
-Open **http://localhost:3000** in your browser. You will see the login page.
-Enter your email address and mail server password — or click **Sign in with
-OAuth2** if OAuth2 is configured.
+Open **http://localhost:3000** in your browser. You can sign in directly with a
+mailbox, or choose the lilmail application-account flow: create an application
+account, then add one or more mailboxes from Settings. The first mailbox is
+validated against IMAP and immediately gets a background synchronization worker.
+Click **Sign in with OAuth2** instead when OAuth2 is configured.
+
+After the first successful mailbox login, the inbox and message details are
+served from the local SQLite mirror. The worker refreshes folders, metadata, and
+full message bodies every `mail_sync.interval` seconds. Back up `cache/mail.db`,
+`sessions/`, `cache/`, and `config.toml` together. The encryption key in
+`config.toml` is required to decrypt stored mailbox credentials.
 
 ## Common scenarios
 

@@ -2,6 +2,7 @@
 
 # Build the lilmail binary
 build:
+	npm run build
 	go build -o lilmail .
 
 # Regenerate THIRD-PARTY-NOTICES.txt from the real dependency graph (Go modules

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -178,12 +179,12 @@ func SessionMiddleware(store *session.Store) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sess, err := store.Get(c)
 		if err != nil {
-			return c.Redirect("/login")
+			return sessionAuthFailure(c)
 		}
 
 		authenticated := sess.Get("authenticated")
 		if authenticated == nil || authenticated != true {
-			return c.Redirect("/login")
+			return sessionAuthFailure(c)
 		}
 
 		username := sess.Get("username")
@@ -197,4 +198,13 @@ func SessionMiddleware(store *session.Store) fiber.Handler {
 
 		return c.Next()
 	}
+}
+
+func sessionAuthFailure(c *fiber.Ctx) error {
+	if strings.HasPrefix(c.Path(), "/api/") {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Authentication required",
+		})
+	}
+	return c.Redirect("/login")
 }

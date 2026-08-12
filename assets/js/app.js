@@ -34,7 +34,7 @@ document.addEventListener('alpine:init', function () {
         pane: loadPref('pane', 'right'),
         // list density: 'comfortable' | 'compact'
         density: loadPref('density', 'comfortable'),
-        selection: /** @type {string[]} */ ([]), // selected email IDs (multi-select)
+		selection: /** @type {Array<{id: string, accountEmail: string}>} */ ([]), // selected mailbox + UID pairs
         activeId: /** @type {string | null} */ (null), // currently-open message id (for keyboard nav)
         /** @param {string} p */
         setPane: function (p) {
@@ -45,13 +45,21 @@ document.addEventListener('alpine:init', function () {
             this.density = this.density === 'compact' ? 'comfortable' : 'compact';
             try { localStorage.setItem('lm.density', this.density); } catch { /* storage unavailable */ }
         },
-        /** @param {string} id */
-        isSelected: function (id) { return this.selection.indexOf(id) !== -1; },
-        /** @param {string} id */
-        toggleSelect: function (id) {
-            const i = this.selection.indexOf(id);
-            if (i === -1) this.selection.push(id); else this.selection.splice(i, 1);
-        },
+		/** @param {string} id @param {string} accountEmail */
+		isSelected: function (id, accountEmail) {
+			accountEmail = accountEmail || '';
+			return this.selection.some(function (item) {
+				return item.id === id && item.accountEmail === accountEmail;
+			});
+		},
+		/** @param {{id: string, accountEmail?: string}} item */
+		toggleSelect: function (item) {
+			const normalized = { id: item.id, accountEmail: item.accountEmail || '' };
+			const i = this.selection.findIndex(function (selected) {
+				return selected.id === normalized.id && selected.accountEmail === normalized.accountEmail;
+			});
+			if (i === -1) this.selection.push(normalized); else this.selection.splice(i, 1);
+		},
         clearSelection: function () { this.selection = []; }
     });
 });
@@ -72,11 +80,47 @@ document.body.addEventListener('htmx:configRequest', function (evt) {
     const tokenEl = document.getElementById('app-token');
     const token = tokenEl instanceof HTMLElement && tokenEl.dataset.token ? tokenEl.dataset.token : '';
     if (token) evt.detail.headers['Authorization'] = 'Bearer ' + token;
-    // Double-submit CSRF: read the "_csrf" cookie set by the server and
-    // echo it back as a header so the CSRF middleware can validate it.
-    const csrfMatch = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
-    if (csrfMatch) evt.detail.headers['X-CSRF-Token'] = decodeURIComponent(csrfMatch[1]);
 });
+
+// Add the same double-submit CSRF header used by HTMX to native fetch calls.
+// Keeping this in one helper avoids silently bypassing CSRF when a form uses
+// fetch instead of an htmx request.
+window.lilmailCSRFHeaders = function (headers) {
+    const output = Object.assign({}, headers || {});
+    const csrfMatch = document.cookie.match(/(?:^|;\s*)_csrf=([^;]+)/);
+    if (csrfMatch) output['X-CSRF-Token'] = decodeURIComponent(csrfMatch[1]);
+    return output;
+};
+
+document.body.addEventListener('htmx:configRequest', function (evt) {
+    evt.detail.headers = window.lilmailCSRFHeaders(evt.detail.headers);
+});
+
+// Chat transcripts should open at the newest message, matching the familiar
+// behaviour of a messaging app. This also runs after HTMX replaces a chat.
+(function () {
+    /** @param {Element | Document} root */
+    function scrollChatToBottom(root) {
+        if (!(root instanceof Element) && !(root instanceof Document)) return;
+        const scroll = root.querySelector('.chat-scroll');
+        if (scroll instanceof HTMLElement) {
+            // The chat area has smooth scrolling for manual navigation, but
+            // opening a conversation must land at the newest message now.
+            const previousBehavior = scroll.style.scrollBehavior;
+            scroll.style.scrollBehavior = 'auto';
+            scroll.scrollTop = scroll.scrollHeight;
+            scroll.style.scrollBehavior = previousBehavior;
+        }
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        scrollChatToBottom(document);
+    });
+    document.body.addEventListener('htmx:afterSwap', function (evt) {
+        const htmxEvent = /** @type {{ detail?: { target?: EventTarget } }} */ (evt);
+        const target = htmxEvent.detail && htmxEvent.detail.target;
+        if (target instanceof Element && target.id === 'chat-pane') scrollChatToBottom(target);
+    });
+})();
 
 (function () {
     const bar = document.getElementById('htmx-loading-bar');

@@ -140,7 +140,7 @@ func (h *AuthHandler) HandleOAuthCallback(c *fiber.Ctx) error {
 
 // oauthError renders the login page with an error, keeping the OAuth2 button.
 func (h *AuthHandler) oauthError(c *fiber.Ctx, msg string) error {
-	return c.Status(401).Render("login", fiber.Map{
+	return RenderStatus(c, 401, "login", fiber.Map{
 		"Error":         msg,
 		"OAuth2Enabled": h.config.OAuth2.Enabled,
 	})

@@ -6,7 +6,7 @@
     {{$unread := true}}
     {{range $latest.Flags}}{{if eq . "\\Seen"}}{{$unread = false}}{{end}}{{end}}
     <div x-data="{ open: false }" style="border-bottom:1px solid var(--c-border-soft)">
-        <div class="email-row{{if $unread}} is-unread{{end}}"
+		<div class="email-row{{if $unread}} is-unread{{end}}"
              @click="if({{$thread.Count}} > 1) { open = !open } else {
                  showEmailViewer = true;
                  htmx.ajax('GET', '/api/email/{{$latest.ID}}',
@@ -20,7 +20,13 @@
                           }});
                  }
              }">
-            {{if $unread}}<span class="email-row__unread-dot"></span>{{end}}
+			{{if $unread}}<span class="email-row__unread-dot"></span>{{end}}
+			<button class="email-row__check" title="{{t $.Translations "Select"}}"
+					@click.stop="$store.mail && $store.mail.toggleSelect({id: {{printf "%q" $latest.ID}}, accountEmail: {{printf "%q" $latest.AccountEmail}}})"
+					:class="{ 'is-checked': $store.mail && $store.mail.isSelected({{printf "%q" $latest.ID}}, {{printf "%q" $latest.AccountEmail}}) }"
+					:aria-pressed="$store.mail && $store.mail.isSelected({{printf "%q" $latest.ID}}, {{printf "%q" $latest.AccountEmail}})">
+				<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+			</button>
             <div class="avatar">{{initial $latest.FromName $latest.From}}</div>
             <div class="email-row__body">
                 <div class="email-row__top">
@@ -35,7 +41,7 @@
                         {{if gt $thread.Count 1}}
                         <span class="email-row__count">{{$thread.Count}}</span>
                         {{end}}
-                        <span class="email-row__date">{{formatDate $latest.Date}}</span>
+                        <span class="email-row__date">{{formatDate $.Locale $latest.Date}}</span>
                     </div>
                 </div>
                 <div class="email-row__subject">{{$thread.Root.Subject}}</div>
@@ -87,7 +93,7 @@
                         <span class="thread-msg__from">
                             {{if $m.FromName}}{{$m.FromName}}{{else}}{{$m.From}}{{end}}
                         </span>
-                        <span class="thread-msg__date">{{formatDate $m.Date}}</span>
+                        <span class="thread-msg__date">{{formatDate $.Locale $m.Date}}</span>
                     </div>
                     <div class="thread-msg__preview">{{$m.Preview}}</div>
                 </div>
@@ -116,10 +122,10 @@
                           }});
                  }">
         {{if $unread}}<span class="email-row__unread-dot"></span>{{end}}
-        <button class="email-row__check" title="Select"
-                @click.stop="$store.mail && $store.mail.toggleSelect('{{.ID}}')"
-                :class="{ 'is-checked': $store.mail && $store.mail.isSelected('{{.ID}}') }"
-                :aria-pressed="$store.mail && $store.mail.isSelected('{{.ID}}')">
+		<button class="email-row__check" title="{{t $.Translations "Select"}}"
+				@click.stop="$store.mail && $store.mail.toggleSelect({id: {{printf "%q" .ID}}, accountEmail: {{printf "%q" .AccountEmail}}})"
+				:class="{ 'is-checked': $store.mail && $store.mail.isSelected({{printf "%q" .ID}}, {{printf "%q" .AccountEmail}}) }"
+				:aria-pressed="$store.mail && $store.mail.isSelected({{printf "%q" .ID}}, {{printf "%q" .AccountEmail}})">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
         </button>
         <div class="avatar">{{initial .FromName .From}}</div>
@@ -134,14 +140,14 @@
                           style="{{if .AccountColor}}background:{{.AccountColor}}{{end}}">{{.AccountLabel}}</span>
                     {{end}}
                     {{if .HasAttachments}}
-                    <span class="email-row__attach" title="Has attachments">
+                        <span class="email-row__attach" title="{{t $.Translations "Has attachments"}}">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
                         </svg>
                     </span>
                     {{end}}
-                    <span class="email-row__date">{{formatDate .Date}}</span>
+                    <span class="email-row__date">{{formatDate $.Locale .Date}}</span>
                 </div>
             </div>
             <div class="email-row__subject">{{.Subject}}</div>
@@ -157,15 +163,15 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/>
         </svg>
-        <p class="empty-state__title">No results</p>
-        <p class="empty-state__sub">No messages matched &ldquo;{{.SearchQuery}}&rdquo;.</p>
+        <p class="empty-state__title">{{t .Translations "No results"}}</p>
+        <p class="empty-state__sub">{{t .Translations "No messages matched"}} &ldquo;{{.SearchQuery}}&rdquo;{{if eq .Locale "zh-CN"}}。{{else}}.{{end}}</p>
         {{else}}
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2"
                 d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
         </svg>
-        <p class="empty-state__title">All clear</p>
-        <p class="empty-state__sub">No messages in this folder.</p>
+        <p class="empty-state__title">{{t .Translations "All clear"}}</p>
+        <p class="empty-state__sub">{{t .Translations "No messages in this folder."}}</p>
         {{end}}
     </div>
 {{end}}

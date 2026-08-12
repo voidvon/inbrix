@@ -12,9 +12,9 @@
                     d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
             <div class="event-detail__row-content">
-                <div class="event-detail__date">{{.Event.Start.Format "Monday, January 2, 2006"}}</div>
+                <div class="event-detail__date">{{calendarDate .Locale .Event.Start}}</div>
                 {{if .Event.AllDay}}
-                <div class="event-detail__time">All day</div>
+                <div class="event-detail__time">{{t .Translations "All day"}}</div>
                 {{else}}
                 <div class="event-detail__time">{{.Event.Start.Format "15:04"}} – {{.Event.End.Format "15:04"}}</div>
                 {{end}}

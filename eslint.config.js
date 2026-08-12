@@ -67,4 +67,19 @@ export default tseslint.config(
       'no-undef': 'off',
     },
   },
+  {
+    files: ['frontend/**/*.{ts,tsx}'],
+    extends: [...tseslint.configs.recommendedTypeChecked],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      parserOptions: {
+        project: ['./frontend/tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      'no-undef': 'off',
+    },
+  },
 );
