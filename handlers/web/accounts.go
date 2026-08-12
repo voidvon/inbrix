@@ -593,9 +593,8 @@ func (h *AccountsHandler) handleSwitchMirrorAccount(c *fiber.Ctx) error {
 		h.syncer.StartAccount(account.ID)
 		h.syncer.Trigger(account.ID)
 	}
-	if c.Get("HX-Request") != "" {
-		c.Set("HX-Redirect", "/inbox")
-		return c.SendStatus(fiber.StatusOK)
+	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
+		return c.JSON(fiber.Map{"ok": true, "next": "/inbox"})
 	}
 	return c.Redirect("/inbox")
 }
@@ -652,7 +651,7 @@ func (h *AccountsHandler) HandleSettings(c *fiber.Ctx) error {
 	sess, _ := h.store.Get(c)
 	token, _ := sess.Get("token").(string)
 
-	return Render(c, "settings", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Title":           "Settings",
 		"Username":        owner,
 		"Email":           email,
@@ -671,7 +670,7 @@ func (h *AccountsHandler) handleMirrorSettings(c *fiber.Ctx) error {
 	}
 	sess, _ := h.store.Get(c)
 	token, _ := sess.Get("token").(string)
-	return Render(c, "settings", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Title":             "Settings",
 		"Username":          c.Locals("username"),
 		"Email":             email,

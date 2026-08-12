@@ -1,6 +1,6 @@
 // handlers/web/editdraft_sanitize_test.go — regression guard for the Edit-Draft
 // stored-XSS fix. The value returned by editableDraftHTML is what HandleEmailView
-// places into the email-viewer template's data-html attribute, which
+// returns to the React compose editor, which
 // restoreDraft() assigns via innerHTML into the compose contenteditable in the
 // MAIN (un-sandboxed) app document. It MUST be defanged.
 package web

@@ -6,7 +6,7 @@ package main
 // claim is "single binary, ~30 MB, no build step".
 //
 // Five such files had accumulated (apple-touch-icon.png, icon-48.png,
-// lilmail-logo.svg, lilmail.png, lilmail.svg) — none reachable from any template,
+// lilmail-logo.svg, lilmail.png, lilmail.svg) — none reachable from any UI,
 // stylesheet, service worker, manifest or Go source. This test stops that
 // happening again, in the direction that actually matters: it fails on an asset
 // that is embedded but unreachable.
@@ -24,15 +24,12 @@ import (
 // assetsAllowedUnreferenced lists files that are shipped ON PURPOSE despite no
 // file naming them. Every entry needs a reason; this is the only escape hatch, so
 // keep it short or the test stops meaning anything.
-var assetsAllowedUnreferenced = map[string]string{
-	"assets/vendor/htmx.min.js.LICENSE":   "the vendored bundle's upstream licence — redistribution requires it to travel with the copy (see README → Third-party notices)",
-	"assets/vendor/alpine.min.js.LICENSE": "the vendored bundle's upstream licence — redistribution requires it to travel with the copy (see README → Third-party notices)",
-}
+var assetsAllowedUnreferenced = map[string]string{}
 
 // assetSearchRoots are the places a reference to an asset can legitimately live:
-// Go source (route handlers), the templates, and asset files that reference other
+// Go source (route handlers), the React source, and asset files that reference other
 // assets (CSS url(), the service worker's precache list, the web manifest).
-var assetSearchRoots = []string{"templates", "assets", "main.go", "handlers", "config"}
+var assetSearchRoots = []string{"assets", "main.go", "handlers", "config", "frontend"}
 
 // TestEveryEmbeddedAssetIsReferenced walks assets/ and asserts each file's name
 // appears somewhere that could actually reach it.
@@ -55,7 +52,7 @@ func TestEveryEmbeddedAssetIsReferenced(t *testing.T) {
 
 	// Guard against the walk silently finding nothing, which would make the loop
 	// below pass while verifying zero assets.
-	const minAssets = 10
+	const minAssets = 5
 	if len(assets) < minAssets {
 		t.Fatalf("only %d files found under assets/, expected at least %d — the walk is under-running "+
 			"and this test would pass without checking anything", len(assets), minAssets)

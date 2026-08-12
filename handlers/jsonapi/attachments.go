@@ -1,7 +1,7 @@
 // handlers/jsonapi/attachments.go — JSON-API attachment download.
 //
 // GET /v1/messages/:uid/attachments/:partId streams a single MIME part. It is
-// the machine-readable counterpart of the HTMX web download (handlers/web/
+// the machine-readable counterpart of the web download (handlers/web/
 // email.go HandleAttachment) and works in BOTH auth modes:
 //
 //   - session mode: the MailClient comes from the caller's session.

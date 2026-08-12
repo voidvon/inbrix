@@ -661,7 +661,7 @@ footer.statusbar{display:flex;align-items:center;gap:9px;min-height:30px;
 /* ══════════ THE APP SHELL ══════════════════════════════════════════════
    The page is laid out as lilmail itself: a folder rail, a message list and
    a reading pane. This is not decoration — it is the same three-pane shape
-   the product opens on (templates/inbox.html, assets/css/mail.css), so the
+   the product opens on (frontend/src/App.tsx and styles.css), so the
    landing answers "what is this like to use?" by being it.
 
    Grafted around the existing sheets rather than replacing them: each
@@ -947,7 +947,7 @@ section[id]{scroll-margin-top:76px}
           <span>your machine,</span>
           <span class="em">one small binary.</span>
         </h1>
-        <p class="hero-lede">A self-hostable PIM client — <b>mail, calendar and contacts</b> — that talks to the IMAP/SMTP, CalDAV and CardDAV account you already own. Server-rendered HTML with every asset compiled into one Go binary: no build step, no CDN, no database to provision, and no service in the middle.</p>
+        <p class="hero-lede">A self-hostable PIM client — <b>mail, calendar and contacts</b> — that talks to the IMAP/SMTP, CalDAV and CardDAV account you already own. A React interface and JSON API ship in one Go binary: no CDN, no database to provision, and no service in the middle.</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="#start">Get started
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
@@ -1010,8 +1010,8 @@ section[id]{scroll-margin-top:76px}
   <div class="tear" aria-hidden="true"></div>
   <!-- ══════════ TICKER ══════════ -->
   <div class="ticker" aria-hidden="true"><div class="track">
-    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>HTMX</span><span>bbolt</span><span>Postgres (optional)</span>
-    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>HTMX</span><span>bbolt</span><span>Postgres (optional)</span>
+    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>bbolt</span><span>Postgres (optional)</span>
+    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>bbolt</span><span>Postgres (optional)</span>
   </div></div>
 
   <!-- ══════════ 01 · WHAT'S INSIDE ══════════ -->
@@ -1033,7 +1033,7 @@ section[id]{scroll-margin-top:76px}
         <p class="not-head">Nothing it doesn't</p>
         <ul class="not-list">
           <li><b>No database server.</b> Durable state is an embedded bbolt file. Postgres is optional, for shared or multi-instance deploys.</li>
-          <li><b>No build step.</b> Templates and vendored JS are compiled in with <code>embed.FS</code>; there is no bundler and no asset pipeline.</li>
+          <li><b>One release artifact.</b> The built React bundle and browser assets are compiled in with <code>embed.FS</code>.</li>
           <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary — and the render gate fails the build if any page fetches off-origin.</li>
           <li><b>No lilmail account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
           <li><b>No calendar or contacts unless you ask.</b> The CalDAV routes are gated on <code>[caldav] enabled</code>; off by default, they cost nothing.</li>
@@ -1045,7 +1045,7 @@ section[id]{scroll-margin-top:76px}
       <div class="rows">
         <article class="row rv">
           <span class="idx">01</span>
-          <div><h3>One binary, no database</h3><p>Templates and vendored JS compiled in with <code>embed.FS</code>; durable state is an embedded bbolt file. An optional Postgres backend covers shared or multi-instance deploys. Runs air-gapped with only a <code>config.toml</code>.</p></div>
+          <div><h3>One binary, no database</h3><p>The React bundle and browser assets are compiled in with <code>embed.FS</code>; durable state is an embedded bbolt file. An optional Postgres backend covers shared or multi-instance deploys. Runs air-gapped with only a <code>config.toml</code>.</p></div>
         </article>
         <article class="row rv">
           <span class="idx">02</span>
@@ -1072,11 +1072,11 @@ section[id]{scroll-margin-top:76px}
         </article>
         <article class="row rv">
           <span class="idx">07</span>
-          <div><h3>A stable <code>/v1</code> JSON API</h3><p>Folders, paginated messages, search, flags, move/archive/spam, snooze, compose and drafts, attachments, calendar, contacts and settings — the same engine and session auth that serve the HTMX UI.</p></div>
+          <div><h3>A stable <code>/v1</code> JSON API</h3><p>Folders, paginated messages, search, flags, move/archive/spam, snooze, compose and drafts, attachments, calendar, contacts and settings — the same engine and session auth used by the React UI.</p></div>
         </article>
         <article class="row rv">
           <span class="idx">08</span>
-          <div><h3>Security you don't configure</h3><p>JWT sessions, AES-256-GCM encrypted credentials at rest, a Content-Security-Policy that pins every origin to <code>self</code> (<code>object-src 'none'</code>, <code>base-uri 'self'</code>, no off-origin <code>connect-src</code>) — though not a script-strict one, because Alpine needs <code>unsafe-inline</code> and <code>unsafe-eval</code> — plus <code>SameSite=Lax</code> cookies, a mail iframe sandboxed without <code>allow-scripts</code>, and CR/LF/NUL header-injection guards on everything outgoing.</p></div>
+          <div><h3>Security you don't configure</h3><p>JWT sessions, AES-256-GCM encrypted credentials at rest, a script-strict Content-Security-Policy that pins every origin to <code>self</code>, double-submit CSRF protection, <code>SameSite=Lax</code> cookies, a mail iframe sandboxed without <code>allow-scripts</code>, and CR/LF/NUL header-injection guards on everything outgoing.</p></div>
         </article>
       </div>
     </div>
@@ -1109,8 +1109,8 @@ section[id]{scroll-margin-top:76px}
           <rect x="8" y="58" width="236" height="148" rx="18" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.17)"/>
           <text class="lbl" x="34" y="92">You</text>
           <text class="nm" x="34" y="128" style="font-size:21px">Your browser</text>
-          <text class="sub" x="34" y="156">Server-rendered HTML</text>
-          <text class="sub" x="34" y="176">over HTMX — or any</text>
+          <text class="sub" x="34" y="156">React in the browser</text>
+          <text class="sub" x="34" y="176">over JSON — or any</text>
           <text class="sub" x="34" y="196">client on /v1</text>
         </g>
         <g>
@@ -1203,7 +1203,7 @@ section[id]{scroll-margin-top:76px}
     </div>
 
     <div class="route-stack">
-      <div><span>You</span><b>Your browser</b><p>Server-rendered HTML over HTMX — or any client on <code>/v1</code>.</p></div>
+      <div><span>You</span><b>Your browser</b><p>React over JSON — or any client on <code>/v1</code>.</p></div>
       <div><span>Your server</span><b>lilmail</b><p>One Go binary and a <code>config.toml</code>. bbolt on disk, or your own Postgres.</p></div>
       <div><span>Your accounts</span><b>IMAP · SMTP · DAV</b><p>Gmail, Outlook, or any standards-compliant server, over OAuth or password.</p></div>
     </div>
@@ -1250,7 +1250,7 @@ section[id]{scroll-margin-top:76px}
           </button>
         </div>
         <div class="gside">
-          <div class="gcap" data-shot="inbox"><h3>Three panes, no chrome in the way</h3><p>Folders, a threaded message list and the reading pane — with unread dots, attachment markers and per-sender avatars. HTMX swaps the panels; the page never reloads.</p></div>
+          <div class="gcap" data-shot="inbox"><h3>Three panes, no chrome in the way</h3><p>Folders, a threaded conversation list and the reading pane — with unread dots, attachment markers and per-sender avatars. React keeps navigation responsive and the selected conversation in the URL.</p></div>
           <div class="gcap" data-shot="message" hidden><h3>HTML mail, safely contained</h3><p>Messages render inside an iframe sandboxed without <code>allow-scripts</code>, so mail HTML cannot execute. Reply, forward, archive, flag, print and delete sit in one row where you'd expect them.</p></div>
           <div class="gcap" data-shot="compose" hidden><h3>Write, attach, schedule</h3><p>Plain-text or rich-text, file attachments as proper multipart MIME with inline <code>cid:</code> images, send-later scheduling, and drafts auto-saved every 30 seconds.</p></div>
           <div class="gcap" data-shot="search" hidden><h3>Straight to the server</h3><p>Search is executed by your IMAP server, not by a local index that has to be built and kept fresh. The same query is a <code>GET /v1/search</code> away.</p></div>
@@ -1364,7 +1364,7 @@ key = "a-32-character-encryption-key!!"</code></pre>
       <span class="num">05</span>
       <div>
         <h2 class="title">One engine, <span class="em">two front doors.</span></h2>
-        <p class="lede">The HTMX UI and the <code>/v1</code> JSON API are the same mail engine under the same session auth. Build a rich client, a script or a widget on it — the shapes are a stable, additive contract.</p>
+        <p class="lede">The React UI and the <code>/v1</code> JSON API use the same mail engine under the same session auth. Build a rich client, a script or a widget on it — the shapes are a stable, additive contract.</p>
       </div>
     </div>
     <div class="contract">

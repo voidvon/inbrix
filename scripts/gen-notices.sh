@@ -54,7 +54,7 @@ as those licences require. lilmail serves this file at /licenses.txt.
 HEADER
 
   echo "================================================================================"
-  echo "Vendored browser assets (served from /assets/vendor/)"
+  echo "Browser assets (served from /assets)"
   echo "================================================================================"
   echo
   for lic in assets/vendor/*.LICENSE; do
@@ -74,7 +74,12 @@ HEADER
   echo "Licence   : BSD-3-Clause (plus the Go patent grant, reproduced below)"
   echo "--------------------------------------------------------------------------------"
   echo
-  cat "$(go env GOROOT)/LICENSE"
+  GO_ROOT="$(go env GOROOT)"
+  GO_LICENSE="${GO_ROOT}/LICENSE"
+  if [[ ! -f "$GO_LICENSE" ]]; then
+    GO_LICENSE="$(dirname "$GO_ROOT")/LICENSE"
+  fi
+  cat "$GO_LICENSE"
   echo
   cat "$(go env GOROOT)/PATENTS"
   echo

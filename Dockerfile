@@ -1,4 +1,4 @@
-# lilmail — single-binary IMAP/SMTP webmail client (HTMX UI + /v1 JSON API).
+# lilmail — single-binary IMAP/SMTP webmail client (React UI + JSON API).
 #
 # Build: docker build -t vulos/lilmail .
 # Run:   docker run -p 3000:3000 -v $PWD/config.toml:/app/config.toml vulos/lilmail

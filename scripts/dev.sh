@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the Go API server and the Vite development server together.
 #
-# Vite serves the browser UI on :3000. Go serves API/auth/legacy web routes on
+# Vite serves the browser UI on :3000. Go serves API/auth routes on
 # :3001. The port override is deliberate: config.toml remains usable for the
 # normal single-binary mode, where Go listens on its configured port.
 

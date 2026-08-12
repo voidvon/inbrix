@@ -1,6 +1,6 @@
 // handlers/jsonapi/messages.go — JSON compose/send + draft-save endpoints.
 //
-// These mirror the HTMX compose path (handlers/web/email.go HandleComposeEmail /
+// These mirror the multipart compose path (handlers/web/email.go HandleComposeEmail /
 // HandleSaveDraft) but accept a JSON body instead of a multipart form, and reuse
 // the exact same engine: api.BuildMIMEMessage for assembly, SMTPClient for send,
 // MailClient.SaveDraft / SaveToSent for IMAP persistence. No mail logic is

@@ -10,7 +10,7 @@
 //   - handlers/web — defangs the HTML of a DRAFT being edited before it is placed
 //     into the compose contenteditable. That contenteditable is assigned via
 //     `innerHTML` in the MAIN app document (see
-//     templates/partials/email-viewer.html restoreDraft()), which — unlike the
+//     browser editor document, which — unlike the
 //     reading-pane iframe — is NOT sandboxed, so raw mail HTML there is a stored
 //     XSS vector. `innerHTML` fires load/error handlers on inserted nodes
 //     (<img src=x onerror=...>, <svg onload=...>), so stripping those handlers

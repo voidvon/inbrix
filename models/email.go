@@ -18,7 +18,7 @@ type Email struct {
 	Subject  string   `json:"subject"`
 	Preview  string   `json:"preview"`
 	Body     string   `json:"body"`           // Plain text
-	HTML     string   `json:"html,omitempty"` // Raw HTML body; auto-escaped by html/template
+	HTML     string   `json:"html,omitempty"` // Raw HTML body; rendered only in a sandboxed iframe
 	// BodyCached distinguishes a synchronized empty-body message from a header
 	// row that still needs its MIME body fetched. It is local storage state and
 	// is intentionally never exposed in the JSON API.
@@ -135,7 +135,7 @@ type AuthResults struct {
 // PartID is the raw IMAP MIME part path (e.g. "2.1"); it is what the JSON API
 // download route consumes:  GET /v1/messages/:uid/attachments/:partId?folder=.
 // ID is the opaque encoded token (base64 of folder\0uid\0part) used by the
-// HTMX web download route instead. Content is never serialized to JSON — it is
+// compatibility attachment route. Content is never serialized to JSON — it is
 // an in-process carrier for the on-demand download path only.
 type Attachment struct {
 	ID          string `json:"id"`

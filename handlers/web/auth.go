@@ -45,7 +45,8 @@ func (h *AuthHandler) SetMailMirror(mirror *mailstore.Store, syncer *mailstore.S
 	h.syncer = syncer
 }
 
-// ShowLogin renders the login page
+// ShowLogin is retained for compatibility with embedders; page rendering is
+// handled by the React SPA and this method is no longer registered as a route.
 func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
 	// The SQLite mirror is the canonical account system. Direct mailbox login
 	// remains available only when the mirror is explicitly disabled, so an old
@@ -60,17 +61,15 @@ func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
 			return c.Redirect("/inbox")
 		}
 	}
-	return Render(c, "login", fiber.Map{
-		"OAuth2Enabled": h.config.OAuth2.Enabled,
-	})
+	return c.JSON(fiber.Map{"oauth2Enabled": h.config.OAuth2.Enabled})
 }
 
 func (h *AuthHandler) ShowUserLogin(c *fiber.Ctx) error {
-	return Render(c, "user-login", nil)
+	return c.JSON(fiber.Map{"page": "user-login"})
 }
 
 func (h *AuthHandler) ShowRegister(c *fiber.Ctx) error {
-	return Render(c, "register", nil)
+	return c.JSON(fiber.Map{"page": "register"})
 }
 
 // HandleUserLogin authenticates a lilmail application user. Mailbox
@@ -332,9 +331,8 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 }
 
 // HandleLogout processes user logout. Must be called via POST to prevent
-// CSRF-triggered forced-logout attacks on GET. For HTMX callers the handler
-// returns an HX-Redirect header so the client navigates without a full-page
-// reload; for regular POST callers a 302 redirect is returned.
+// CSRF-triggered forced-logout attacks on GET. JSON callers receive a small
+// success object; the legacy redirect response remains for embedders.
 func (h *AuthHandler) HandleLogout(c *fiber.Ctx) error {
 	sess, err := h.store.Get(c)
 	if err != nil {
@@ -356,8 +354,6 @@ func (h *AuthHandler) HandleLogout(c *fiber.Ctx) error {
 		return c.Status(500).SendString("Error during logout")
 	}
 
-	// HTMX callers: use the HX-Redirect response header so the client performs
-	// a full-page navigation without swapping content into an element.
 	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
 		return c.JSON(fiber.Map{"ok": true})
 	}
@@ -609,8 +605,8 @@ func (h *AuthHandler) CreateSMTPClientForAccount(entry AccountEntry) (*api.SMTPC
 // CalDAVClient returns a CalDAVClient authenticated for the current session.
 // For OAuth2 sessions the bearer token is retrieved (and refreshed) transparently;
 // for basic-auth sessions the [caldav] config credentials are used. This is the
-// single CalDAV client-construction path shared by the HTMX calendar routes and
-// the JSON API (/v1/calendar).
+// single CalDAV client-construction path shared by the browser and JSON
+// calendar APIs.
 func (h *AuthHandler) CalDAVClient(c *fiber.Ctx) (*api.CalDAVClient, error) {
 	sess, err := h.store.Get(c)
 	if err != nil {

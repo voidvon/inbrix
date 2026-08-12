@@ -288,7 +288,7 @@ func (c AIConfig) EmbeddedAI() bool { return c.Mode == AIModeEmbedded }
 // NotificationsConfig configures Phase-6 real-time notifications.
 // Everything is opt-in and default-disabled: with Enabled = false (the
 // default) the application behaves exactly as without this feature — no extra
-// goroutines, no SSE route, no JS injected into pages.
+// goroutines and no SSE route.
 //
 //	[notifications]
 //	enabled      = false          # master switch — MUST be true to activate anything
@@ -600,19 +600,13 @@ func (c *Config) GetSecurityHeaders() map[string]string {
 	// cannot execute scripts in the LilMail origin.
 	//
 	// 'self'            — allow scripts/styles loaded from the same origin
-	// 'unsafe-inline'   — needed for Alpine.js x-data / x-on inline handlers
-	//                     and the small inline <style> blocks in the layout.
-	//                     HTMX+Alpine rely heavily on inline JS attributes, so
-	//                     removing this would require a nonce/hash approach.
-	// blob:             — allows HTMX to use blob: object-URLs when needed.
+	// 'unsafe-inline'   — needed for the browser's inline style attributes and
+	//                     the small inline style blocks used by the client shell.
+	// blob:             — allows browser APIs to use blob: object URLs when needed.
 	//
 	// Email HTML bodies are sandboxed inside <iframe sandbox> (no allow-scripts)
 	// so they never reach this CSP; this policy is the outer-page defence.
-	// Alpine.js evaluates expressions via new Function() which requires
-	// 'unsafe-eval'. Without it, Alpine silently falls back and x-data / x-show
-	// expressions may not initialize correctly. 'unsafe-inline' is also needed
-	// for Alpine's inline x-on handlers.
-	scriptSrc := "'self' 'unsafe-inline' 'unsafe-eval'"
+	scriptSrc := "'self'"
 	imgSrc := "'self' data: blob:"
 	connectSrc := "'self'"
 	csp := "default-src 'self'; script-src " + scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src " + imgSrc + "; connect-src " + connectSrc + "; object-src 'none'; base-uri 'self';"

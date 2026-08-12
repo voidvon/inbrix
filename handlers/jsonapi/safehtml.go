@@ -5,8 +5,7 @@
 // The sanitizer policy now lives in the shared, dependency-free
 // handlers/htmlsafe package so it can also defang the HTML of a DRAFT being
 // edited before it enters the compose contenteditable in handlers/web (that
-// contenteditable is assigned via innerHTML in the MAIN app document — see
-// templates/partials/email-viewer.html restoreDraft() — which, unlike the
+// contenteditable may be assigned by an editor in the browser — unlike the
 // sandboxed reading-pane iframe, would otherwise be a stored-XSS sink).
 //
 // WHY DEFANG THESE SNIPPETS: they are composed into an outgoing MIME text/html

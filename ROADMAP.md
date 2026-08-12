@@ -39,7 +39,7 @@ service). This document tracks where we are and where we're going.
 **JSON API (`/v1`)**
 - A stable REST surface (folders, paginated messages, search, flags,
   move/delete, compose + drafts, scheduled send, calendar, contacts, settings)
-  served alongside the HTMX UI from the same engine and session auth — the
+  used by the React UI and other clients through the same engine and session auth — the
   contract the Vulos OS and other rich clients build on. See
   [docs/API.md](docs/API.md).
 - **Send-as identities** — `GET`/`PUT /v1/settings/identities`; compose,
@@ -129,7 +129,7 @@ service). This document tracks where we are and where we're going.
   generated from the real dependency graph and served at `/licenses.txt`
 
 **Packaging & distribution**
-- **Self-contained binary** — templates and vendored HTMX/Alpine.js are
+- **Self-contained binary** — the React production bundle and static assets are
   embedded via `embed.FS`; runs fully offline with only `config.toml`
 - Unit tests (SASL/MIME/attachment-ID/threading/AI/config/security) + **CI**
   workflow — build, `gofmt`, `go vet`, `go test -race`, and a published-docs

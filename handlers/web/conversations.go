@@ -384,7 +384,7 @@ func (h *EmailHandler) HandleConversationList(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Error loading local conversations"})
 	}
-	return Render(c, "conversation-list", data, "")
+	return c.JSON(data)
 }
 
 func (h *EmailHandler) HandleConversationView(c *fiber.Ctx) error {
@@ -397,7 +397,7 @@ func (h *EmailHandler) HandleConversationView(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Conversation not found"})
 	}
 	data["Conversation"] = selected
-	return Render(c, "conversation-chat", data, "")
+	return c.JSON(data)
 }
 
 func (h *EmailHandler) HandleConversationSearch(c *fiber.Ctx) error {
@@ -431,7 +431,7 @@ func (h *EmailHandler) HandleConversationSearch(c *fiber.Ctx) error {
 		data["Conversations"] = filtered
 		data["SelectedConversationID"] = ""
 	}
-	return Render(c, "conversation-list", data, "")
+	return c.JSON(data)
 }
 
 func (h *EmailHandler) HandleConversations(c *fiber.Ctx) error {
@@ -442,5 +442,5 @@ func (h *EmailHandler) HandleConversations(c *fiber.Ctx) error {
 		}
 		return c.Status(500).SendString("Error loading local conversations")
 	}
-	return Render(c, "conversations", data)
+	return c.JSON(data)
 }

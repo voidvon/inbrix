@@ -1,7 +1,7 @@
 // handlers/jsonapi/calendar.go — JSON calendar endpoints over CalDAV.
 //
 // These reuse the same CalDAV client (api.CalDAVClient) and models.Calendar*
-// types as the HTMX calendar UI (handlers/web/calendar.go); only the transport
+// types as the calendar helper (handlers/web/calendar.go); only the transport
 // is JSON. They are registered only when [caldav] enabled = true.
 //
 // Times travel as RFC 3339 strings (e.g. 2026-06-26T10:00:00Z). The start/end

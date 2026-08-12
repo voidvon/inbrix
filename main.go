@@ -201,9 +201,23 @@ func main() {
 	webEmailHandler := web.NewEmailHandler(store, config, webAuthHandler)
 	webEmailHandler.SetMailMirror(mailMirror)
 
-	// JSON/REST API (/v1/*) — machine-readable contract for rich JSON clients
-	// (e.g. the Vulos OS mail surface). Additive: reuses the same engine +
-	// session auth as the HTMX UI, returns 401 JSON instead of redirecting.
+	// Browser mutations use the double-submit cookie pattern. The same handler
+	// is composed into /v1 below; its Next hook skips requests that the JSON API's
+	// broker middleware has already authenticated with the shared broker secret.
+	csrfMiddleware := csrf.New(csrf.Config{
+		KeyLookup:      "header:X-CSRF-Token",
+		CookieName:     "_csrf",
+		CookieHTTPOnly: false, // React reads the token to send the matching header.
+		CookieSameSite: "Lax",
+		CookieSecure:   config.Server.SecureCookies,
+		Expiration:     24 * time.Hour,
+		Next:           jsonapi.IsBrokerRequest,
+		ContextKey:     "csrfToken",
+	})
+
+	// JSON/REST API (/v1/*) — machine-readable contract used by the React client
+	// and other rich clients. It reuses the same engine and session auth, and
+	// returns 401 JSON instead of redirecting.
 	//
 	// A durable KV store (bbolt by default, Postgres when configured) backs
 	// scheduled send (send-later): the store persists pending scheduled sends and
@@ -220,10 +234,10 @@ func main() {
 	scheduleDBPath := filepath.Join(config.Cache.Folder, "scheduled.db")
 	if kv, kvErr := storage.Open(config, scheduleDBPath); kvErr != nil {
 		log.Printf("scheduled send unavailable (store open failed): %v", kvErr)
-		jsonapi.New(store, config, webAuthHandler).Register(app)
+		jsonapi.New(store, config, webAuthHandler).RegisterWithMiddleware(app, csrfMiddleware)
 	} else {
 		jsonAPI := jsonapi.NewWithStore(store, config, webAuthHandler, kv)
-		jsonAPI.Register(app)
+		jsonAPI.RegisterWithMiddleware(app, csrfMiddleware)
 		defer jsonAPI.StopScheduler()
 		defer kv.Close()
 	}
@@ -245,12 +259,16 @@ func main() {
 	// React owns every browser page. The shell is public; data endpoints remain
 	// session-gated and return JSON when the user is not authenticated.
 	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/settings", "/calendar", "/calendar/week"} {
-		app.Get(path, serveSPA)
+		app.Get(path, csrfMiddleware, serveSPA)
 	}
-	app.Get("/folder/*", serveSPA)
-	app.Post("/login", loginLimiter, webAuthHandler.HandleLogin)
-	app.Post("/user-login", loginLimiter, webAuthHandler.HandleUserLogin)
-	app.Post("/register", webAuthHandler.HandleRegister)
+	app.Get("/csrf", csrfMiddleware, func(c *fiber.Ctx) error {
+		token, _ := c.Locals("csrfToken").(string)
+		return c.JSON(fiber.Map{"token": token})
+	})
+	app.Get("/folder/*", csrfMiddleware, serveSPA)
+	app.Post("/login", loginLimiter, csrfMiddleware, webAuthHandler.HandleLogin)
+	app.Post("/user-login", loginLimiter, csrfMiddleware, webAuthHandler.HandleUserLogin)
+	app.Post("/register", csrfMiddleware, webAuthHandler.HandleRegister)
 	app.Get("/language", web.HandleLanguage)
 
 	// Demo / screenshot mode — registered only when [demo] enabled = true.
@@ -279,10 +297,11 @@ func main() {
 	// CSRF middleware for all web (cookie-session) protected routes.
 	// Uses the double-submit cookie pattern:
 	//   1. Middleware sets a JS-readable "_csrf" cookie on GET responses.
-	//   2. HTMX's htmx:configRequest handler reads the cookie and sends its
-	//      value as "X-CSRF-Token" on every mutating request.
+	//   2. React's API client reads the cookie and sends its value as
+	//      "X-CSRF-Token" on every mutating request.
 	//   3. Middleware validates header == cookie value before the handler runs.
-	// WebPush subscribe/unsubscribe routes are skipped.
+	// WebPush subscribe/unsubscribe routes use the same cookie session as all
+	// other browser mutations and are covered by this middleware as well.
 	//
 	// CORRECTION (found while typechecking assets/js/push.js, 2026-08-06): the
 	// skip comment used to justify this as "they carry Authorization: Bearer
@@ -300,19 +319,6 @@ func main() {
 	// resolved deliberately (either validate the Bearer token server-side to
 	// match the comment's original intent, or drop the exemption and the now-
 	// pointless header) rather than left as accidentally-correct.
-	csrfMiddleware := csrf.New(csrf.Config{
-		KeyLookup:      "header:X-CSRF-Token",
-		CookieName:     "_csrf",
-		CookieHTTPOnly: false, // must be JS-readable for double-submit pattern
-		CookieSameSite: "Lax",
-		CookieSecure:   config.Server.SecureCookies,
-		Expiration:     24 * time.Hour,
-		Next: func(c *fiber.Ctx) bool {
-			// Skip for WebPush routes — see the correction above.
-			return strings.HasPrefix(c.Path(), "/api/push/")
-		},
-	})
-
 	// When the SQLite mirror is enabled it is the canonical account system. Do
 	// not let an old direct-mailbox session fall through to the legacy IMAP
 	// handlers: that makes the inbox look slow and defeats the local mirror.
@@ -373,6 +379,17 @@ func main() {
 	// JSON endpoints used by the React client during the /v1 migration.
 	apiRoutes := protected.Group("/api")
 	{
+		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
+			return c.JSON(fiber.Map{
+				"notifications": config.Notifications.Enabled,
+				"webPush":      config.Notifications.Enabled && config.Notifications.WebPush,
+				"calendar":     config.CalDAV.Enabled,
+			})
+		})
+		apiRoutes.Get("/csrf", func(c *fiber.Ctx) error {
+			token, _ := c.Locals("csrfToken").(string)
+			return c.JSON(fiber.Map{"token": token})
+		})
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)

@@ -3,11 +3,11 @@
 Working backlog derived from [ROADMAP.md](ROADMAP.md). Checked items are done;
 phases are executed in order. Each task must leave `go build ./...`,
 `go vet ./...`, and `gofmt -l` clean, and must preserve the existing
-existing design system (hand-written CSS + Alpine.js).
+existing React design system.
 
-Stack reminder: Go + Fiber, server-rendered Go templates + HTMX + Alpine.js +
-hand-written CSS (dark mode; `assets/css/mail.css`), file-based cache, no
-external DB. Mail via `emersion/go-imap` and `net/smtp`.
+Stack reminder: Go + Fiber JSON API, React + Vite + Tailwind CSS, file-based
+cache, and no required external database. Mail uses `emersion/go-imap` and
+`net/smtp`.
 
 ---
 
@@ -41,21 +41,16 @@ external DB. Mail via `emersion/go-imap` and `net/smtp`.
 
 ## Phase 2 — UI/UX, Gmail-inspired & responsive 🎨
 
-- [x] **2.1** `templates/layouts/main.html`: responsive app shell — sticky top
-      bar (logo, search, account), collapsible sidebar that becomes a mobile
-      drawer (Alpine). Keep current theme/colors.
-- [x] **2.2** `templates/inbox.html` + `partials/email-list.html`: Gmail-like
-      density, unread emphasis, row hover actions (archive/delete/read),
-      responsive. Fix broken non-INBOX folder navigation.
-- [x] **2.3** `partials/email-viewer.html`: cleaner header/avatar, responsive
-      layout, render HTML mail safely in a sandboxed `<iframe srcdoc>` (or
-      server-side sanitize), keep attachment chips wired to
+The checked items below describe the original implementation. Their behavior
+now lives in `frontend/`; the former templates and browser micro-frameworks
+were removed during the React-only migration.
+
+- [x] **2.1** Responsive React app shell with sticky top bar and mobile drawer.
+- [x] **2.2** Gmail-like inbox density, unread emphasis, and responsive folder navigation.
+- [x] **2.3** Responsive viewer with sandboxed HTML mail and attachment chips wired to
       `/api/attachment/:id`.
-- [x] **2.4** `partials/compose-modal.html`: Gmail-style docked compose
-      (bottom-right card; full-screen on mobile); wire To/Subject/Body + send.
-- [x] **2.5** Rendering-bug pass: populate list **preview** text (fetch a small
-      body snippet in `FetchMessages`), fix `toast.html`, loading states, and
-      any broken `{{}}`/HTMX targets.
+- [x] **2.4** React rich-text compose dialog with To/Subject/Body + send.
+- [x] **2.5** Populate list preview text and cover loading/error states.
 
 ## Phase 3 — JWZ threading 🧵
 
@@ -79,8 +74,7 @@ external DB. Mail via `emersion/go-imap` and `net/smtp`.
       list events in a date range, parse iCal, create a basic event.
 - [x] **4.3** Routes + handlers: `/calendar` (month view), `/calendar/week`,
       event detail, create-event POST.
-- [x] **4.4** Gmail-style calendar templates (month grid + week view) on the
-      existing theme; sidebar/nav link guarded by `[caldav].enabled`.
+- [x] **4.4** Gmail-style React calendar UI with routes guarded by backend capabilities.
 - [x] **4.5** iCalendar (`.ics`) invite detection in the mail viewer with a
       basic RSVP affordance.
 
@@ -104,9 +98,8 @@ external DB. Mail via `emersion/go-imap` and `net/smtp`.
 
 ## Phase 5 — Self-contained & CI 📦 (run LAST so it captures all assets)
 
-- [x] **5.1** Embed `templates/` (and vendored HTMX/Alpine.js + CSS +
-      notification Service Worker / JS) via `embed.FS`; serve assets locally so
-      the binary runs offline.
+- [x] **5.1** Embed the React production bundle, browser assets, and notification
+      Service Worker via `embed.FS`; serve assets locally so the binary runs offline.
 - [x] **5.2** Add a `ci.yml` workflow: `go build` + `go vet` + `go test ./...`
       on push/PR.
 - [x] **5.3** Update README/config docs for new `[smtp]`, `[caldav]`,

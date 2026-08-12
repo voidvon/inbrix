@@ -5,9 +5,8 @@
 //   2. Handle 'notificationclick': focus an existing LilMail tab or open a new one.
 //   3. Handle 'pushsubscriptionchange': re-subscribe and POST the new subscription.
 //
-// This file is intentionally kept minimal — no caching / offline logic.
-// It is registered by the inline script in layouts/main.html when Web Push is
-// enabled (webPushEnabled flag injected by the template).
+// This file is intentionally kept minimal — no caching / offline logic. The
+// React settings screen registers it when Web Push is enabled by the user.
 
 'use strict';
 
@@ -151,9 +150,8 @@ function isVapidPublicKeyResponse(v) {
 
 /**
  * urlBase64ToUint8Array converts a base64url string to a Uint8Array for use
- * as the applicationServerKey in PushManager.subscribe(). Duplicated from
- * assets/js/push.js: this file has no bundler/shared-module mechanism to
- * import it from, and the app intentionally ships with no bundler.
+ * as the applicationServerKey in PushManager.subscribe(). This service worker
+ * is a standalone browser asset, so it cannot import the React module helper.
  * @param {string} base64String
  * @returns {Uint8Array<ArrayBuffer>}
  */
@@ -188,11 +186,22 @@ addEventListener('pushsubscriptionchange', function (event) {
         options
             .then(function (opts) { return registration.pushManager.subscribe(opts); })
             .then(function (newSub) {
-                return fetch('/api/push/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(newSub.toJSON()),
-                });
+                return fetch('/api/csrf', { credentials: 'include' })
+                    .then(function (r) { return r.json(); })
+                    .then(function (csrf) {
+                        if (!csrf || typeof csrf.token !== 'string' || csrf.token === '') {
+                            throw new Error('CSRF token unavailable');
+                        }
+                        return fetch('/api/push/subscribe', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': csrf.token,
+                            },
+                            body: JSON.stringify(newSub.toJSON()),
+                        });
+                    });
             })
     );
 });

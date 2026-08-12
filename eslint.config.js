@@ -1,9 +1,6 @@
 // eslint.config.js — flat config for lilmail's static client JS.
 //
-// Scope: assets/js/*.js (browser scripts extracted from templates/layouts/
-// main.html) and assets/sw.js (the Service Worker). Vendored bundles under
-// assets/vendor/ (htmx, alpine) are excluded — they are third-party code we
-// do not maintain and do not want flagged.
+// Scope: the service worker and any remaining standalone browser scripts.
 //
 // Type-aware: parserOptions.projectService normally auto-discovers the
 // nearest tsconfig.json per file, but there is only one tsconfig.json in
@@ -19,29 +16,9 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   {
     ignores: [
-      'assets/vendor/**',
       'node_modules/**',
       'scripts/**',
     ],
-  },
-  {
-    files: ['assets/js/**/*.js'],
-    extends: [...tseslint.configs.recommendedTypeChecked],
-    languageOptions: {
-      ecmaVersion: 2020,
-      sourceType: 'script',
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-    rules: {
-      // TypeScript (via checkJs) already reports every undefined-reference
-      // case this would catch, with far better accuracy for ambient/DOM
-      // globals; typescript-eslint's own docs recommend disabling it for
-      // exactly this reason.
-      'no-undef': 'off',
-    },
   },
   {
     // Not `projectService: { defaultProject, allowDefaultProject }` here:

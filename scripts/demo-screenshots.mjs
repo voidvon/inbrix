@@ -75,15 +75,8 @@ async function run(browser, scheme, scale) {
     console.log(`  [ok] ${file} — ${description}`);
   };
 
-  // Alpine hides pre-init markup with [x-cloak]; shooting before it clears
-  // bakes an invisible half-page into the PNG.
-  async function waitForAlpine(p) {
-    try {
-      await p.waitForFunction(() => document.querySelectorAll('[x-cloak]').length === 0, { timeout: 4000 });
-    } catch (_) {
-      await p.waitForTimeout(600);
-    }
-    // Web fonts settle after Alpine; a shot taken mid-swap shows fallback metrics.
+  async function waitForReact(p, selector = '#root > *') {
+    await p.waitForSelector(selector, { state: 'visible', timeout: 8000 });
     try { await p.evaluate(() => document.fonts.ready); } catch (_) {}
     await p.waitForTimeout(150);
   }
@@ -92,7 +85,7 @@ async function run(browser, scheme, scale) {
     // ---------------------------------------------------------------- login
     console.log(`\n[${scheme} ${scale}×] login page`);
     await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle' });
-    await waitForAlpine(page);
+    await waitForReact(page);
     await shot(page, 'login', 'Login page');
 
     // ------------------------------------------------- authenticate (demo)
@@ -104,7 +97,7 @@ async function run(browser, scheme, scale) {
     // ---------------------------------------------------------------- inbox
     console.log(`[${scheme} ${scale}×] inbox`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
-    await waitForAlpine(page);
+    await waitForReact(page, '[data-testid="conversation-list"]');
     await shot(page, 'inbox', 'Inbox with seeded demo messages');
 
     // ----------------------------------------------------------------- hero
@@ -115,39 +108,23 @@ async function run(browser, scheme, scale) {
     // like a bug rather than a feature.
     console.log(`[${scheme} ${scale}×] hero (inbox + open message)`);
     const openBestMessage = async (p) => {
-      const rows = await p.$$('.email-row');
-      let target = null;
-      for (const row of rows) {
-        const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
-        const subject  = await row.evaluate(el => el.querySelector('.email-row__subject')?.textContent || '');
-        if (!isThread && /moodboard/i.test(subject)) { target = row; break; }
-      }
-      if (!target) {
-        for (const row of rows) {
-          const isThread = await row.evaluate(el => !!el.querySelector('.email-row__chevron'));
-          if (!isThread) { target = row; break; }
-        }
-      }
+      const rows = await p.$$('[data-testid="conversation-row"]');
+      const target = rows[0];
       if (!target) return false;
       await target.click();
-      // The placeholder's own text is long enough to satisfy a naive length
-      // check, so assert the real view element and the placeholder's absence.
-      try {
-        await p.waitForFunction(() => {
-          const pane = document.querySelector('#email-viewer-pane');
-          return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
-        }, { timeout: 5000 });
-      } catch (_) {
-        await p.waitForTimeout(1500);
-      }
-      await p.waitForTimeout(900);   // the mail iframe auto-sizes to its content
+      await p.waitForSelector('[data-testid="conversation-detail"]', { state: 'visible', timeout: 5000 });
+      await p.waitForFunction(() => new URL(location.href).searchParams.has('conversation'));
+      const restoredURL = p.url();
+      await p.reload({ waitUntil: 'networkidle' });
+      await p.waitForSelector('[data-testid="conversation-detail"]', { state: 'visible', timeout: 5000 });
+      if (p.url() !== restoredURL) throw new Error('conversation URL was not restored after refresh');
       return true;
     };
 
     if (await openBestMessage(page)) {
       await shot(page, 'hero', 'Inbox with a message open in the reading pane');
     } else {
-      console.warn('  [skip] hero — no single-message .email-row found');
+      console.warn('  [skip] hero — no conversation row found');
     }
 
     // -------------------------------------------------------------- message
@@ -158,53 +135,8 @@ async function run(browser, scheme, scale) {
     console.log(`[${scheme} ${scale}×] message view`);
     const msgPage = await context.newPage();
     await msgPage.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
-    await waitForAlpine(msgPage);
-    await msgPage.evaluate(() => {
-      try {
-        const root = document.querySelector('[x-data]');
-        const data = root?._x_dataStack?.[0];
-        if (data) { data.showComposeModal = false; data.showEmailViewer = false; }
-      } catch (_) {}
-    });
-    await msgPage.waitForTimeout(300);
-
-    const waitForViewer = async (p) => {
-      try {
-        await p.waitForFunction(() => {
-          const pane = document.querySelector('#email-viewer-pane');
-          return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
-        }, { timeout: 5000 });
-      } catch (_) {
-        await p.waitForTimeout(1500);
-      }
-      await p.waitForTimeout(900);
-    };
-
-    let gotMessage = false;
-    const threadRow = await msgPage.$('.email-row:has(.email-row__chevron)');
-    if (threadRow) {
-      await threadRow.click();
-      // Expansion injects .thread-msg children in place; it does not open the
-      // viewer, so a shot taken here would show an empty reading pane.
-      try {
-        await msgPage.waitForSelector('.thread-msg', { timeout: 3000 });
-        // Every collapsed thread in the list contributes hidden .thread-msg
-        // nodes, so an unfiltered $$ returns children of threads that are
-        // still shut — clicking one waits 30 s for a never-visible element.
-        // Take only the children the expansion actually revealed.
-        const children = [];
-        for (const el of await msgPage.$$('.thread-msg')) {
-          if (await el.isVisible()) children.push(el);
-        }
-        if (children.length) {
-          await children[children.length - 1].click({ timeout: 4000 });
-          await waitForViewer(msgPage);
-          gotMessage = await msgPage.evaluate(
-            () => !!document.querySelector('#email-viewer-pane .email-view'));
-        }
-      } catch (_) {}
-    }
-    if (!gotMessage) gotMessage = await openBestMessage(msgPage);   // fall back to any single message
+    await waitForReact(msgPage, '[data-testid="conversation-list"]');
+    const gotMessage = await openBestMessage(msgPage);
     if (gotMessage) {
       await shot(msgPage, 'message', 'Message viewer — a reply open inside an expanded thread');
     } else {
@@ -215,17 +147,14 @@ async function run(browser, scheme, scale) {
     // -------------------------------------------------------------- compose
     console.log(`[${scheme} ${scale}×] compose modal`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
-    await waitForAlpine(page);
-    const composeBtn = await page.$([
-      'button[data-compose]', '[data-action="compose"]',
-      '.compose-btn', '.btn-compose', 'button:has-text("Compose")',
-    ].join(', '));
+    await waitForReact(page, '[data-testid="conversation-list"]');
+    const composeBtn = await page.$('[data-testid="compose-button"]');
     if (composeBtn) {
       await composeBtn.click();
-      await page.waitForTimeout(700);
-      const toField = await page.$('input[name="to"], input[placeholder*="To"], input[aria-label*="To"]');
+      await page.waitForSelector('[data-testid="compose-dialog"]', { state: 'visible' });
+      const toField = await page.$('#compose-to');
       if (toField) await toField.fill('alice@example.com');
-      const subjectField = await page.$('input[name="subject"], input[placeholder*="Subject"]');
+      const subjectField = await page.$('#compose-subject');
       if (subjectField) await subjectField.fill('Re: Product roadmap Q3');
       await shot(page, 'compose', 'Compose modal with CC/BCC and attachment UI');
     } else {
@@ -235,46 +164,13 @@ async function run(browser, scheme, scale) {
     // --------------------------------------------------------------- search
     console.log(`[${scheme} ${scale}×] search results`);
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
-    await waitForAlpine(page);
-    const searchInput = await page.$('input[type="search"], input[name="q"]');
+    await waitForReact(page, '[data-testid="conversation-list"]');
+    const searchInput = await page.$('[data-testid="mail-search"]');
     if (searchInput) {
       await searchInput.click();
-      // type() so HTMX sees real keydown/keyup events; fill() fires neither.
-      await page.type('input[type="search"], input[name="q"]', 'roadmap', { delay: 80 });
-      await page.waitForTimeout(1400);   // 500 ms hx-trigger debounce + network
-      // Open the hit before capturing. Searching and then photographing an
-      // empty reading pane spent three quarters of the frame on the words
-      // "Select a message to read" — the shot showed the search box working
-      // and the product not. Reuses openBestMessage so the capture waits on
-      // .email-view actually existing rather than on a timeout.
-      // openBestMessage alone is not enough here: it deliberately skips
-      // thread rows, and the "roadmap" hit collapses into a thread, so the
-      // first attempt found nothing to open and photographed an empty pane
-      // anyway. Expand the thread and open its newest reply first, exactly
-      // as the message shot does, and only then fall back.
-      let opened = false;
-      const hit = await page.$('.email-row:has(.email-row__chevron)');
-      if (hit) {
-        await hit.click();
-        try {
-          await page.waitForSelector('.thread-msg', { timeout: 3000 });
-          const kids = [];
-          for (const el of await page.$$('.thread-msg')) {
-            if (await el.isVisible()) kids.push(el);
-          }
-          if (kids.length) {
-            await kids[kids.length - 1].click({ timeout: 4000 });
-            await page.waitForFunction(() => {
-              const pane = document.querySelector('#email-viewer-pane');
-              return pane && pane.querySelector('.email-view') && !pane.querySelector('.viewer-placeholder');
-            }, { timeout: 5000 }).catch(() => {});
-            await page.waitForTimeout(900);
-            opened = await page.evaluate(
-              () => !!document.querySelector('#email-viewer-pane .email-view'));
-          }
-        } catch (_) {}
-      }
-      if (!opened) opened = await openBestMessage(page);
+      await searchInput.fill('roadmap');
+      await page.waitForTimeout(700);
+      const opened = await openBestMessage(page);
       if (!opened) {
         console.warn('  [warn] search — no result row to open; capturing the list alone');
       }
@@ -287,7 +183,7 @@ async function run(browser, scheme, scale) {
     console.log(`[${scheme} ${scale}×] calendar`);
     const calResp = await page.goto(`${BASE_URL}/calendar`, { waitUntil: 'networkidle' });
     if (calResp && calResp.status() < 400) {
-      await waitForAlpine(page);
+      await waitForReact(page);
       await shot(page, 'calendar', 'Calendar month view');
     } else {
       console.warn(`  [skip] calendar — status ${calResp?.status()}`);
@@ -296,7 +192,7 @@ async function run(browser, scheme, scale) {
     // ------------------------------------------------------------- settings
     console.log(`[${scheme} ${scale}×] settings`);
     await page.goto(`${BASE_URL}/settings`, { waitUntil: 'networkidle' });
-    await waitForAlpine(page);
+    await waitForReact(page);
     await shot(page, 'settings', 'Settings page');
   } finally {
     await context.close();
@@ -325,7 +221,7 @@ async function runPhone(browser, scheme, scale) {
     await page.goto(`${BASE_URL}/demo-login`, { waitUntil: 'networkidle' });
     if (page.url().includes('/login')) throw new Error('Demo login failed');
     await page.goto(`${BASE_URL}/inbox`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.list-col', { timeout: 8000 });
+    await page.waitForSelector('[data-testid="conversation-list"]', { timeout: 8000 });
     try { await page.evaluate(() => document.fonts.ready); } catch (_) {}
     await page.waitForTimeout(500);
 
@@ -333,10 +229,10 @@ async function runPhone(browser, scheme, scale) {
     // the full width; when it does not, the capture shows a dead strip where
     // the hidden reading pane used to be and the landing page ships that.
     const listW = await page.evaluate(
-      () => Math.round(document.querySelector('.list-col').getBoundingClientRect().width));
+      () => Math.round(document.querySelector('[data-testid="conversation-list"]').getBoundingClientRect().width));
     if (listW < PHONE_W - 1) {
       throw new Error(
-        `phone layout is broken: .list-col is ${listW}px inside a ${PHONE_W}px viewport ` +
+        `phone layout is broken: conversation list is ${listW}px inside a ${PHONE_W}px viewport ` +
         `(expected full width below 1024px)`);
     }
 

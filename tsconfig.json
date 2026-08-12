@@ -13,5 +13,5 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true
   },
-  "include": ["assets/js/**/*.js", "types/**/*.d.ts"]
+  "include": ["types/**/*.d.ts"]
 }

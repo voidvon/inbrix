@@ -5,14 +5,14 @@
 dev:
 	bash scripts/dev.sh
 
-# Build the frontend and embed it into the lilmail binary
+# Build the React frontend and embed it into the lilmail binary
 build:
 	npm run build
 	go build -o lilmail .
 
 # Regenerate THIRD-PARTY-NOTICES.txt from the real dependency graph (Go modules
-# + vendored browser assets). The file is embedded in the binary and served at
-# /licenses.txt; re-run after changing go.mod or assets/vendor/.
+# + browser assets). The file is embedded in the binary and served at
+# /licenses.txt; re-run after changing go.mod or browser dependencies.
 notices:
 	./scripts/gen-notices.sh
 

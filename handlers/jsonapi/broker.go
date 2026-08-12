@@ -16,7 +16,7 @@
 // injected headers are IGNORED ENTIRELY and the request falls back to normal
 // session auth. Standalone lilmail (no secret configured) therefore never trusts
 // arbitrary client headers. The headers are only ever read inside the /v1 group
-// (after the middleware), never on unauthenticated or HTMX paths.
+// (after the middleware), never on unauthenticated paths.
 package jsonapi
 
 import (
@@ -238,6 +238,14 @@ func (h *Handler) parseBroker(c *fiber.Ctx) (brokerSpec, bool) {
 func brokerSpecOf(c *fiber.Ctx) (brokerSpec, bool) {
 	spec, ok := c.Locals(brokerLocalsKey).(brokerSpec)
 	return spec, ok
+}
+
+// IsBrokerRequest reports whether brokerMiddleware accepted the request's
+// credential-injection headers. It is exported for middleware composition in
+// main.go, where the browser CSRF middleware must skip trusted broker calls.
+func IsBrokerRequest(c *fiber.Ctx) bool {
+	_, ok := brokerSpecOf(c)
+	return ok
 }
 
 // atoiDefault parses s as an int, returning def for empty/invalid input.

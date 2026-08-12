@@ -1,6 +1,6 @@
 // handlers/jsonapi/accounts.go — /v1/accounts CRUD + unified-inbox read path.
 //
-// PORTED FROM handlers/web/{accounts,unified,accountstore}.go (the legacy HTMX
+// Ported from handlers/web/{accounts,unified,accountstore}.go (the legacy
 // multi-account feature) to the /v1 JSON surface. What carried over unchanged in
 // spirit: concurrent per-account IMAP fetch (one goroutine + timeout per account,
 // one slow/broken account never blocks the others), per-account AES-GCM-encrypted

@@ -18,8 +18,8 @@
 
 lilmail is a self-hostable **PIM client** — mail, calendar, and contacts — that
 connects to the **user's own** IMAP/SMTP + CalDAV + CardDAV account and ships as
-**one self-contained Go binary**. The production React/Vite bundle, Go templates,
-and browser assets are embedded via `embed.FS` — no CDN or external services to
+**one self-contained Go binary**. The production React/Vite bundle and browser
+assets are embedded via `embed.FS` — no CDN or external services to
 run by default. Drop the binary next to a `config.toml` and it runs,
 comfortably, on 64 MB of RAM.
 
@@ -42,8 +42,8 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
 
 ## Features
 
-- **Single binary (~24 MB), no external database service** — templates and vendored JS
-  embedded with `embed.FS`; durable state uses an embedded [bbolt](https://github.com/etcd-io/bbolt)
+- **Single binary (~24 MB), no external database service** — the React bundle and
+  browser assets are embedded with `embed.FS`; durable state uses an embedded [bbolt](https://github.com/etcd-io/bbolt)
   file by default and the mail mirror uses pure-Go SQLite; an **optional Postgres
   backend** remains available for shared KV state; runs fully offline/air-gapped
   with only `config.toml`
@@ -52,11 +52,10 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
   message-detail reads do not wait on IMAP. Set `sync_bodies = false` only when
   reducing local disk/network use is more important than offline detail reads.
 - **IMAP** mailbox browsing and **SMTP** sending
-- **JSON API** (`/v1`) — a clean REST surface (folders/labels, paginated
+- **JSON API** (`/v1`) — the backend contract for React and other clients (folders/labels, paginated
   messages, search, flags, move/archive/spam, delete, snooze, compose + drafts,
   attachment upload/download, scheduled send, calendar, contacts, settings) for
-  rich clients, served alongside the HTMX UI from the same engine and the same
-  session auth. See [docs/API.md](docs/API.md).
+  rich clients, backed by the same mail engine and session auth. See [docs/API.md](docs/API.md).
 - **OAuth2 / OpenID Connect** — authorization-code flow, PKCE (S256), automatic
   refresh-token handling, XOAUTH2 and OAUTHBEARER SASL; password login still works
 - **Conversation threading** — JWZ algorithm (`References` / `In-Reply-To` /
@@ -88,10 +87,10 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
 
 ## How it works
 
-lilmail is a [Fiber](https://gofiber.io/) application. The main inbox is a React
-SPA, while authentication, settings, and legacy mail pages remain Go-rendered
-HTML enhanced with HTMX and Alpine.js. The release build embeds both the Vite
-bundle and the server assets into the Go binary.
+lilmail is a [Fiber](https://gofiber.io/) application. The browser is a React/Vite
+SPA and the Go process provides the JSON API, session/auth endpoints, and the
+embedded SPA shell. The release build embeds the Vite bundle and static assets
+into the Go binary.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-monospace, SFMono-Regular, Menlo, monospace','primaryColor':'#334155','primaryBorderColor':'#94a3b8','primaryTextColor':'#e2e8f0','lineColor':'#0d9488','edgeLabelBackground':'transparent','clusterBorder':'#3f8f86','clusterBkg':'transparent'}}}%%
@@ -100,9 +99,9 @@ flowchart TD
     classDef server fill:#0f766e,stroke:#5eead4,color:#f0fdfa,stroke-width:2.5px;
     classDef backend fill:#334155,stroke:#94a3b8,color:#e2e8f0,stroke-width:1.5px;
 
-    UI["HTMX/Alpine UI (HTMX/SSE)"] --> Server
-    React["External UIs (fetch /v1 JSON)"] --> Server
-    Server["Fiber HTTP server<br/>HTMX routes + /v1 JSON API<br/>(one Go binary)<br/>same mail engine +<br/>session auth under both"]
+    UI["React SPA (fetch /api + /v1 JSON)"] --> Server
+    React["Other clients (fetch /v1 JSON)"] --> Server
+    Server["Fiber HTTP server<br/>SPA shell + JSON API<br/>(one Go binary)<br/>same mail engine +<br/>session auth"]
     Server --> IMAP["IMAP/SMTP (your mail server)"]
     Server --> Store["durable store (seam): bbolt by default;<br/>optional Postgres (threads, drafts, recipients, accounts)"]
     Server --> Services["opt-in services (CalDAV, CardDAV, AI, Web Push) — off by default"]
@@ -118,7 +117,7 @@ keys, scheduled sends) lives in `cache/mail.db`, bbolt, or the optional shared
 Postgres store depending on the subsystem. IMAP remains the source of truth;
 SQLite is a local mirror, not a replacement mail server. Session and stored
 mailbox credentials are AES-256-GCM encrypted. The same mail engine backs both
-the server-rendered HTMX UI and the `/v1` JSON API. See
+the React browser client and the `/v1` JSON API. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request lifecycle and
 [docs/API.md](docs/API.md) for the JSON API reference.
 
@@ -306,18 +305,15 @@ project; source and issues at [github.com/vul-os/lilmail](https://github.com/vul
 
 ### Third-party notices
 
-lilmail redistributes third-party software: Go modules compiled into the binary,
-and the vendored JavaScript (htmx, Alpine.js) served to the browser. Their
+lilmail redistributes third-party software: Go modules compiled into the binary
+and browser assets served to the browser. Their
 licences (MIT, BSD, ISC, Apache-2.0) require the copyright notice and licence
 text to accompany every copy, so lilmail ships them:
 
 - [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) — name, version, licence and
   full licence text for every component. Generated from the real dependency graph
   by `make notices` (`scripts/gen-notices.sh`); never hand-edited.
-- A running lilmail serves it at **`/licenses.txt`**, linked from the login page
-  and from Settings → About.
-- Each vendored bundle also has its upstream licence next to it, e.g.
-  `assets/vendor/htmx.min.js.LICENSE`.
+- A running lilmail serves it at **`/licenses.txt`**.
 
 ---
 

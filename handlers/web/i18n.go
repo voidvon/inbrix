@@ -18,42 +18,14 @@ func CurrentLocale(c *fiber.Ctx) string {
 	return i18n.Detect(c.Cookies(localeCookieName), c.Get("Accept-Language"))
 }
 
-// Render attaches all request-scoped localization data before delegating to
-// Fiber. Every full page and HTMX partial goes through this helper so a page
-// fragment cannot silently fall back to English.
-func Render(c *fiber.Ctx, view string, data fiber.Map, layout ...string) error {
-	if data == nil {
-		data = fiber.Map{}
+// RenderStatus returns a JSON error for compatibility with legacy handler
+// methods that are no longer mounted. All browser pages are rendered by React.
+func RenderStatus(c *fiber.Ctx, status int, _ string, data fiber.Map, _ ...string) error {
+	message, _ := data["Error"].(string)
+	if message == "" {
+		message = fiber.ErrInternalServerError.Message
 	}
-
-	locale := CurrentLocale(c)
-	translations := i18n.Dictionary(locale)
-	data["Locale"] = locale
-	data["Translations"] = translations
-	data["CurrentPath"] = c.OriginalURL()
-
-	// Common handler errors and titles use the English source text as their key.
-	// Translating them here keeps error paths localized without duplicating
-	// locale plumbing in every handler.
-	for _, field := range []string{"Error", "Success", "Title"} {
-		if value, ok := data[field].(string); ok && value != "" {
-			data[field] = i18n.Translate(locale, value)
-		}
-	}
-
-	return c.Render(view, data, layout...)
-}
-
-func RenderStatus(c *fiber.Ctx, status int, view string, data fiber.Map, layout ...string) error {
-	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
-		message, _ := data["Error"].(string)
-		if message == "" {
-			message = fiber.ErrInternalServerError.Message
-		}
-		return c.Status(status).JSON(fiber.Map{"error": message})
-	}
-	c.Status(status)
-	return Render(c, view, data, layout...)
+	return c.Status(status).JSON(fiber.Map{"error": message})
 }
 
 // HandleLanguage stores the UI preference and returns the user to the page

@@ -430,7 +430,7 @@ func (h *EmailHandler) HandleFolder(c *fiber.Ctx) error {
 	// Build JWZ threads using the shared bbolt store.
 	threads := h.buildThreads(userStr, folderName, emails)
 
-	return Render(c, "inbox", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Username":      userStr,
 		"Email":         sessionEmail,
 		"MailAccounts":  h.mailAccountOptions(c),
@@ -442,7 +442,7 @@ func (h *EmailHandler) HandleFolder(c *fiber.Ctx) error {
 	})
 }
 
-// HandleEmailView handles the HTMX request for viewing a single email.
+// HandleEmailView returns a compatibility JSON payload for a single email.
 // In unified mode, X-Account-Email identifies which account's IMAP connection
 // to use.  Falls back to the session account when the header is absent.
 func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
@@ -569,7 +569,7 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 		email.AccountLabel = mirrorAccount.Label
 		email.AccountColor = mirrorAccount.Color
 	}
-	// Detect Drafts folder so the template can show "Edit Draft" instead of Reply/Forward.
+	// Detect Drafts folder for compatibility metadata.
 	isDrafts := strings.Contains(strings.ToLower(folderName), "draft")
 
 	// Propagate account identity so the reply/compose path can use the right SMTP.
@@ -594,17 +594,16 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 		preparedHTML, hasRemote = prepareEmailHTML(email.HTML)
 	}
 
-	// Sanitize the HTML that feeds the Edit-Draft path. The email-viewer template
-	// stashes this into data-html; restoreDraft() then assigns it via innerHTML
-	// into the compose contenteditable in the MAIN (un-sandboxed) app document.
+	// Sanitize the HTML that feeds any edit-draft client path. React never inserts
+	// this value into the outer document without sanitizing it first.
 	// Raw mail HTML there is a stored-XSS sink (innerHTML fires load/error handlers
 	// on inserted nodes), so it must be defanged server-side. This is SEPARATE from
 	// preparedHTML above, which drives the sandboxed reading-pane iframe and stays
 	// full-fidelity.
 	editableHTML := editableDraftHTML(email.HTML)
 
-	// Important: Set empty layout and only render the partial
-	return Render(c, "partials/email-viewer", fiber.Map{
+	// Return the compatibility payload as JSON.
+	return c.JSON(fiber.Map{
 		"Email":         email,
 		"EmailHTML":     preparedHTML,
 		"EditableHTML":  editableHTML,
@@ -612,8 +611,7 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 		"Self":          self,
 		"CurrentFolder": folderName,
 		"IsDrafts":      isDrafts,
-		"Layout":        "", // This is crucial to prevent full HTML rendering
-	}, "") // Add empty string as second argument to explicitly disable layout
+	})
 }
 
 func emailBodyCached(email models.Email) bool {
@@ -779,7 +777,7 @@ func (h *EmailHandler) HandleDeleteEmail(c *fiber.Ctx) error {
 	})
 }
 
-// HandleFolderEmails handles HTMX partial rendering for folder contents.
+// HandleFolderEmails returns folder contents as JSON for compatibility clients.
 // Supports unified mode via ?unified=1 query parameter (INBOX only).
 func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 	folderName, err := url.QueryUnescape(c.Params("name"))
@@ -872,7 +870,7 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 	}
 	threads := h.buildThreads(userStr, threadKey, emails)
 
-	return Render(c, "partials/email-list", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Emails":           emails,
 		"Threads":          threads,
 		"CurrentFolder":    folderName,
@@ -880,7 +878,7 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 		"Unified":          unified && unifiedAvailable,
 		"UnifiedAvailable": unifiedAvailable,
 		"AccountErrors":    accountErrors,
-	}, "") // Explicitly set no layout
+	})
 }
 
 // HandleComposeEmail handles the email composition and sending.
@@ -1195,13 +1193,13 @@ func (h *EmailHandler) HandleListDrafts(c *fiber.Ctx) error {
 
 	threads := h.buildThreads(username, draftsFolder, emails)
 
-	return Render(c, "partials/email-list", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Emails":        emails,
 		"Threads":       threads,
 		"CurrentFolder": draftsFolder,
 		"IsDrafts":      true,
 		"Token":         token,
-	}, "")
+	})
 }
 
 // HandleAutocomplete returns recipient suggestions for the compose modal.
@@ -1261,10 +1259,9 @@ func (h *EmailHandler) HandleAutocomplete(c *fiber.Ctx) error {
 }
 
 // editableDraftHTML returns a sanitized copy of a message's HTML body that is
-// safe to place into the compose contenteditable. The email-viewer template
-// assigns this value into #compose-rich-body via innerHTML in the MAIN app
-// document (restoreDraft() → fill()), which — unlike the sandboxed reading-pane
-// iframe — is NOT script-isolated, so raw attacker-controlled mail HTML would run
+// safe to place into a browser compose editor. A rich-text editor lives in the
+// main app document, which — unlike the sandboxed reading-pane iframe — is not
+// script-isolated, so raw attacker-controlled mail HTML would run
 // (e.g. <img src=x onerror=...>, <svg onload=...>). We defang it with the shared
 // htmlsafe policy (strips script/style/iframe/svg/forms, all on* handlers, and
 // javascript:/vbscript:/data: URLs) while keeping benign formatting.
@@ -1393,11 +1390,11 @@ func (h *EmailHandler) HandleSearch(c *fiber.Ctx) error {
 
 	threads := h.buildThreads(userStr, folderName+":search:"+query, emails)
 
-	return Render(c, "partials/email-list", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Emails":        emails,
 		"Threads":       threads,
 		"CurrentFolder": folderName,
 		"Token":         token,
 		"SearchQuery":   query,
-	}, "")
+	})
 }

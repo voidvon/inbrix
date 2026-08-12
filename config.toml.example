@@ -121,7 +121,7 @@ use_pkce = true           # PKCE (S256); recommended
 # Web Push (background, even with no open tab) — requires HTTPS:
 #   4. Set webpush = true.  A VAPID key pair is auto-generated on first start
 #      and persisted to vapid_key_file (default: vapid.json in the working dir).
-#   5. Go to Settings → Push Notifications → "Enable push notifications".
+#   5. Go to the React Settings page and enable Push notifications.
 #
 # [notifications]
 # enabled       = false   # master switch — must be true to activate anything
@@ -216,7 +216,7 @@ use_pkce = true           # PKCE (S256); recommended
 #   With SQLite enabled it merges the local mirrors without opening IMAP.
 #   Each row shows a colour badge from the account's configured colour.
 #   Access directly: GET /inbox?unified=1
-#   HTMX partial:    GET /api/folder/INBOX/emails?unified=1
+#   React client:    GET /api/conversations?q=project
 #   Reply/send from a unified-view message uses the correct account's SMTP
 #   credentials automatically (pass account_email in the compose form).
 #

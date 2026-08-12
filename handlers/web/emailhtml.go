@@ -307,8 +307,8 @@ func ensureQuoted(v string) string {
 // instead of trying — and failing — to navigate the sandboxed frame). It blocks
 // remote images by default and reports whether any were blocked.
 //
-// The returned string is a plain string: the template assigns it to the iframe
-// srcdoc attribute, where html/template attribute-escapes it correctly.
+// The returned string is plain HTML for the React client to assign to the
+// sandboxed iframe's srcDoc property.
 func prepareEmailHTML(raw string) (string, bool) {
 	body, blocked := blockRemoteContent(raw)
 

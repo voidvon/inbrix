@@ -1,10 +1,10 @@
 # Architecture
 
 lilmail is a Go web application using the [Fiber](https://gofiber.io/) HTTP
-framework. The React/Vite frontend, Go HTML templates, and browser assets are
-embedded in the release binary at build time via `embed.FS`. During local UI
-development, Vite serves the React source separately and proxies backend
-requests to the Go process.
+framework. The React/Vite frontend and browser assets are embedded in the
+release binary at build time via `embed.FS`. During local UI development, Vite
+serves the React source separately and proxies backend requests to the Go
+process.
 
 ## Repository layout
 
@@ -18,7 +18,7 @@ lilmail/
 │   ├── ai/                  # AI mail assistant endpoints
 │   ├── api/                 # Mail ENGINE: IMAP/SMTP client, MIME, threading, CalDAV
 │   ├── jsonapi/             # /v1 JSON REST API over the engine (for external UIs)
-│   └── web/                 # HTML page handlers (inbox, viewer, settings, …) — HTMX
+│   └── web/                 # session/auth, compatibility JSON, SSE and mail helpers
 ├── mailstore/               # Pure-Go SQLite users, mailbox mirror, and sync workers
 ├── frontend/                # React/Vite inbox application
 ├── models/
@@ -34,17 +34,8 @@ lilmail/
 ├── sessions/                # Runtime session state (file-based)
 ├── utils/
 │   └── cache.go             # On-disk cache helpers
-├── templates/               # Go HTML templates
-│   ├── layouts/main.html    # Shared app shell (nav, sidebar, top bar)
-│   ├── partials/            # HTMX partial fragments (email-list, compose, …)
-│   ├── inbox.html
-│   ├── login.html
-│   ├── settings.html
-│   ├── calendar.html
-│   └── calendar-week.html
 ├── assets/
-│   ├── css/mail.css         # Hand-written CSS (dark mode, responsive)
-│   ├── vendor/              # htmx.min.js, alpine.min.js (+ their .LICENSE files)
+│   ├── icon*.png            # PWA/app icons
 │   └── sw.js                # Service worker (Web Push)
 ├── scripts/                 # Developer tooling (Playwright screenshotter, demo seed)
 ├── docs/                    # Documentation and screenshots
@@ -57,7 +48,7 @@ lilmail/
 ├── .github/workflows/       # CI + release pipelines
 ├── config.toml.example
 ├── go.mod / go.sum
-└── tmpl_smoke_test.go       # Template parse smoke test
+└── frontend/dist/           # Production Vite bundle embedded into the binary
 ```
 
 ## Request lifecycle
@@ -70,11 +61,9 @@ flowchart TD
     classDef backend fill:#334155,stroke:#94a3b8,color:#e2e8f0,stroke-width:1.5px;
 
     Browser --> Server["Fiber HTTP server (main.go)"]
-    Server --> MW["Middleware: JWT session auth (except /login, /health, /sw.js)"]
-    Server --> Web["Web routes → handlers/web/"]
-    Web --> Tmpl["Go templates"]
-    Tmpl --> HTML["HTML response"]
-    Server --> API["API routes → handlers/api/"]
+    Server --> MW["Middleware: session auth + CSRF"]
+    Server --> SPA["React SPA shell + static assets"]
+    Server --> API["JSON routes → handlers/jsonapi + handlers/web"]
     API --> JSON["JSON response"]
     API --> Clients["IMAP/SMTP clients (created per request from session creds)"]
     Server --> Mirror["mailstore: SQLite mirror + polling workers"]
@@ -87,7 +76,7 @@ flowchart TD
 
     class Browser entry
     class Server server
-    class MW,Web,Tmpl,HTML,API,JSON,Clients,AI,Proxy,SSE,Stream,Notif backend
+    class MW,SPA,API,JSON,Clients,AI,Proxy,SSE,Stream,Notif backend
 ```
 
 ## Key subsystems
@@ -208,11 +197,11 @@ same fail-closed posture as the mail credential-injection seam.
 
 ### JSON API (`handlers/jsonapi`)
 
-A clean `/v1` JSON/REST surface served alongside the HTMX UI. It reuses the same
+A clean `/v1` JSON/REST surface used by the React UI and other clients. It reuses the same
 mail engine (`handlers/api`) and the same session auth path
 (`web.AuthHandler.CreateIMAPClient`), so there is no duplicated mail logic and
-the HTMX UI is untouched. Unlike the HTMX `SessionMiddleware` (which redirects to
-`/login`), the API returns `401` JSON. This is the stable contract the Vulos OS
+the browser shell is untouched. Unlike page navigation, the API returns `401`
+JSON. This is the stable contract the Vulos OS
 builds its mail, Calendar, and Contacts surfaces on. See [API.md](API.md).
 
 Two subsystems live inside this package:
@@ -260,22 +249,21 @@ discarded.
 
 ### Frontend
 
-The main inbox UI lives in `frontend/` as a React/Vite application. Go templates
-remain in use for authentication, settings, and legacy mail/calendar pages;
-those pages are enhanced with [HTMX](https://htmx.org/) and
-[Alpine.js](https://alpinejs.dev/). Shared browser assets and vendor JS are
-served from `assets/`.
+The complete browser UI lives in `frontend/` as a React/Vite application. Go
+serves the SPA shell and JSON/session endpoints; it does not render page
+templates. Shared browser assets and the service worker are served from
+`assets/`.
 
 For local frontend development, `make dev` starts Vite on `:3000` and Go on
-`:3001`. Vite proxies `/api`, `/v1`, authentication, and legacy page routes to
+`:3001`. Vite proxies `/api`, `/v1`, authentication, and SPA page routes to
 the Go server. `go run main.go` alone is the single-process production-style
 path and serves the embedded `frontend/dist` bundle.
 
 ## Build and embedding
 
 `npm run build && go build ./...` (or `make build`) produces a single
-self-contained binary. `//go:embed` directives in `main.go` embed `templates/`,
-`assets/`, `frontend/dist/`, and `handlers/ai/prompts/` into the binary at
+self-contained binary. `//go:embed` directives in `main.go` embed `assets/`,
+`frontend/dist/`, and `handlers/ai/prompts/` into the binary at
 compile time. The binary can run fully air-gapped without any companion files
 except `config.toml`.
 

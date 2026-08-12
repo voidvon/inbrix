@@ -16,13 +16,13 @@ require (
 	github.com/emersion/go-webdav v0.7.0
 	github.com/gen2brain/beeep v0.11.2
 	github.com/gofiber/fiber/v2 v2.52.14
-	github.com/gofiber/template/html/v2 v2.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/vul-os/llmux v0.1.2
 	github.com/yuin/goldmark v1.8.2
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.52.0
+	golang.org/x/net v0.55.0
 	golang.org/x/text v0.37.0
 	modernc.org/sqlite v1.36.3
 )
@@ -36,8 +36,6 @@ require (
 	github.com/esiqveland/notify v0.13.3 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
-	github.com/gofiber/template v1.8.3 // indirect
-	github.com/gofiber/utils v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -63,7 +61,6 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	modernc.org/libc v1.61.13 // indirect

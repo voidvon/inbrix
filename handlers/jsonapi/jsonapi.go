@@ -1,19 +1,13 @@
-// Package jsonapi exposes lilmail's mail engine as a clean JSON/REST API,
-// separate from the HTMX/Alpine web UI in handlers/web.
+// Package jsonapi exposes lilmail's mail engine as a clean JSON/REST API used
+// by the React web client and other rich clients.
 //
-// WHY THIS EXISTS: the handlers/web routes render HTML fragments for HTMX. That
-// is perfect for the zero-build single-binary standalone UI, but a rich JSON
-// client (e.g. the Vulos OS mail surface) needs a stable machine-readable
-// contract. This package is that contract — it returns
+// It returns
 // models.Email / MailboxInfo as JSON and never renders templates.
 //
-// It is purely additive: it reuses the SAME engine (handlers/api) and the SAME
-// session auth path (web.AuthHandler.CreateIMAPClient) as the HTMX UI, so there
-// is no duplicated mail logic and the existing UI is untouched. Removing this
-// package leaves standalone lilmail fully working.
+// It reuses the same engine and session auth path (web.AuthHandler.CreateIMAPClient)
+// as the browser client, so there is no duplicated mail logic.
 //
-// Auth: unlike the HTMX SessionMiddleware (which 302-redirects to /login), this
-// API returns 401 JSON so a fetch()-based client can handle it.
+// Auth failures return 401 JSON so fetch()-based clients can handle them.
 package jsonapi
 
 import (
@@ -61,8 +55,7 @@ type Handler struct {
 	bimi *api.BIMIResolver
 }
 
-// New builds a JSON API handler. auth is the same *web.AuthHandler the HTMX UI
-// uses, so both surfaces share one authentication + client-construction path.
+// New builds a JSON API handler sharing the web authentication and client path.
 // The brokered credential mode is enabled when LILMAIL_BROKER_SECRET is set.
 //
 // Scheduled send is OFF in this constructor (no durable store). Use NewWithStore
@@ -93,10 +86,22 @@ func (h *Handler) StopScheduler() { h.schedule.Stop() }
 // delimiter — e.g. "INBOX/Archive" — need no special escaping. UIDs are numeric
 // and safe as path segments.
 func (h *Handler) Register(app *fiber.App) {
+	h.RegisterWithMiddleware(app)
+}
+
+// RegisterWithMiddleware mounts the JSON API and accepts optional middleware
+// that runs after broker validation but before session authentication. This is
+// where the browser's double-submit CSRF check belongs: brokered requests have
+// no cookie session and must be allowed through, while ordinary session clients
+// need the same protection as the React-facing /api routes.
+func (h *Handler) RegisterWithMiddleware(app *fiber.App, middleware ...fiber.Handler) {
 	// brokerMiddleware runs first: it validates the broker secret and, if valid,
 	// parses the X-Vulos-Mail-* headers into a connection spec for this request.
 	// requireAuth then accepts either a brokered request or a valid session.
-	g := app.Group("/v1", h.brokerMiddleware, h.requireAuth)
+	groupMiddleware := []fiber.Handler{h.brokerMiddleware}
+	groupMiddleware = append(groupMiddleware, middleware...)
+	groupMiddleware = append(groupMiddleware, h.requireAuth)
+	g := app.Group("/v1", groupMiddleware...)
 
 	g.Get("/me", h.handleMe)
 	g.Get("/folders", h.handleFolders)
@@ -117,7 +122,7 @@ func (h *Handler) Register(app *fiber.App) {
 	h.registerFolders(g)
 
 	// Compose / drafts — JSON transport over the same SMTP/MIME engine as the
-	// HTMX compose path. The :uid Delete above is registered first so it is not
+	// Compose path. The :uid Delete above is registered first so it is not
 	// shadowed; these add new paths.
 	//
 	// POST /v1/messages is rate-limited per IP to prevent spam/relay abuse.
@@ -158,7 +163,7 @@ func (h *Handler) Register(app *fiber.App) {
 	// (X-Vulos-Mail-Caldav-Url), so the routes must exist even when the local
 	// [caldav] block is not enabled; the brokered handlers build the client from
 	// the headers. Reuses the CalDAV client + models.Calendar* types from the
-	// HTMX calendar surface.
+	// Calendar surface.
 	if h.config.CalDAV.Enabled || h.brokerSecret != "" {
 		g.Get("/calendar/events", h.handleCalendarEvents)      // ?start=&end=
 		g.Post("/calendar/events", h.handleCreateEvent)        // body {summary,start,end,...}

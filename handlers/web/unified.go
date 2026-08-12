@@ -137,8 +137,8 @@ func (f *unifiedFetcher) fetchForEntry(entry AccountEntry) AccountFetchResult {
 // each additional account in entries, concurrently.
 //
 // primaryEmail / primaryLabel / primaryColor identify the session account in the
-// unified list.  When primaryLabel is empty the badge is suppressed in the
-// template (single-account mode).
+	// unified list. When primaryLabel is empty the client suppresses the account
+	// badge (single-account mode).
 //
 // Returns:
 //   - merged []models.Email sorted date descending

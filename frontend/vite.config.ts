@@ -32,6 +32,7 @@ export default defineConfig(({ command, mode }) => {
         "/api": backendProxy,
         "/v1": backendProxy,
         "/assets": backendProxy,
+        "/csrf": backendProxy,
         "/user-login": backendProxy,
         "/login": backendProxy,
         "/register": backendProxy,

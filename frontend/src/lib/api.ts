@@ -11,10 +11,20 @@ export class ApiError extends Error {
   }
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}) {
+export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  const csrf = getCookie("_csrf");
+  const method = (init.method || "GET").toUpperCase();
+  let csrf = getCookie("_csrf");
+  if (!csrf && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    const response = await fetch("/csrf", {
+      headers: { Accept: "application/json" },
+      credentials: "include",
+    });
+    if (!response.ok) throw new ApiError("Failed to initialize request security", response.status);
+    const payload = await response.json() as { token?: string };
+    csrf = payload.token || getCookie("_csrf");
+  }
   if (csrf) headers.set("X-CSRF-Token", csrf);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -38,6 +48,10 @@ async function apiFetch<T>(path: string, init: RequestInit = {}) {
 export function getConversations(query = "") {
   const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
   return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
+}
+
+export function getCapabilities() {
+  return apiFetch<{ notifications: boolean; webPush: boolean; calendar: boolean }>("/api/capabilities");
 }
 
 export function getConversation(id: string) {
@@ -108,7 +122,7 @@ function normalizeAccount(account: ConnectedAccount & { imap_server?: string; im
 }
 
 export function addAccount(account: { email: string; password: string; label: string; color: string; imap_server?: string }) {
-  return apiFetch<ConnectedAccount>("/api/accounts", { method: "POST", body: JSON.stringify(account) });
+  return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>("/api/accounts", { method: "POST", body: JSON.stringify(account) });
 }
 
 export function deleteAccount(email: string) {
@@ -121,4 +135,22 @@ export function getCalendarEvents(start: string, end: string) {
 
 export function createCalendarEvent(event: Omit<CalendarEvent, "uid">) {
   return apiFetch<{ created: boolean; uid: string }>("/v1/calendar/events", { method: "POST", body: JSON.stringify(event) });
+}
+
+export function getVapidPublicKey() {
+  return apiFetch<{ publicKey: string }>("/api/push/vapid-public");
+}
+
+export function savePushSubscription(subscription: PushSubscriptionJSON) {
+  return apiFetch<{ ok: boolean }>("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify(subscription),
+  });
+}
+
+export function removePushSubscription(endpoint: string) {
+  return apiFetch<{ ok: boolean }>("/api/push/subscribe", {
+    method: "DELETE",
+    body: JSON.stringify({ endpoint }),
+  });
 }

@@ -34,8 +34,8 @@ func NewCalendarHandler(store *session.Store, cfg *config.Config, auth *AuthHand
 }
 
 // caldavClient returns a CalDAVClient authenticated for the current session.
-// It delegates to AuthHandler.CalDAVClient so the HTMX calendar routes and the
-// JSON API (/v1/calendar) share one CalDAV client-construction path.
+// It delegates to AuthHandler.CalDAVClient so all calendar access shares one
+// CalDAV client-construction path.
 func (h *CalendarHandler) caldavClient(c *fiber.Ctx) (*api.CalDAVClient, error) {
 	return h.auth.CalDAVClient(c)
 }
@@ -98,7 +98,7 @@ func (h *CalendarHandler) HandleCalendarMonth(c *fiber.Ctx) error {
 		nextYear++
 	}
 
-	return Render(c, "calendar", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Title":     i18n.FormatMonthTitle(CurrentLocale(c), int(month), year),
 		"Year":      year,
 		"Month":     int(month),
@@ -154,7 +154,7 @@ func (h *CalendarHandler) HandleCalendarWeek(c *fiber.Ctx) error {
 	prevMonday := monday.AddDate(0, 0, -7)
 	nextMonday := monday.AddDate(0, 0, 7)
 
-	return Render(c, "calendar-week", fiber.Map{
+	return c.JSON(fiber.Map{
 		"Title":    i18n.FormatWeekTitle(CurrentLocale(c), monday),
 		"Monday":   monday,
 		"Days":     days,
@@ -164,7 +164,7 @@ func (h *CalendarHandler) HandleCalendarWeek(c *fiber.Ctx) error {
 	})
 }
 
-// HandleEventDetail renders an event detail partial (HTMX target).
+// HandleEventDetail returns one event as JSON for compatibility clients.
 func (h *CalendarHandler) HandleEventDetail(c *fiber.Ctx) error {
 	uid := c.Params("uid")
 	if uid == "" {
@@ -191,9 +191,9 @@ func (h *CalendarHandler) HandleEventDetail(c *fiber.Ctx) error {
 
 	for _, ev := range events {
 		if ev.UID == uid {
-			return Render(c, "partials/calendar-event", fiber.Map{
+			return c.JSON(fiber.Map{
 				"Event": ev,
-			}, "") // no layout — HTMX partial
+			})
 		}
 	}
 
