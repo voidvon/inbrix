@@ -121,12 +121,27 @@ function normalizeAccount(account: ConnectedAccount & { imap_server?: string; im
   };
 }
 
-export function addAccount(account: { email: string; password: string; label: string; color: string; imap_server?: string }) {
+export type AddAccountInput = {
+  email: string;
+  password: string;
+  label: string;
+  color: string;
+  imap_server: string;
+  imap_port: number;
+  smtp_server: string;
+  smtp_port: number;
+};
+
+export function addAccount(account: AddAccountInput) {
   return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>("/api/accounts", { method: "POST", body: JSON.stringify(account) });
 }
 
 export function deleteAccount(email: string) {
   return apiFetch<{ ok?: boolean }>(`/api/accounts/${encodeURIComponent(email)}`, { method: "DELETE" });
+}
+
+export function switchAccount(email: string) {
+  return apiFetch<{ ok?: boolean; next?: string }>(`/api/accounts/${encodeURIComponent(email)}/switch`, { method: "POST" });
 }
 
 export function getCalendarEvents(start: string, end: string) {

@@ -1,15 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import {
   Archive,
   ArrowLeft,
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronRight,
   FilePenLine,
   Folder,
   Italic,
   Link,
+  Languages,
   List,
   ListOrdered,
   Mail,
@@ -22,7 +25,6 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   Send,
   Settings,
@@ -38,7 +40,7 @@ import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
-import { ApiError, addAccount, createCalendarEvent, deleteAccount, getAccounts, getCalendarEvents, getCapabilities, getConversation, getConversations, getFolderMessages, getMessage, register, resyncAttachments, sendMessage, signIn, signOut, switchLanguage } from "./lib/api";
+import { ApiError, addAccount, createCalendarEvent, deleteAccount, getAccounts, getCalendarEvents, getCapabilities, getConversation, getConversations, getFolderMessages, getMessage, register, sendMessage, signIn, signOut, switchAccount, switchLanguage } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, initials, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
@@ -103,6 +105,22 @@ const zh = {
   enablePush: "启用推送通知",
   disablePush: "停用推送通知",
   pushUnavailable: "当前浏览器或服务器未启用推送通知",
+  connectedAccounts: "已连接账户",
+  color: "颜色",
+  language: "语言",
+  generalSettings: "通用设置",
+  mailboxManagement: "邮箱管理",
+  mailboxDescription: "管理已连接的 IMAP / SMTP 邮箱账户",
+  account: "账户",
+  imapServer: "IMAP 服务器",
+  imapPort: "IMAP 端口",
+  smtpServer: "SMTP 服务器",
+  smtpPort: "SMTP 端口",
+  server: "服务器",
+  actions: "操作",
+  noAccounts: "暂无已连接的邮箱账户",
+  optional: "可选",
+  adding: "正在添加…",
 };
 
 const en = {
@@ -157,6 +175,22 @@ const en = {
   enablePush: "Enable push notifications",
   disablePush: "Disable push notifications",
   pushUnavailable: "Push notifications are unavailable in this browser or server",
+  connectedAccounts: "Connected accounts",
+  color: "Color",
+  language: "Language",
+  generalSettings: "General",
+  mailboxManagement: "Mailboxes",
+  mailboxDescription: "Manage connected IMAP / SMTP mail accounts",
+  account: "Account",
+  imapServer: "IMAP server",
+  imapPort: "IMAP port",
+  smtpServer: "SMTP server",
+  smtpPort: "SMTP port",
+  server: "Server",
+  actions: "Actions",
+  noAccounts: "No connected mail accounts",
+  optional: "Optional",
+  adding: "Adding…",
 };
 
 type Copy = typeof zh;
@@ -223,8 +257,8 @@ function InboxPage() {
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [composeDefaults, setComposeDefaults] = useState({ to: "", subject: "" });
-  const [resyncNotice, setResyncNotice] = useState("");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const debouncedSearch = useDebouncedValue(search, 250);
 
@@ -299,29 +333,20 @@ function InboxPage() {
     openCompose({ to: latest?.from || conversation.peerEmail || "", subject: replySubject });
   };
 
-  const resync = useMutation({
-    mutationFn: resyncAttachments,
-    onSuccess: () => {
-      setResyncNotice(locale.resyncQueued);
-      window.setTimeout(() => setResyncNotice(""), 4000);
-      void conversations.refetch();
-    },
-  });
-
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
   if (authenticated) return <LoginScreen copy={locale} />;
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <Topbar copy={locale} email={conversations.data?.accountEmail || ""} search={search} onSearch={setSearch} onMenu={() => setSidebarOpen(true)} onCompose={() => openCompose()} onResync={() => resync.mutate()} resyncing={resync.isPending} />
-      <div className="flex h-[calc(100vh-3.5rem)] min-h-[32.5rem] overflow-hidden">
-        {sidebarOpen && <button className="fixed inset-x-0 top-14 bottom-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
-        <Sidebar copy={locale} folders={conversations.data?.folders || []} onCompose={() => openCompose()} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
+    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
+        {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
+        <Sidebar copy={locale} folders={conversations.data?.folders || []} accounts={conversations.data?.accounts || []} accountEmail={conversations.data?.accountEmail || ""} onCompose={() => openCompose()} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
         <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
           <ConversationList
             copy={locale}
             data={conversations.data}
             search={search}
+            onSearch={setSearch}
+            onMenu={() => setSidebarOpen(true)}
             loading={conversations.isPending}
             error={conversations.error}
             selectedId={selectedId}
@@ -344,57 +369,27 @@ function InboxPage() {
             className={chatOpen ? "flex" : "hidden lg:flex"}
           />
         </main>
-      </div>
-      {resyncNotice && <div className="fixed right-4 bottom-4 z-50 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground shadow-lg">{resyncNotice}</div>}
       <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
+      <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
 
-function Topbar({ copy, email, search, onSearch, onMenu, onCompose, onResync, resyncing }: { copy: Copy; email: string; search: string; onSearch: (value: string) => void; onMenu: () => void; onCompose: () => void; onResync: () => void; resyncing: boolean }) {
-  return (
-    <header className="relative z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-card px-3 lg:px-5">
-      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
-      <a className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-tight" href="/inbox" aria-label="Lilmail">
-        <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>
-        <span className="hidden sm:inline">lilmail</span>
-      </a>
-      <div className="relative mx-auto flex w-full max-w-xl flex-1 items-center">
-        <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" aria-hidden="true" />
-        <Input data-testid="mail-search" type="search" className="bg-muted/50 pl-9 pr-10" value={search} onChange={(event) => onSearch(event.target.value)} placeholder={copy.search} aria-label={copy.search} />
-        {search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => onSearch("")} aria-label={copy.cancel} title={copy.cancel}><X /></Button>}
-      </div>
-      <div className="hidden shrink-0 items-center gap-2 lg:flex">
-        {email && <Badge variant="secondary" className="max-w-52 truncate font-normal text-muted-foreground"><span className="size-2 shrink-0 rounded-full bg-foreground/50" />{email}<ChevronDown className="size-3 shrink-0" /></Badge>}
-        <div className="flex items-center rounded-lg border bg-muted p-0.5">
-          <Button variant={copy === zh ? "secondary" : "ghost"} size="sm" onClick={() => switchLanguage("zh-CN")}>简体中文</Button>
-          <Button variant={copy === en ? "secondary" : "ghost"} size="sm" onClick={() => switchLanguage("en")}>English</Button>
-        </div>
-        <Button variant="ghost" size="icon" onClick={onResync} disabled={resyncing} aria-label={copy.resyncAttachments} title={copy.resyncAttachments}><RefreshCw className={cn(resyncing && "animate-spin")} /></Button>
-        <Button variant="ghost" size="icon" onClick={() => window.location.assign("/settings")} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
-        <Button variant="link" size="sm" className="px-2 text-primary" onClick={() => { void signOut().then(() => window.location.assign("/user-login")); }}>{copy.signOut}</Button>
-      </div>
-      <Button data-testid="compose-button" variant="default" size="icon" className="lg:hidden" onClick={onCompose} aria-label={copy.compose} title={copy.compose}><Pencil /></Button>
-    </header>
-  );
-}
-
-function Sidebar({ copy, folders, onCompose, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; onCompose: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
+function Sidebar({ copy, folders, accounts, accountEmail, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
   return (
-    <aside className={cn("fixed top-14 bottom-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-[14.375rem] lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
+    <aside className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-[14.375rem] lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
       <Button data-testid="compose-button" className="mb-4 w-full" onClick={onCompose}><Pencil />{copy.compose}</Button>
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
         <Button asChild variant="secondary" size="sm" className={cn(navClass, "bg-sidebar-accent text-sidebar-accent-foreground")}><a href="/inbox" onClick={onClose}><MessageCircle /><span>{copy.conversations}</span></a></Button>
         <Button asChild variant="ghost" size="sm" className={navClass}><a href="/calendar" onClick={onClose}><CalendarDays /><span>{copy.calendar}</span></a></Button>
         <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
         {foldersOpen && <div className="flex flex-col gap-1">{visibleFolders.map((folder) => <FolderLink key={folder.name} folder={folder} onClose={onClose} />)}{!visibleFolders.length && <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>}</div>}
-        <div className="mt-auto flex items-center justify-end gap-1 border-t pt-3">
-          <Button asChild variant="ghost" size="icon" aria-label={copy.settings} title={copy.settings}>
-            <a href="/settings" onClick={onClose}><Settings /></a>
-          </Button>
+        <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
+          <AccountMenu copy={copy} accounts={accounts} accountEmail={accountEmail} />
+          <Button variant="ghost" size="icon" onClick={onSettings} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
           <Button variant="ghost" size="icon" onClick={onToggleDarkMode} aria-label={darkMode ? copy.lightMode : copy.darkMode} title={darkMode ? copy.lightMode : copy.darkMode}>
             {darkMode ? <Sun /> : <Moon />}
           </Button>
@@ -404,20 +399,58 @@ function Sidebar({ copy, folders, onCompose, open, onClose, darkMode, onToggleDa
   );
 }
 
+function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; accounts: ConversationListResponse["accounts"]; accountEmail: string }) {
+  const active = accounts.find((account) => account.isActive || account.email === accountEmail);
+  const selectAccount = async (email: string) => {
+    if (email === accountEmail) return;
+    await switchAccount(email);
+    window.location.assign("/inbox");
+  };
+  return (
+    <MenuPrimitive.Root>
+      <MenuPrimitive.Trigger render={<Button variant="ghost" className="min-w-0 flex-1 justify-start px-2" />}>
+        <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active?.color || "#777" }} />
+        <span className="min-w-0 flex-1 truncate text-left">{active?.label || accountEmail}</span>
+        <ChevronDown className="size-3.5" />
+      </MenuPrimitive.Trigger>
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner side="top" align="start" sideOffset={6} className="z-[70]">
+          <MenuPrimitive.Popup className="w-60 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+            {accounts.map((account) => (
+              <MenuPrimitive.Item key={account.email} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={() => void selectAccount(account.email)}>
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} />
+                <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{account.label || account.email}</strong><small className="block truncate text-muted-foreground">{account.email}</small></span>
+                {(account.isActive || account.email === accountEmail) && <Check className="size-4 shrink-0" />}
+              </MenuPrimitive.Item>
+            ))}
+            <MenuPrimitive.Separator className="my-1 h-px bg-border" />
+            <MenuPrimitive.Item className="flex cursor-default items-center rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={() => { void signOut().then(() => window.location.assign("/user-login")); }}>{copy.signOut}</MenuPrimitive.Item>
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
+  );
+}
+
 function FolderLink({ folder, onClose }: { folder: Mailbox; onClose: () => void }) {
   const name = folder.name.toLowerCase();
   const Icon = name.includes("trash") || name.includes("deleted") ? Trash2 : name.includes("junk") || name.includes("spam") ? TriangleAlert : name.includes("draft") ? FilePenLine : name.includes("archive") ? Archive : Folder;
   return <Button asChild variant="ghost" size="sm" className="w-full justify-start gap-2.5 pl-9 text-muted-foreground"><a href={`/folder/${encodeURIComponent(folder.name)}`} onClick={onClose}><Icon /><span className="min-w-0 flex-1 truncate">{folder.name}</span>{folder.unreadCount ? <Badge variant="secondary" className="min-w-5 justify-center px-1.5 text-[10px]">{folder.unreadCount}</Badge> : null}</a></Button>;
 }
 
-function ConversationList({ copy, data, search, loading, error, selectedId, onSelect, onRefresh, className }: { copy: Copy; data?: ConversationListResponse; search: string; loading: boolean; error: Error | null; selectedId: string | null; onSelect: (id: string) => void; onRefresh: () => void; className?: string }) {
+function ConversationList({ copy, data, search, onSearch, onMenu, loading, error, selectedId, onSelect, onRefresh, className }: { copy: Copy; data?: ConversationListResponse; search: string; onSearch: (value: string) => void; onMenu: () => void; loading: boolean; error: Error | null; selectedId: string | null; onSelect: (id: string) => void; onRefresh: () => void; className?: string }) {
   const rows = data?.conversations || [];
   return (
     <section data-testid="conversation-list" className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", className)}>
-      <div className="grid min-h-[4.5rem] grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center border-b bg-card px-4 py-3">
-        <span aria-hidden="true" />
-        <div className="min-w-0 text-center"><h1 className="truncate text-base font-semibold tracking-tight">{copy.conversations}</h1><p className="mt-1 truncate text-xs text-muted-foreground">{rows.length} {copy.conversations.toLowerCase()}</p></div>
-        <Button variant="ghost" size="icon" onClick={onRefresh} aria-label={copy.refresh} title={copy.refresh}><RefreshCw /></Button>
+      <div className="border-b bg-card px-3 py-3">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
+          <div className="relative flex min-w-0 flex-1 items-center">
+          <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" aria-hidden="true" />
+          <Input data-testid="mail-search" type="search" className="h-9 bg-muted/60 pl-9 pr-9" value={search} onChange={(event) => onSearch(event.target.value)} placeholder={copy.search} aria-label={copy.search} />
+          {search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => onSearch("")} aria-label={copy.cancel} title={copy.cancel}><X /></Button>}
+          </div>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {loading && <ListSkeleton />}
@@ -432,10 +465,8 @@ function ConversationList({ copy, data, search, loading, error, selectedId, onSe
 function ConversationRow({ copy, conversation, selected, onClick }: { copy: Copy; conversation: ConversationSummary; selected: boolean; onClick: () => void }) {
   return (
     <button data-testid="conversation-row" className={cn("relative flex w-full items-start gap-3 border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:z-10 focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")} onClick={onClick} type="button">
-      <MailAvatar label={initials(conversation.title, conversation.peerEmail)} />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time></span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">{conversation.subject || copy.noSubject}</span>
         <span className="mt-1 block truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
       </span>
       {conversation.unreadCount > 0 && <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="mt-0.5 min-w-5 justify-center px-1.5 text-[10px] leading-4">{conversation.unreadCount}</Badge>}
@@ -487,16 +518,16 @@ function ChatView({ copy, detail, onBack, onReply }: { copy: Copy; detail: Conve
   return (
     <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col">
       <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
-        <div className="flex min-w-0 items-center justify-start gap-1 sm:gap-3"><Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button><MailAvatar label={initials(detail.title, detail.peerEmail)} /></div>
+        <div className="flex min-w-0 items-center justify-start"><Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button></div>
         <div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{detail.subject || copy.noSubject}<span className="px-1.5">·</span>{detail.count} {copy.messages}</p></div>
-        <div className="flex min-w-0 items-center justify-end gap-1"><Button variant="ghost" size="icon" onClick={onReply} aria-label={copy.reply} title={copy.reply}><Send /></Button><Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button></div>
+        <div className="flex min-w-0 items-center justify-end"><Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button></div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth px-3 py-6 sm:px-[5vw] sm:py-8" ref={scrollRef}>
         <div ref={contentRef}>
           {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} />)}
         </div>
       </div>
-      <div className="hidden items-center justify-between border-t bg-card px-5 py-2 text-xs text-muted-foreground lg:flex"><span>{copy.reply}</span><Button variant="secondary" size="sm" onClick={onReply}><Send />{copy.reply}</Button></div>
+      <div className="flex items-center justify-start border-t bg-card px-3 py-2 sm:px-5"><Button variant="secondary" size="sm" onClick={onReply}><Send />{copy.reply}</Button></div>
     </section>
   );
 }
@@ -767,15 +798,44 @@ function MailDetail({ copy, message, folder }: { copy: Copy; message: MailMessag
 }
 
 function SettingsPage({ copy }: { copy: Copy }) {
-  const queryClient = useQueryClient();
-  const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts, retry: false });
+  return <div className="min-h-screen bg-background"><PageHeader title={copy.settings} action={<Button asChild variant="ghost" size="sm"><a href="/inbox">{copy.conversations}</a></Button>} /><main className="mx-auto max-w-4xl p-4 py-8 lg:p-8"><SettingsContent copy={copy} /></main></div>;
+}
+
+function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="settings-dialog" className="flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-3rem)] sm:max-w-5xl">
+        <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12 text-left">
+          <DialogTitle>{copy.settings}</DialogTitle>
+          <DialogDescription className="sr-only">{copy.settings}</DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 overflow-y-auto p-5 sm:p-6">
+          <SettingsContent copy={copy} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SettingsContent({ copy }: { copy: Copy }) {
+  const [section, setSection] = useState<"general" | "mailboxes">("general");
+  return (
+    <div className="grid min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
+      <nav className="flex gap-1 border-b pb-4 md:flex-col md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
+        <Button className="justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => setSection("general")}><Settings />{copy.generalSettings}</Button>
+        <Button className="justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => setSection("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
+      </nav>
+      <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
+        {section === "general" ? <GeneralSettings copy={copy} /> : <MailboxSettings copy={copy} />}
+      </div>
+    </div>
+  );
+}
+
+function GeneralSettings({ copy }: { copy: Copy }) {
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
-  const [form, setForm] = useState({ email: "", password: "", label: "", color: "#4f46e5" });
-  const [error, setError] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushMessage, setPushMessage] = useState("");
-  const add = useMutation({ mutationFn: () => addAccount(form), onSuccess: () => { setForm({ email: "", password: "", label: "", color: "#4f46e5" }); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
-  const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["accounts"] }) });
   useEffect(() => { void currentPushSubscription().then((subscription) => setPushEnabled(Boolean(subscription))); }, []);
   const togglePush = async () => {
     setPushMessage("");
@@ -788,7 +848,104 @@ function SettingsPage({ copy }: { copy: Copy }) {
     }
   };
   const pushAvailable = supportsWebPush() && capabilities.data?.webPush === true;
-  return <div className="min-h-screen bg-background"><PageHeader title={copy.settings} action={<Button asChild variant="ghost" size="sm"><a href="/inbox">{copy.conversations}</a></Button>} /><main className="mx-auto grid max-w-4xl gap-8 p-4 py-8 lg:grid-cols-[1fr_22rem] lg:p-8"><section><h2 className="text-base font-semibold">{copy.addAccount}</h2><div className="mt-4 grid gap-3">{accounts.data?.accounts.map((account: ConnectedAccount) => <div className="flex items-center gap-3 border-b py-3" key={account.email}><span className="size-3 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0 flex-1"><strong className="block truncate text-sm">{account.label || account.email}</strong><span className="text-xs text-muted-foreground">{account.email} · {account.imapServer}</span></div><Button variant="ghost" size="sm" onClick={() => remove.mutate(account.email)}>{copy.remove}</Button></div>)}{accounts.isPending && <p>{copy.loading}</p>}{accounts.error && <p className="text-sm text-destructive">{accounts.error.message}</p>}</div><section className="mt-8 border-t pt-6"><h2 className="text-base font-semibold">{copy.pushNotifications}</h2><Button className="mt-4" variant="secondary" disabled={!pushAvailable} onClick={() => void togglePush()}>{pushEnabled ? <BellOff /> : <Bell />}{pushEnabled ? copy.disablePush : copy.enablePush}</Button>{pushMessage && <p className="mt-2 text-xs text-destructive">{pushMessage}</p>}{!pushAvailable && !capabilities.isPending && <p className="mt-2 text-xs text-muted-foreground">{copy.pushUnavailable}</p>}</section></section><form className="grid content-start gap-3 border-l pl-0 lg:pl-8" onSubmit={(event) => { event.preventDefault(); setError(""); add.mutate(); }}><Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} /></Label><Label className="grid gap-1.5">Color<Input type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={add.isPending}><Plus />{copy.addAccount}</Button></form></main></div>;
+  const currentLanguage = copy === en ? "en" : "zh-CN";
+  return (
+    <div className="max-w-2xl">
+      <h2 className="text-lg font-semibold">{copy.generalSettings}</h2>
+      <section className="mt-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold"><Languages className="size-4" />{copy.language}</h3>
+        <div className="mt-3 inline-flex items-center rounded-lg border bg-muted p-0.5">
+          <Button className={cn(currentLanguage === "zh-CN" && "bg-background shadow-sm ring-1 ring-border hover:bg-background")} variant="ghost" size="sm" aria-pressed={currentLanguage === "zh-CN"} onClick={() => switchLanguage("zh-CN")}>{currentLanguage === "zh-CN" && <Check />}简体中文</Button>
+          <Button className={cn(currentLanguage === "en" && "bg-background shadow-sm ring-1 ring-border hover:bg-background")} variant="ghost" size="sm" aria-pressed={currentLanguage === "en"} onClick={() => switchLanguage("en")}>{currentLanguage === "en" && <Check />}English</Button>
+        </div>
+      </section>
+      <section className="mt-7 border-t pt-6">
+        <h3 className="text-sm font-semibold">{copy.pushNotifications}</h3>
+        <Button className="mt-3 max-w-full whitespace-normal" variant="secondary" disabled={!pushAvailable} onClick={() => void togglePush()}>{pushEnabled ? <BellOff /> : <Bell />}{pushEnabled ? copy.disablePush : copy.enablePush}</Button>
+        {pushMessage && <p className="mt-2 text-xs text-destructive">{pushMessage}</p>}
+        {!pushAvailable && !capabilities.isPending && <p className="mt-2 text-xs text-muted-foreground">{copy.pushUnavailable}</p>}
+      </section>
+    </div>
+  );
+}
+
+const emptyAccountForm = { email: "", password: "", label: "", color: "#4f46e5", imap_server: "", imap_port: 993, smtp_server: "", smtp_port: 587 };
+
+function MailboxSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts, retry: false });
+  const [addOpen, setAddOpen] = useState(false);
+  const [error, setError] = useState("");
+  const refreshAccountData = () => {
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+  };
+  const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => { setError(""); refreshAccountData(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  return (
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">{copy.mailboxManagement}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.mailboxDescription}</p></div>
+        <Button onClick={() => setAddOpen(true)}><Plus />{copy.addAccount}</Button>
+      </div>
+      <div className="mt-5 overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[44rem] text-left text-sm">
+          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.account}</th><th className="px-4 py-2.5 font-medium">IMAP</th><th className="px-4 py-2.5 font-medium">SMTP</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
+          <tbody>
+            {accounts.data?.accounts.map((account: ConnectedAccount) => (
+              <tr className="border-b last:border-b-0" key={account.email}>
+                <td className="px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0"><strong className="block max-w-52 truncate font-medium">{account.label || account.email}</strong><span className="block max-w-52 truncate text-xs text-muted-foreground">{account.email}</span></div></div></td>
+                <td className="px-4 py-3 whitespace-nowrap">{account.imapServer}{account.imapPort ? `:${account.imapPort}` : ""}</td>
+                <td className="px-4 py-3 whitespace-nowrap">{account.smtpServer || "-"}{account.smtpPort ? `:${account.smtpPort}` : ""}</td>
+                <td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(account.email)}>{copy.remove}</Button></td>
+              </tr>
+            ))}
+            {!accounts.isPending && !accounts.data?.accounts.length && <tr><td className="px-4 py-10 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {accounts.isPending && <p className="py-3 text-sm text-muted-foreground">{copy.loading}</p>}
+      {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
+      {error && <p className="py-2 text-xs text-destructive">{error}</p>}
+      <AddAccountDialog copy={copy} open={addOpen} onOpenChange={setAddOpen} onAdded={refreshAccountData} />
+    </section>
+  );
+}
+
+function AddAccountDialog({ copy, open, onOpenChange, onAdded }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void; onAdded: () => void }) {
+  const [form, setForm] = useState({ ...emptyAccountForm });
+  const [error, setError] = useState("");
+  const changeOpen = (value: boolean) => {
+    if (!value) setError("");
+    onOpenChange(value);
+  };
+  const add = useMutation({ mutationFn: () => addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); onAdded(); onOpenChange(false); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const field = (name: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.type === "number" ? Number(event.target.value) : event.target.value;
+    setForm((current) => ({ ...current, [name]: value }));
+  };
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader><DialogTitle>{copy.addAccount}</DialogTitle><DialogDescription>{copy.mailboxDescription}</DialogDescription></DialogHeader>
+        <form className="grid gap-5" onSubmit={(event) => { event.preventDefault(); setError(""); add.mutate(); }}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={field("email")} autoComplete="email" required /></Label>
+            <Label className="grid gap-1.5">{copy.password}<Input type="password" value={form.password} onChange={field("password")} autoComplete="new-password" required /></Label>
+            <Label className="grid gap-1.5">{copy.displayName} ({copy.optional})<Input value={form.label} onChange={field("label")} /></Label>
+            <Label className="grid gap-1.5">{copy.color}<Input className="p-1" type="color" value={form.color} onChange={field("color")} /></Label>
+          </div>
+          <div className="grid gap-3 border-t pt-5 sm:grid-cols-[minmax(0,1fr)_8rem]">
+            <Label className="grid gap-1.5">{copy.imapServer}<Input value={form.imap_server} onChange={field("imap_server")} placeholder="imap.example.com" /></Label>
+            <Label className="grid gap-1.5">{copy.imapPort}<Input type="number" min={1} max={65535} value={form.imap_port} onChange={field("imap_port")} required /></Label>
+            <Label className="grid gap-1.5">{copy.smtpServer}<Input value={form.smtp_server} onChange={field("smtp_server")} placeholder="smtp.example.com" /></Label>
+            <Label className="grid gap-1.5">{copy.smtpPort}<Input type="number" min={1} max={65535} value={form.smtp_port} onChange={field("smtp_port")} required /></Label>
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <DialogFooter><Button type="button" variant="ghost" onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={add.isPending}><Plus />{add.isPending ? copy.adding : copy.addAccount}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function CalendarPage({ copy }: { copy: Copy }) {
@@ -803,7 +960,7 @@ function CalendarPage({ copy }: { copy: Copy }) {
 }
 
 function ListSkeleton() {
-  return <div className="grid">{Array.from({ length: 7 }, (_, index) => <div className="flex gap-3 border-b px-4 py-3" key={index}><Skeleton className="size-9 shrink-0 rounded-full" /><div className="grid flex-1 gap-2 pt-1"><Skeleton className="h-2.5 w-2/5" /><Skeleton className="h-2.5 w-3/5" /><Skeleton className="h-2.5 w-4/5" /></div></div>)}</div>;
+  return <div className="grid">{Array.from({ length: 7 }, (_, index) => <div className="grid gap-2 border-b px-4 py-3" key={index}><Skeleton className="h-2.5 w-2/5" /><Skeleton className="h-2.5 w-4/5" /></div>)}</div>;
 }
 
 function ErrorState({ copy, onRetry }: { copy: Copy; onRetry?: () => void }) {
