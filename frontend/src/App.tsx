@@ -40,7 +40,7 @@ import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import { ApiError, addAccount, createCalendarEvent, deleteAccount, getAccounts, getCalendarEvents, getCapabilities, getConversation, getConversations, getFolderMessages, getMessage, register, resyncAttachments, sendMessage, signIn, signOut, switchLanguage } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
-import { cn, formatFullDate, formatMailDate, formatSize, initials, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
+import { cn, formatSize, formatTime, initials, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -257,7 +257,7 @@ function InboxPage() {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       if (!("Notification" in window) || Notification.permission !== "granted" || document.visibilityState === "visible") return;
       try {
-        const payload = JSON.parse(event.data) as { from?: string; subject?: string };
+        const payload = JSON.parse(String(event.data)) as { from?: string; subject?: string };
         new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
       } catch {
         // A malformed optional notification must not interrupt inbox refreshes.
@@ -414,8 +414,9 @@ function ConversationList({ copy, data, search, loading, error, selectedId, onSe
   const rows = data?.conversations || [];
   return (
     <section data-testid="conversation-list" className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", className)}>
-      <div className="flex min-h-[4.5rem] items-center justify-between border-b px-4 py-3">
-        <div><h1 className="text-base font-semibold tracking-tight">{copy.conversations}</h1><p className="mt-1 text-xs text-muted-foreground">{rows.length} {copy.conversations.toLowerCase()}</p></div>
+      <div className="grid min-h-[4.5rem] grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center border-b bg-card px-4 py-3">
+        <span aria-hidden="true" />
+        <div className="min-w-0 text-center"><h1 className="truncate text-base font-semibold tracking-tight">{copy.conversations}</h1><p className="mt-1 truncate text-xs text-muted-foreground">{rows.length} {copy.conversations.toLowerCase()}</p></div>
         <Button variant="ghost" size="icon" onClick={onRefresh} aria-label={copy.refresh} title={copy.refresh}><RefreshCw /></Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -433,7 +434,7 @@ function ConversationRow({ copy, conversation, selected, onClick }: { copy: Copy
     <button data-testid="conversation-row" className={cn("relative flex w-full items-start gap-3 border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:z-10 focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")} onClick={onClick} type="button">
       <MailAvatar label={initials(conversation.title, conversation.peerEmail)} />
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatMailDate(conversation.date, "zh-CN")}</time></span>
+        <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time></span>
         <span className="mt-1 block truncate text-xs text-muted-foreground">{conversation.subject || copy.noSubject}</span>
         <span className="mt-1 block truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
       </span>
@@ -452,70 +453,219 @@ function ChatPanel({ copy, detail, loading, error, onBack, onReply, className }:
 
 function ChatView({ copy, detail, onBack, onReply }: { copy: Copy; detail: ConversationDetail; onBack: () => void; onReply: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
-    if (!scroll) return;
+    const content = contentRef.current;
+    if (!scroll || !content) return;
+    const stickToBottom = { current: true };
     const jumpToLatest = () => {
       const previousBehavior = scroll.style.scrollBehavior;
       scroll.style.scrollBehavior = "auto";
       scroll.scrollTop = scroll.scrollHeight;
       scroll.style.scrollBehavior = previousBehavior;
     };
+    const updateStickiness = () => {
+      stickToBottom.current = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+    };
+    const keepLatestVisible = () => {
+      if (stickToBottom.current) jumpToLatest();
+    };
+
+    scroll.addEventListener("scroll", updateStickiness, { passive: true });
+    const resizeObserver = new ResizeObserver(keepLatestVisible);
     jumpToLatest();
+    resizeObserver.observe(content);
     const frame = window.requestAnimationFrame(jumpToLatest);
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      scroll.removeEventListener("scroll", updateStickiness);
+      resizeObserver.disconnect();
+    };
   }, [detail.id, detail.messages.length]);
 
   return (
     <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col">
-      <header className="flex min-h-[4.5rem] items-center gap-3 border-b bg-card px-3 py-3 sm:px-5">
-        <Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button>
-        <MailAvatar label={initials(detail.title, detail.peerEmail)} />
-        <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{detail.subject || copy.noSubject}<span className="px-1.5">·</span>{detail.count} {copy.messages}</p></div>
-        <div className="flex items-center gap-1"><Button variant="ghost" size="icon" onClick={onReply} aria-label={copy.reply} title={copy.reply}><Send /></Button><Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button></div>
+      <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center justify-start gap-1 sm:gap-3"><Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button><MailAvatar label={initials(detail.title, detail.peerEmail)} /></div>
+        <div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{detail.subject || copy.noSubject}<span className="px-1.5">·</span>{detail.count} {copy.messages}</p></div>
+        <div className="flex min-w-0 items-center justify-end gap-1"><Button variant="ghost" size="icon" onClick={onReply} aria-label={copy.reply} title={copy.reply}><Send /></Button><Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button></div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth px-3 py-6 sm:px-[5vw] sm:py-8" ref={scrollRef}>
-        {detail.messages.map((message) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} />)}
+        <div ref={contentRef}>
+          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} />)}
+        </div>
       </div>
       <div className="hidden items-center justify-between border-t bg-card px-5 py-2 text-xs text-muted-foreground lg:flex"><span>{copy.reply}</span><Button variant="secondary" size="sm" onClick={onReply}><Send />{copy.reply}</Button></div>
     </section>
   );
 }
 
-function MessageBubble({ copy, message, accountEmail }: { copy: Copy; message: ConversationMessage; accountEmail?: string }) {
+function MessageBubble({ copy, message, accountEmail, rootRef, eager }: { copy: Copy; message: ConversationMessage; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
   const outgoing = message.outgoing;
+  const formattedDate = formatTime(message.date);
   return (
-    <article className="mx-auto mb-5 max-w-3xl">
+    <article className="mb-5">
       <div className={cn("mb-1 px-3 text-xs leading-tight font-medium text-muted-foreground", outgoing ? "text-right" : "")}>{sender}</div>
       <div className={cn("flex items-end gap-2", outgoing && "justify-end")}>
         {!outgoing && <MailAvatar small label={initials(message.fromName, message.from)} />}
-        <div className={cn("max-w-[80%] overflow-hidden rounded-xl border px-3 py-2 text-sm leading-relaxed sm:max-w-[70ch]", outgoing ? "border-transparent bg-secondary text-secondary-foreground" : "border-border bg-background text-foreground")}>
-          {message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} /> : <div className="[overflow-wrap:anywhere] whitespace-pre-wrap">{renderLinkifiedText(visibleText)}</div>}
+        <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed", message.html && "w-full", outgoing ? "border-transparent bg-secondary text-secondary-foreground" : "border-border bg-background text-foreground")}>
+          {message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(visibleText)}</div>}
           {!message.html && split.quoted && <details className="mt-2 border-t border-border/60 pt-2 text-muted-foreground">
             <summary className="flex cursor-pointer list-none items-center gap-1 text-xs [&::-webkit-details-marker]:hidden"><ChevronDown className="size-3.5" />{copy.showQuoted}</summary>
-            <div className="mt-2 max-h-80 overflow-y-auto border-l-2 border-border pl-2 [overflow-wrap:anywhere] whitespace-pre-wrap">{renderLinkifiedText(split.quoted)}</div>
+            <div className="mt-2 border-l-2 border-border pl-2 whitespace-pre-wrap">{renderLinkifiedText(split.quoted)}</div>
           </details>}
           {message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((attachment) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={attachment.id} href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{attachment.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small></a>)}</div></> : null}
         </div>
         {outgoing && <MailAvatar small label={initials("", accountEmail)} />}
       </div>
-      <time className={cn("mt-1 block px-3 text-xs text-muted-foreground", outgoing ? "text-right" : "")} title={formatFullDate(message.date, "zh-CN")}>{formatFullDate(message.date, "zh-CN")}</time>
+      <time className={cn("mt-1 block px-3 text-xs text-muted-foreground", outgoing ? "text-right" : "")} title={formattedDate}>{formattedDate}</time>
     </article>
   );
 }
 
-function EmailHTMLFrame({ html, title }: { html: string; title: string }) {
+function EmailHTMLFrame({ html, title, rootRef, eager }: { html: string; title: string; rootRef: { current: HTMLDivElement | null }; eager: boolean }) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const resize = () => {
+  const [enabled, setEnabled] = useState(eager);
+
+  useEffect(() => {
+    if (eager) setEnabled(true);
+  }, [eager]);
+
+  useEffect(() => {
+    if (enabled) return;
+    const host = hostRef.current;
+    if (!host || !("IntersectionObserver" in window)) {
+      setEnabled(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      setEnabled(true);
+      observer.disconnect();
+    }, { root: rootRef.current, rootMargin: "1200px 0px" });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [enabled, rootRef]);
+
+  useLayoutEffect(() => {
+    if (!enabled) return;
     const frame = frameRef.current;
-    const document = frame?.contentDocument;
-    if (!frame || !document) return;
-    frame.style.height = `${Math.min(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 48), 720)}px`;
-  };
-  return <iframe ref={frameRef} className="block min-h-12 w-full border-0 bg-transparent" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={html} title={title} onLoad={resize} />;
+    if (!frame) return;
+
+    let mounted = true;
+    let measureFrame = 0;
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+    let resourceCleanup: (() => void) | null = null;
+    let documentProbeTimer = 0;
+    let lastHeight = 0;
+
+    // The document is written synchronously below, so the first real body
+    // height does not depend on the iframe load event.
+    frame.style.height = "1px";
+
+    const measureNow = () => {
+      if (!mounted) return;
+      const doc = frame.contentDocument;
+      const root = doc?.documentElement;
+      const body = doc?.body;
+      if (!root || !body) return;
+
+      const height = Math.max(body.scrollHeight, body.offsetHeight, body.getBoundingClientRect().height, 48);
+      if (height === lastHeight) return;
+      lastHeight = height;
+      frame.style.height = `${height}px`;
+    };
+
+    const measure = () => {
+      if (!mounted) return;
+      window.cancelAnimationFrame(measureFrame);
+      measureFrame = window.requestAnimationFrame(measureNow);
+    };
+
+    const clearDocumentObservers = () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      resizeObserver = null;
+      mutationObserver = null;
+      resourceCleanup?.();
+      resourceCleanup = null;
+    };
+
+    const observeDocument = (doc: Document) => {
+      clearDocumentObservers();
+
+      const installTransparentBackground = () => {
+        if (!doc.head || doc.head.querySelector("[data-lilmail-frame-style]")) return;
+        const style = doc.createElement("style");
+        style.dataset.lilmailFrameStyle = "";
+        style.textContent = "html, body { background-color: transparent !important; }";
+        doc.head.append(style);
+      };
+
+      installTransparentBackground();
+      resizeObserver = new ResizeObserver(measure);
+      resizeObserver.observe(doc.documentElement);
+      if (doc.body) resizeObserver.observe(doc.body);
+      mutationObserver = new MutationObserver(() => {
+        installTransparentBackground();
+        measure();
+      });
+      mutationObserver.observe(doc, { childList: true, subtree: true, characterData: true });
+
+      const onResource = (event: Event) => {
+        if (event.target instanceof HTMLImageElement) measure();
+      };
+      doc.addEventListener("load", onResource, true);
+      doc.addEventListener("error", onResource, true);
+      resourceCleanup = () => {
+        doc.removeEventListener("load", onResource, true);
+        doc.removeEventListener("error", onResource, true);
+      };
+      void doc.fonts?.ready.then(measure, measure);
+      measure();
+    };
+
+    const doc = frame.contentDocument;
+    if (!doc) return clearDocumentObservers;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    observeDocument(doc);
+    measureNow();
+
+    // A few short probes cover browsers that replace the initial about:blank
+    // document after close(). They are independent of image loading.
+    let probePasses = 0;
+    const probeDocument = () => {
+      if (!mounted) return;
+      const current = frame.contentDocument;
+      if (current && current !== doc) {
+        observeDocument(current);
+      }
+      measureNow();
+      probePasses += 1;
+      if (mounted && probePasses < 20) {
+        documentProbeTimer = window.setTimeout(probeDocument, 50);
+      }
+    };
+    probeDocument();
+
+    return () => {
+      mounted = false;
+      window.cancelAnimationFrame(measureFrame);
+      window.clearTimeout(documentProbeTimer);
+      clearDocumentObservers();
+    };
+  }, [enabled, html]);
+
+  return <div ref={hostRef} className="min-h-12 w-full min-w-0">{enabled && <iframe ref={frameRef} className="block w-full min-w-0 border-0 bg-transparent" scrolling="auto" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" title={title} />}</div>;
 }
 
 function renderLinkifiedText(text: string) {
@@ -609,11 +759,11 @@ function FolderPage({ copy, folder }: { copy: Copy; folder: string }) {
     window.addEventListener("popstate", restoreMessageFromURL);
     return () => window.removeEventListener("popstate", restoreMessageFromURL);
   }, []);
-  return <div className="min-h-screen bg-background"><PageHeader title={folder} /><main className="flex h-[calc(100vh-3.5rem)]"><section className={cn("w-full overflow-y-auto border-r bg-card lg:w-96", detailOpen && "hidden lg:block")}>{list.isPending && <ListSkeleton />}{list.error && <ErrorState copy={copy} onRetry={() => void list.refetch()} />}{list.data?.messages.map((message) => <button key={message.id} type="button" onClick={() => select(message.id)} className={cn("block w-full border-b px-4 py-3 text-left hover:bg-muted", selected === message.id && "bg-muted")}><strong className="block truncate text-sm">{message.fromName || message.from}</strong><span className="mt-1 block truncate text-xs">{message.subject || copy.noSubject}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{message.preview}</span></button>)}</section><section className={cn("min-w-0 flex-1 overflow-y-auto p-4 sm:p-6", !detailOpen && "hidden lg:block")}>{detailOpen && <Button variant="ghost" size="sm" className="mb-4 lg:hidden" onClick={closeDetail}><ArrowLeft />{copy.back}</Button>}{detail.isPending && selected ? <p>{copy.loading}</p> : detail.data ? <MailDetail copy={copy} message={detail.data} folder={folder} /> : <EmptyState icon={<Mail />} text={copy.selectConversation} />}</section></main></div>;
+  return <div className="min-h-screen bg-background"><PageHeader title={folder} /><main className="flex h-[calc(100vh-3.5rem)]"><section className={cn("w-full overflow-y-auto border-r bg-card lg:w-96", detailOpen && "hidden lg:block")}>{list.isPending && <ListSkeleton />}{list.error && <ErrorState copy={copy} onRetry={() => void list.refetch()} />}{list.data?.messages.map((message) => <button key={message.id} type="button" onClick={() => select(message.id)} className={cn("block w-full border-b px-4 py-3 text-left hover:bg-muted", selected === message.id && "bg-muted")}><span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm">{message.fromName || message.from}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span><span className="mt-1 block truncate text-xs">{message.subject || copy.noSubject}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{message.preview}</span></button>)}</section><section className={cn("min-w-0 flex-1 overflow-y-auto p-4 sm:p-6", !detailOpen && "hidden lg:block")}>{detailOpen && <Button variant="ghost" size="sm" className="mb-4 lg:hidden" onClick={closeDetail}><ArrowLeft />{copy.back}</Button>}{detail.isPending && selected ? <p>{copy.loading}</p> : detail.data ? <MailDetail copy={copy} message={detail.data} folder={folder} /> : <EmptyState icon={<Mail />} text={copy.selectConversation} />}</section></main></div>;
 }
 
 function MailDetail({ copy, message, folder }: { copy: Copy; message: MailMessage; folder: string }) {
-  return <article className="mx-auto max-w-3xl"><h2 className="text-xl font-semibold">{message.subject || copy.noSubject}</h2><p className="mt-2 text-sm text-muted-foreground">{message.fromName || message.from} · {formatFullDate(message.date, "zh-CN")}</p><Separator className="my-5" /><div className="whitespace-pre-wrap leading-7 [overflow-wrap:anywhere]">{message.body || copy.noBody}</div>{message.attachments?.length ? <div className="mt-6 grid gap-2">{message.attachments.map((item) => <a className="text-primary underline" key={item.partId} href={`/v1/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(item.partId)}?folder=${encodeURIComponent(folder)}`}>{item.filename}</a>)}</div> : null}</article>;
+  return <article className="mx-auto max-w-3xl"><h2 className="text-xl font-semibold">{message.subject || copy.noSubject}</h2><p className="mt-2 text-sm text-muted-foreground">{message.fromName || message.from} · {formatTime(message.date)}</p><Separator className="my-5" /><div className="whitespace-pre-wrap leading-7 [overflow-wrap:anywhere]">{message.body || copy.noBody}</div>{message.attachments?.length ? <div className="mt-6 grid gap-2">{message.attachments.map((item) => <a className="text-primary underline" key={item.partId} href={`/v1/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(item.partId)}?folder=${encodeURIComponent(folder)}`}>{item.filename}</a>)}</div> : null}</article>;
 }
 
 function SettingsPage({ copy }: { copy: Copy }) {
@@ -649,7 +799,7 @@ function CalendarPage({ copy }: { copy: Copy }) {
   const events = useQuery({ queryKey: ["calendar", start], queryFn: () => getCalendarEvents(start, end), retry: false });
   const [form, setForm] = useState({ summary: "", location: "", start: "", end: "" });
   const create = useMutation({ mutationFn: () => createCalendarEvent({ ...form, start: new Date(form.start).toISOString(), end: new Date(form.end).toISOString(), allDay: false }), onSuccess: () => { setForm({ summary: "", location: "", start: "", end: "" }); void queryClient.invalidateQueries({ queryKey: ["calendar"] }); } });
-  return <div className="min-h-screen bg-background"><PageHeader title={copy.calendar} action={<Button asChild variant="ghost" size="sm"><a href="/inbox">{copy.conversations}</a></Button>} /><main className="mx-auto grid max-w-5xl gap-8 p-4 py-8 lg:grid-cols-[1fr_22rem] lg:p-8"><section><h2 className="text-lg font-semibold">{now.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2><div className="mt-5 grid gap-2">{events.data?.events.map((event: CalendarEvent) => <article className="grid grid-cols-[6rem_1fr] gap-4 border-b py-3" key={event.uid}><time className="text-xs text-muted-foreground">{new Date(event.start).toLocaleString([], { day: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><div><strong className="text-sm">{event.summary}</strong>{event.location && <p className="mt-1 text-xs text-muted-foreground">{event.location}</p>}</div></article>)}{events.isPending && <p>{copy.loading}</p>}{events.error && <p className="text-sm text-destructive">{events.error.message}</p>}</div></section><form className="grid content-start gap-3 border-l pl-0 lg:pl-8" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><h2 className="font-semibold">{copy.newEvent}</h2><Label className="grid gap-1.5">{copy.subject}<Input value={form.summary} onChange={(event) => setForm({ ...form, summary: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.location}<Input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></Label><Label className="grid gap-1.5">{copy.start}<Input type="datetime-local" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.end}<Input type="datetime-local" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required /></Label><Button disabled={create.isPending}>{copy.save}</Button></form></main></div>;
+  return <div className="min-h-screen bg-background"><PageHeader title={copy.calendar} action={<Button asChild variant="ghost" size="sm"><a href="/inbox">{copy.conversations}</a></Button>} /><main className="mx-auto grid max-w-5xl gap-8 p-4 py-8 lg:grid-cols-[1fr_22rem] lg:p-8"><section><h2 className="text-lg font-semibold">{now.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h2><div className="mt-5 grid gap-2">{events.data?.events.map((event: CalendarEvent) => <article className="grid grid-cols-[6rem_1fr] gap-4 border-b py-3" key={event.uid}><time className="text-xs text-muted-foreground">{formatTime(event.start)}</time><div><strong className="text-sm">{event.summary}</strong>{event.location && <p className="mt-1 text-xs text-muted-foreground">{event.location}</p>}</div></article>)}{events.isPending && <p>{copy.loading}</p>}{events.error && <p className="text-sm text-destructive">{events.error.message}</p>}</div></section><form className="grid content-start gap-3 border-l pl-0 lg:pl-8" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><h2 className="font-semibold">{copy.newEvent}</h2><Label className="grid gap-1.5">{copy.subject}<Input value={form.summary} onChange={(event) => setForm({ ...form, summary: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.location}<Input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></Label><Label className="grid gap-1.5">{copy.start}<Input type="datetime-local" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.end}<Input type="datetime-local" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required /></Label><Button disabled={create.isPending}>{copy.save}</Button></form></main></div>;
 }
 
 function ListSkeleton() {

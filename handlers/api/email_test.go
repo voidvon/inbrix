@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"lilmail/models"
+
 	"github.com/emersion/go-imap"
 )
 
@@ -196,5 +198,34 @@ func TestProcessListMessageUsesRFCHeadersWithoutEnvelope(t *testing.T) {
 func TestDecodeMIMEHeaderGB18030(t *testing.T) {
 	if got := decodeMIMEHeader("=?gb18030?B?xOO6ww==?="); got != "你好" {
 		t.Errorf("decoded GB18030 subject = %q, want %q", got, "你好")
+	}
+}
+
+func TestMarkInlineAttachmentsFromHTML(t *testing.T) {
+	attachments := []models.Attachment{
+		{ID: "image-1", Filename: "=?gbk?B?NTc1Njc2MjhAMjE3RDkxMTcuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "57567628@217D9117.4E377C6A00000000.jpg"},
+		{ID: "image-2", Filename: "=?gbk?B?MkZEQTM3NThANjc5NzM0MkMuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "2FDA3758@6797342C.4E377C6A00000000.jpg"},
+		{ID: "image-3", Filename: "=?gbk?B?Q0Y1NTQwNTBARTJBNDlCMjEuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "CF554050@E2A49B21.4E377C6A00000000.jpg"},
+		{ID: "pdf", Filename: "Bank_Account_Details.pdf", ContentType: "application/octet-stream"},
+	}
+	html := `<img src="cid:CF554050@E2A49B21.4E377C6A00000000.jpg"><img src="cid:2FDA3758@6797342C.4E377C6A00000000.jpg"><img src="cid:57567628@217D9117.4E377C6A00000000.jpg">`
+
+	got := MarkInlineAttachmentsFromHTML(html, attachments)
+	if len(got) != len(attachments) {
+		t.Fatalf("attachment count = %d, want %d", len(got), len(attachments))
+	}
+	for i, attachment := range got[:3] {
+		if !attachment.IsInline {
+			t.Errorf("attachment %d was not identified as inline: %+v", i, attachment)
+		}
+	}
+	if got[0].Filename != "57567628@217D9117.4E377C6A0000" || got[1].Filename != "2FDA3758@6797342C.4E377C6A0000" || got[2].Filename != "CF554050@E2A49B21.4E377C6A0000" {
+		t.Errorf("RFC 2047 filenames were not decoded: %+v", got[:3])
+	}
+	if got[3].IsInline {
+		t.Errorf("PDF was incorrectly identified as inline: %+v", got[3])
+	}
+	if attachments[0].IsInline || attachments[0].Filename == got[0].Filename {
+		t.Fatal("inline repair mutated the input attachment slice")
 	}
 }

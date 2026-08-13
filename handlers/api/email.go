@@ -13,6 +13,8 @@ import (
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
+	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,6 +26,8 @@ import (
 
 // reMessageID matches RFC 2822 message-id tokens of the form <...>.
 var reMessageID = regexp.MustCompile(`<[^>]+>`)
+
+var cidReferenceRe = regexp.MustCompile(`(?i)cid:([^\s"'<>]+)`)
 
 // listHeadersSection fetches the headers needed to render a message list and
 // build conversation metadata. QQ enterprise mail can return a malformed
@@ -506,10 +510,7 @@ func (c *Client) processAttachments(msg *imap.Message, folderName string) []mode
 
 	msg.BodyStructure.Walk(func(path []int, part *imap.BodyStructure) bool {
 		if part != nil && isAttachmentPart(part) {
-			filename, _ := part.Filename()
-			if filename == "" {
-				filename = "attachment"
-			}
+			filename := attachmentFilename(part)
 			partID := pathToString(path)
 			attachments = append(attachments, models.Attachment{
 				ID:          encodeAttachmentID(folderName, uid, partID),
@@ -517,8 +518,8 @@ func (c *Client) processAttachments(msg *imap.Message, folderName string) []mode
 				Filename:    filename,
 				ContentType: fmt.Sprintf("%s/%s", strings.ToLower(part.MIMEType), strings.ToLower(part.MIMESubType)),
 				Size:        int(part.Size),
-				IsInline:    strings.EqualFold(part.Disposition, "inline"),
-				ContentID:   strings.Trim(strings.TrimSpace(part.Id), "<>"),
+				IsInline:    isInlinePart(part),
+				ContentID:   attachmentContentID(part),
 			})
 		}
 		return true // keep walking children
@@ -537,8 +538,90 @@ func isAttachmentPart(bs *imap.BodyStructure) bool {
 	if strings.EqualFold(bs.MIMEType, "multipart") || strings.EqualFold(bs.MIMEType, "text") {
 		return false
 	}
-	if fn, _ := bs.Filename(); fn != "" {
+	if hasAttachmentFilename(bs) {
 		return true
+	}
+	return attachmentContentID(bs) != ""
+}
+
+// isInlinePart handles the reliable MIME-level signal. Some Outlook/Foxmail
+// messages declare cid-referenced images as Content-Disposition: attachment;
+// those are corrected after the HTML body has been collected.
+func isInlinePart(bs *imap.BodyStructure) bool {
+	if strings.EqualFold(bs.Disposition, "inline") {
+		return true
+	}
+	// An explicit attachment disposition remains regular until the HTML body
+	// confirms that the Content-ID is used as an embedded resource.
+	return false
+}
+
+func attachmentFilename(bs *imap.BodyStructure) string {
+	filename, _ := bs.Filename()
+	filename = decodeMIMEHeader(filename)
+	if strings.TrimSpace(filename) == "" {
+		return "attachment"
+	}
+	return filename
+}
+
+func hasAttachmentFilename(bs *imap.BodyStructure) bool {
+	filename, _ := bs.Filename()
+	return strings.TrimSpace(filename) != ""
+}
+
+func attachmentContentID(bs *imap.BodyStructure) string {
+	return strings.Trim(strings.TrimSpace(bs.Id), "<>")
+}
+
+// MarkInlineAttachmentsFromHTML repairs MIME metadata from mail clients that
+// label cid-referenced images as regular attachments. It returns a copied
+// slice so callers can safely apply the correction to cached metadata at read
+// time as well as to newly fetched messages.
+func MarkInlineAttachmentsFromHTML(htmlBody string, attachments []models.Attachment) []models.Attachment {
+	if len(attachments) == 0 {
+		return attachments
+	}
+	referenced := make(map[string]struct{})
+	for _, match := range cidReferenceRe.FindAllStringSubmatch(htmlBody, -1) {
+		contentID := match[1]
+		if decoded, err := url.PathUnescape(contentID); err == nil {
+			contentID = decoded
+		}
+		if contentID = normalizeContentID(contentID); contentID != "" {
+			referenced[contentID] = struct{}{}
+		}
+	}
+
+	corrected := make([]models.Attachment, len(attachments))
+	copy(corrected, attachments)
+	for i := range corrected {
+		corrected[i].Filename = decodeMIMEHeader(corrected[i].Filename)
+		if normalizeContentID(corrected[i].ContentID) == "" {
+			continue
+		}
+		if _, ok := referenced[normalizeContentID(corrected[i].ContentID)]; ok && isImageAttachment(corrected[i]) {
+			corrected[i].IsInline = true
+		}
+	}
+	return corrected
+}
+
+func normalizeContentID(value string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(value), "<>"))
+}
+
+func isImageAttachment(attachment models.Attachment) bool {
+	contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(attachment.ContentType, ";", 2)[0]))
+	if strings.HasPrefix(contentType, "image/") {
+		return true
+	}
+	for _, candidate := range []string{attachment.Filename, attachment.ContentID} {
+		ext := strings.ToLower(path.Ext(strings.Trim(candidate, "<>")))
+		switch ext {
+		case ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".tif", ".tiff", ".webp":
+			return true
+		}
 	}
 	return false
 }
@@ -646,9 +729,7 @@ func (c *Client) FetchAttachment(folderName, uid, partPath string) ([]byte, stri
 	if msg.BodyStructure != nil {
 		msg.BodyStructure.Walk(func(p []int, part *imap.BodyStructure) bool {
 			if part != nil && samePath(p, path) {
-				if fn, _ := part.Filename(); fn != "" {
-					filename = fn
-				}
+				filename = attachmentFilename(part)
 				contentType = fmt.Sprintf("%s/%s", strings.ToLower(part.MIMEType), strings.ToLower(part.MIMESubType))
 				encoding = strings.ToLower(part.Encoding)
 			}
@@ -775,6 +856,7 @@ func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Em
 
 	// Attachment metadata (content is fetched on demand by FetchAttachment).
 	attachments := c.processAttachments(msg, folderName)
+	attachments = MarkInlineAttachmentsFromHTML(email.HTML, attachments)
 	email.Attachments = attachments
 	email.HasAttachments = hasRegularAttachments(attachments)
 

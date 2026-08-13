@@ -159,6 +159,7 @@ var zhCN = map[string]string{
 	"Reply":                             "回复",
 	"Reply all":                         "回复全部",
 	"Reply All":                         "回复全部",
+	"Show quoted message":               "显示引用内容",
 	"Forward":                           "转发",
 	"Archive (coming soon)":             "归档（即将推出）",
 	"Mark as unread (u)":                "标记为未读（u）",

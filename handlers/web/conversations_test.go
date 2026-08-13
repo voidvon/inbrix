@@ -138,10 +138,51 @@ func TestConversationJSONInlineOnlyDoesNotClaimAttachment(t *testing.T) {
 	}
 }
 
+func TestConversationJSONRepairsCIDImagesFromLegacyMetadata(t *testing.T) {
+	account := mailstore.Account{ID: "acct-cid-legacy", Email: "me@example.com"}
+	conversations := buildConversations(account, []models.Email{{
+		ID: "111", Folder: "Sent Messages", MessageID: "<cid-legacy@example.com>",
+		From: "me@example.com", To: "alice@example.com", Subject: "Inline images",
+		HTML: `<img src="cid:CF554050@E2A49B21.4E377C6A00000000.jpg"><img src="cid:2FDA3758@6797342C.4E377C6A00000000.jpg"><img src="cid:57567628@217D9117.4E377C6A00000000.jpg">`,
+		Date: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC),
+		Attachments: []models.Attachment{
+			{ID: "image-1", Filename: "=?gbk?B?NTc1Njc2MjhAMjE3RDkxMTcuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "57567628@217D9117.4E377C6A00000000.jpg"},
+			{ID: "image-2", Filename: "=?gbk?B?MkZEQTM3NThANjc5NzM0MkMuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "2FDA3758@6797342C.4E377C6A00000000.jpg"},
+			{ID: "image-3", Filename: "=?gbk?B?Q0Y1NTQwNTBARTJBNDlCMjEuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "CF554050@E2A49B21.4E377C6A00000000.jpg"},
+			{ID: "pdf", Filename: "Bank_Account_Details.pdf", ContentType: "application/octet-stream", Size: 377116},
+		},
+	}})
+
+	detail := conversationDetailJSON(conversations[0])
+	message := detail.Messages[0]
+	if len(message.Attachments) != 1 || message.Attachments[0].Filename != "Bank_Account_Details.pdf" {
+		t.Fatalf("CID images were surfaced as regular attachments: %+v", message.Attachments)
+	}
+	if !message.HasAttachments {
+		t.Fatal("real PDF attachment was lost")
+	}
+	for _, contentID := range []string{
+		"57567628@217D9117.4E377C6A00000000.jpg",
+		"2FDA3758@6797342C.4E377C6A00000000.jpg",
+		"CF554050@E2A49B21.4E377C6A00000000.jpg",
+	} {
+		if strings.Contains(message.HTML, "cid:"+contentID) || !strings.Contains(message.HTML, "/api/attachment/") {
+			t.Fatalf("CID %q was not rewritten to a local image URL: %s", contentID, message.HTML)
+		}
+	}
+}
+
 func TestCollapseQuotedHTML(t *testing.T) {
 	out := collapseQuotedHTML(`<div>New reply</div><div class="gmail_quote"><blockquote>Original</blockquote></div>`)
 	if !strings.Contains(out, `<details class="lilmail-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Original") {
 		t.Fatalf("quoted HTML was not collapsed: %s", out)
+	}
+}
+
+func TestCollapseQuotedHTMLUsesLocale(t *testing.T) {
+	out := collapseQuotedHTMLForLocale(`<div>New reply</div><div class="gmail_quote"><blockquote>Original</blockquote></div>`, "zh-CN")
+	if !strings.Contains(out, "显示引用内容") {
+		t.Fatalf("quoted HTML did not use the Chinese summary: %s", out)
 	}
 }
 

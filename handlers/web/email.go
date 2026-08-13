@@ -585,9 +585,8 @@ func (h *EmailHandler) HandleEmailView(c *fiber.Ctx) error {
 	}
 
 	// Prepare the HTML body for the sandboxed reading-pane iframe: inject a
-	// readable baseline stylesheet, a <base target="_blank">, and block remote
-	// images/backgrounds until the user opts in (privacy). hasRemote drives the
-	// "Display images" banner.
+	// readable baseline stylesheet and a <base target="_blank">. Ordinary remote
+	// images load by default; other remote-loading content remains blocked.
 	var preparedHTML string
 	var hasRemote bool
 	if email.HTML != "" {

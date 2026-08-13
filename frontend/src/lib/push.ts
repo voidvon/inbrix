@@ -22,6 +22,7 @@ export async function enableWebPush(locale: string) {
     userVisibleOnly: true,
     applicationServerKey: decodeBase64URL(publicKey),
   }));
+  if (!subscription) throw new Error("Push subscription could not be created");
   await savePushSubscription(subscription.toJSON());
   return subscription;
 }

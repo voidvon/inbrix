@@ -5,7 +5,7 @@
 //
 // Sizing / sandboxing approach
 // ----------------------------
-// The reading pane renders HTML mail in an <iframe srcdoc="...">. We want the
+// The reading pane renders HTML mail in a sandboxed <iframe>. We want the
 // iframe to grow to the natural height of its content (Gmail-style) so the
 // whole reading pane scrolls as one document instead of trapping the message in
 // a small inner scroll box.
@@ -19,13 +19,12 @@
 // is allow-same-origin together WITH allow-scripts, which lets framed content
 // remove its own sandbox — we never grant both.)
 //
-// Privacy / remote content
+// Remote content
 // -------------------------
-// Remote (http/https/protocol-relative "//") assets are neutralised server-side
-// before the HTML ever reaches the browser, so no tracking pixel or remote asset
-// loads until the user explicitly clicks "Display images". The vectors that are
-// neutralised are:
-//   - <img>/<image> src (→ placeholder) and srcset
+// Remote images are displayed by default. Other remote-loading elements remain
+// neutralised server-side so rendering an email cannot automatically load nested
+// documents, media, objects, stylesheets, or CSS backgrounds. The vectors that
+// remain neutralised are:
 //   - <input type=image> src
 //   - <video> poster
 //   - media src on <video>/<audio>/<source>/<track>/<embed>/<iframe>
@@ -35,12 +34,9 @@
 //   - remote url(...) and @import in inline style="" attributes AND in
 //     <style>...</style> blocks
 //
-// Blocked <img>/<image> src/srcset URLs (and the other tag attributes) are
-// stashed in data-blocked-* attributes; the parent page restores <img> ones on
-// demand (it can, because the frame is same-origin and script-free). Remote CSS
-// url()/@import are rewritten to about:blank and are NOT restorable — they are
-// only blocked. Inline data: URIs (embedded/contact-photo images) and cid:/
-// relative references are left untouched, so nothing local is over-blocked.
+// Remote CSS url()/@import are rewritten to about:blank. Inline data: URIs,
+// cid:/relative references, and ordinary remote <img>/<image> URLs are left
+// untouched.
 package web
 
 import (
@@ -61,14 +57,16 @@ var (
 	// acceptable for the privacy pass (the XSS sanitiser is a separate stage).
 	tagRe = regexp.MustCompile(`(?is)<([a-z][a-z0-9]*)\b[^>]*>`)
 
-	srcAttrRe    = regexp.MustCompile(`(?is)\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
-	srcsetRe     = regexp.MustCompile(`(?is)\bsrcset\s*=\s*("[^"]*"|'[^']*')`)
-	posterAttrRe = regexp.MustCompile(`(?is)\bposter\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
-	hrefAttrRe   = regexp.MustCompile(`(?is)\bhref\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
-	dataAttrRe   = regexp.MustCompile(`(?is)\bdata\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
-	bgAttrRe     = regexp.MustCompile(`(?is)\bbackground\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
-	styleAttrRe  = regexp.MustCompile(`(?is)style\s*=\s*("[^"]*"|'[^']*')`)
-	styleBlockRe = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
+	srcAttrRe      = regexp.MustCompile(`(?is)\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	srcsetRe       = regexp.MustCompile(`(?is)\bsrcset\s*=\s*("[^"]*"|'[^']*')`)
+	loadingAttrRe  = regexp.MustCompile(`(?is)\bloading\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	decodingAttrRe = regexp.MustCompile(`(?is)\bdecoding\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	posterAttrRe   = regexp.MustCompile(`(?is)\bposter\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	hrefAttrRe     = regexp.MustCompile(`(?is)\bhref\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	dataAttrRe     = regexp.MustCompile(`(?is)\bdata\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	bgAttrRe       = regexp.MustCompile(`(?is)\bbackground\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+	styleAttrRe    = regexp.MustCompile(`(?is)style\s*=\s*("[^"]*"|'[^']*')`)
+	styleBlockRe   = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
 	// inputImageRe reports whether an <input> tag is an image button (only those
 	// fetch a remote resource via src).
 	inputImageRe = regexp.MustCompile(`(?is)\btype\s*=\s*['"]?\s*image\b`)
@@ -100,20 +98,6 @@ body {
   overflow-wrap: break-word;
 }
 img, video { max-width: 100%; height: auto; }
-/* Blocked remote images render as a slim dashed placeholder instead of a giant
-   square (the 1x1 transparent GIF would otherwise inherit the width attribute's
-   aspect ratio). Restored to natural size once the user clicks "Display images". */
-img[data-blocked-src] {
-  height: 34px !important;
-  min-width: 34px;
-  max-width: 100%;
-  background: #f0e9e2;
-  border: 1px dashed #c9bfb4;
-  border-radius: 4px;
-}
-@media (prefers-color-scheme: dark) {
-  img[data-blocked-src] { background: #2a251f; border-color: #4a4239; }
-}
 table { max-width: 100%; }
 a { color: #0e9384; }
 pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
@@ -140,16 +124,14 @@ func isRemoteURL(v string) bool {
 		strings.HasPrefix(low, "//")
 }
 
-// blockRemoteContent neutralises every remote-fetching vector in an HTML mail
-// body so no remote asset (tracking pixel, remote CSS, media, etc.) loads
-// automatically. It rewrites: <img>/<image> src (→ placeholder + data-blocked-src)
-// and srcset; <input type=image> src; <video> poster; src on
+// blockRemoteContent neutralises non-image remote-fetching vectors in an HTML
+// mail body. Ordinary <img>/<image> sources pass through so mail images display
+// by default. It rewrites: <input type=image> src; <video> poster; src on
 // <video>/<audio>/<source>/<track>/<embed>/<iframe>; <object> data; <link> href;
 // the background="" attribute on any element; and remote url()/@import inside both
 // inline style="" attributes and <style> blocks. "Remote" means http/https or a
 // protocol-relative "//" URL; cid:, data: and relative references are left alone.
-// It returns the rewritten HTML and whether anything was blocked (which drives the
-// "Display images" banner).
+// It returns the rewritten HTML and whether anything was blocked.
 func blockRemoteContent(html string) (string, bool) {
 	blocked := false
 
@@ -202,11 +184,10 @@ func blockRemoteContent(html string) (string, bool) {
 // unchanged.
 func neutralizeTag(name, tag string) (string, bool) {
 	switch name {
-	// <image> is parsed as <img> by the HTML parser, so treat both identically.
+	// Mail images are visible by default. The iframe remains script-free, and
+	// other auto-loading element types below retain the privacy pass.
 	case "img", "image":
-		tag, b1 := blockSrcPlaceholder(tag)
-		tag, b2 := blockSrcset(tag)
-		return tag, b1 || b2
+		return tag, false
 	case "input":
 		if !inputImageRe.MatchString(tag) {
 			return tag, false
@@ -231,8 +212,8 @@ func neutralizeTag(name, tag string) (string, bool) {
 }
 
 // blockSrcPlaceholder swaps a remote src= for a transparent placeholder and
-// stashes the original URL in data-blocked-src (which the parent page restores
-// when the user clicks "Display images"). data:/cid:/relative src are left alone.
+// stashes the original URL in data-blocked-src. It is used for input type=image;
+// ordinary mail <img> elements bypass it. data:/cid:/relative src are left alone.
 func blockSrcPlaceholder(tag string) (string, bool) {
 	blocked := false
 	tag = srcAttrRe.ReplaceAllStringFunc(tag, func(attr string) string {
@@ -246,9 +227,8 @@ func blockSrcPlaceholder(tag string) (string, bool) {
 	return tag, blocked
 }
 
-// blockSrcset stashes a srcset= into data-blocked-srcset. srcset is a candidate
-// list; if it is present at all it is stashed wholesale (matching the historical
-// <img> behaviour) so no candidate is fetched.
+// blockSrcset stashes a non-image source element's srcset= into
+// data-blocked-srcset. Ordinary mail <img> elements bypass it.
 func blockSrcset(tag string) (string, bool) {
 	blocked := false
 	tag = srcsetRe.ReplaceAllStringFunc(tag, func(attr string) string {
@@ -278,8 +258,8 @@ func stashAttr(tag string, re *regexp.Regexp, dataName string) (string, bool) {
 // neutralizeCSS rewrites remote url(...) and @import references inside a chunk of
 // CSS (a <style> block or an inline style="" attribute) to about:blank so nothing
 // is fetched. It returns the rewritten CSS and whether anything was changed. These
-// rewrites are destructive (not restorable), which is why remote CSS is only ever
-// blocked, never surfaced by the "Display images" restore path.
+// rewrites are destructive because remote CSS remains blocked in the reading
+// view even though ordinary image elements are displayed.
 func neutralizeCSS(css string) (string, bool) {
 	changed := false
 	if cssURLRe.MatchString(css) {
@@ -304,13 +284,15 @@ func ensureQuoted(v string) string {
 
 // prepareEmailHTML wraps a raw HTML email body in a minimal document with our
 // baseline stylesheet and a <base target="_blank"> (so links open in a new tab
-// instead of trying — and failing — to navigate the sandboxed frame). It blocks
-// remote images by default and reports whether any were blocked.
+// instead of trying — and failing — to navigate the sandboxed frame). Remote
+// images pass through, while other remote-loading elements stay blocked. The bool
+// reports whether non-image remote content was blocked.
 //
-// The returned string is plain HTML for the React client to assign to the
-// sandboxed iframe's srcDoc property.
+// The returned string is plain HTML for the React client to write into the
+// sandboxed iframe's initial document.
 func prepareEmailHTML(raw string) (string, bool) {
 	body, blocked := blockRemoteContent(raw)
+	body = addImageLoadingHints(body)
 
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html><html><head><meta charset="utf-8">`)
@@ -321,4 +303,54 @@ func prepareEmailHTML(raw string) (string, bool) {
 	b.WriteString(body)
 	b.WriteString(`</body></html>`)
 	return b.String(), blocked
+}
+
+// addImageLoadingHints keeps remote mail images from delaying the iframe's
+// document load and first height measurement. Local/cid/data images remain
+// eager because they do not create a network waterfall.
+func addImageLoadingHints(raw string) string {
+	return tagRe.ReplaceAllStringFunc(raw, func(tag string) string {
+		match := tagRe.FindStringSubmatch(tag)
+		if len(match) < 2 || (strings.ToLower(match[1]) != "img" && strings.ToLower(match[1]) != "image") {
+			return tag
+		}
+
+		tag = upsertImageAttribute(tag, decodingAttrRe, `decoding="async"`)
+		if hasRemoteImageSource(tag) {
+			tag = upsertImageAttribute(tag, loadingAttrRe, `loading="lazy"`)
+		}
+		return tag
+	})
+}
+
+func upsertImageAttribute(tag string, re *regexp.Regexp, replacement string) string {
+	if re.MatchString(tag) {
+		return re.ReplaceAllString(tag, replacement)
+	}
+	end := strings.LastIndexByte(tag, '>')
+	if end < 0 {
+		return tag
+	}
+	if end > 0 && tag[end-1] == '/' {
+		end--
+	}
+	return tag[:end] + " " + replacement + tag[end:]
+}
+
+func hasRemoteImageSource(tag string) bool {
+	if match := srcAttrRe.FindStringSubmatch(tag); len(match) > 1 && isRemoteURL(match[1]) {
+		return true
+	}
+	if match := srcsetRe.FindStringSubmatch(tag); len(match) <= 1 {
+		return false
+	} else {
+		value := strings.Trim(strings.TrimSpace(match[1]), `"'`)
+		for _, candidate := range strings.Split(value, ",") {
+			fields := strings.Fields(candidate)
+			if len(fields) > 0 && isRemoteURL(fields[0]) {
+				return true
+			}
+		}
+	}
+	return false
 }

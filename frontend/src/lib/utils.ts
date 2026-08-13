@@ -28,24 +28,65 @@ export function initials(name?: string, fallback?: string) {
   return Array.from(value)[0]?.toUpperCase() || "?";
 }
 
-export function formatMailDate(value: string, locale: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+type DateValue = string | number | Date;
+
+const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
+const WEEKDAY_LABELS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
 }
 
-export function formatFullDate(value: string, locale: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+function toDate(value: DateValue) {
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function localDateKey(date: Date) {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatClock(date: Date) {
+  return `${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+
+function formatMonthDay(date: Date) {
+  return `${padDatePart(date.getMonth() + 1)}月${padDatePart(date.getDate())}日`;
+}
+
+export function formatTime(value: DateValue, now = new Date()) {
+  const date = toDate(value);
+  if (!date || Number.isNaN(now.getTime())) return "";
+
+  const dateKey = localDateKey(date);
+  const todayKey = localDateKey(now);
+  const dayBeforeThisWeek = todayKey - ((now.getDay() + 6) % 7) * DAY_IN_MILLISECONDS;
+  const dayDifference = Math.round((todayKey - dateKey) / DAY_IN_MILLISECONDS);
+  const clock = formatClock(date);
+
+  if (dayDifference === 0) return clock;
+  if (dayDifference === 1) return `昨天 ${clock}`;
+  if (dayDifference === 2) return `前天 ${clock}`;
+  if (dateKey >= dayBeforeThisWeek && dateKey < todayKey - 2 * DAY_IN_MILLISECONDS) {
+    return `${WEEKDAY_LABELS[date.getDay()]} ${clock}`;
+  }
+
+  const yearDifference = now.getFullYear() - date.getFullYear();
+  if (yearDifference === 0) return `${formatMonthDay(date)} ${clock}`;
+  if (yearDifference === 1) return `去年 ${formatMonthDay(date)}`;
+  if (yearDifference === 2) return `前年 ${formatMonthDay(date)}`;
+  return `${date.getFullYear()}年${formatMonthDay(date)}`;
+}
+
+// Keep the previous helpers as compatibility aliases for existing callers.
+export function formatMailDate(value: string, locale?: string) {
+  void locale;
+  return formatTime(value);
+}
+
+export function formatFullDate(value: string, locale?: string) {
+  void locale;
+  return formatTime(value);
 }
 
 export function isSentMailbox(mailbox: MailboxLike) {

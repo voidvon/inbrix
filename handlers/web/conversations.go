@@ -262,6 +262,10 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 			AccountColor: account.Color,
 		}
 		for _, email := range thread.Messages {
+			// Older mirror rows may have marked cid-referenced images as regular
+			// attachments. Reclassify them from the cached HTML before building both
+			// the conversation summary and its message bubbles.
+			email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
 			outgoing := isSentMailboxName(email.Folder) || sameMailboxAddress(email.From, account.Email)
 			conversation.Messages = append(conversation.Messages, ConversationMessage{Email: email, Outgoing: outgoing})
 			if !outgoing && isUnread(email) {

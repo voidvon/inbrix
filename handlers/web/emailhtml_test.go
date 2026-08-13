@@ -17,9 +17,6 @@ func TestBlockRemoteContent_AllVectors(t *testing.T) {
 		in   string
 		host string // remote host that must not be live-fetchable afterwards
 	}{
-		{"img", `<img src="http://evil1/pixel.gif">`, "evil1"},
-		{"image-tag", `<image src=http://evil2/i>`, "evil2"},
-		{"img-srcset", `<img srcset="http://evil3/a 1x, http://evil3/b 2x">`, "evil3"},
 		{"input-type-image", `<input type="image" src="http://evil4/q">`, "evil4"},
 		{"video-poster", `<video poster="http://evil5/p"></video>`, "evil5"},
 		{"video-src", `<video src="http://evil6/m.mp4"></video>`, "evil6"},
@@ -37,7 +34,6 @@ func TestBlockRemoteContent_AllVectors(t *testing.T) {
 		{"style-block-url", `<style>body{background:url(http://evil18/x)}</style>`, "evil18"},
 		{"style-block-import-url", `<style>@import url(http://evil19/y);</style>`, "evil19"},
 		{"style-block-import-str", `<style>@import "http://evil20/y";</style>`, "evil20"},
-		{"protocol-relative-img", `<img src="//evil21/r">`, "evil21"},
 		{"protocol-relative-link", `<link rel=stylesheet href="//evil22/r.css">`, "evil22"},
 		{"protocol-relative-css", `<style>body{background:url(//evil23/r)}</style>`, "evil23"},
 	}
@@ -50,6 +46,20 @@ func TestBlockRemoteContent_AllVectors(t *testing.T) {
 			}
 			assertNoLiveRemote(t, out, tc.host)
 		})
+	}
+}
+
+func TestBlockRemoteContent_DisplaysMailImagesByDefault(t *testing.T) {
+	for _, in := range []string{
+		`<img src="http://images.example/pixel.gif">`,
+		`<image src=http://images.example/logo>`,
+		`<img srcset="http://images.example/a 1x, http://images.example/b 2x">`,
+		`<img src="//images.example/banner">`,
+	} {
+		out, blocked := blockRemoteContent(in)
+		if blocked || out != in {
+			t.Fatalf("mail image should load unchanged by default: in=%q out=%q blocked=%v", in, out, blocked)
+		}
 	}
 }
 
@@ -124,32 +134,25 @@ func attrValueEnd(s string, eqStart int) int {
 	}
 }
 
-// TestBlockRemoteContent_DataURIPreserved confirms inline data: images (embedded
-// content, contact photos) are NOT blocked even when they appear alongside remote
-// content that IS blocked.
+// TestBlockRemoteContent_DataURIPreserved confirms inline and remote images are
+// both displayed unchanged.
 func TestBlockRemoteContent_DataURIPreserved(t *testing.T) {
 	dataImg := `<img src="data:image/png;base64,iVBORw0KGgoAAAANSU">`
 	in := dataImg + `<img src="http://evil/pixel.gif">`
 	out, blocked := blockRemoteContent(in)
-	if !blocked {
-		t.Fatalf("expected blocked=true (remote img present)")
+	if blocked {
+		t.Fatalf("ordinary images should not be blocked")
 	}
 	if !strings.Contains(out, `src="data:image/png;base64,iVBORw0KGgoAAAANSU"`) {
 		t.Fatalf("data: image was altered/blocked, got %q", out)
 	}
-	if !strings.Contains(out, "data-blocked-src=") {
-		t.Fatalf("expected the remote img to be blocked, got %q", out)
+	if !strings.Contains(out, `src="http://evil/pixel.gif"`) {
+		t.Fatalf("expected the remote img to remain visible, got %q", out)
 	}
 }
 
-// TestBlockRemoteContent_NoOverBlock is the "display images on" / no-over-block
-// guarantee. lilmail has no server-side display-images-ON path — blocking is
-// always applied server-side and the parent page restores data-blocked-src on the
-// user's click. So the server-side contract this test pins is: content that is NOT
-// remote (data:, cid:, relative, fragment, mailto) must pass through untouched
-// with blocked=false, and remote <img> URLs must be preserved verbatim in
-// data-blocked-src so the client CAN restore them (i.e. remote is allowed once the
-// user opts in, not destroyed).
+// TestBlockRemoteContent_NoOverBlock confirms local content and ordinary remote
+// images pass through untouched.
 func TestBlockRemoteContent_NoOverBlock(t *testing.T) {
 	local := `<img src="data:image/gif;base64,AAAA">` +
 		`<img src="cid:logo@example">` +
@@ -166,15 +169,11 @@ func TestBlockRemoteContent_NoOverBlock(t *testing.T) {
 		t.Fatalf("local content was modified.\n got: %q\nwant: %q", out, local)
 	}
 
-	// Remote img URL must be preserved verbatim (restorable => display-images-on
-	// allows it).
 	const remoteURL = "https://cdn.example.com/hero.jpg?u=abc"
-	rout, rblocked := blockRemoteContent(`<img src="` + remoteURL + `">`)
-	if !rblocked {
-		t.Fatalf("expected remote img blocked")
-	}
-	if !strings.Contains(rout, `data-blocked-src="`+remoteURL+`"`) {
-		t.Fatalf("remote URL not preserved verbatim for restore, got %q", rout)
+	remote := `<img src="` + remoteURL + `">`
+	rout, rblocked := blockRemoteContent(remote)
+	if rblocked || rout != remote {
+		t.Fatalf("remote image should pass through unchanged, got %q blocked=%v", rout, rblocked)
 	}
 }
 
@@ -205,20 +204,43 @@ func TestBlockRemoteContent_InputNonImageUntouched(t *testing.T) {
 	}
 }
 
-// TestPrepareEmailHTML_WrapsAndBlocks confirms the wrapper still blocks and
-// reports it, and preserves data: content.
-func TestPrepareEmailHTML_WrapsAndBlocks(t *testing.T) {
+// TestPrepareEmailHTML_WrapsAndDisplaysImages confirms ordinary remote and
+// embedded images are both visible in the prepared iframe document.
+func TestPrepareEmailHTML_WrapsAndDisplaysImages(t *testing.T) {
 	out, blocked := prepareEmailHTML(`<img src="http://evil/p"><img src="data:image/gif;base64,AAAA">`)
-	if !blocked {
-		t.Fatalf("expected blocked=true")
+	if blocked {
+		t.Fatalf("ordinary images should not be reported as blocked")
 	}
 	if !strings.Contains(out, "<!DOCTYPE html>") || !strings.Contains(out, emailFrameCSS) {
 		t.Fatalf("wrapper document not produced: %q", out)
 	}
-	if !strings.Contains(out, "data-blocked-src=") {
-		t.Fatalf("remote img not blocked in wrapper: %q", out)
+	if !strings.Contains(out, `src="http://evil/p"`) || strings.Contains(out, "data-blocked-src=") {
+		t.Fatalf("remote img not restored in wrapper: %q", out)
 	}
 	if !strings.Contains(out, "data:image/gif;base64,AAAA") {
 		t.Fatalf("data: image lost in wrapper: %q", out)
+	}
+}
+
+func TestPrepareEmailHTML_DisplaysRemoteSrcsetButKeepsOtherContentBlocked(t *testing.T) {
+	out, _ := prepareEmailHTML(`<img srcset="https://images.example/a 1x, https://images.example/b 2x"><iframe src="https://frame.example/"></iframe>`)
+	if !strings.Contains(out, `srcset="https://images.example/a 1x, https://images.example/b 2x"`) {
+		t.Fatalf("remote srcset not restored: %q", out)
+	}
+	if !strings.Contains(out, `loading="lazy"`) || !strings.Contains(out, `decoding="async"`) {
+		t.Fatalf("remote image loading hints missing: %q", out)
+	}
+	if strings.Contains(out, `<iframe src="https://frame.example/"`) || !strings.Contains(out, `data-blocked-src="https://frame.example/"`) {
+		t.Fatalf("non-image remote content should remain blocked: %q", out)
+	}
+}
+
+func TestPrepareEmailHTMLKeepsLocalImagesEager(t *testing.T) {
+	out, _ := prepareEmailHTML(`<img src="cid:logo@example.com"><img src="data:image/gif;base64,AAAA">`)
+	if strings.Contains(out, `loading="lazy"`) {
+		t.Fatalf("local images should not be delayed: %q", out)
+	}
+	if strings.Count(out, `decoding="async"`) != 2 {
+		t.Fatalf("expected async decoding on both images: %q", out)
 	}
 }

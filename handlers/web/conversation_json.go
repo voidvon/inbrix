@@ -3,6 +3,7 @@ package web
 import (
 	stdhtml "html"
 	"lilmail/handlers/api"
+	"lilmail/i18n"
 	"lilmail/models"
 	"net/url"
 	"regexp"
@@ -106,6 +107,10 @@ func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON 
 }
 
 func conversationDetailJSON(conversation Conversation) ConversationDetailJSON {
+	return conversationDetailJSONForLocale(conversation, i18n.LocaleEnglish)
+}
+
+func conversationDetailJSONForLocale(conversation Conversation, locale string) ConversationDetailJSON {
 	result := ConversationDetailJSON{
 		ID:           conversation.ID,
 		Title:        conversation.Title,
@@ -119,6 +124,7 @@ func conversationDetailJSON(conversation Conversation) ConversationDetailJSON {
 	}
 	for _, message := range conversation.Messages {
 		email := message.Email
+		email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
 		body := email.Body
 		if strings.TrimSpace(body) == "" {
 			body = email.Preview
@@ -126,7 +132,7 @@ func conversationDetailJSON(conversation Conversation) ConversationDetailJSON {
 		body = stdhtml.UnescapeString(body)
 		preparedHTML := ""
 		if strings.TrimSpace(email.HTML) != "" {
-			htmlBody := collapseQuotedHTML(email.HTML)
+			htmlBody := collapseQuotedHTMLForLocale(email.HTML, locale)
 			preparedHTML, _ = prepareEmailHTML(rewriteInlineCIDReferences(htmlBody, email.Attachments, conversation.AccountEmail))
 		}
 		attachments := regularAttachments(email.Attachments)
@@ -155,11 +161,15 @@ func conversationDetailJSON(conversation Conversation) ConversationDetailJSON {
 }
 
 func collapseQuotedHTML(raw string) string {
+	return collapseQuotedHTMLForLocale(raw, i18n.LocaleEnglish)
+}
+
+func collapseQuotedHTMLForLocale(raw, locale string) string {
 	document, err := html.Parse(strings.NewReader(raw))
 	if err != nil {
 		return raw
 	}
-	collapseQuotedNodes(document)
+	collapseQuotedNodes(document, locale)
 	var output strings.Builder
 	if err := html.Render(&output, document); err != nil {
 		return raw
@@ -167,13 +177,13 @@ func collapseQuotedHTML(raw string) string {
 	return output.String()
 }
 
-func collapseQuotedNodes(node *html.Node) {
+func collapseQuotedNodes(node *html.Node, locale string) {
 	for child := node.FirstChild; child != nil; {
 		next := child.NextSibling
 		if isQuotedHTMLNode(child) {
-			wrapQuotedNodes(node, child, child)
+			wrapQuotedNodes(node, child, child, locale)
 		} else {
-			collapseQuotedNodes(child)
+			collapseQuotedNodes(child, locale)
 		}
 		child = next
 	}
@@ -183,16 +193,16 @@ func collapseQuotedNodes(node *html.Node) {
 	// the old message and should be collapsed together.
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		if isOriginalSeparatorNode(child) {
-			wrapQuotedNodes(node, child, nil)
+			wrapQuotedNodes(node, child, nil, locale)
 			break
 		}
 	}
 }
 
-func wrapQuotedNodes(parent, first, last *html.Node) {
+func wrapQuotedNodes(parent, first, last *html.Node, locale string) {
 	details := &html.Node{Type: html.ElementNode, Data: "details", Attr: []html.Attribute{{Key: "class", Val: "lilmail-quoted"}}}
 	summary := &html.Node{Type: html.ElementNode, Data: "summary"}
-	summary.AppendChild(&html.Node{Type: html.TextNode, Data: "Show quoted message"})
+	summary.AppendChild(&html.Node{Type: html.TextNode, Data: i18n.Translate(locale, "Show quoted message")})
 	parent.InsertBefore(details, first)
 	for child := first; child != nil; {
 		next := child.NextSibling
@@ -372,5 +382,5 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 	if selected == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
-	return c.JSON(fiber.Map{"conversation": conversationDetailJSON(*selected)})
+	return c.JSON(fiber.Map{"conversation": conversationDetailJSONForLocale(*selected, CurrentLocale(c))})
 }
