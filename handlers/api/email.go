@@ -19,8 +19,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/emersion/go-imap"
+	htmlcharset "golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -975,6 +978,7 @@ func collectBodies(body io.Reader, contentType, cte, disposition string, email *
 		return
 	}
 	data = decodeTransferBytes(data, cte)
+	data = decodeBodyCharset(data, mediaType, params)
 
 	switch {
 	case strings.HasPrefix(mediaType, "text/html") && email.HTML == "":
@@ -982,6 +986,70 @@ func collectBodies(body io.Reader, contentType, cte, disposition string, email *
 	case strings.HasPrefix(mediaType, "text/plain") && email.Body == "":
 		email.Body = string(data)
 	}
+}
+
+// decodeBodyCharset converts MIME text parts to UTF-8 after transfer decoding.
+// Many clients send Windows-1252, ISO-8859, or GB-family bytes; storing those
+// bytes directly in a Go string makes encoding/json replace them with U+FFFD.
+func decodeBodyCharset(data []byte, mediaType string, params map[string]string) []byte {
+	label := strings.TrimSpace(params["charset"])
+	if label == "" {
+		if utf8.Valid(data) {
+			return data
+		}
+		if strings.EqualFold(mediaType, "text/html") {
+			encoding, _, certain := htmlcharset.DetermineEncoding(data, mediaType)
+			if certain {
+				if decoded, readErr := io.ReadAll(encoding.NewDecoder().Reader(bytes.NewReader(data))); readErr == nil {
+					return decoded
+				}
+			}
+		}
+		return DecodeLegacyText(data)
+	}
+
+	normalized := strings.ToLower(strings.ReplaceAll(label, "_", "-"))
+	if normalized == "utf-8" || normalized == "utf8" || normalized == "us-ascii" || normalized == "ascii" {
+		// Preserve valid UTF-8 from senders that incorrectly declare us-ascii.
+		if utf8.Valid(data) {
+			return data
+		}
+	}
+	reader, err := htmlcharset.NewReaderLabel(label, bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return data
+	}
+	return decoded
+}
+
+// DecodeLegacyText repairs cached text created before MIME charset conversion
+// was implemented. GB18030 is preferred when it produces CJK text; otherwise
+// Windows-1252 is the conservative fallback for Western legacy mail.
+func DecodeLegacyText(data []byte) []byte {
+	if utf8.Valid(data) {
+		return data
+	}
+	if decoded, err := io.ReadAll(simplifiedchinese.GB18030.NewDecoder().Reader(bytes.NewReader(data))); err == nil && cjkCount(decoded) >= 2 {
+		return decoded
+	}
+	if decoded, err := io.ReadAll(charmap.Windows1252.NewDecoder().Reader(bytes.NewReader(data))); err == nil {
+		return decoded
+	}
+	return data
+}
+
+func cjkCount(data []byte) int {
+	count := 0
+	for _, r := range string(data) {
+		if r >= '\u3400' && r <= '\u9fff' {
+			count++
+		}
+	}
+	return count
 }
 
 // extractCalendarPart walks a raw RFC 5322 message and returns the transfer-

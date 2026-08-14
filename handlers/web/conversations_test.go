@@ -58,6 +58,60 @@ func TestBuildConversationsMergesInboxAndSent(t *testing.T) {
 	}
 }
 
+func TestConversationIdentityUsesParticipantsNotMessagesOrSubject(t *testing.T) {
+	account := mailstore.Account{ID: "acct-stable", Email: "me@example.com"}
+	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	first := models.Email{ID: "1", Folder: "INBOX", MessageID: "<one@example.com>", From: "Alice <ALICE@example.com>", To: "me@example.com", Subject: "First subject", Date: when}
+	initial := buildConversations(account, []models.Email{first})
+	if len(initial) != 1 {
+		t.Fatalf("initial conversation count = %d, want 1", len(initial))
+	}
+
+	second := models.Email{ID: "2", Folder: "Sent Messages", MessageID: "<two@example.com>", From: "me@example.com", To: "alice@example.com", Subject: "Unrelated subject", Date: when.Add(time.Hour)}
+	updated := buildConversations(account, []models.Email{first, second})
+	if len(updated) != 1 || updated[0].Count != 2 {
+		t.Fatalf("same participant messages were not merged: %+v", updated)
+	}
+	if updated[0].ID != initial[0].ID {
+		t.Fatalf("conversation ID changed after adding a message: %q -> %q", initial[0].ID, updated[0].ID)
+	}
+	if updated[0].PeerEmail != "alice@example.com" {
+		t.Fatalf("participant was not normalized: %q", updated[0].PeerEmail)
+	}
+}
+
+func TestConversationIdentitySeparatesParticipantSets(t *testing.T) {
+	account := mailstore.Account{ID: "acct-participants", Email: "me@example.com"}
+	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	emails := []models.Email{
+		{ID: "1", Folder: "INBOX", From: "alice@example.com", To: "me@example.com", Subject: "Alice", Date: when},
+		{ID: "2", Folder: "Sent Messages", From: "me@example.com", To: "bob@example.com, alice@example.com", Subject: "Alice and Bob", Date: when.Add(time.Hour)},
+		{ID: "3", Folder: "INBOX", From: "bob@example.com", To: "Alice <alice@example.com>, Me <ME@example.com>", Subject: "Order differs", Date: when.Add(2 * time.Hour)},
+	}
+	conversations := buildConversations(account, emails)
+	if len(conversations) != 2 {
+		t.Fatalf("conversation count = %d, want 2", len(conversations))
+	}
+	if conversations[0].PeerEmail != "alice@example.com, bob@example.com" || conversations[0].Count != 2 {
+		t.Fatalf("multi-participant conversation = %+v", conversations[0])
+	}
+	if conversations[1].PeerEmail != "alice@example.com" || conversations[1].Count != 1 {
+		t.Fatalf("single-participant conversation = %+v", conversations[1])
+	}
+	if conversations[0].ID == conversations[1].ID {
+		t.Fatal("different participant sets produced the same conversation ID")
+	}
+}
+
+func TestConversationIDIgnoresParticipantOrder(t *testing.T) {
+	accountID := "acct-order"
+	first := []string{"alice@example.com", "bob@example.com"}
+	second := []string{"bob@example.com", "alice@example.com"}
+	if conversationID(accountID, first) != conversationID(accountID, second) {
+		t.Fatal("participant order changed the conversation ID")
+	}
+}
+
 func TestConversationFoldersRecognizeQQSentMessages(t *testing.T) {
 	folders := []mailstore.Folder{
 		{Name: "INBOX"},

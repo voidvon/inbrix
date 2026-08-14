@@ -35,6 +35,7 @@ export type ConversationSummary = {
   accountEmail?: string;
   accountLabel?: string;
   accountColor?: string;
+  note?: string;
 };
 
 export type ConversationMessage = {

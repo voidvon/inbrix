@@ -317,3 +317,41 @@ func TestListMessagesForFoldersPreservesSourceFolder(t *testing.T) {
 		t.Fatalf("source folders were not preserved: %+v", messages)
 	}
 }
+
+func TestConversationNotesPersistClearAndStayAccountScoped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "notes@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testAccount(t, s, owner.ID, "first@example.com", true)
+	second := testAccount(t, s, owner.ID, "second@example.com", false)
+
+	if err := s.SetConversationNote(ctx, first.ID, "conversation-1", " Important customer "); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetConversationNote(ctx, second.ID, "conversation-1", "Different account"); err != nil {
+		t.Fatal(err)
+	}
+	firstNotes, err := s.ListConversationNotes(ctx, first.ID)
+	if err != nil || firstNotes["conversation-1"] != "Important customer" {
+		t.Fatalf("first account notes = %v, err=%v", firstNotes, err)
+	}
+	secondNotes, err := s.ListConversationNotes(ctx, second.ID)
+	if err != nil || secondNotes["conversation-1"] != "Different account" {
+		t.Fatalf("second account notes = %v, err=%v", secondNotes, err)
+	}
+
+	if err := s.SetConversationNote(ctx, first.ID, "conversation-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	firstNotes, err = s.ListConversationNotes(ctx, first.ID)
+	if err != nil || len(firstNotes) != 0 {
+		t.Fatalf("cleared note remained: %v, err=%v", firstNotes, err)
+	}
+	secondNotes, _ = s.ListConversationNotes(ctx, second.ID)
+	if secondNotes["conversation-1"] != "Different account" {
+		t.Fatalf("clearing first account changed second account: %v", secondNotes)
+	}
+}

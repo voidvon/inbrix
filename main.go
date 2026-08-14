@@ -382,8 +382,8 @@ func main() {
 		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
 			return c.JSON(fiber.Map{
 				"notifications": config.Notifications.Enabled,
-				"webPush":      config.Notifications.Enabled && config.Notifications.WebPush,
-				"calendar":     config.CalDAV.Enabled,
+				"webPush":       config.Notifications.Enabled && config.Notifications.WebPush,
+				"calendar":      config.CalDAV.Enabled,
 			})
 		})
 		apiRoutes.Get("/csrf", func(c *fiber.Ctx) error {
@@ -393,6 +393,8 @@ func main() {
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
+		apiRoutes.Put("/conversations/:id/note", webEmailHandler.HandleConversationNoteJSON)
+		apiRoutes.Delete("/conversations/:id/messages/:uid", webEmailHandler.HandleConversationMessageDeleteJSON)
 
 		// Attachment download (ID encodes folder + UID + MIME part)
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)

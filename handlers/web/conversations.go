@@ -8,6 +8,7 @@ import (
 	"lilmail/handlers/api"
 	"lilmail/mailstore"
 	"lilmail/models"
+	"net/mail"
 	"sort"
 	"strings"
 
@@ -32,6 +33,7 @@ type Conversation struct {
 	AccountEmail   string
 	AccountLabel   string
 	AccountColor   string
+	Note           string
 }
 
 type ConversationMessage struct {
@@ -131,13 +133,6 @@ func firstMailboxAddress(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func displayAddress(name, address string) string {
-	if strings.TrimSpace(name) != "" {
-		return strings.TrimSpace(name)
-	}
-	return firstMailboxAddress(address)
-}
-
 func isUnread(email models.Email) bool {
 	for _, flag := range email.Flags {
 		if flag == `\Seen` {
@@ -160,61 +155,87 @@ func messageHasAttachments(email models.Email) bool {
 	return false
 }
 
-func conversationID(accountID string, thread models.Thread) string {
+func conversationID(accountID string, participants []string) string {
 	h := sha256.New()
 	h.Write([]byte(accountID))
-	for _, email := range thread.Messages {
-		folder := email.Folder
-		if folder == "" {
-			folder = conversationViewFolder
-		}
-		fmt.Fprintf(h, "\x00%s\x00%s\x00%s", folder, email.ID, email.MessageID)
+	ordered := append([]string(nil), participants...)
+	sort.Strings(ordered)
+	for _, participant := range ordered {
+		fmt.Fprintf(h, "\x00%s", participant)
 	}
 	return hex.EncodeToString(h.Sum(nil)[:12])
 }
 
-func conversationTitle(messages []models.Email, mailbox string) (string, string) {
-	type participant struct {
-		name  string
-		email string
+func parseMailboxAddresses(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
 	}
-	participants := make([]participant, 0, 2)
-	seen := make(map[string]struct{})
-	appendParticipant := func(name, address string) {
-		address = firstMailboxAddress(address)
-		key := strings.ToLower(address)
-		if address == "" || sameMailboxAddress(address, mailbox) {
-			return
-		}
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		participants = append(participants, participant{name: displayAddress(name, address), email: address})
-	}
-
-	for _, email := range messages {
-		outgoing := isSentMailboxName(email.Folder) || sameMailboxAddress(email.From, mailbox)
-		if outgoing {
-			name := ""
-			if len(email.ToNames) > 0 {
-				name = email.ToNames[0]
+	if addresses, err := mail.ParseAddressList(value); err == nil {
+		result := make([]string, 0, len(addresses))
+		for _, address := range addresses {
+			if normalized := strings.ToLower(strings.TrimSpace(address.Address)); normalized != "" {
+				result = append(result, normalized)
 			}
-			appendParticipant(name, email.To)
-		} else {
-			appendParticipant(email.FromName, email.From)
+		}
+		return result
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ';' })
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if normalized := strings.ToLower(firstMailboxAddress(part)); normalized != "" {
+			result = append(result, normalized)
+		}
+	}
+	return result
+}
+
+func messageParticipants(email models.Email, mailbox string) []string {
+	mailbox = strings.ToLower(strings.TrimSpace(mailbox))
+	seen := make(map[string]struct{})
+	for _, value := range []string{email.From, email.To, email.Cc} {
+		for _, address := range parseMailboxAddresses(value) {
+			if address != mailbox {
+				seen[address] = struct{}{}
+			}
+		}
+	}
+	participants := make([]string, 0, len(seen))
+	for address := range seen {
+		participants = append(participants, address)
+	}
+	sort.Strings(participants)
+	return participants
+}
+
+func conversationTitle(messages []models.Email, mailbox string, participants []string) (string, string) {
+	names := make(map[string]string, len(participants))
+	for _, email := range messages {
+		from := strings.ToLower(firstMailboxAddress(email.From))
+		if from != "" && !sameMailboxAddress(from, mailbox) && strings.TrimSpace(email.FromName) != "" {
+			names[from] = strings.TrimSpace(email.FromName)
+		}
+		for index, address := range parseMailboxAddresses(email.To) {
+			if sameMailboxAddress(address, mailbox) || names[address] != "" || index >= len(email.ToNames) {
+				continue
+			}
+			if name := strings.TrimSpace(email.ToNames[index]); name != "" {
+				names[address] = name
+			}
 		}
 	}
 	if len(participants) == 0 {
 		return "Conversation", ""
 	}
-	names := make([]string, 0, len(participants))
-	emails := make([]string, 0, len(participants))
-	for _, p := range participants {
-		names = append(names, p.name)
-		emails = append(emails, p.email)
+	labels := make([]string, 0, len(participants))
+	for _, address := range participants {
+		if names[address] != "" {
+			labels = append(labels, names[address])
+		} else {
+			labels = append(labels, address)
+		}
 	}
-	return strings.Join(names, ", "), strings.Join(emails, ", ")
+	return strings.Join(labels, ", "), strings.Join(participants, ", ")
 }
 
 func buildConversations(account mailstore.Account, emails []models.Email) []Conversation {
@@ -225,23 +246,45 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 		if emails[i].Folder == "" {
 			emails[i].Folder = conversationViewFolder
 		}
+		emails[i].Subject = string(api.DecodeLegacyText([]byte(emails[i].Subject)))
+		emails[i].Preview = string(api.DecodeLegacyText([]byte(emails[i].Preview)))
+		emails[i].Body = string(api.DecodeLegacyText([]byte(emails[i].Body)))
+		emails[i].HTML = string(api.DecodeLegacyText([]byte(emails[i].HTML)))
 		emails[i].AccountEmail = account.Email
 		emails[i].AccountLabel = account.Label
 		emails[i].AccountColor = account.Color
 	}
 
-	threads := api.ThreadMessages(emails)
-	conversations := make([]Conversation, 0, len(threads))
-	for _, thread := range threads {
-		if len(thread.Messages) == 0 {
-			continue
+	type conversationGroup struct {
+		participants []string
+		messages     []models.Email
+	}
+	groups := make(map[string]*conversationGroup)
+	for _, email := range emails {
+		participants := messageParticipants(email, account.Email)
+		key := strings.Join(participants, "\x00")
+		group := groups[key]
+		if group == nil {
+			group = &conversationGroup{participants: participants}
+			groups[key] = group
 		}
-		title, peerEmail := conversationTitle(thread.Messages, account.Email)
-		subject := stdhtml.UnescapeString(strings.TrimSpace(thread.Root.Subject))
+		group.messages = append(group.messages, email)
+	}
+
+	conversations := make([]Conversation, 0, len(groups))
+	for _, group := range groups {
+		sort.SliceStable(group.messages, func(i, j int) bool {
+			if group.messages[i].Date.Equal(group.messages[j].Date) {
+				return group.messages[i].ID < group.messages[j].ID
+			}
+			return group.messages[i].Date.Before(group.messages[j].Date)
+		})
+		title, peerEmail := conversationTitle(group.messages, account.Email, group.participants)
+		subject := stdhtml.UnescapeString(strings.TrimSpace(group.messages[0].Subject))
 		if subject == "" {
 			subject = "(no subject)"
 		}
-		latest := thread.Latest
+		latest := group.messages[len(group.messages)-1]
 		preview := stdhtml.UnescapeString(strings.TrimSpace(latest.Preview))
 		if preview == "" {
 			preview = stdhtml.UnescapeString(strings.TrimSpace(latest.Body))
@@ -250,18 +293,18 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 			preview = subject
 		}
 		conversation := Conversation{
-			ID:           conversationID(account.ID, thread),
+			ID:           conversationID(account.ID, group.participants),
 			Title:        title,
 			PeerEmail:    peerEmail,
 			Subject:      subject,
 			Preview:      preview,
 			Latest:       latest,
-			Count:        len(thread.Messages),
+			Count:        len(group.messages),
 			AccountEmail: account.Email,
 			AccountLabel: account.Label,
 			AccountColor: account.Color,
 		}
-		for _, email := range thread.Messages {
+		for _, email := range group.messages {
 			// Older mirror rows may have marked cid-referenced images as regular
 			// attachments. Reclassify them from the cached HTML before building both
 			// the conversation summary and its message bubbles.
@@ -305,7 +348,17 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			continue
 		}
 		result.Emails = tagMirrorEmails(emails, account)
-		conversations = append(conversations, buildConversations(account, result.Emails)...)
+		accountConversations := buildConversations(account, result.Emails)
+		notes, err := h.mailDB.ListConversationNotes(c.UserContext(), account.ID)
+		if err != nil {
+			result.Err = err
+			results = append(results, result)
+			continue
+		}
+		for i := range accountConversations {
+			accountConversations[i].Note = notes[accountConversations[i].ID]
+		}
+		conversations = append(conversations, accountConversations...)
 		results = append(results, result)
 	}
 	sort.SliceStable(conversations, func(i, j int) bool {

@@ -28,6 +28,7 @@ type ConversationSummaryJSON struct {
 	AccountEmail   string `json:"accountEmail,omitempty"`
 	AccountLabel   string `json:"accountLabel,omitempty"`
 	AccountColor   string `json:"accountColor,omitempty"`
+	Note           string `json:"note,omitempty"`
 }
 
 // ConversationMessageJSON is the detail model for one chat bubble. HTML is
@@ -103,6 +104,7 @@ func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON 
 		AccountEmail:   conversation.AccountEmail,
 		AccountLabel:   conversation.AccountLabel,
 		AccountColor:   conversation.AccountColor,
+		Note:           conversation.Note,
 	}
 }
 
@@ -310,7 +312,8 @@ func filterConversationJSON(conversations []Conversation, query string) []Conver
 		matched := strings.Contains(strings.ToLower(conversation.Title), query) ||
 			strings.Contains(strings.ToLower(conversation.PeerEmail), query) ||
 			strings.Contains(strings.ToLower(conversation.Subject), query) ||
-			strings.Contains(strings.ToLower(conversation.Preview), query)
+			strings.Contains(strings.ToLower(conversation.Preview), query) ||
+			strings.Contains(strings.ToLower(conversation.Note), query)
 		if !matched {
 			for _, message := range conversation.Messages {
 				if strings.Contains(strings.ToLower(message.Email.From), query) ||
@@ -383,4 +386,102 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
 	return c.JSON(fiber.Map{"conversation": conversationDetailJSONForLocale(*selected, CurrentLocale(c))})
+}
+
+func (h *EmailHandler) HandleConversationNoteJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	conversationID := strings.TrimSpace(c.Params("id"))
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	var body struct {
+		Note string `json:"note"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	body.Note = strings.TrimSpace(body.Note)
+	if len([]rune(body.Note)) > 200 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Conversation note must not exceed 200 characters"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation note"})
+	}
+	ownerID, _ := sess.Get("user_id").(string)
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), ownerID, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	if err := h.mailDB.SetConversationNote(c.UserContext(), account.ID, conversationID, body.Note); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation note"})
+	}
+	return c.JSON(fiber.Map{"ok": true, "note": body.Note})
+}
+
+func (h *EmailHandler) HandleConversationMessageDeleteJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+
+	conversationID := strings.TrimSpace(c.Params("id"))
+	uid := strings.TrimSpace(c.Params("uid"))
+	var body struct {
+		Folder string `json:"folder"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	body.Folder = strings.TrimSpace(body.Folder)
+	if uid == "" || body.Folder == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Message folder and UID are required"})
+	}
+
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	messageFound := false
+	for _, message := range selected.Messages {
+		if message.Email.ID == uid && message.Email.Folder == body.Folder {
+			messageFound = true
+			break
+		}
+	}
+	if !messageFound {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found in conversation"})
+	}
+
+	client, account, err := h.messageClientForAccount(c, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not connect to the mail server"})
+	}
+	defer client.Close()
+
+	trash, err := client.DiscoverTrashFolder()
+	if err != nil || strings.TrimSpace(trash) == "" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Trash folder could not be found; the email was not permanently deleted"})
+	}
+	if strings.EqualFold(strings.TrimSpace(trash), body.Folder) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "This email is already in Trash; permanent deletion is not available here"})
+	}
+	if err := client.MoveMessage(body.Folder, uid, trash); err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not move the email to Trash"})
+	}
+	if err := h.mailDB.DeleteMessage(c.UserContext(), account.ID, body.Folder, uid); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email was moved to Trash, but the local mailbox could not be updated"})
+	}
+
+	return c.JSON(fiber.Map{"ok": true})
 }

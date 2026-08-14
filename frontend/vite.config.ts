@@ -41,8 +41,6 @@ export default defineConfig(({ command, mode }) => {
         "/language": backendProxy,
         "/auth": backendProxy,
         "/settings": backendProxy,
-        "/folder": backendProxy,
-        "/calendar": backendProxy,
         "/events": backendProxy,
         "/sw.js": backendProxy,
         "/licenses.txt": backendProxy,

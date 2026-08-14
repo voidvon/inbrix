@@ -58,6 +58,20 @@ export function getConversation(id: string) {
   return apiFetch<ConversationDetailResponse>(`/api/conversations/${encodeURIComponent(id)}`);
 }
 
+export function saveConversationNote(id: string, note: string) {
+  return apiFetch<{ ok: boolean; note: string }>(`/api/conversations/${encodeURIComponent(id)}/note`, {
+    method: "PUT",
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function deleteConversationMessage(conversationId: string, uid: string, folder: string) {
+  return apiFetch<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(uid)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ folder }),
+  });
+}
+
 export function resyncAttachments() {
   return apiFetch<{ ok: boolean; queued: boolean; account: string }>("/api/accounts/resync-attachments", { method: "POST" });
 }

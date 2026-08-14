@@ -199,6 +199,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_list ON messages(account_id, folder_name, date_unix DESC, uid DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, folder_name, subject)`,
+		`CREATE TABLE IF NOT EXISTS conversation_notes (
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, conversation_id),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -210,6 +219,49 @@ func (s *Store) migrate(ctx context.Context) error {
 	// users upgrading an existing mirror database.
 	if err := s.ensureMessageAttachmentMetadataColumn(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) ListConversationNotes(ctx context.Context, accountID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT conversation_id, note FROM conversation_notes WHERE account_id = ?`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list conversation notes: %w", err)
+	}
+	defer rows.Close()
+	notes := make(map[string]string)
+	for rows.Next() {
+		var conversationID, note string
+		if err := rows.Scan(&conversationID, &note); err != nil {
+			return nil, fmt.Errorf("mailstore: scan conversation note: %w", err)
+		}
+		notes[conversationID] = note
+	}
+	return notes, rows.Err()
+}
+
+func (s *Store) SetConversationNote(ctx context.Context, accountID, conversationID, note string) error {
+	accountID = strings.TrimSpace(accountID)
+	conversationID = strings.TrimSpace(conversationID)
+	if accountID == "" || conversationID == "" {
+		return fmt.Errorf("mailstore: conversation note account and conversation are required")
+	}
+	note = strings.TrimSpace(note)
+	if note == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM conversation_notes WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID)
+		if err != nil {
+			return fmt.Errorf("mailstore: delete conversation note: %w", err)
+		}
+		return nil
+	}
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO conversation_notes(account_id, conversation_id, note, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(account_id, conversation_id) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at`,
+		accountID, conversationID, note, now, now)
+	if err != nil {
+		return fmt.Errorf("mailstore: set conversation note: %w", err)
 	}
 	return nil
 }

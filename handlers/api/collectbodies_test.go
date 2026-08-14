@@ -45,6 +45,44 @@ func TestSinglePartPlainBase64(t *testing.T) {
 	}
 }
 
+func TestPlainBodyWindows1252Charset(t *testing.T) {
+	body := string([]byte{'I', 't', 0x92, 's', ' ', 0x80, '5'})
+	got := collect(t, "text/plain; charset=windows-1252", "", "", body)
+	if got.Body != "It’s €5" {
+		t.Fatalf("Windows-1252 body not converted to UTF-8: %q", got.Body)
+	}
+}
+
+func TestHTMLBodyUsesMetaCharset(t *testing.T) {
+	body := string(append([]byte(`<html><head><meta charset="windows-1252"></head><body>`), []byte{'I', 't', 0x92, 's', ' ', 0x80, '5', '<', '/', 'b', 'o', 'd', 'y', '>'}...))
+	got := collect(t, "text/html", "", "", body)
+	if !strings.Contains(got.HTML, "It’s €5") {
+		t.Fatalf("HTML meta charset not converted to UTF-8: %q", got.HTML)
+	}
+}
+
+func TestPlainBodyGB18030Charset(t *testing.T) {
+	got := collect(t, "text/plain; charset=gb2312", "base64", "", "xOO6ww==")
+	if got.Body != "你好" {
+		t.Fatalf("GB2312 body not converted to UTF-8: %q", got.Body)
+	}
+}
+
+func TestUndeclaredGB18030HTML(t *testing.T) {
+	body := string([]byte{0xcf, 0xb5, 0xcd, 0xb3, 0xd3, 0xca, 0xbc, 0xfe})
+	got := collect(t, "text/html", "", "", body)
+	if got.HTML != "系统邮件" {
+		t.Fatalf("undeclared GB18030 HTML not converted to UTF-8: %q", got.HTML)
+	}
+}
+
+func TestLegacyWindows1252Fallback(t *testing.T) {
+	got := string(DecodeLegacyText([]byte{'I', 't', 0x92, 's'}))
+	if got != "It’s" {
+		t.Fatalf("legacy Windows-1252 text not converted to UTF-8: %q", got)
+	}
+}
+
 func TestMultipartAlternativeBase64Plain(t *testing.T) {
 	body := "--b1\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\n" +

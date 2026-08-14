@@ -162,3 +162,63 @@
 .ProseMirror ol {
   padding-left: 1.5rem;
 }
+
+.reply-quote {
+  margin: 0.75rem 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+}
+
+.reply-quote-toolbar {
+  display: flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem 0.25rem 0.65rem;
+  color: var(--muted-foreground);
+}
+
+.reply-quote-toolbar button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: calc(var(--radius) * 0.65);
+  padding: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.reply-quote-toolbar button:hover {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.reply-quote-toolbar button:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-quote-toolbar svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+}
+
+.reply-quote-delete:hover {
+  color: var(--destructive) !important;
+}
+
+.reply-quote-content {
+  margin: 0 0.65rem 0.65rem;
+  border-left: 2px solid var(--border);
+  padding: 0.25rem 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.reply-quote[data-collapsed="true"] > .reply-quote-content {
+  display: none;
+}
