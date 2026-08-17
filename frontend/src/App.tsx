@@ -11,7 +11,14 @@ import {
   ChevronRight,
   Code2,
   FilePenLine,
+  FileArchive,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
   Folder,
+  Download,
+  ExternalLink,
+  Eye,
   Italic,
   Link,
   Languages,
@@ -52,7 +59,7 @@ import UnderlineExtension from "@tiptap/extension-underline";
 import { toast } from "sonner";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMessage, getSignatures, markConversationRead, markConversationUnread, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -64,8 +71,10 @@ import { Separator } from "./components/ui/separator";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Skeleton } from "./components/ui/skeleton";
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "./components/ui/pagination";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
 import { Textarea } from "./components/ui/textarea";
-import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailMessage, Mailbox, MailSummary } from "./types";
+import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailAttachment, MailMessage, Mailbox, MailSummary } from "./types";
 
 const EmailImageExtension = ImageExtension.configure({ inline: true, allowBase64: false });
 
@@ -80,6 +89,28 @@ const zh = {
   trashFolder: "已删除",
   junkFolder: "垃圾邮件",
   archiveFolder: "归档",
+  attachmentManager: "附件管理",
+  attachmentSearch: "搜索文件名、邮件主题或发件人",
+  attachmentCount: "个附件",
+  noAttachments: "暂无附件",
+  allAttachmentTypes: "全部类型",
+  attachmentImages: "图片",
+  attachmentPDF: "PDF",
+  attachmentDocuments: "文档",
+  attachmentSpreadsheets: "表格",
+  attachmentArchives: "压缩包",
+  attachmentName: "文件名",
+  attachmentMessage: "所属邮件",
+  attachmentSender: "发件人",
+  attachmentSize: "大小",
+  attachmentDate: "日期",
+  attachmentActions: "操作",
+  attachmentPage: "页码",
+  previewAttachment: "预览附件",
+  downloadAttachment: "下载附件",
+  viewOriginalMessage: "查看原邮件",
+  previousPage: "上一页",
+  nextPage: "下一页",
   settings: "设置",
   darkMode: "深色模式",
   lightMode: "浅色模式",
@@ -246,6 +277,28 @@ const en = {
   trashFolder: "Trash",
   junkFolder: "Junk",
   archiveFolder: "Archive",
+  attachmentManager: "Attachments",
+  attachmentSearch: "Search filename, message subject, or sender",
+  attachmentCount: "attachments",
+  noAttachments: "No attachments",
+  allAttachmentTypes: "All types",
+  attachmentImages: "Images",
+  attachmentPDF: "PDF",
+  attachmentDocuments: "Documents",
+  attachmentSpreadsheets: "Spreadsheets",
+  attachmentArchives: "Archives",
+  attachmentName: "Filename",
+  attachmentMessage: "Message",
+  attachmentSender: "Sender",
+  attachmentSize: "Size",
+  attachmentDate: "Date",
+  attachmentActions: "Actions",
+  attachmentPage: "Page",
+  previewAttachment: "Preview attachment",
+  downloadAttachment: "Download attachment",
+  viewOriginalMessage: "View original message",
+  previousPage: "Previous page",
+  nextPage: "Next page",
   settings: "Settings",
   darkMode: "Dark mode",
   lightMode: "Light mode",
@@ -455,6 +508,7 @@ function App() {
       if (!anchor || anchor.target || anchor.hasAttribute("download")) return;
       const url = new URL(anchor.href, window.location.href);
       const isMailRoute = url.pathname === "/inbox" ||
+        url.pathname === "/attachments" ||
         url.pathname === "/calendar" ||
         url.pathname === "/calendar/week" ||
         url.pathname.startsWith("/folder/");
@@ -473,6 +527,7 @@ function App() {
   if (path === "/login" || path === "/user-login") return <LoginScreen copy={zh} />;
   if (path === "/register") return <RegisterScreen copy={zh} />;
   if (path === "/settings") return <SettingsPage copy={zh} />;
+  if (path === "/attachments") return <AttachmentsPage />;
   if (path === "/calendar" || path === "/calendar/week") return <CalendarPage />;
   if (path.startsWith("/folder/")) return <FolderPage key={path} folder={decodeURIComponent(path.slice("/folder/".length))} />;
   return <InboxPage />;
@@ -698,7 +753,7 @@ function InboxPage() {
   );
 }
 
-function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar"; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
+function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar" | "attachments"; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
@@ -706,8 +761,9 @@ function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, curre
     <aside className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-[14.375rem] lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
       <Button data-testid="compose-button" className="mb-4 w-full" onClick={onCompose}><Pencil />{copy.compose}</Button>
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
-        <Button asChild variant={!currentFolder && currentView !== "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView !== "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><a href="/inbox" onClick={onClose}><MessageCircle /><span>{copy.conversations}</span></a></Button>
-        {calendarEnabled && <Button asChild variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><a href="/calendar" onClick={onClose}><CalendarDays /><span>{copy.calendar}</span></a></Button>}
+        <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView !== "calendar" && currentView !== "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView !== "calendar" && currentView !== "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
+        <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
+        {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
         <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
         {foldersOpen && <ScrollArea className="min-h-0 flex-1" contentClassName="flex flex-col gap-1">{visibleFolders.map((folder) => <FolderLink key={folder.name} copy={copy} folder={folder} selected={folder.name === currentFolder} onClose={onClose} />)}{!visibleFolders.length && <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>}</ScrollArea>}
         <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
@@ -783,7 +839,7 @@ function folderLabel(copy: Copy, folder: Mailbox) {
 function FolderLink({ copy, folder, selected = false, onClose }: { copy: Copy; folder: Mailbox; selected?: boolean; onClose: () => void }) {
   const kind = folderKind(folder);
   const Icon = kind === "trash" ? Trash2 : kind === "junk" ? TriangleAlert : kind === "drafts" ? FilePenLine : kind === "archive" ? Archive : Folder;
-  return <Button asChild variant={selected ? "secondary" : "ghost"} size="sm" className={cn("w-full justify-start gap-2.5 pl-9 text-muted-foreground", selected && "text-sidebar-accent-foreground")}><a href={`/folder/${encodeURIComponent(folder.name)}`} onClick={onClose}><Icon /><span className="min-w-0 flex-1 truncate">{folderLabel(copy, folder)}</span>{folder.unreadCount ? <Badge variant="secondary" className="min-w-5 justify-center px-1.5 text-[10px]">{folder.unreadCount}</Badge> : null}</a></Button>;
+  return <Button nativeButton={false} render={<a href={`/folder/${encodeURIComponent(folder.name)}`} onClick={onClose} />} variant={selected ? "secondary" : "ghost"} size="sm" className={cn("w-full justify-start gap-2.5 pl-9 text-muted-foreground", selected && "text-sidebar-accent-foreground")}><Icon /><span className="min-w-0 flex-1 truncate">{folderLabel(copy, folder)}</span>{folder.unreadCount ? <Badge variant="secondary" className="min-w-5 justify-center px-1.5 text-[10px]">{folder.unreadCount}</Badge> : null}</Button>;
 }
 
 function ConversationList({ copy, data, search, onSearch, onMenu, loading, error, selectedId, onSelect, onMarkUnread, onDelete, onRefresh, className }: { copy: Copy; data?: ConversationListResponse; search: string; onSearch: (value: string) => void; onMenu: () => void; loading: boolean; error: Error | null; selectedId: string | null; onSelect: (id: string) => void; onMarkUnread: (conversation: ConversationSummary) => void; onDelete: (conversation: ConversationSummary) => void; onRefresh: () => void; className?: string }) {
@@ -1405,7 +1461,6 @@ function htmlToPlainText(html: string) {
   return lines
     .map(({ depth, text }) => `${depth ? `${">".repeat(depth)} ` : ""}${text.trimEnd()}`.trimEnd())
     .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -1580,7 +1635,7 @@ function LoginScreen({ copy }: { copy: Copy }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const mutation = useMutation({ mutationFn: () => signIn(login, password), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>lilmail</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form><Button asChild variant="link" size="sm"><a href="/register">Create an application account</a></Button></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>lilmail</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form><Button nativeButton={false} render={<a href="/register" />} variant="link" size="sm">Create an application account</Button></div></main>;
 }
 
 function RegisterScreen({ copy }: { copy: Copy }) {
@@ -1588,11 +1643,140 @@ function RegisterScreen({ copy }: { copy: Copy }) {
   const [error, setError] = useState("");
   const mutation = useMutation({ mutationFn: () => register(form.login, form.displayName, form.password, form.confirmation), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
   const field = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form><Button asChild variant="link"><a href="/login">{copy.login}</a></Button></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form><Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
 }
 
 function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
   return <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6"><a className="flex items-center gap-2 font-semibold" href="/inbox"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</a><h1 className="text-sm font-semibold">{title}</h1><div>{action}</div></header>;
+}
+
+type AttachmentKind = "all" | "images" | "pdf" | "documents" | "spreadsheets" | "archives";
+type AttachmentPageItem = number | "start-ellipsis" | "end-ellipsis";
+
+function attachmentPageItems(currentPage: number, pageCount: number): AttachmentPageItem[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+  const pages: AttachmentPageItem[] = [1];
+  if (currentPage > 4) pages.push("start-ellipsis");
+  for (let page = Math.max(2, currentPage - 1); page <= Math.min(pageCount - 1, currentPage + 1); page += 1) pages.push(page);
+  if (currentPage < pageCount - 3) pages.push("end-ellipsis");
+  pages.push(pageCount);
+  return pages;
+}
+
+function attachmentFileIcon(attachment: MailAttachment) {
+  const type = attachment.contentType.toLowerCase();
+  const filename = attachment.filename.toLowerCase();
+  if (type.startsWith("image/")) return FileImage;
+  if (type.includes("spreadsheet") || type.includes("excel") || /\.(?:xls|xlsx|csv)$/.test(filename)) return FileSpreadsheet;
+  if (type.includes("zip") || type.includes("rar") || type.includes("7z") || /\.(?:zip|rar|7z|gz)$/.test(filename)) return FileArchive;
+  return FileText;
+}
+
+function attachmentDownloadURL(attachment: MailAttachment, inline = false) {
+  const query = new URLSearchParams({ account_email: attachment.accountEmail });
+  if (inline) query.set("inline", "true");
+  return `/api/attachment/${encodeURIComponent(attachment.id)}?${query.toString()}`;
+}
+
+function attachmentMessageURL(attachment: MailAttachment) {
+  return `/folder/${encodeURIComponent(attachment.folder)}?message=${encodeURIComponent(attachment.messageId)}`;
+}
+
+function AttachmentsPage() {
+  const metadata = useQuery({ queryKey: ["conversations", "attachment-shell"], queryFn: () => getConversations() });
+  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
+  const locale = useLocale(metadata.data?.locale);
+  const [search, setSearch] = useState("");
+  const [kind, setKind] = useState<AttachmentKind>("all");
+  const [offset, setOffset] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const attachments = useQuery({
+    queryKey: ["attachments", debouncedSearch, kind, offset],
+    queryFn: () => getMailAttachments(debouncedSearch, kind, offset),
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("lilmail-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  const authenticated = (metadata.error instanceof ApiError && metadata.error.status === 401) || (attachments.error instanceof ApiError && attachments.error.status === 401);
+  if (authenticated) return <LoginScreen copy={locale} />;
+  const kinds: Array<{ value: AttachmentKind; label: string }> = [
+    { value: "all", label: locale.allAttachmentTypes },
+    { value: "images", label: locale.attachmentImages },
+    { value: "pdf", label: locale.attachmentPDF },
+    { value: "documents", label: locale.attachmentDocuments },
+    { value: "spreadsheets", label: locale.attachmentSpreadsheets },
+    { value: "archives", label: locale.attachmentArchives },
+  ];
+  const pageSize = attachments.data?.limit || 100;
+  const pageCount = Math.max(1, Math.ceil((attachments.data?.total || 0) / pageSize));
+  const currentPage = Math.min(pageCount, Math.floor(offset / pageSize) + 1);
+  const changePage = (page: number) => setOffset((page - 1) * pageSize);
+  return (
+    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
+      {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
+      <Sidebar copy={locale} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentView="attachments" onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
+          <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={locale.folders} title={locale.folders}><Menu /></Button>
+          <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-semibold">{locale.attachmentManager}</h1><p className="text-xs text-muted-foreground">{attachments.data?.total || 0} {locale.attachmentCount}</p></div>
+        </header>
+        <div className="flex flex-col items-start justify-start gap-2 border-b bg-card px-3 py-3 sm:flex-row sm:items-center sm:px-5">
+          <div className="relative flex h-8 w-full min-w-0 items-center sm:w-[220px] sm:flex-none"><Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" /><Input type="search" className="h-8 w-full bg-muted/60 pl-9 pr-9" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={locale.attachmentSearch} aria-label={locale.attachmentSearch} />{search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => { setSearch(""); setOffset(0); }} aria-label={locale.cancel}><X /></Button>}</div>
+          <Select value={kind} onValueChange={(value) => { setKind(value as AttachmentKind); setOffset(0); }}><SelectTrigger className="h-8 w-full min-w-0 sm:w-48" aria-label={locale.allAttachmentTypes}><SelectValue>{kinds.find((item) => item.value === kind)?.label}</SelectValue></SelectTrigger><SelectContent>{kinds.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+          {attachments.isPending && <ListSkeleton />}
+          {!attachments.isPending && attachments.error && <ErrorState copy={locale} onRetry={() => void attachments.refetch()} />}
+          {!attachments.isPending && !attachments.error && !attachments.data?.attachments.length && <EmptyState icon={<Paperclip />} text={locale.noAttachments} />}
+          {!!attachments.data?.attachments.length && <Table className="min-w-[780px] table-fixed">
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[30%] px-5">{locale.attachmentName}</TableHead>
+                <TableHead className="w-[27%]">{locale.attachmentMessage}</TableHead>
+                <TableHead className="w-[17%]">{locale.attachmentSender}</TableHead>
+                <TableHead className="w-[9%] text-right">{locale.attachmentSize}</TableHead>
+                <TableHead className="w-[8rem] text-right">{locale.attachmentDate}</TableHead>
+                <TableHead className="w-[7.5rem] pr-5 text-right"><span className="sr-only">{locale.attachmentActions}</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {attachments.data.attachments.map((attachment) => {
+                const Icon = attachmentFileIcon(attachment);
+                return <TableRow key={`${attachment.folder}/${attachment.messageId}/${attachment.partId || attachment.id}`}>
+                  <TableCell className="px-5 py-2.5"><div className="flex min-w-0 items-center gap-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><Icon className="size-4" /></span><strong className="min-w-0 truncate text-sm font-medium" title={attachment.filename}>{attachment.filename || locale.noSubject}</strong></div></TableCell>
+                  <TableCell><a className="block truncate text-sm hover:underline" href={attachmentMessageURL(attachment)} title={attachment.messageSubject}>{attachment.messageSubject || locale.noSubject}</a></TableCell>
+                  <TableCell><span className="block truncate text-sm text-muted-foreground" title={attachment.fromName || attachment.messageFrom}>{attachment.fromName || attachment.messageFrom}</span></TableCell>
+                  <TableCell className="text-right text-sm text-muted-foreground">{formatSize(attachment.size)}</TableCell>
+                  <TableCell className="w-[8rem] max-w-[8rem] text-right text-xs text-muted-foreground"><time className="block truncate" title={formatTime(attachment.messageDate)}>{formatTime(attachment.messageDate)}</time></TableCell>
+                  <TableCell className="pr-5"><div className="flex items-center justify-end gap-0.5"><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment, true)} target="_blank" rel="noreferrer" aria-label={locale.previewAttachment} title={locale.previewAttachment} />} variant="ghost" size="icon" className="size-8"><Eye /></Button><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment)} aria-label={locale.downloadAttachment} title={locale.downloadAttachment} />} variant="ghost" size="icon" className="size-8"><Download /></Button><Button nativeButton={false} render={<a href={attachmentMessageURL(attachment)} aria-label={locale.viewOriginalMessage} title={locale.viewOriginalMessage} />} variant="ghost" size="icon" className="size-8"><ExternalLink /></Button></div></TableCell>
+                </TableRow>;
+              })}
+            </TableBody>
+          </Table>}
+        </div>
+        {attachments.data && attachments.data.total > 0 && <footer className="flex min-h-11 flex-col items-center justify-between gap-1 px-3 py-1.5 sm:flex-row sm:px-5">
+          <span className="shrink-0 text-xs text-muted-foreground">{offset + 1}-{Math.min(offset + attachments.data.attachments.length, attachments.data.total)} / {attachments.data.total}</span>
+          <Pagination className="mx-0 w-auto justify-end">
+            <PaginationContent>
+              <PaginationItem><PaginationPrevious href="#" text={locale.previousPage} aria-label={locale.previousPage} aria-disabled={currentPage === 1} tabIndex={currentPage === 1 ? -1 : undefined} className={cn(currentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage > 1) changePage(currentPage - 1); }} /></PaginationItem>
+              {attachmentPageItems(currentPage, pageCount).map((item) => typeof item === "number"
+                ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentPage} aria-label={`${locale.attachmentPage} ${item}`} onClick={(event) => { event.preventDefault(); changePage(item); }}>{item}</PaginationLink></PaginationItem>
+                : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
+              <PaginationItem><PaginationNext href="#" text={locale.nextPage} aria-label={locale.nextPage} aria-disabled={currentPage === pageCount} tabIndex={currentPage === pageCount ? -1 : undefined} className={cn(currentPage === pageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage < pageCount) changePage(currentPage + 1); }} /></PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </footer>}
+      </main>
+      <ComposeDialog copy={locale} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void attachments.refetch()} />
+      <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
+    </div>
+  );
 }
 
 function FolderMessageRow({ copy, message, address, selected, junkActions, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; junkActions: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
@@ -1728,7 +1912,7 @@ function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
 }
 
 function SettingsPage({ copy }: { copy: Copy }) {
-  return <div className="min-h-screen bg-background"><PageHeader title={copy.settings} action={<Button asChild variant="ghost" size="sm"><a href="/inbox">{copy.conversations}</a></Button>} /><main className="mx-auto max-w-4xl p-4 py-8 lg:p-8"><SettingsContent copy={copy} /></main></div>;
+  return <div className="min-h-screen bg-background"><PageHeader title={copy.settings} action={<Button nativeButton={false} render={<a href="/inbox" />} variant="ghost" size="sm">{copy.conversations}</Button>} /><main className="mx-auto max-w-4xl p-4 py-8 lg:p-8"><SettingsContent copy={copy} /></main></div>;
 }
 
 function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -1857,11 +2041,11 @@ function SignatureSettings({ copy }: { copy: Copy }) {
         <div><h2 className="flex items-center gap-2 text-lg font-semibold"><SignatureIcon className="size-5" />{copy.signatureSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.signatureSettingsDescription}</p></div>
         <Button onClick={openAdd}><Plus />{copy.addSignature}</Button>
       </div>
-      <div className="mt-5 overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[36rem] text-left text-sm">
-          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.signatureName}</th><th className="px-4 py-2.5 font-medium">{copy.signaturePreview}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
-          <tbody>{signatures.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.loading}</td></tr> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <tr className="border-b last:border-b-0" key={signature.id}><td className="px-4 py-3"><div className="flex items-center gap-2"><span className="font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></td><td className="max-w-md px-4 py-3 text-muted-foreground"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></td><td className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => { setError(""); setDeleteTarget(signature); }} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</td></tr>}</tbody>
-        </table>
+      <div className="mt-5 overflow-hidden rounded-lg border">
+        <Table className="min-w-[36rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.signatureName}</TableHead><TableHead className="px-4">{copy.signaturePreview}</TableHead><TableHead className="w-24 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
+          <TableBody>{signatures.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <TableRow key={signature.id}><TableCell className="px-4 py-3"><div className="flex items-center gap-2"><span className="truncate font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => { setError(""); setDeleteTarget(signature); }} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</TableCell></TableRow>}</TableBody>
+        </Table>
       </div>
       {(signatures.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (signatures.error instanceof Error ? signatures.error.message : copy.loadFailed)}</p>}
       <Dialog open={open} onOpenChange={(next) => { if (!persist.isPending) setOpen(next); }}>
@@ -1928,11 +2112,11 @@ function AgentSettings({ copy }: { copy: Copy }) {
         <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Bot className="size-5" />{copy.agentSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.agentSettingsDescription}</p></div>
         <Button onClick={openAdd}><Plus />{copy.addAgent}</Button>
       </div>
-      <div className="mt-5 overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[36rem] text-left text-sm">
-          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.agentName}</th><th className="px-4 py-2.5 font-medium">{copy.agentPrompt}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
-          <tbody>{agents.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.loading}</td></tr> : agents.data?.agents.length ? agents.data.agents.map((agent) => <tr className="border-b last:border-b-0" key={agent.id}><td className="px-4 py-3 font-medium">{agent.name}</td><td className="max-w-md px-4 py-3 text-muted-foreground"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p></td><td className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</td></tr>}</tbody>
-        </table>
+      <div className="mt-5 overflow-hidden rounded-lg border">
+        <Table className="min-w-[36rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.agentName}</TableHead><TableHead className="px-4">{copy.agentPrompt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
+          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
+        </Table>
       </div>
       {(agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (agents.error instanceof Error ? agents.error.message : copy.loadFailed)}</p>}
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
@@ -2030,11 +2214,11 @@ function AISettings({ copy }: { copy: Copy }) {
         <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-5" />{copy.aiSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.aiSettingsDescription}</p></div>
         <Button onClick={openAdd}><Plus />{copy.addAIModel}</Button>
       </div>
-      <div className="mt-5 overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[40rem] text-left text-sm">
-          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.aiModel}</th><th className="px-4 py-2.5 font-medium">{copy.aiProvider}</th><th className="px-4 py-2.5 font-medium">{copy.aiReasoningEffort}</th><th className="px-4 py-2.5 font-medium">{copy.aiBaseURL}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
-          <tbody>{models.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={5}>{copy.loading}</td></tr> : models.data?.models.length ? models.data.models.map((item) => <tr className="border-b last:border-b-0" key={item.id}><td className="px-4 py-3"><div className="flex items-center gap-2"><span className="font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></td><td className="px-4 py-3">OpenAI</td><td className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</td><td className="max-w-64 truncate px-4 py-3 text-muted-foreground" title={item.baseUrl}>{item.baseUrl}</td><td className="px-4 py-3"><div className="flex justify-end gap-2">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</td></tr>}</tbody>
-        </table>
+      <div className="mt-5 overflow-hidden rounded-lg border">
+        <Table className="min-w-[46rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[19%] px-4">{copy.aiModel}</TableHead><TableHead className="w-[12%] px-4">{copy.aiProvider}</TableHead><TableHead className="w-[16%] px-4">{copy.aiReasoningEffort}</TableHead><TableHead className="px-4">{copy.aiBaseURL}</TableHead><TableHead className="w-52 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
+          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">OpenAI</TableCell><TableCell className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
+        </Table>
       </div>
       {(models.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (models.error instanceof Error ? models.error.message : copy.loadFailed)}</p>}
       <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setEditingModel(null); }}>
@@ -2166,23 +2350,23 @@ function MailboxSettings({ copy }: { copy: Copy }) {
         <div><h2 className="text-lg font-semibold">{copy.mailboxManagement}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.mailboxDescription}</p></div>
         <Button onClick={() => setAddOpen(true)}><Plus />{copy.addAccount}</Button>
       </div>
-      <div className="mt-5 overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[44rem] text-left text-sm">
-          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.account}</th><th className="px-4 py-2.5 font-medium">IMAP</th><th className="px-4 py-2.5 font-medium">SMTP</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
-          <tbody>
+      <div className="mt-5 overflow-hidden rounded-lg border">
+        <Table className="min-w-[44rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[34%] px-4">{copy.account}</TableHead><TableHead className="w-[24%] px-4">IMAP</TableHead><TableHead className="w-[24%] px-4">SMTP</TableHead><TableHead className="w-[18%] px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {accounts.isPending && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.loading}</TableCell></TableRow>}
             {accounts.data?.accounts.map((account: ConnectedAccount) => (
-              <tr className="border-b last:border-b-0" key={account.email}>
-                <td className="px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0"><strong className="block max-w-52 truncate font-medium">{account.label || account.email}</strong><span className="block max-w-52 truncate text-xs text-muted-foreground">{account.email}</span></div></div></td>
-                <td className="px-4 py-3 whitespace-nowrap">{account.imapServer}{account.imapPort ? `:${account.imapPort}` : ""}</td>
-                <td className="px-4 py-3 whitespace-nowrap">{account.smtpServer || "-"}{account.smtpPort ? `:${account.smtpPort}` : ""}</td>
-                <td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(account.email)}>{copy.remove}</Button></td>
-              </tr>
+              <TableRow key={account.email}>
+                <TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0"><strong className="block truncate font-medium">{account.label || account.email}</strong><span className="block truncate text-xs text-muted-foreground">{account.email}</span></div></div></TableCell>
+                <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.imapServer}${account.imapPort ? `:${account.imapPort}` : ""}`}>{account.imapServer}{account.imapPort ? `:${account.imapPort}` : ""}</span></TableCell>
+                <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.smtpServer || "-"}${account.smtpPort ? `:${account.smtpPort}` : ""}`}>{account.smtpServer || "-"}{account.smtpPort ? `:${account.smtpPort}` : ""}</span></TableCell>
+                <TableCell className="px-4 py-3 text-right"><Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(account.email)}>{copy.remove}</Button></TableCell>
+              </TableRow>
             ))}
-            {!accounts.isPending && !accounts.data?.accounts.length && <tr><td className="px-4 py-10 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</td></tr>}
-          </tbody>
-        </table>
+            {!accounts.isPending && !accounts.data?.accounts.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>}
+          </TableBody>
+        </Table>
       </div>
-      {accounts.isPending && <p className="py-3 text-sm text-muted-foreground">{copy.loading}</p>}
       {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
       {error && <p className="py-2 text-xs text-destructive">{error}</p>}
       <AddAccountDialog copy={copy} open={addOpen} onOpenChange={setAddOpen} onAdded={refreshAccountData} />

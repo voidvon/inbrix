@@ -1,5 +1,5 @@
 import { getCookie } from "./utils";
-import type { CalendarEvent, ConnectedAccount, ConversationDetailResponse, ConversationListResponse, MailMessage, Mailbox } from "../types";
+import type { CalendarEvent, ConnectedAccount, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, Mailbox } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -274,6 +274,13 @@ export function getFolderMessages(folder: string) {
 
 export function getMessage(folder: string, id: string) {
   return apiFetch<MailMessage>(`/api/mail/messages/${encodeURIComponent(id)}?folder=${encodeURIComponent(folder)}`);
+}
+
+export function getMailAttachments(query: string, type: string, offset = 0, limit = 100) {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (query.trim()) params.set("q", query.trim());
+  if (type && type !== "all") params.set("type", type);
+  return apiFetch<MailAttachmentListResponse>(`/api/attachments?${params.toString()}`);
 }
 
 function mailMessageMutationPath(folder: string, id: string, accountEmail?: string, suffix = "") {

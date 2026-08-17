@@ -6,7 +6,6 @@ toolchain go1.25.12
 
 require (
 	github.com/BurntSushi/toml v1.4.0
-	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap v1.2.1
@@ -19,7 +18,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/vul-os/llmux v0.1.2
-	github.com/yuin/goldmark v1.8.2
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0
@@ -29,7 +27,6 @@ require (
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
-	github.com/JohannesKaufmann/dom v0.3.1 // indirect
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect

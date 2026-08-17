@@ -109,16 +109,18 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 // read incrementally, so callers can build large messages into a temporary file
 // without retaining the raw attachment and its base64 representation in memory.
 func WriteMIMEMessage(w io.Writer, opts MIMEMessageOptions) error {
-	// Normalize at the MIME boundary as a final defense for every delivery path,
-	// including scheduled sends and callers outside the web handlers.
+	// Sanitize at the MIME boundary as a final defense for every delivery path,
+	// including scheduled sends and callers outside the web handlers. The
+	// sanitizer preserves HTML structure; it must not convert the body through
+	// Markdown here.
 	if opts.HTMLBody != "" {
-		normalized, err := htmlsafe.NormalizeHTML(opts.HTMLBody)
+		sanitized, err := htmlsafe.NormalizeHTML(opts.HTMLBody)
 		if err != nil {
 			return fmt.Errorf("normalize HTML body: %w", err)
 		}
-		opts.HTMLBody = normalized
-		if opts.PlainBody == "" && normalized != "" {
-			opts.PlainBody = htmlsafe.PlainTextFromHTML(normalized)
+		opts.HTMLBody = sanitized
+		if opts.PlainBody == "" && sanitized != "" {
+			opts.PlainBody = htmlsafe.PlainTextFromHTML(sanitized)
 		}
 	}
 	if opts.PlainBody == "" && opts.HTMLBody == "" {

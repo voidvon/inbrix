@@ -258,7 +258,7 @@ func main() {
 
 	// React owns every browser page. The shell is public; data endpoints remain
 	// session-gated and return JSON when the user is not authenticated.
-	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/settings", "/calendar", "/calendar/week"} {
+	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/settings", "/calendar", "/calendar/week"} {
 		app.Get(path, csrfMiddleware, serveSPA)
 	}
 	app.Get("/csrf", csrfMiddleware, func(c *fiber.Ctx) error {
@@ -396,6 +396,7 @@ func main() {
 		apiRoutes.Get("/mail/folders", webEmailHandler.HandleLocalFoldersJSON)
 		apiRoutes.Get("/mail/messages", webEmailHandler.HandleLocalFolderMessagesJSON)
 		apiRoutes.Get("/mail/messages/:uid", webEmailHandler.HandleLocalFolderMessageJSON)
+		apiRoutes.Get("/attachments", webEmailHandler.HandleLocalAttachmentsJSON)
 		apiRoutes.Post("/mail/messages/:uid/not-spam", webEmailHandler.HandleLocalJunkMessageRestoreJSON)
 		apiRoutes.Delete("/mail/messages/:uid", webEmailHandler.HandleLocalJunkMessageDeleteJSON)
 		apiRoutes.Put("/conversations/:id/note", webEmailHandler.HandleConversationNoteJSON)

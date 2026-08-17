@@ -677,6 +677,13 @@ func encodeAttachmentID(folder, uid, part string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
+// EncodeAttachmentID returns the same owner-validated download token used by
+// message detail responses. Attachment index views use it when backfilled
+// metadata predates the opaque ID field.
+func EncodeAttachmentID(folder, uid, part string) string {
+	return encodeAttachmentID(folder, uid, part)
+}
+
 // DecodeAttachmentID reverses encodeAttachmentID.
 func DecodeAttachmentID(id string) (folder, uid, part string, err error) {
 	raw, err := base64.RawURLEncoding.DecodeString(id)

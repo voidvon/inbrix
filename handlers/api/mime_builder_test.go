@@ -144,25 +144,64 @@ func TestBuildMIMEMessage_HTMLAndPlain(t *testing.T) {
 	}
 }
 
-func TestBuildMIMEMessage_NormalizesHTMLBody(t *testing.T) {
+func TestBuildMIMEMessage_SanitizesHTMLBody(t *testing.T) {
 	raw, err := BuildMIMEMessage(MIMEMessageOptions{
 		From:      "sender@example.com",
 		To:        "recipient@example.com",
 		Subject:   "safe HTML",
 		PlainBody: "Hello link",
-		HTMLBody:  `<div style="display:none"><strong>Hello</strong><script>alert(1)</script><a href="javascript:alert(1)">link</a></div>`,
+		HTMLBody:  `<div style="display:none"><strong>Hello</strong><div><br></div><script>alert(1)</script><a href="javascript:alert(1)">link</a></div>`,
 	})
 	if err != nil {
 		t.Fatalf("BuildMIMEMessage: %v", err)
 	}
 	lower := strings.ToLower(string(raw))
-	for _, banned := range []string{"<script", "javascript:", "style=", "onerror="} {
+	for _, banned := range []string{"<script", "javascript:", "onerror="} {
 		if strings.Contains(lower, banned) {
 			t.Errorf("MIME body contains %q: %q", banned, string(raw))
 		}
 	}
+	if !strings.Contains(lower, "<div") || !strings.Contains(lower, "style=3d") {
+		t.Fatalf("safe HTML structure was not preserved in MIME body: %q", string(raw))
+	}
+	if !strings.Contains(string(raw), `<div><br></div>`) {
+		t.Fatalf("intentional blank line was lost from MIME body: %q", string(raw))
+	}
 	if !strings.Contains(string(raw), "<strong>Hello</strong>") {
 		t.Fatalf("normalized formatting missing from MIME body: %q", string(raw))
+	}
+}
+
+func TestBuildMIMEMessage_PreservesImageDimensions(t *testing.T) {
+	raw, err := BuildMIMEMessage(MIMEMessageOptions{
+		From:      "sender@example.com",
+		To:        "recipient@example.com",
+		Subject:   "signature image",
+		PlainBody: "signature",
+		HTMLBody:  `<p><img src="cid:logo" alt="Logo" width="180"></p>`,
+	})
+	if err != nil {
+		t.Fatalf("BuildMIMEMessage: %v", err)
+	}
+	msg := parseMail(t, raw)
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/alternative" {
+		t.Fatalf("Content-Type = %q, params=%v, err=%v", mediaType, params, err)
+	}
+	mr := multipart.NewReader(msg.Body, params["boundary"])
+	if _, err := mr.NextPart(); err != nil {
+		t.Fatalf("read plain body part: %v", err)
+	}
+	htmlPart, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("read HTML body part: %v", err)
+	}
+	htmlBody, err := io.ReadAll(htmlPart)
+	if err != nil {
+		t.Fatalf("read HTML body: %v", err)
+	}
+	if !strings.Contains(string(htmlBody), `width="180"`) {
+		t.Fatalf("signature image width was lost from MIME HTML body: %q", string(htmlBody))
 	}
 }
 

@@ -62,6 +62,7 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		if err != nil {
 			continue
 		}
+		email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
 		bodyCached := email.BodyCached || email.Body != "" || email.HTML != ""
 		attachmentMetadataCached := email.AttachmentMetadataCached || len(email.Attachments) > 0
 		hasAttachments := email.HasAttachments || hasRegularAttachment(email.Attachments)
@@ -75,6 +76,11 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		)
 		if err != nil {
 			return fmt.Errorf("mailstore: upsert message %s/%s/%s: %w", accountID, folderName, email.ID, err)
+		}
+		if attachmentMetadataCached {
+			if err := replaceMessageAttachments(ctx, tx, accountID, folderName, uid, email.Attachments); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -96,13 +102,53 @@ func (s *Store) UpdateAttachmentMetadata(ctx context.Context, accountID, folderN
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mailstore: begin attachment metadata update: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var htmlBody string
+	if err := tx.QueryRowContext(ctx, `SELECT html FROM messages WHERE account_id = ? AND folder_name = ? AND uid = ?`, accountID, folderName, n).Scan(&htmlBody); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("mailstore: read message HTML for attachment metadata %s/%s/%s: %w", accountID, folderName, uid, err)
+	}
+	attachments = api.MarkInlineAttachmentsFromHTML(htmlBody, attachments)
+	_, err = tx.ExecContext(ctx, `
 		UPDATE messages
 		SET attachments_json = ?, has_attachments = ?, attachment_metadata_cached = 1, updated_at = ?
 		WHERE account_id = ? AND folder_name = ? AND uid = ?`,
 		marshalJSON(attachments, "[]"), boolInt(hasRegularAttachment(attachments)), time.Now().Unix(), accountID, folderName, n)
 	if err != nil {
 		return fmt.Errorf("mailstore: update attachment metadata %s/%s/%s: %w", accountID, folderName, uid, err)
+	}
+	if err := replaceMessageAttachments(ctx, tx, accountID, folderName, n, attachments); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mailstore: commit attachment metadata update: %w", err)
+	}
+	return nil
+}
+
+type messageAttachmentExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func replaceMessageAttachments(ctx context.Context, execer messageAttachmentExecer, accountID, folderName string, uid int64, attachments []models.Attachment) error {
+	if _, err := execer.ExecContext(ctx, `DELETE FROM message_attachments WHERE account_id = ? AND folder_name = ? AND uid = ?`, accountID, folderName, uid); err != nil {
+		return fmt.Errorf("mailstore: clear attachment index %s/%s/%d: %w", accountID, folderName, uid, err)
+	}
+	for index, attachment := range attachments {
+		key := strings.TrimSpace(attachment.PartID)
+		if key == "" {
+			key = strings.TrimSpace(attachment.ID)
+		}
+		if key == "" {
+			key = fmt.Sprintf("index-%d", index)
+		}
+		if _, err := execer.ExecContext(ctx, `INSERT INTO message_attachments(account_id, folder_name, uid, attachment_key, attachment_id, part_id, filename, content_type, size_bytes, is_inline, content_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			accountID, folderName, uid, key, attachment.ID, attachment.PartID, attachment.Filename, attachment.ContentType, attachment.Size, boolInt(attachment.IsInline), attachment.ContentID); err != nil {
+			return fmt.Errorf("mailstore: index attachment %s/%s/%d/%s: %w", accountID, folderName, uid, key, err)
+		}
 	}
 	return nil
 }

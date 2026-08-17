@@ -98,6 +98,29 @@ export type MailMessage = Omit<ConversationMessage, "outgoing"> & {
   accountEmail?: string;
 };
 
+export type MailAttachment = {
+  id: string;
+  partId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  folder: string;
+  messageId: string;
+  messageDate: string;
+  messageFrom: string;
+  fromName?: string;
+  messageSubject: string;
+  accountEmail: string;
+};
+
+export type MailAttachmentListResponse = {
+  attachments: MailAttachment[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset?: number;
+};
+
 export type ConnectedAccount = {
   email: string;
   label: string;

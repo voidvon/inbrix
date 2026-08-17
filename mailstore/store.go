@@ -295,6 +295,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_list ON messages(account_id, folder_name, date_unix DESC, uid DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, folder_name, subject)`,
+		`CREATE TABLE IF NOT EXISTS message_attachments (
+			account_id TEXT NOT NULL,
+			folder_name TEXT NOT NULL,
+			uid INTEGER NOT NULL,
+			attachment_key TEXT NOT NULL,
+			attachment_id TEXT NOT NULL DEFAULT '',
+			part_id TEXT NOT NULL DEFAULT '',
+			filename TEXT NOT NULL DEFAULT '',
+			content_type TEXT NOT NULL DEFAULT '',
+			size_bytes INTEGER NOT NULL DEFAULT 0,
+			is_inline INTEGER NOT NULL DEFAULT 0,
+			content_id TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(account_id, folder_name, uid, attachment_key),
+			FOREIGN KEY(account_id, folder_name, uid) REFERENCES messages(account_id, folder_name, uid) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_attachments_list ON message_attachments(account_id, is_inline, content_type, filename)`,
+		`INSERT OR IGNORE INTO message_attachments(account_id, folder_name, uid, attachment_key, attachment_id, part_id, filename, content_type, size_bytes, is_inline, content_id)
+			SELECT messages.account_id, messages.folder_name, messages.uid,
+				COALESCE(NULLIF(json_extract(item.value, '$.partId'), ''), NULLIF(json_extract(item.value, '$.id'), ''), 'legacy-' || item.key),
+				COALESCE(json_extract(item.value, '$.id'), ''), COALESCE(json_extract(item.value, '$.partId'), ''),
+				COALESCE(json_extract(item.value, '$.filename'), ''), COALESCE(json_extract(item.value, '$.contentType'), ''),
+				COALESCE(json_extract(item.value, '$.size'), 0), COALESCE(json_extract(item.value, '$.isInline'), 0),
+				COALESCE(json_extract(item.value, '$.contentId'), '')
+			FROM messages, json_each(CASE WHEN json_valid(messages.attachments_json) THEN messages.attachments_json ELSE '[]' END) AS item`,
 		`CREATE TABLE IF NOT EXISTS message_summaries (
 			account_id TEXT NOT NULL,
 			folder_name TEXT NOT NULL,

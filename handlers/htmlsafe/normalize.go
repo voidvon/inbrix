@@ -1,38 +1,21 @@
 package htmlsafe
 
 import (
-	"bytes"
 	"fmt"
 	stdhtml "html"
 	"strings"
 
-	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
-	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
+	xhtml "golang.org/x/net/html"
 )
 
-// maxNormalizedHTMLBytes bounds HTML that is sent through the converter. The
+// maxNormalizedHTMLBytes bounds HTML that is sent through the sanitizer. The
 // request body limit is much larger because it also covers attachments; this
 // separate limit keeps a rich-text body from consuming disproportionate CPU.
 const maxNormalizedHTMLBytes = 2 * 1024 * 1024
 
-var markdownRenderer = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
-	// Raw HTML is intentionally disabled. The conversion pipeline must emit
-	// elements produced by Goldmark only, never HTML supplied by the caller.
-	goldmark.WithRendererOptions(goldmarkhtml.WithXHTML()),
-)
-
-// NormalizeHTML converts a caller-provided HTML body into a small, safe HTML
-// representation:
-//
-//	HTML -> security defanging -> Markdown -> Goldmark HTML
-//
-// The Markdown string is an intermediate representation only. It is not stored
-// as the MIME body because mail clients expect text/html or text/plain parts,
-// and converting received mail in place would lose information such as inline
-// resources and client-specific structure.
+// NormalizeHTML applies the active-content policy while preserving the caller's
+// HTML structure. Do not route mail HTML through Markdown: Markdown cannot
+// represent intentional blank lines, tables, inline styles, or image sizing.
 func NormalizeHTML(in string) (string, error) {
 	if strings.TrimSpace(in) == "" {
 		return "", nil
@@ -41,25 +24,11 @@ func NormalizeHTML(in string) (string, error) {
 		return "", fmt.Errorf("html body exceeds %d bytes", maxNormalizedHTMLBytes)
 	}
 
-	defanged := SanitizeHTML(in)
-	if strings.TrimSpace(defanged) == "" {
+	sanitized := SanitizeHTML(in)
+	if strings.TrimSpace(sanitized) == "" {
 		return "", nil
 	}
-
-	markdown, err := htmltomarkdown.ConvertString(defanged)
-	if err != nil {
-		return "", fmt.Errorf("convert html to markdown: %w", err)
-	}
-	markdown = strings.TrimSpace(markdown)
-	if markdown == "" {
-		return "", nil
-	}
-
-	var rendered bytes.Buffer
-	if err := markdownRenderer.Convert([]byte(markdown), &rendered); err != nil {
-		return "", fmt.Errorf("render markdown as html: %w", err)
-	}
-	return strings.TrimSpace(rendered.String()), nil
+	return sanitized, nil
 }
 
 // NormalizeComposeBodies normalizes the rich body and derives the plain-text
@@ -87,23 +56,66 @@ func SanitizeHTML(in string) string {
 	return sanitize(in, maxNormalizedHTMLBytes)
 }
 
-// PlainTextFromHTML returns a compact text/plain fallback from normalized HTML.
-// It is deliberately conservative: tags are discarded, entities are decoded
-// after tag removal, and whitespace is collapsed. The rich HTML has already
-// been normalized before this function is called.
+var plainTextBlockElements = map[string]bool{
+	"address": true, "article": true, "aside": true, "blockquote": true,
+	"dd": true, "div": true, "dl": true, "dt": true, "figcaption": true,
+	"figure": true, "footer": true, "h1": true, "h2": true, "h3": true,
+	"h4": true, "h5": true, "h6": true, "header": true, "hr": true,
+	"li": true, "main": true, "nav": true, "ol": true, "p": true,
+	"pre": true, "section": true, "table": true, "td": true, "th": true,
+	"tr": true, "ul": true,
+}
+
+// PlainTextFromHTML returns a text/plain fallback while retaining meaningful
+// line breaks from <br> and block elements. It is used only when the caller did
+// not provide a plain-text alternative; the rich HTML remains the source of
+// truth for formatting.
 func PlainTextFromHTML(in string) string {
+	doc, err := xhtml.Parse(strings.NewReader(in))
+	if err != nil {
+		return strings.TrimSpace(stdhtml.UnescapeString(in))
+	}
+
 	var b strings.Builder
-	inTag := false
-	for _, r := range in {
-		switch {
-		case r == '<':
-			inTag = true
-			b.WriteByte(' ')
-		case r == '>':
-			inTag = false
-		case !inTag:
-			b.WriteRune(r)
+	writeLineBreak := func() {
+		if b.Len() > 0 && b.String()[b.Len()-1] != '\n' {
+			b.WriteByte('\n')
 		}
 	}
-	return strings.Join(strings.Fields(stdhtml.UnescapeString(b.String())), " ")
+	var visit func(*xhtml.Node, bool)
+	visit = func(node *xhtml.Node, inPre bool) {
+		switch node.Type {
+		case xhtml.TextNode:
+			text := strings.ReplaceAll(stdhtml.UnescapeString(node.Data), "\u00a0", " ")
+			if !inPre && strings.TrimSpace(text) == "" {
+				if !strings.ContainsAny(text, "\r\n") && text != "" {
+					b.WriteByte(' ')
+				}
+				return
+			}
+			b.WriteString(text)
+		case xhtml.ElementNode:
+			name := strings.ToLower(node.Data)
+			if name == "br" {
+				b.WriteByte('\n')
+				return
+			}
+			block := plainTextBlockElements[name]
+			if block {
+				writeLineBreak()
+			}
+			for child := node.FirstChild; child != nil; child = child.NextSibling {
+				visit(child, inPre || name == "pre")
+			}
+			if block {
+				writeLineBreak()
+			}
+		default:
+			for child := node.FirstChild; child != nil; child = child.NextSibling {
+				visit(child, inPre)
+			}
+		}
+	}
+	visit(doc, false)
+	return strings.TrimSpace(b.String())
 }
