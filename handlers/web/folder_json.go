@@ -308,6 +308,50 @@ func (h *EmailHandler) HandleLocalFolderMessageJSON(c *fiber.Ctx) error {
 	return c.JSON(response)
 }
 
+// HandleLocalFolderMessageReadJSON marks one mirrored message as read on both
+// the mail server and the local mirror so folder badges update immediately.
+func (h *EmailHandler) HandleLocalFolderMessageReadJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	account, err := h.localFolderAccount(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	folder := strings.TrimSpace(c.Query("folder"))
+	uid := strings.TrimSpace(c.Params("uid"))
+	if folder == "" || uid == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Message folder and UID are required"})
+	}
+	email, err := h.mailDB.GetMessage(c.UserContext(), account.ID, folder, uid)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found"})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read local message"})
+	}
+	flags, changed := flagsWithSeen(email.Flags, true)
+	if !changed {
+		return c.JSON(fiber.Map{"ok": true, "updated": 0})
+	}
+
+	client, _, err := h.messageClientForAccount(c, account.Email)
+	if err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not connect to the mail server"})
+	}
+	defer client.Close()
+	if err := client.SetMessageFlag(folder, uid, `\Seen`, true); err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not update the email read status"})
+	}
+	if err := h.mailDB.UpdateFlags(c.UserContext(), account.ID, folder, uid, flags); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email status changed on the mail server, but the local mailbox could not be updated"})
+	}
+	if err := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, folder); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email status changed, but the local unread count could not be updated"})
+	}
+	return c.JSON(fiber.Map{"ok": true, "updated": 1})
+}
+
 func (h *EmailHandler) localJunkMessageMutation(c *fiber.Ctx, permanent bool) error {
 	if h.mailDB == nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Mail mirror is unavailable"})

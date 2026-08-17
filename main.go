@@ -396,6 +396,7 @@ func main() {
 		apiRoutes.Get("/mail/folders", webEmailHandler.HandleLocalFoldersJSON)
 		apiRoutes.Get("/mail/messages", webEmailHandler.HandleLocalFolderMessagesJSON)
 		apiRoutes.Get("/mail/messages/:uid", webEmailHandler.HandleLocalFolderMessageJSON)
+		apiRoutes.Patch("/mail/messages/:uid/read", webEmailHandler.HandleLocalFolderMessageReadJSON)
 		apiRoutes.Get("/attachments", webEmailHandler.HandleLocalAttachmentsJSON)
 		apiRoutes.Post("/mail/messages/:uid/not-spam", webEmailHandler.HandleLocalJunkMessageRestoreJSON)
 		apiRoutes.Delete("/mail/messages/:uid", webEmailHandler.HandleLocalJunkMessageDeleteJSON)

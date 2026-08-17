@@ -276,6 +276,10 @@ export function getMessage(folder: string, id: string) {
   return apiFetch<MailMessage>(`/api/mail/messages/${encodeURIComponent(id)}?folder=${encodeURIComponent(folder)}`);
 }
 
+export function markMailMessageRead(folder: string, id: string, accountEmail?: string) {
+  return apiFetch<{ ok: boolean; updated: number }>(mailMessageMutationPath(folder, id, accountEmail, "/read"), { method: "PATCH" });
+}
+
 export function getMailAttachments(query: string, type: string, offset = 0, limit = 100) {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (query.trim()) params.set("q", query.trim());

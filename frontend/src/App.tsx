@@ -61,7 +61,7 @@ import { toast } from "sonner";
 import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -1845,8 +1845,17 @@ function AttachmentsPage() {
   );
 }
 
+function messageIsUnread(message: Pick<MailMessage, "flags">) {
+  return !message.flags?.some((flag) => flag.toLowerCase() === "\\seen");
+}
+
+function flagsMarkedSeen(flags: string[] = []) {
+  return flags.some((flag) => flag.toLowerCase() === "\\seen") ? flags : [...flags, "\\Seen"];
+}
+
 function FolderMessageRow({ copy, message, address, selected, junkActions, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; junkActions: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
-  const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{address}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span><span className="mt-1 block truncate text-xs text-muted-foreground/70">{message.subject || copy.noSubject}</span></button>;
+  const unread = messageIsUnread(message);
+  const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-muted-foreground")}>{address}</strong><span className="flex shrink-0 items-center gap-2">{unread && <span className="size-1.5 rounded-full bg-primary" aria-label={copy.unread} title={copy.unread} />}<time className="text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span></span><span className={cn("mt-1 block truncate text-xs", unread ? "text-foreground/80" : "text-muted-foreground/70")}>{message.subject || copy.noSubject}</span></button>;
   if (!junkActions) return row;
   return (
     <ContextMenuPrimitive.Root>
@@ -1877,6 +1886,7 @@ function FolderPage({ folder }: { folder: string }) {
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<MailMessage | null>(null);
   const [permanentDeleteError, setPermanentDeleteError] = useState("");
+  const markingReadRef = useRef(new Set<string>());
   const list = useQuery({ queryKey: ["folder", folder], queryFn: () => getFolderMessages(folder) });
   const detail = useQuery({ queryKey: ["message", folder, selected], queryFn: () => getMessage(folder, selected!), enabled: Boolean(selected) });
   const select = (id: string) => { setSelected(id); setDetailOpen(true); const url = new URL(window.location.href); url.searchParams.set("message", id); window.history.pushState({}, "", url); };
@@ -1933,6 +1943,26 @@ function FolderPage({ folder }: { folder: string }) {
     window.addEventListener("popstate", restoreMessageFromURL);
     return () => window.removeEventListener("popstate", restoreMessageFromURL);
   }, []);
+  useEffect(() => {
+    if (!selected) return;
+    const message = list.data?.messages.find((item) => item.id === selected);
+    if (!message || !messageIsUnread(message)) return;
+    const accountEmail = message.accountEmail || metadata.data?.accountEmail || "";
+    const key = `${accountEmail}/${folder}/${message.id}`;
+    if (markingReadRef.current.has(key)) return;
+    markingReadRef.current.add(key);
+    void markMailMessageRead(folder, message.id, accountEmail).then(() => {
+      queryClient.setQueryData<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(["folder", folder], (current) => current ? {
+        ...current,
+        messages: current.messages.map((item) => item.id === message.id ? { ...item, flags: flagsMarkedSeen(item.flags) } : item),
+      } : current);
+      queryClient.setQueryData<MailMessage>(["message", folder, message.id], (current) => current ? { ...current, flags: flagsMarkedSeen(current.flags) } : current);
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    }).catch((value) => {
+      markingReadRef.current.delete(key);
+      toast.error(value instanceof Error ? value.message : locale.loadFailed);
+    });
+  }, [folder, list.data?.messages, locale.loadFailed, metadata.data?.accountEmail, queryClient, selected]);
   const authenticated = (metadata.error instanceof ApiError && metadata.error.status === 401) || (list.error instanceof ApiError && list.error.status === 401);
   if (authenticated) return <LoginScreen copy={locale} />;
   return (

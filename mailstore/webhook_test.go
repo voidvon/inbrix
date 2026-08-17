@@ -96,8 +96,9 @@ func TestSendFeishuWebhookPayloadAndBusinessError(t *testing.T) {
 		Subject:  "Status update",
 		Date:     time.Date(2026, time.August, 14, 9, 30, 0, 0, time.Local),
 	}
+	summary := "客户：Acme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。"
 	const webhookURL = "https://open.feishu.cn/open-apis/bot/v2/hook/secret"
-	if err := sendFeishuWebhook(context.Background(), client, webhookURL, account, message, "建议确认阀门型号和数量"); err != nil {
+	if err := sendFeishuWebhook(context.Background(), client, webhookURL, account, message, summary); err != nil {
 		t.Fatalf("sendFeishuWebhook: %v", err)
 	}
 	if client.req == nil || client.req.Method != http.MethodPost || client.req.URL.String() != webhookURL {
@@ -112,7 +113,8 @@ func TestSendFeishuWebhookPayloadAndBusinessError(t *testing.T) {
 	if err := json.Unmarshal(client.data, &payload); err != nil {
 		t.Fatalf("decode payload: %v (%s)", err, client.data)
 	}
-	if payload.MsgType != "text" || !strings.Contains(payload.Content.Text, "Alice <alice@example.com>") || !strings.Contains(payload.Content.Text, "Status update") || !strings.Contains(payload.Content.Text, account.Email) || !strings.Contains(payload.Content.Text, "建议确认阀门型号和数量") {
+	wantText := "alice@example.com\nAcme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。"
+	if payload.MsgType != "text" || payload.Content.Text != wantText {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 

@@ -145,27 +145,17 @@ func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi
 	}
 }
 
-func sendFeishuWebhook(ctx context.Context, client HTTPClient, webhookURL string, account Account, message models.Email, summary string) error {
+func sendFeishuWebhook(ctx context.Context, client HTTPClient, webhookURL string, _ Account, message models.Email, summary string) error {
 	from := strings.TrimSpace(message.From)
-	if name := strings.TrimSpace(message.FromName); name != "" {
-		if from != "" {
-			from = fmt.Sprintf("%s <%s>", name, from)
-		} else {
-			from = name
-		}
-	}
 	if from == "" {
 		from = "（未知发件人）"
 	}
-	subject := strings.TrimSpace(message.Subject)
-	if subject == "" {
-		subject = "（无主题）"
+	summary = strings.TrimSpace(summary)
+	summary = strings.TrimPrefix(summary, "客户：")
+	text := from
+	if summary != "" {
+		text += "\n" + summary
 	}
-	text := fmt.Sprintf("📬 新邮件\n邮箱：%s\n发件人：%s\n主题：%s", account.Email, from, subject)
-	if !message.Date.IsZero() {
-		text += "\n时间：" + message.Date.Local().Format("2006-01-02 15:04")
-	}
-	text += "\n\n🤖 Spirax Sarco 询价分析\n" + strings.TrimSpace(summary)
 	return sendFeishuText(ctx, client, webhookURL, text)
 }
 
