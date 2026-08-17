@@ -113,7 +113,7 @@ func TestSendFeishuWebhookPayloadAndBusinessError(t *testing.T) {
 	if err := json.Unmarshal(client.data, &payload); err != nil {
 		t.Fatalf("decode payload: %v (%s)", err, client.data)
 	}
-	wantText := "alice@example.com\nAcme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。"
+	wantText := "alice@example.com\n客户：Acme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。"
 	if payload.MsgType != "text" || payload.Content.Text != wantText {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
@@ -143,13 +143,13 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err != nil || agent.ID != createdAgent.ID {
 		t.Fatalf("GetWebhookInquiryAgent: %+v, %v", agent, err)
 	}
-	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"{\"company\":\"Acme GmbH\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"需要确认具体型号和交期。\",\"question\":\"\",\"summary\":\"客户询价十台阀门。\"}"}`}
+	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"{\"客户\":\"Acme GmbH\",\"需求\":\"十台阀门\",\"要求\":\"确认型号和交期\",\"问题\":\"\"}"}`}
 	m := &SyncManager{store: s, key: encryptionKey}
 	summary, err := m.summarizeInquiryForWebhook(ctx, client, Account{OwnerID: "alice", Email: "sales@example.com"}, models.Email{From: "buyer@example.com", To: "sales@example.com", Subject: "Valve RFQ", Body: "Please quote 10 valves", BodyCached: true})
 	if err != nil {
 		t.Fatalf("summarizeInquiryForWebhook: %v", err)
 	}
-	if summary != "客户：Acme GmbH、德国\n需求：十台阀门\n要求：需要确认具体型号和交期。" {
+	if summary != "客户：Acme GmbH\n需求：十台阀门\n要求：确认型号和交期" {
 		t.Fatalf("summary: %q", summary)
 	}
 	if got := client.req.Header.Get("Authorization"); got != "Bearer test-api-key" {
@@ -166,26 +166,7 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err := json.Unmarshal(client.data, &request); err != nil {
 		t.Fatalf("decode OpenAI request: %v", err)
 	}
-	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, inquiryOutputRules) || request.Reasoning.Effort != "low" || !strings.Contains(request.Input, "Please quote 10 valves") {
+	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, `["客户","需求","要求","问题"]`) || request.Reasoning.Effort != "low" || !strings.Contains(request.Input, "Please quote 10 valves") {
 		t.Fatalf("unexpected OpenAI request: %+v", request)
-	}
-}
-
-func TestStripMarkdownAndChineseValidation(t *testing.T) {
-	raw := "## 询价分析\n\n- **产品**：阀门\n1. 数量：10\n> 需要确认型号\n[资料](https://example.com)"
-	got := stripMarkdown(raw)
-	for _, marker := range []string{"#", "- ", "**", "1. ", "> ", "[资料]("} {
-		if strings.Contains(got, marker) {
-			t.Fatalf("Markdown marker %q remains in %q", marker, got)
-		}
-	}
-	if !isSimplifiedChineseDominant(got) {
-		t.Fatalf("simplified Chinese text rejected: %q", got)
-	}
-	if !isSimplifiedChineseDominant("表示感谢。") {
-		t.Fatal("short simplified Chinese summary was rejected")
-	}
-	if isSimplifiedChineseDominant("Please quote ten Spirax Sarco valves as soon as possible.") {
-		t.Fatal("English response accepted")
 	}
 }

@@ -441,8 +441,11 @@ func main() {
 	protected.Post("/api/settings/ai/agents", userAIHandler.HandleCreateAgent)
 	protected.Put("/api/settings/ai/agents/:id", userAIHandler.HandleUpdateAgent)
 	protected.Delete("/api/settings/ai/agents/:id", userAIHandler.HandleDeleteAgent)
+	protected.Get("/api/settings/ai/task-bindings", userAIHandler.HandleListTaskBindings)
+	protected.Put("/api/settings/ai/task-bindings", userAIHandler.HandleSaveTaskBinding)
 	apiRoutes.Post("/ai/summary", userAIHandler.HandleSummarize)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
+	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	// Build the completion backend before registering. With [ai] enabled = false
 	// this builds nothing at all; with mode = "embedded" it constructs the
 	// in-process llmux gateway and fails startup on a configuration that could

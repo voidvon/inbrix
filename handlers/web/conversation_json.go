@@ -411,7 +411,7 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 		if summaryErr != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail summaries"})
 		}
-		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account.OwnerID)
+		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account)
 		for index, message := range selected.Messages {
 			record, exists := summaries[mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)]
 			if !exists {

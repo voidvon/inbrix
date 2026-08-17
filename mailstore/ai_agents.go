@@ -3,18 +3,48 @@ package mailstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
-const aiAgentColumns = `id, owner_id, name, prompt, purpose, created_at`
+const aiAgentColumns = `id, owner_id, name, prompt, purpose, output_labels_json, created_at`
+
+var defaultAIAgentOutputLabels = []string{"客户", "需求", "要求", "问题"}
+
+func NormalizeAIAgentOutputLabels(labels []string) ([]string, error) {
+	if labels == nil {
+		return append([]string(nil), defaultAIAgentOutputLabels...), nil
+	}
+	if len(labels) > 12 {
+		return nil, errors.New("mailstore: AI agent cannot have more than 12 output labels")
+	}
+	normalized := make([]string, 0, len(labels))
+	seen := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" || len([]rune(label)) > 20 || strings.ContainsAny(label, "\r\n：:") {
+			return nil, errors.New("mailstore: invalid AI agent output label")
+		}
+		if _, exists := seen[label]; exists {
+			return nil, errors.New("mailstore: duplicate AI agent output label")
+		}
+		seen[label] = struct{}{}
+		normalized = append(normalized, label)
+	}
+	return normalized, nil
+}
 
 func scanAIAgent(scanner interface{ Scan(...any) error }) (AIAgentRecord, error) {
 	var agent AIAgentRecord
+	var outputLabelsJSON string
 	var createdAt int64
-	err := scanner.Scan(&agent.ID, &agent.OwnerID, &agent.Name, &agent.Prompt, &agent.Purpose, &createdAt)
+	err := scanner.Scan(&agent.ID, &agent.OwnerID, &agent.Name, &agent.Prompt, &agent.Purpose, &outputLabelsJSON, &createdAt)
+	if err == nil {
+		err = json.Unmarshal([]byte(outputLabelsJSON), &agent.OutputLabels)
+	}
 	agent.CreatedAt = time.Unix(createdAt, 0)
 	return agent, err
 }
@@ -40,6 +70,11 @@ func (s *Store) CreateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	agent.OwnerID = strings.TrimSpace(agent.OwnerID)
 	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Prompt = strings.TrimSpace(agent.Prompt)
+	var err error
+	agent.OutputLabels, err = NormalizeAIAgentOutputLabels(agent.OutputLabels)
+	if err != nil {
+		return AIAgentRecord{}, err
+	}
 	if agent.OwnerID == "" || agent.Name == "" || agent.Prompt == "" {
 		return AIAgentRecord{}, errors.New("mailstore: AI agent owner, name, and prompt are required")
 	}
@@ -51,7 +86,8 @@ func (s *Store) CreateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 		}
 	}
 	now := time.Now().Unix()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_agents(id, owner_id, name, prompt, purpose, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.OwnerID, agent.Name, agent.Prompt, agent.Purpose, now, now); err != nil {
+	labelsJSON, _ := json.Marshal(agent.OutputLabels)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_agents(id, owner_id, name, prompt, purpose, output_labels_json, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.OwnerID, agent.Name, agent.Prompt, agent.Purpose, string(labelsJSON), now, now); err != nil {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: create AI agent: %w", err)
 	}
 	agent.CreatedAt = time.Unix(now, 0)
@@ -63,10 +99,28 @@ func (s *Store) UpdateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	agent.OwnerID = strings.TrimSpace(agent.OwnerID)
 	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Prompt = strings.TrimSpace(agent.Prompt)
+	var err error
+	agent.OutputLabels, err = NormalizeAIAgentOutputLabels(agent.OutputLabels)
+	if err != nil {
+		return AIAgentRecord{}, err
+	}
 	if agent.ID == "" || agent.OwnerID == "" || agent.Name == "" || agent.Prompt == "" {
 		return AIAgentRecord{}, errors.New("mailstore: AI agent id, owner, name, and prompt are required")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_agents SET name = ?, prompt = ?, updated_at = ? WHERE owner_id = ? AND id = ?`, agent.Name, agent.Prompt, time.Now().Unix(), agent.OwnerID, agent.ID)
+	if len(agent.OutputLabels) == 0 {
+		var summaryUses int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT (SELECT COUNT(*) FROM ai_task_bindings WHERE agent_id = ? AND task_type = ?)
+				 + (SELECT COUNT(*) FROM ai_agents WHERE owner_id = ? AND id = ? AND purpose IN ('mail_summary', 'feishu_inquiry_analysis'))`,
+			agent.ID, MailSummaryTask, agent.OwnerID, agent.ID).Scan(&summaryUses); err != nil {
+			return AIAgentRecord{}, fmt.Errorf("mailstore: inspect AI agent summary bindings: %w", err)
+		}
+		if summaryUses > 0 {
+			return AIAgentRecord{}, errors.New("mailstore: a mail summary agent must have output labels")
+		}
+	}
+	labelsJSON, _ := json.Marshal(agent.OutputLabels)
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_agents SET name = ?, prompt = ?, output_labels_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?`, agent.Name, agent.Prompt, string(labelsJSON), time.Now().Unix(), agent.OwnerID, agent.ID)
 	if err != nil {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: update AI agent: %w", err)
 	}

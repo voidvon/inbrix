@@ -17,11 +17,13 @@ import (
 )
 
 const (
-	mailSummaryPipelineVersion = 4
+	mailSummaryPipelineVersion = 6
 	mailSummaryGenerationLease = 2 * time.Minute
 )
 
 var mailSummaryMessageIDRe = regexp.MustCompile(`<[^>]+>`)
+
+const mailSummarySystemPrompt = `你是一个邮件分析引擎。请只分析输入中实际存在的信息，不得编造。结果必须精简，每个字段只写一行且不超过 80 个字；缺失的信息使用空字符串。严格遵守下方智能体提示词和输出格式。`
 
 // HTTPClient is the minimal client contract needed by mail summarization and
 // optional delivery channels.
@@ -44,7 +46,8 @@ type mailSummaryConfig struct {
 }
 
 func mailSummaryConfigHash(agent AIAgentRecord, model AIModelRecord, effort string) string {
-	configValue := fmt.Sprintf("v%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", mailSummaryPipelineVersion, model.ID, model.Model, effort, agent.ID, agent.Prompt, inquiryOutputRules)
+	labelsJSON, _ := json.Marshal(agent.OutputLabels)
+	configValue := fmt.Sprintf("v%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", mailSummaryPipelineVersion, model.ID, model.Model, effort, agent.ID, agent.Prompt, labelsJSON, mailSummarySystemPrompt)
 	return hashMailSummaryValue(configValue)
 }
 
@@ -67,22 +70,31 @@ func CurrentMailSummarySourceHash(ctx context.Context, store *Store, account Acc
 	return hashMailSummaryValue(mailSummaryInput(account, message, previous)), nil
 }
 
-func CurrentMailSummaryConfigHash(ctx context.Context, store *Store, ownerID string) (string, error) {
-	agent, model, effort, err := resolveMailSummaryMetadata(ctx, store, ownerID)
+func CurrentMailSummaryConfigHash(ctx context.Context, store *Store, account Account) (string, error) {
+	agent, model, effort, err := resolveMailSummaryMetadata(ctx, store, account)
 	if err != nil {
 		return "", err
 	}
 	return mailSummaryConfigHash(agent, model, effort), nil
 }
 
-func resolveMailSummaryMetadata(ctx context.Context, store *Store, ownerID string) (AIAgentRecord, AIModelRecord, string, error) {
-	agent, err := store.GetMailSummaryAgent(ctx, ownerID)
-	if err != nil {
-		return AIAgentRecord{}, AIModelRecord{}, "", fmt.Errorf("load mail summary agent: %w", err)
+func resolveMailSummaryMetadata(ctx context.Context, store *Store, account Account) (AIAgentRecord, AIModelRecord, string, error) {
+	var agent AIAgentRecord
+	var model AIModelRecord
+	binding, err := store.GetAITaskBinding(ctx, account.OwnerID, account.ID, MailSummaryTask)
+	if err == nil {
+		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
+		if err == nil {
+			model, err = store.GetAIModel(ctx, account.OwnerID, binding.ModelID)
+		}
+	} else if errors.Is(err, ErrNotFound) {
+		agent, err = store.GetMailSummaryAgent(ctx, account.OwnerID)
+		if err == nil {
+			model, err = store.GetDefaultAIModel(ctx, account.OwnerID)
+		}
 	}
-	model, err := store.GetDefaultAIModel(ctx, ownerID)
 	if err != nil {
-		return AIAgentRecord{}, AIModelRecord{}, "", fmt.Errorf("load default AI model: %w", err)
+		return AIAgentRecord{}, AIModelRecord{}, "", fmt.Errorf("load mail summary configuration: %w", err)
 	}
 	effort := strings.TrimSpace(model.ReasoningEffort)
 	if effort == "" {
@@ -92,8 +104,8 @@ func resolveMailSummaryMetadata(ctx context.Context, store *Store, ownerID strin
 
 }
 
-func resolveMailSummaryConfig(ctx context.Context, store *Store, encryptionKey, ownerID string) (mailSummaryConfig, error) {
-	agent, model, effort, err := resolveMailSummaryMetadata(ctx, store, ownerID)
+func resolveMailSummaryConfig(ctx context.Context, store *Store, encryptionKey string, account Account) (mailSummaryConfig, error) {
+	agent, model, effort, err := resolveMailSummaryMetadata(ctx, store, account)
 	if err != nil {
 		return mailSummaryConfig{}, err
 	}
@@ -105,27 +117,67 @@ func resolveMailSummaryConfig(ctx context.Context, store *Store, encryptionKey, 
 }
 
 func generateMailSummary(ctx context.Context, client HTTPClient, account Account, message models.Email, previous string, cfg mailSummaryConfig) (string, error) {
-	raw, err := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, cfg.agent.Prompt+"\n\n"+inquiryOutputRules, fullEmailForInquiryAnalysis(account, message), cfg.effort)
+	raw, err := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, mailSummaryInstructions(cfg.agent), mailSummaryInput(account, message, previous), cfg.effort)
 	if err != nil {
 		return "", err
 	}
-	summary, err := formatMailSummary(raw)
-	if err != nil {
-		return "", err
+	return formatTaggedMailSummary(raw, cfg.agent.OutputLabels)
+}
+
+func mailSummaryInstructions(agent AIAgentRecord) string {
+	labelsJSON, _ := json.Marshal(agent.OutputLabels)
+	return mailSummarySystemPrompt + "\n\n智能体提示词：\n" + agent.Prompt + "\n\n输出格式：\n只输出一个合法 JSON 对象，不要输出 Markdown、代码块或解释。JSON 必须且只能包含这些键，并保持字段值为字符串：" + string(labelsJSON)
+}
+
+func formatTaggedMailSummary(raw string, labels []string) (string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &fields); err != nil {
+		return "", errors.New("OpenAI analysis did not return the configured output fields")
 	}
-	if !isSimplifiedChineseDominant(summary) {
-		return "", errors.New("OpenAI analysis did not satisfy simplified Chinese requirements")
+	allowed := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		allowed[label] = struct{}{}
 	}
-	if previous != "" {
-		if oneLine := oneLinePreviousSummary(previous); oneLine != "" {
-			summary = "上一封: " + oneLine + "\n" + summary
+	for key := range fields {
+		if _, ok := allowed[key]; !ok {
+			return "", errors.New("OpenAI analysis returned an unconfigured output field")
 		}
 	}
-	return summary, nil
+	lines := make([]string, 0, len(labels))
+	for _, label := range labels {
+		var value string
+		if field, ok := fields[label]; ok {
+			if err := json.Unmarshal(field, &value); err != nil {
+				return "", errors.New("OpenAI analysis returned a non-string output field")
+			}
+		}
+		value = compactMailSummaryValue(value, 80)
+		if value != "" {
+			lines = append(lines, label+"："+value)
+		}
+	}
+	if len(lines) == 0 {
+		return "", errors.New("OpenAI analysis returned no configured output values")
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func compactMailSummaryValue(value string, maxRunes int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
 }
 
 func mailSummaryInput(account Account, message models.Email, previous string) string {
-	return oneLinePreviousSummary(previous) + "\x00" + fullEmailForInquiryAnalysis(account, message)
+	current := fullEmailForInquiryAnalysis(account, message)
+	previous = strings.TrimSpace(previous)
+	if previous == "" {
+		return current
+	}
+	return "上一封邮件的已保存分析（仅供上下文参考）：\n" + previous + "\n\n当前邮件：\n" + current
 }
 
 func previousMailSummary(ctx context.Context, store *Store, accountID string, message models.Email) (string, error) {
@@ -154,88 +206,11 @@ func directParentMessageID(message models.Email) string {
 	return parentID
 }
 
-func oneLinePreviousSummary(summary string) string {
-	lines := strings.Split(strings.ReplaceAll(summary, "\r\n", "\n"), "\n")
-	parts := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "上一封：") || strings.HasPrefix(line, "上一封:") {
-			continue
-		}
-		if line != "" {
-			parts = append(parts, strings.TrimRight(line, "。；;"))
-		}
-	}
-	return strings.Join(parts, "；")
-}
-
-type mailSummaryFields struct {
-	Company      string `json:"company"`
-	Country      string `json:"country"`
-	Products     string `json:"products"`
-	Requirements string `json:"requirements"`
-	Question     string `json:"question"`
-	Summary      string `json:"summary"`
-}
-
-func formatMailSummary(raw string) (string, error) {
-	var fields mailSummaryFields
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &fields); err != nil {
-		return "", errors.New("OpenAI analysis did not return the required summary template")
-	}
-	company := compactMailSummaryField(fields.Company, 40)
-	country := compactMailSummaryField(fields.Country, 24)
-	customer := strings.Join(nonEmptyStrings(company, country), "、")
-	products := compactMailSummaryField(fields.Products, 80)
-	requirements := compactMailSummaryField(fields.Requirements, 80)
-	question := compactMailSummaryField(fields.Question, 80)
-	lines := make([]string, 0, 4)
-	if customer != "" {
-		lines = append(lines, "客户："+customer)
-	}
-	if products != "" {
-		lines = append(lines, "需求："+products)
-	}
-	if requirements != "" {
-		lines = append(lines, "要求："+requirements)
-	}
-	if question != "" {
-		lines = append(lines, "问题："+question)
-	}
-	if len(lines) == 0 {
-		summary := compactMailSummaryField(fields.Summary, 80)
-		if summary == "" {
-			return "", errors.New("OpenAI analysis did not summarize the mail content")
-		}
-		return summary, nil
-	}
-	return strings.Join(lines, "\n"), nil
-}
-
-func compactMailSummaryField(value string, maxRunes int) string {
-	value = strings.Join(strings.Fields(value), " ")
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
-}
-
-func nonEmptyStrings(values ...string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value != "" {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
 // SummarizeMail analyzes one complete email. It is independent from delivery
 // channels so background notifications and interactive clients share exactly
-// the same prompt, model selection, and output validation.
+// the same configured prompt and model selection.
 func SummarizeMail(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email) (string, error) {
-	cfg, err := resolveMailSummaryConfig(ctx, store, encryptionKey, account.OwnerID)
+	cfg, err := resolveMailSummaryConfig(ctx, store, encryptionKey, account)
 	if err != nil {
 		return "", err
 	}
@@ -258,7 +233,7 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 	sourceHash := hashMailSummaryValue(mailSummaryInput(account, message, previous))
 	if existing, err := store.GetMessageSummary(ctx, key); err == nil && existing.Status == "ready" && !regenerate {
 		stale := existing.SourceHash != sourceHash
-		if configHash, cfgErr := CurrentMailSummaryConfigHash(ctx, store, account.OwnerID); cfgErr == nil {
+		if configHash, cfgErr := CurrentMailSummaryConfigHash(ctx, store, account); cfgErr == nil {
 			stale = stale || existing.ConfigHash != configHash
 		}
 		return MailSummaryResult{Record: existing, Cached: true, Stale: stale}, nil
@@ -266,7 +241,7 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 		return MailSummaryResult{}, err
 	}
 
-	cfg, err := resolveMailSummaryConfig(ctx, store, encryptionKey, account.OwnerID)
+	cfg, err := resolveMailSummaryConfig(ctx, store, encryptionKey, account)
 	if err != nil {
 		return MailSummaryResult{}, err
 	}

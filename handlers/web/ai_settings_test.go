@@ -78,3 +78,67 @@ func TestCreateOpenAIResponse(t *testing.T) {
 		t.Fatalf("summary: got %q", got)
 	}
 }
+
+func TestCreateOpenAIResponseWithComposeInstructions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input           string `json:"input"`
+			Instructions    string `json:"instructions"`
+			MaxOutputTokens int    `json:"max_output_tokens"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Input != "compose prompt" || body.Instructions != "compose instructions" || body.MaxOutputTokens != 1200 {
+			t.Errorf("unexpected request: %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"output_text":"Generated email"}`)
+	}))
+	defer server.Close()
+
+	h := &AISettingsHandler{client: server.Client()}
+	got, err := h.createOpenAIResponseWithInstructions(context.Background(), mailstore.AIModelRecord{
+		BaseURL: server.URL,
+		Model:   "gpt-test",
+	}, "test-key", "compose instructions", "compose prompt", 1200)
+	if err != nil {
+		t.Fatalf("createOpenAIResponseWithInstructions: %v", err)
+	}
+	if got != "Generated email" {
+		t.Fatalf("output: got %q", got)
+	}
+}
+
+func TestEmailDraftInstructions(t *testing.T) {
+	t.Run("system prompt only", func(t *testing.T) {
+		if got := emailDraftInstructions("  "); got != emailDraftSystemPrompt {
+			t.Fatalf("emailDraftInstructions() = %q, want system prompt", got)
+		}
+	})
+	t.Run("combines system and agent prompts", func(t *testing.T) {
+		got := emailDraftInstructions("  Reply in concise business Chinese.  ")
+		want := emailDraftSystemPrompt + "\n\nAgent instructions:\nReply in concise business Chinese."
+		if got != want {
+			t.Fatalf("emailDraftInstructions() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestStripBestRegards(t *testing.T) {
+	tests := map[string]struct {
+		input string
+		want  string
+	}{
+		"signature block": {"Thanks for confirming.\n\nBest regards,\nAlice", "Thanks for confirming."},
+		"case and CRLF":   {"See you Tuesday.\r\n\r\nbEsT ReGaRdS，\r\nAlice", "See you Tuesday."},
+		"no signoff":      {"Thanks for confirming.", "Thanks for confirming."},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := stripBestRegards(test.input); got != test.want {
+				t.Fatalf("stripBestRegards() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

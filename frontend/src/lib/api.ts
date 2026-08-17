@@ -189,6 +189,22 @@ export function summarizeMailThread(thread: string) {
   });
 }
 
+export type GenerateEmailInput = {
+  accountEmail: string;
+  instruction: string;
+  subject: string;
+  recipients: string;
+  context?: string;
+  draft?: string;
+};
+
+export function generateEmail(input: GenerateEmailInput) {
+  return apiFetch<{ body: string }>("/api/ai/write-email", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export type MailSummaryResult = {
   summary: string;
   status: "ready";
@@ -208,15 +224,22 @@ export type AIAgent = {
   id: string;
   name: string;
   prompt: string;
+  outputLabels: string[];
 };
 
 export type AIAgentInput = {
   name: string;
   prompt: string;
+  outputLabels: string[];
 };
 
 export function getAIAgents() {
-  return apiFetch<{ agents: AIAgent[] }>("/api/settings/ai/agents");
+  return apiFetch<{ agents: Array<Omit<AIAgent, "outputLabels"> & { outputLabels?: string[] }> }>("/api/settings/ai/agents").then((payload) => ({
+    agents: payload.agents.map((agent) => ({
+      ...agent,
+      outputLabels: Array.isArray(agent.outputLabels) ? agent.outputLabels : ["客户", "需求", "要求", "问题"],
+    })),
+  }));
 }
 
 export function addAIAgent(agent: AIAgentInput) {
@@ -230,6 +253,27 @@ export function updateAIAgent(id: string, agent: AIAgentInput) {
   return apiFetch<AIAgent>(`/api/settings/ai/agents/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: JSON.stringify(agent),
+  });
+}
+
+export type AITaskBinding = {
+  accountEmail: string;
+  taskType: "mail_summary" | "email_draft";
+  agentId: string;
+  modelId: string;
+  explicit: boolean;
+};
+
+export type AITaskBindingInput = Pick<AITaskBinding, "accountEmail" | "taskType" | "agentId" | "modelId">;
+
+export function getAITaskBindings() {
+  return apiFetch<{ bindings: AITaskBinding[] }>("/api/settings/ai/task-bindings");
+}
+
+export function saveAITaskBinding(binding: AITaskBindingInput) {
+  return apiFetch<AITaskBinding>("/api/settings/ai/task-bindings", {
+    method: "PUT",
+    body: JSON.stringify(binding),
   });
 }
 

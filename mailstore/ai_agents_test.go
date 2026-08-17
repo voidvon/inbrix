@@ -9,12 +9,12 @@ import (
 func TestAIAgentsCRUDAndOwnerIsolation(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	agent, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: "alice", Name: "询价分析", Prompt: "分析询价"})
+	agent, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: "alice", Name: "询价分析", Prompt: "分析询价", OutputLabels: []string{"客户", "行动"}})
 	if err != nil {
 		t.Fatalf("CreateAIAgent: %v", err)
 	}
-	agent, err = s.UpdateAIAgent(ctx, AIAgentRecord{ID: agent.ID, OwnerID: "alice", Name: "询价分析", Prompt: "更新后的提示词"})
-	if err != nil || agent.Prompt != "更新后的提示词" {
+	agent, err = s.UpdateAIAgent(ctx, AIAgentRecord{ID: agent.ID, OwnerID: "alice", Name: "询价分析", Prompt: "更新后的提示词", OutputLabels: []string{"风险", "下一步"}})
+	if err != nil || agent.Prompt != "更新后的提示词" || len(agent.OutputLabels) != 2 || agent.OutputLabels[0] != "风险" || agent.OutputLabels[1] != "下一步" {
 		t.Fatalf("UpdateAIAgent: %+v, %v", agent, err)
 	}
 	if _, err := s.GetAIAgent(ctx, "bob", agent.ID); !errors.Is(err, ErrNotFound) {

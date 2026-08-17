@@ -49,7 +49,7 @@ func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
 	if call == c.failCall {
 		return nil, errors.New("model unavailable")
 	}
-	body := fmt.Sprintf(`{"output_text":"{\"company\":\"测试客户\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"这是第%d次生成，需确认型号和交期。\",\"question\":\"\",\"summary\":\"客户询价十台阀门。\"}"}`, call)
+	body := fmt.Sprintf(`{"output_text":"{\"客户\":\"测试客户\",\"需求\":\"十台阀门\",\"要求\":\"这是第%d次生成，需确认型号和交期。\",\"问题\":\"\"}"}`, call)
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 }
 
@@ -153,8 +153,8 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	if err != nil || first.Cached || first.Record.Status != "ready" {
 		t.Fatalf("first summary: %+v err=%v", first, err)
 	}
-	if strings.HasPrefix(first.Record.Summary, "上一封:") {
-		t.Fatalf("summary without a ready parent should not have a previous-message prefix: %q", first.Record.Summary)
+	if first.Record.Summary != "客户：测试客户\n需求：十台阀门\n要求：这是第1次生成，需确认型号和交期。" {
+		t.Fatalf("configured fields were not formatted: %q", first.Record.Summary)
 	}
 	second, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
 	if err != nil || !second.Cached || second.Stale || second.Record.Summary != first.Record.Summary {
@@ -182,7 +182,7 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	if err != nil || !stale.Stale || client.callCount() != 1 {
 		t.Fatalf("config-stale summary: %+v calls=%d err=%v", stale, client.callCount(), err)
 	}
-	if _, err := CurrentMailSummaryConfigHash(ctx, s, account.OwnerID); err != nil {
+	if _, err := CurrentMailSummaryConfigHash(ctx, s, account); err != nil {
 		t.Fatalf("config fingerprint should not decrypt API key: %v", err)
 	}
 }
@@ -223,13 +223,12 @@ func TestGetOrCreateMailSummaryReusesDirectParentSummaryAndStripsQuote(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := "上一封: 客户：Acme GmbH、德国；需求：10 台阀门；要求：请确认交期\n客户："
-	if !strings.HasPrefix(result.Record.Summary, wantPrefix) {
-		t.Fatalf("summary did not reuse only the direct parent's own result:\n%s", result.Record.Summary)
+	if result.Record.Summary != "客户：测试客户\n需求：十台阀门\n要求：这是第1次生成，需确认型号和交期。" {
+		t.Fatalf("configured fields were not formatted:\n%s", result.Record.Summary)
 	}
 	input := client.lastInput()
-	if !strings.Contains(input, "Please add CE certificates.") || strings.Contains(input, "Original request") || strings.Contains(input, "wrote:") {
-		t.Fatalf("model input did not isolate the current body:\n%s", input)
+	if !strings.Contains(input, parentSummary) || !strings.Contains(input, "Please add CE certificates.") || strings.Contains(input, "Original request") || strings.Contains(input, "wrote:") {
+		t.Fatalf("model input did not include the parent analysis and isolated current body:\n%s", input)
 	}
 
 	currentHash, err := CurrentMailSummarySourceHash(ctx, s, account, message)
@@ -238,56 +237,28 @@ func TestGetOrCreateMailSummaryReusesDirectParentSummaryAndStripsQuote(t *testin
 	}
 }
 
-func TestFormatMailSummaryUsesCompactTemplate(t *testing.T) {
-	got, err := formatMailSummary(`{
-		"company":" Acme GmbH ",
-		"country":"德国",
-		"products":"10 台\nFT14 浮球式蒸汽疏水阀",
-		"requirements":"需提供交期、运费和 CE 认证资料。",
-		"question":""
-	}`)
+func TestConfiguredOutputLabelsControlPromptAndSummaryOrder(t *testing.T) {
+	agent := AIAgentRecord{Prompt: "重点分析风险和下一步行动。", OutputLabels: []string{"行动", "风险"}}
+	instructions := mailSummaryInstructions(agent)
+	if !strings.Contains(instructions, mailSummarySystemPrompt) || !strings.Contains(instructions, agent.Prompt) || !strings.Contains(instructions, `["行动","风险"]`) {
+		t.Fatalf("final instructions did not combine system prompt, agent prompt, and labels:\n%s", instructions)
+	}
+	got, err := formatTaggedMailSummary(`{"风险":"客户未提供工况参数","行动":"确认压力和温度","额外":"不应接受"}`, agent.OutputLabels)
+	if err == nil {
+		t.Fatalf("unconfigured field was accepted: %q", got)
+	}
+	got, err = formatTaggedMailSummary(`{"风险":"客户未提供工况参数","行动":"确认压力和温度"}`, agent.OutputLabels)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "客户：Acme GmbH、德国\n需求：10 台 FT14 浮球式蒸汽疏水阀\n要求：需提供交期、运费和 CE 认证资料。"
-	if got != want {
-		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	if want := "行动：确认压力和温度\n风险：客户未提供工况参数"; got != want {
+		t.Fatalf("summary order: got %q, want %q", got, want)
 	}
-	if strings.Contains(got, "问题：") {
-		t.Fatalf("empty question was rendered: %q", got)
-	}
-}
-
-func TestFormatMailSummaryOmitsMissingValues(t *testing.T) {
-	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"是否支持 16 bar 工况？","summary":"客户询问产品是否支持 16 bar 工况。"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "问题：是否支持 16 bar 工况？"
-	if got != want {
-		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
-	}
-}
-
-func TestFormatMailSummaryUsesSentenceWhenAllStructuredFieldsAreEmpty(t *testing.T) {
-	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"","summary":"发件人向收件人表示感谢。"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "发件人向收件人表示感谢。"; got != want {
-		t.Fatalf("summary: got %q, want %q", got, want)
-	}
-}
-
-func TestFormatMailSummaryRequiresSentenceWhenAllStructuredFieldsAreEmpty(t *testing.T) {
-	if _, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"","summary":""}`); err == nil {
-		t.Fatal("empty summary was accepted when all structured fields were empty")
-	}
-}
-
-func TestFormatMailSummaryRejectsFreeformOutput(t *testing.T) {
-	if _, err := formatMailSummary("客户询价十台阀门。"); err == nil {
-		t.Fatal("freeform output was accepted")
+	model := AIModelRecord{ID: "model", Model: "gpt-test"}
+	before := mailSummaryConfigHash(agent, model, "low")
+	agent.OutputLabels = []string{"风险", "行动"}
+	if after := mailSummaryConfigHash(agent, model, "low"); before == after {
+		t.Fatal("changing output label order did not change the configuration hash")
 	}
 }
 

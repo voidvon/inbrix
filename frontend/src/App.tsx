@@ -1,7 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu";
 import {
   Archive,
   ArrowLeft,
@@ -61,12 +59,14 @@ import { toast } from "sonner";
 import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "./components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Separator } from "./components/ui/separator";
@@ -74,6 +74,7 @@ import { ScrollArea } from "./components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Skeleton } from "./components/ui/skeleton";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "./components/ui/pagination";
+import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
 import { Textarea } from "./components/ui/textarea";
 import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailAttachment, MailMessage, Mailbox, MailSummary } from "./types";
@@ -201,15 +202,28 @@ const zh = {
   regenerateSummary: "重新总结",
   summaryStale: "配置已更新",
   agentSettings: "智能体",
-  agentSettingsDescription: "管理智能体的纯文本提示词。",
+  agentSettingsDescription: "系统提示词、智能体提示词和输出标签共同组成最终提示词。",
   addAgent: "新增智能体",
   editAgent: "编辑智能体",
   agentName: "名称",
   agentPrompt: "提示词",
+  agentOutputLabels: "输出标签",
+  agentOutputLabelsPlaceholder: "输入标签后按回车，例如：客户",
+  invalidAgentOutputLabel: "标签不能包含冒号，最多 12 个标签，每个不超过 20 个字",
+  agentOutputLabelsDescription: "不填写时按普通智能体使用；邮件总结需要标签，邮件撰写可以留空。",
+  removeAgentOutputLabel: "删除输出标签",
   noAgents: "暂无智能体",
   agentSaved: "智能体已新增",
   agentUpdated: "智能体已更新",
   savingAgent: "正在保存…",
+  mailboxAIConfiguration: "邮箱 AI 配置",
+  mailboxAIConfigurationDescription: "为每个已绑定邮箱分别配置邮件总结和邮件撰写使用的智能体与模型。",
+  mailSummaryAgent: "邮件总结智能体",
+  emailDraftAgent: "邮件撰写智能体",
+  aiTask: "AI 功能",
+  inheritedConfiguration: "兼容配置",
+  explicitConfiguration: "已配置",
+  mailboxAIConfigurationSaved: "邮箱 AI 配置已保存",
   signatureSettings: "邮件签名",
   signatureSettingsDescription: "管理写邮件和回复时可使用的富文本签名。",
   addSignature: "新建签名",
@@ -268,6 +282,19 @@ const zh = {
   invalidRecipient: "请输入有效的邮箱地址",
   removeRecipient: "删除收件人",
   sendEmail: "发送邮件",
+  aiWriteEmail: "AI 编写邮件",
+  aiWriteDescription: "补充希望 AI 如何编写这封邮件。",
+  aiInstruction: "补充说明",
+  aiInstructionPlaceholder: "例如：语气专业简洁，确认周二下午三点可以参会",
+  includeConversation: "附带邮件聊天记录",
+  noConversationContext: "当前没有可附带的邮件聊天记录",
+  generate: "生成",
+  generating: "正在生成…",
+  aiGenerateFailed: "邮件生成失败",
+  generatedDraft: "生成结果",
+  regenerate: "再次生成",
+  useGeneratedDraft: "采用",
+  refineInstructionPlaceholder: "继续补充修改要求，例如：再简短一些，并明确回复截止时间",
 };
 
 const en = {
@@ -391,15 +418,28 @@ const en = {
   regenerateSummary: "Regenerate summary",
   summaryStale: "Configuration changed",
   agentSettings: "Agents",
-  agentSettingsDescription: "Manage plain-text prompts for agents.",
+  agentSettingsDescription: "The system prompt, agent prompt, and output labels are combined into the final prompt.",
   addAgent: "Add agent",
   editAgent: "Edit agent",
   agentName: "Name",
   agentPrompt: "Prompt",
+  agentOutputLabels: "Output labels",
+  agentOutputLabelsPlaceholder: "Type a label and press Enter, e.g. Customer",
+  invalidAgentOutputLabel: "Labels cannot contain a colon and must be at most 20 characters; up to 12 labels",
+  agentOutputLabelsDescription: "Leave empty for a regular agent; summaries require labels, while email drafting does not.",
+  removeAgentOutputLabel: "Remove output label",
   noAgents: "No agents configured",
   agentSaved: "Agent added",
   agentUpdated: "Agent updated",
   savingAgent: "Saving…",
+  mailboxAIConfiguration: "Mailbox AI configuration",
+  mailboxAIConfigurationDescription: "Configure the agent and model used for mail summaries and email drafting in each connected mailbox.",
+  mailSummaryAgent: "Mail summary agent",
+  emailDraftAgent: "Email drafting agent",
+  aiTask: "AI function",
+  inheritedConfiguration: "Fallback",
+  explicitConfiguration: "Configured",
+  mailboxAIConfigurationSaved: "Mailbox AI configuration saved",
   signatureSettings: "Email signatures",
   signatureSettingsDescription: "Manage rich-text signatures used for new messages and replies.",
   addSignature: "New signature",
@@ -458,17 +498,32 @@ const en = {
   invalidRecipient: "Enter a valid email address",
   removeRecipient: "Remove recipient",
   sendEmail: "Send email",
+  aiWriteEmail: "Write with AI",
+  aiWriteDescription: "Add guidance for how AI should write this email.",
+  aiInstruction: "Additional instructions",
+  aiInstructionPlaceholder: "For example: keep it concise and confirm Tuesday at 3 PM",
+  includeConversation: "Include email conversation",
+  noConversationContext: "No email conversation is available",
+  generate: "Generate",
+  generating: "Generating…",
+  aiGenerateFailed: "Could not generate the email",
+  generatedDraft: "Generated draft",
+  regenerate: "Generate again",
+  useGeneratedDraft: "Use draft",
+  refineInstructionPlaceholder: "Add another change, for example: make it shorter and state the reply deadline",
 };
 
 type Copy = typeof zh;
 
 type ComposeDefaults = {
+  accountEmail?: string;
   to: string;
   cc?: string;
   subject: string;
   html?: string;
   inReplyTo?: string;
   references?: string[];
+  conversation?: ConversationMessage[];
 };
 
 function useDebouncedValue(value: string, delay: number) {
@@ -680,11 +735,13 @@ function InboxPage() {
     const references = [...(source?.references || [])];
     if (source?.messageId && !references.includes(source.messageId)) references.push(source.messageId);
     openCompose({
+      accountEmail: conversation.accountEmail,
       to: recipient,
       subject: replySubject,
       html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
       inReplyTo: source?.messageId,
       references,
+      conversation: conversation.messages,
     });
   };
 
@@ -706,18 +763,20 @@ function InboxPage() {
     const references = [...(source.references || [])];
     if (source.messageId && !references.includes(source.messageId)) references.push(source.messageId);
     openCompose({
+      accountEmail: conversation.accountEmail,
       to: to.join(", "),
       cc: cc.join(", "),
       subject: replySubject,
       html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
       inReplyTo: source.messageId,
       references,
+      conversation: conversation.messages,
     });
   };
 
   const openNewMailForMessage = (conversation: ConversationDetail, message: ConversationMessage) => {
     const recipient = message.outgoing ? message.to : message.from || conversation.peerEmail || "";
-    openCompose({ to: recipient, subject: "" });
+    openCompose({ accountEmail: conversation.accountEmail, to: recipient, subject: "", conversation: conversation.messages });
   };
 
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
@@ -766,7 +825,7 @@ function InboxPage() {
             className={chatOpen ? "flex" : "hidden lg:flex"}
           />
         </main>
-      <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => {
+      <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={composeDefaults.accountEmail || conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => {
         void queryClient.invalidateQueries({ queryKey: ["conversations"] });
         void queryClient.invalidateQueries({ queryKey: ["conversation"] });
       }} />
@@ -821,28 +880,24 @@ function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; accounts: C
     window.location.assign("/inbox");
   };
   return (
-    <MenuPrimitive.Root>
-      <MenuPrimitive.Trigger render={<Button variant="ghost" className="min-w-0 flex-1 justify-start px-2" />}>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" className="min-w-0 flex-1 justify-start px-2" />}>
         <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active?.color || "#777" }} />
         <span className="min-w-0 flex-1 truncate text-left">{active?.label || accountEmail}</span>
         <ChevronDown className="size-3.5" />
-      </MenuPrimitive.Trigger>
-      <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner side="top" align="start" sideOffset={6} className="z-[70]">
-          <MenuPrimitive.Popup className="w-60 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-            {accounts.map((account) => (
-              <MenuPrimitive.Item key={account.email} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={() => void selectAccount(account.email)}>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" sideOffset={6} className="w-60">
+        {accounts.map((account) => (
+              <DropdownMenuItem key={account.email} className="gap-2 px-2 py-2" onClick={() => void selectAccount(account.email)}>
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} />
                 <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{account.label || account.email}</strong><small className="block truncate text-muted-foreground">{account.email}</small></span>
                 {(account.isActive || account.email === accountEmail) && <Check className="size-4 shrink-0" />}
-              </MenuPrimitive.Item>
+              </DropdownMenuItem>
             ))}
-            <MenuPrimitive.Separator className="my-1 h-px bg-border" />
-            <MenuPrimitive.Item className="flex cursor-default items-center rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={() => { void signOut().then(() => window.location.assign("/user-login")); }}>{copy.signOut}</MenuPrimitive.Item>
-          </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
-      </MenuPrimitive.Portal>
-    </MenuPrimitive.Root>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" className="px-2 py-2" onClick={() => { void signOut().then(() => window.location.assign("/user-login")); }}>{copy.signOut}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -946,8 +1001,8 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
     inputRef.current?.blur();
   };
   return (
-    <ContextMenuPrimitive.Root>
-      <ContextMenuPrimitive.Trigger className="block">
+    <ContextMenu>
+      <ContextMenuTrigger className="block">
       <article data-testid="conversation-row" className={cn("relative w-full max-w-full overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}>
       <button className="flex w-full min-w-0 max-w-full items-start gap-3 overflow-hidden text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onClick={onClick} type="button">
         <span className="min-w-0 max-w-full flex-1 overflow-hidden">
@@ -968,16 +1023,12 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
       </div>
       {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
       </article>
-      </ContextMenuPrimitive.Trigger>
-      <ContextMenuPrimitive.Portal>
-        <ContextMenuPrimitive.Positioner className="z-40 outline-none">
-          <ContextMenuPrimitive.Popup className="w-44 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onMarkUnread}><Mail className="size-4" />{copy.markUnread}</ContextMenuPrimitive.Item>
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteConversation}</ContextMenuPrimitive.Item>
-          </ContextMenuPrimitive.Popup>
-        </ContextMenuPrimitive.Positioner>
-      </ContextMenuPrimitive.Portal>
-    </ContextMenuPrimitive.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-44">
+        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onMarkUnread}><Mail className="size-4" />{copy.markUnread}</ContextMenuItem>
+        <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteConversation}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -1091,8 +1142,8 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
   const outgoing = message.outgoing;
   const formattedDate = formatTime(message.date);
   return (
-    <ContextMenuPrimitive.Root>
-      <ContextMenuPrimitive.Trigger className="mb-5 block select-text">
+    <ContextMenu>
+      <ContextMenuTrigger className="mb-5 block select-text">
         <article>
           <div className={cn("mb-1 flex min-w-0 items-start gap-2 text-xs leading-tight text-muted-foreground", outgoing && "justify-end text-right")}><div className="min-w-0"><div><span className="font-medium">{sender}</span><time className="ml-2" title={formattedDate}>{formattedDate}</time></div><div className="mt-1 max-w-full break-words text-[11px]"><span className="font-medium">{copy.to}:</span> {message.to || "-"}{message.cc && <><span className="mx-1.5">·</span><span className="font-medium">{copy.cc}:</span> {message.cc}</>}</div></div></div>
           <div className={cn("flex items-end", outgoing && "justify-end")}>
@@ -1107,18 +1158,14 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
           </div>
           <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} />
         </article>
-      </ContextMenuPrimitive.Trigger>
-      <ContextMenuPrimitive.Portal>
-        <ContextMenuPrimitive.Positioner className="z-40 outline-none">
-          <ContextMenuPrimitive.Popup className="w-40 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onReply}><Send className="size-4" />{copy.reply}</ContextMenuPrimitive.Item>
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onReplyAll}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuPrimitive.Item>
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onNewMail}><Mail className="size-4" />{copy.sendEmail}</ContextMenuPrimitive.Item>
-            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteEmail}</ContextMenuPrimitive.Item>
-          </ContextMenuPrimitive.Popup>
-        </ContextMenuPrimitive.Positioner>
-      </ContextMenuPrimitive.Portal>
-    </ContextMenuPrimitive.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-40">
+        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReply}><Send className="size-4" />{copy.reply}</ContextMenuItem>
+        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem>
+        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onNewMail}><Mail className="size-4" />{copy.sendEmail}</ContextMenuItem>
+        <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteEmail}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -1464,6 +1511,111 @@ function RichTextButtons({ editor, disabled = false }: { editor: Editor | null; 
   );
 }
 
+function aiConversationContext(messages: ConversationMessage[]) {
+  return messages.map((message, index) => {
+    const summary = message.mailSummary?.status === "ready" ? message.mailSummary.text.trim() : "";
+    const body = splitQuotedText(message.body || message.preview || "").visible.trim() || (message.body || message.preview || "").trim();
+    const content = summary ? `AI summary:\n${summary}` : `Message body:\n${body}`;
+    return [
+      `Message ${index + 1}`,
+      `Date: ${message.date}`,
+      `From: ${message.fromName ? `${message.fromName} <${message.from}>` : message.from}`,
+      `To: ${message.to}`,
+      message.cc ? `Cc: ${message.cc}` : "",
+      `Subject: ${message.subject}`,
+      content,
+    ].filter(Boolean).join("\n");
+  }).join("\n\n---\n\n");
+}
+
+function generatedEmailHTML(body: string) {
+  return body.replace(/\r\n?/g, "\n").split(/\n{2,}/).map((paragraph) => {
+    const content = paragraph.split("\n").map((line) => escapeHTML(line)).join("<br>");
+    return `<p>${content || "<br>"}</p>`;
+  }).join("");
+}
+
+function replaceEditorDraft(editor: Editor, body: string) {
+  let protectedPosition: number | null = null;
+  editor.state.doc.descendants((node, position) => {
+    if (protectedPosition === null && (node.type.name === "emailSignature" || node.type.name === "replyQuote")) {
+      protectedPosition = position;
+      return false;
+    }
+    return protectedPosition === null;
+  });
+  const html = generatedEmailHTML(body);
+  if (protectedPosition === null) {
+    editor.commands.setContent(html);
+  } else {
+    editor.chain().deleteRange({ from: 0, to: protectedPosition }).insertContentAt(0, html).run();
+  }
+  editor.commands.focus("start");
+}
+
+function AIAssistantButton({ copy, editor, disabled, composeOpen, accountEmail, subject, recipients, conversation }: { copy: Copy; editor: Editor | null; disabled: boolean; composeOpen: boolean; accountEmail: string; subject: string; recipients: string; conversation?: ConversationMessage[] }) {
+  const [open, setOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [includeConversation, setIncludeConversation] = useState(false);
+  const [generatedBody, setGeneratedBody] = useState("");
+  const [error, setError] = useState("");
+  const messages = conversation || [];
+  const hasConversation = messages.length > 0;
+  const mutation = useMutation({
+    mutationFn: () => generateEmail({
+      accountEmail,
+      instruction,
+      subject,
+      recipients,
+      context: includeConversation ? aiConversationContext(messages) : undefined,
+      draft: generatedBody || undefined,
+    }),
+    onSuccess: ({ body }) => {
+      setGeneratedBody(body);
+      setInstruction("");
+      setError("");
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.aiGenerateFailed),
+  });
+
+  useEffect(() => {
+    setIncludeConversation(false);
+    setInstruction("");
+    setGeneratedBody("");
+    setError("");
+  }, [composeOpen, conversation]);
+
+  const useGeneratedBody = () => {
+    if (!editor || !generatedBody) return;
+    replaceEditorDraft(editor, generatedBody);
+    setGeneratedBody("");
+    setInstruction("");
+    setError("");
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) setError(""); }}>
+      <PopoverTrigger render={<Button type="button" variant={open ? "secondary" : "ghost"} size="icon" disabled={disabled || !editor} aria-label={copy.aiWriteEmail} title={copy.aiWriteEmail} />}><Sparkles /></PopoverTrigger>
+      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[min(26rem,calc(100vw-2rem))] gap-0 p-4">
+        <PopoverTitle className="text-sm font-semibold">{copy.aiWriteEmail}</PopoverTitle>
+        <PopoverDescription className="mt-1 text-xs">{copy.aiWriteDescription}</PopoverDescription>
+        {generatedBody && <div className="mt-4 grid gap-1.5"><strong className="text-xs font-medium">{copy.generatedDraft}</strong><div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-6">{generatedBody}</div></div>}
+        <Label className="mt-4 grid gap-1.5 text-xs" htmlFor="ai-compose-instruction">{copy.aiInstruction}<Textarea id="ai-compose-instruction" value={instruction} onChange={(event) => { setInstruction(event.target.value); setError(""); }} placeholder={generatedBody ? copy.refineInstructionPlaceholder : copy.aiInstructionPlaceholder} rows={4} disabled={mutation.isPending} /></Label>
+        <label className={cn("mt-3 flex items-start gap-2 text-sm", !hasConversation && "text-muted-foreground")} title={!hasConversation ? copy.noConversationContext : undefined}>
+          <input className="mt-0.5 size-4 shrink-0 accent-primary" type="checkbox" checked={includeConversation} disabled={!hasConversation || mutation.isPending} onChange={(event) => setIncludeConversation(event.target.checked)} />
+          <span>{copy.includeConversation}{!hasConversation && <span className="mt-0.5 block text-xs">{copy.noConversationContext}</span>}</span>
+        </label>
+        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant={generatedBody ? "outline" : "default"} size="sm" disabled={mutation.isPending || (!instruction.trim() && !subject.trim() && !includeConversation && !generatedBody)} onClick={() => mutation.mutate()}><Sparkles />{mutation.isPending ? copy.generating : generatedBody ? copy.regenerate : copy.generate}</Button>
+          {generatedBody && <Button type="button" size="sm" disabled={mutation.isPending} onClick={useGeneratedBody}><Check />{copy.useGeneratedDraft}</Button>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function htmlToPlainText(html: string) {
   const body = new DOMParser().parseFromString(html, "text/html").body;
   const lines: { depth: number; text: string }[] = [{ depth: 0, text: "" }];
@@ -1672,6 +1824,8 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
           <div className="grid gap-3 border-b px-5 py-4"><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.to}<RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.cc}<RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">{copy.subject}<Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} /></Label></div>
           <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
             <RichTextButtons editor={editor} disabled={sourceMode} />
+            <Separator orientation="vertical" className="mx-1 h-5" />
+            <AIAssistantButton copy={copy} editor={editor} disabled={sourceMode} composeOpen={open} accountEmail={accountEmail} subject={subject} recipients={[...recipients, ...ccRecipients].join(", ")} conversation={defaults.conversation} />
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <Select value={selectedSignatureId} disabled={sourceMode || signatures.isPending} onValueChange={(value) => {
                 if (!value) return;
@@ -1858,17 +2012,13 @@ function FolderMessageRow({ copy, message, address, selected, junkActions, actio
   const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-muted-foreground")}>{address}</strong><span className="flex shrink-0 items-center gap-2">{unread && <span className="size-1.5 rounded-full bg-primary" aria-label={copy.unread} title={copy.unread} />}<time className="text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span></span><span className={cn("mt-1 block truncate text-xs", unread ? "text-foreground/80" : "text-muted-foreground/70")}>{message.subject || copy.noSubject}</span></button>;
   if (!junkActions) return row;
   return (
-    <ContextMenuPrimitive.Root>
-      <ContextMenuPrimitive.Trigger className="block">{row}</ContextMenuPrimitive.Trigger>
-      <ContextMenuPrimitive.Portal>
-        <ContextMenuPrimitive.Positioner className="z-40 outline-none">
-          <ContextMenuPrimitive.Popup className="w-44 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-            <ContextMenuPrimitive.Item disabled={actionPending} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50" onClick={onNotSpam}><ShieldCheck className="size-4" />{copy.notSpam}</ContextMenuPrimitive.Item>
-            <ContextMenuPrimitive.Item disabled={actionPending} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50" onClick={onPermanentDelete}><Trash2 className="size-4" />{copy.permanentDelete}</ContextMenuPrimitive.Item>
-          </ContextMenuPrimitive.Popup>
-        </ContextMenuPrimitive.Positioner>
-      </ContextMenuPrimitive.Portal>
-    </ContextMenuPrimitive.Root>
+    <ContextMenu>
+      <ContextMenuTrigger className="block">{row}</ContextMenuTrigger>
+      <ContextMenuContent className="w-44">
+        <ContextMenuItem disabled={actionPending} className="gap-2 px-2 py-2" onClick={onNotSpam}><ShieldCheck className="size-4" />{copy.notSpam}</ContextMenuItem>
+        <ContextMenuItem variant="destructive" disabled={actionPending} className="gap-2 px-2 py-2" onClick={onPermanentDelete}><Trash2 className="size-4" />{copy.permanentDelete}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -2173,6 +2323,66 @@ function SignatureSettings({ copy }: { copy: Copy }) {
   );
 }
 
+function splitOutputLabels(value: string) {
+  return value.split(/[,，;；、\n]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function validOutputLabel(value: string) {
+  return Boolean(value.trim()) && Array.from(value.trim()).length <= 20 && !/[\r\n：:]/.test(value);
+}
+
+function AgentOutputLabelInput({ copy, labels, onChange, draftRef, disabled }: { copy: Copy; labels: string[]; onChange: (labels: string[]) => void; draftRef: MutableRefObject<string>; disabled: boolean }) {
+  const [draft, setDraft] = useState("");
+  const [invalid, setInvalid] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const addValues = (values: string[]) => {
+    const candidates = values.map((value) => value.trim()).filter(Boolean);
+    if (!candidates.length) return true;
+    if (labels.length + candidates.length > 12 || candidates.some((value) => !validOutputLabel(value))) {
+      setInvalid(true);
+      return false;
+    }
+    const existing = new Set(labels);
+    const next = [...labels];
+    for (const value of candidates) {
+      if (!existing.has(value)) {
+        existing.add(value);
+        next.push(value);
+      }
+    }
+    if (next.length > 12) {
+      setInvalid(true);
+      return false;
+    }
+    onChange(next);
+    setDraft("");
+    draftRef.current = "";
+    setInvalid(false);
+    return true;
+  };
+  return (
+    <div>
+      <div className={cn("flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-input bg-transparent px-2 py-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50", invalid && "border-destructive focus-within:border-destructive focus-within:ring-destructive/20", disabled && "cursor-not-allowed opacity-50")} onClick={() => inputRef.current?.focus()}>
+        {labels.map((label, index) => <span className="flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-sm" key={`${label}-${index}`}><span className="truncate" title={label}>{label}</span><button type="button" className="grid size-4 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-background hover:text-foreground" disabled={disabled} onClick={(event) => { event.stopPropagation(); onChange(labels.filter((_, itemIndex) => itemIndex !== index)); }} aria-label={`${copy.removeAgentOutputLabel}: ${label}`} title={copy.removeAgentOutputLabel}><X className="size-3" /></button></span>)}
+        <input ref={inputRef} className="h-6 min-w-40 flex-1 bg-transparent px-0.5 text-sm outline-none placeholder:text-muted-foreground" value={draft} disabled={disabled || labels.length >= 12} onChange={(event) => { setDraft(event.target.value); draftRef.current = event.target.value; if (invalid) setInvalid(false); }} onKeyDown={(event) => {
+          if (["Enter", ",", "，", ";", "；", "Tab"].includes(event.key) && draft.trim()) {
+            event.preventDefault();
+            addValues(splitOutputLabels(draft));
+          } else if (event.key === "Backspace" && !draft && labels.length) {
+            onChange(labels.slice(0, -1));
+          }
+        }} onPaste={(event) => {
+          const value = event.clipboardData.getData("text");
+          if (!/[,，;；、\n]/.test(value)) return;
+          event.preventDefault();
+          addValues(splitOutputLabels(value));
+        }} onBlur={() => { if (draft.trim()) addValues(splitOutputLabels(draft)); }} placeholder={labels.length ? "" : copy.agentOutputLabelsPlaceholder} aria-invalid={invalid} aria-label={copy.agentOutputLabels} />
+      </div>
+      {invalid && <p className="mt-1 text-xs text-destructive">{copy.invalidAgentOutputLabel}</p>}
+    </div>
+  );
+}
+
 function AgentSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, retry: false });
@@ -2180,6 +2390,8 @@ function AgentSettings({ copy }: { copy: Copy }) {
   const [editing, setEditing] = useState<AIAgent | null>(null);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [outputLabels, setOutputLabels] = useState<string[]>(["客户", "需求", "要求", "问题"]);
+  const outputLabelDraftRef = useRef("");
   const [error, setError] = useState("");
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
   const create = useMutation({
@@ -2192,12 +2404,23 @@ function AgentSettings({ copy }: { copy: Copy }) {
     onSuccess: () => { setOpen(false); setEditing(null); setError(""); toast.success(copy.agentUpdated); refresh(); },
     onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
   });
-  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setError(""); setOpen(true); };
-  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setError(""); setOpen(true); };
+  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setOutputLabels(["客户", "需求", "要求", "问题"]); outputLabelDraftRef.current = ""; setError(""); setOpen(true); };
+  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setOutputLabels(agent.outputLabels); outputLabelDraftRef.current = ""; setError(""); setOpen(true); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    const input = { name: name.trim(), prompt: prompt.trim() };
+    const pendingLabels = splitOutputLabels(outputLabelDraftRef.current);
+    if (pendingLabels.some((label) => !validOutputLabel(label))) {
+      setError(copy.invalidAgentOutputLabel);
+      return;
+    }
+    const submittedLabels = [...outputLabels];
+    for (const label of pendingLabels) if (!submittedLabels.includes(label)) submittedLabels.push(label);
+    if (submittedLabels.length > 12) {
+      setError(copy.invalidAgentOutputLabel);
+      return;
+    }
+    const input = { name: name.trim(), prompt: prompt.trim(), outputLabels: submittedLabels };
     if (editing) update.mutate({ id: editing.id, input });
     else create.mutate(input);
   };
@@ -2211,7 +2434,7 @@ function AgentSettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[36rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.agentName}</TableHead><TableHead className="px-4">{copy.agentPrompt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
+          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
       {(agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (agents.error instanceof Error ? agents.error.message : copy.loadFailed)}</p>}
@@ -2220,12 +2443,107 @@ function AgentSettings({ copy }: { copy: Copy }) {
           <DialogHeader><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
           <form className="grid gap-4" onSubmit={submit}>
             <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} required /></div>
+            <div className="grid gap-2"><div><Label>{copy.agentOutputLabels}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.agentOutputLabelsDescription}</p></div><AgentOutputLabelInput copy={copy} labels={outputLabels} onChange={setOutputLabels} draftRef={outputLabelDraftRef} disabled={pending} /></div>
             <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-64 resize-y" value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={pending} required /></div>
             {(create.isError || update.isError) && error && <p className="text-xs text-destructive">{error}</p>}
             <DialogFooter><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+    </section>
+  );
+}
+
+function MailboxAITaskSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, retry: false });
+  const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
+  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, retry: false });
+  const [drafts, setDrafts] = useState<Record<string, { agentId: string; modelId: string }>>({});
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!bindings.data) return;
+    setDrafts(Object.fromEntries(bindings.data.bindings.map((binding) => [`${binding.accountEmail}\u0000${binding.taskType}`, { agentId: binding.agentId, modelId: binding.modelId }])));
+  }, [bindings.data]);
+
+  const saveBinding = useMutation({
+    mutationFn: saveAITaskBinding,
+    onSuccess: () => {
+      setError("");
+      toast.success(copy.mailboxAIConfigurationSaved);
+      void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onError: (value) => {
+      const message = value instanceof Error ? value.message : copy.loadFailed;
+      setError(message);
+      toast.error(message);
+      void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
+    },
+  });
+  const updateAndSave = (binding: AITaskBinding, field: "agentId" | "modelId", value: string) => {
+    const key = `${binding.accountEmail}\u0000${binding.taskType}`;
+    const current = drafts[key] || { agentId: binding.agentId, modelId: binding.modelId };
+    const next = { ...current, [field]: value };
+    setDrafts((items) => ({ ...items, [key]: next }));
+    if (!next.agentId || !next.modelId) return;
+    setError("");
+    saveBinding.mutate({ accountEmail: binding.accountEmail, taskType: binding.taskType, ...next });
+  };
+  const loadError = bindings.error instanceof Error ? bindings.error.message : models.error instanceof Error ? models.error.message : agents.error instanceof Error ? agents.error.message : "";
+
+  return (
+    <section className="mt-8 border-t pt-6">
+      <div>
+        <h3 className="text-base font-semibold">{copy.mailboxAIConfiguration}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p>
+      </div>
+      <div className="mt-4 overflow-hidden rounded-lg border">
+        <Table className="min-w-[48rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[26%] px-4">{copy.email}</TableHead>
+              <TableHead className="w-[20%] px-4">{copy.aiTask}</TableHead>
+              <TableHead className="w-[27%] px-4">{copy.agentSettings}</TableHead>
+              <TableHead className="w-[27%] px-4">{copy.aiModel}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(bindings.isPending || models.isPending || agents.isPending) ? (
+              <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.loading}</TableCell></TableRow>
+            ) : bindings.data?.bindings.length ? bindings.data.bindings.map((binding) => {
+              const draft = drafts[`${binding.accountEmail}\u0000${binding.taskType}`] || { agentId: binding.agentId, modelId: binding.modelId };
+              const saving = saveBinding.isPending && saveBinding.variables?.accountEmail === binding.accountEmail && saveBinding.variables?.taskType === binding.taskType;
+              const availableAgents = agents.data?.agents || [];
+              const selectableAgents = binding.taskType === "mail_summary" ? availableAgents.filter((agent) => agent.outputLabels.length > 0) : availableAgents;
+              return (
+                <TableRow key={`${binding.accountEmail}:${binding.taskType}`}>
+                  <TableCell className="px-4 py-3">
+                    <div className="min-w-0"><span className="block truncate font-medium" title={binding.accountEmail}>{binding.accountEmail}</span><span className="mt-1 block text-xs text-muted-foreground">{binding.explicit ? copy.explicitConfiguration : copy.inheritedConfiguration}</span></div>
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-sm">{binding.taskType === "mail_summary" ? copy.mailSummaryAgent : copy.emailDraftAgent}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <Select value={draft.agentId} onValueChange={(value) => updateAndSave(binding, "agentId", value || "")} disabled={!selectableAgents.length || saving}>
+                      <SelectTrigger className="w-full"><SelectValue>{selectableAgents.find((agent) => agent.id === draft.agentId)?.name || copy.noAgents}</SelectValue></SelectTrigger>
+                      <SelectContent>{selectableAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="px-4 py-3">
+                    <Select value={draft.modelId} onValueChange={(value) => updateAndSave(binding, "modelId", value || "")} disabled={!models.data?.models.length || saving}>
+                      <SelectTrigger className="w-full"><SelectValue>{models.data?.models.find((model) => model.id === draft.modelId)?.model || copy.noAIModels}</SelectValue></SelectTrigger>
+                      <SelectContent>{models.data?.models.map((model) => <SelectItem key={model.id} value={model.id}>{model.model}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </TableCell>
+                </TableRow>
+              );
+            }) : (
+              <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+      {(bindings.isError || models.isError || agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || loadError || copy.loadFailed}</p>}
     </section>
   );
 }
@@ -2438,6 +2756,7 @@ function MailboxSettings({ copy }: { copy: Copy }) {
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
   };
   const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => { setError(""); refreshAccountData(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   return (
@@ -2465,6 +2784,7 @@ function MailboxSettings({ copy }: { copy: Copy }) {
       </div>
       {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
       {error && <p className="py-2 text-xs text-destructive">{error}</p>}
+      <MailboxAITaskSettings copy={copy} />
       <AddAccountDialog copy={copy} open={addOpen} onOpenChange={setAddOpen} onAdded={refreshAccountData} />
     </section>
   );

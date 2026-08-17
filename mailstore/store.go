@@ -104,12 +104,21 @@ type AIModelRecord struct {
 }
 
 type AIAgentRecord struct {
-	ID        string
-	OwnerID   string
-	Name      string
-	Prompt    string
-	Purpose   string
-	CreatedAt time.Time
+	ID           string
+	OwnerID      string
+	Name         string
+	Prompt       string
+	Purpose      string
+	OutputLabels []string
+	CreatedAt    time.Time
+}
+
+type AITaskBindingRecord struct {
+	AccountID string
+	TaskType  string
+	AgentID   string
+	ModelID   string
+	UpdatedAt time.Time
 }
 
 type MessageSummaryKey struct {
@@ -241,11 +250,25 @@ func (s *Store) migrate(ctx context.Context) error {
 			name TEXT NOT NULL,
 			prompt TEXT NOT NULL,
 			purpose TEXT NOT NULL DEFAULT '',
+			output_labels_json TEXT NOT NULL DEFAULT '["客户","需求","要求","问题"]',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			UNIQUE(owner_id, name)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_agents_owner ON ai_agents(owner_id, created_at, name)`,
+		`CREATE TABLE IF NOT EXISTS ai_task_bindings (
+			account_id TEXT NOT NULL,
+			task_type TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			model_id TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, task_type),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE,
+			FOREIGN KEY(agent_id) REFERENCES ai_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY(model_id) REFERENCES ai_models(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_task_bindings_agent ON ai_task_bindings(agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_task_bindings_model ON ai_task_bindings(model_id)`,
 		`INSERT OR IGNORE INTO ai_models(id, owner_id, provider, base_url, model, encrypted_api_key, is_default, created_at, updated_at)
 			SELECT 'legacy_' || owner_id, owner_id, 'openai', base_url, model, encrypted_api_key, 1, updated_at, updated_at
 			FROM ai_model_settings WHERE model <> '' AND encrypted_api_key <> ''`,
@@ -357,6 +380,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	if err := s.ensureAIAgentPurposeColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAIAgentOutputLabelsColumn(ctx); err != nil {
 		return err
 	}
 	// The messages table predates attachment_metadata_cached. CREATE TABLE IF
@@ -491,6 +517,33 @@ func (s *Store) ensureAIAgentPurposeColumn(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_agents ADD COLUMN purpose TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("mailstore: add AI agent purpose column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureAIAgentOutputLabelsColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_agents)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI agents schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI agents schema: %w", err)
+		}
+		if name == "output_labels_json" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI agents schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_agents ADD COLUMN output_labels_json TEXT NOT NULL DEFAULT '["客户","需求","要求","问题"]'`); err != nil {
+		return fmt.Errorf("mailstore: add AI agent output labels column: %w", err)
 	}
 	return nil
 }
