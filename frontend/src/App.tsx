@@ -57,6 +57,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import { toast } from "sonner";
+import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
 import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
@@ -1430,8 +1431,11 @@ function RichTextButtons({ editor, disabled = false }: { editor: Editor | null; 
 function htmlToPlainText(html: string) {
   const body = new DOMParser().parseFromString(html, "text/html").body;
   const lines: { depth: number; text: string }[] = [{ depth: 0, text: "" }];
-  const newLine = (depth: number) => {
-    if (!lines.at(-1)?.text) lines[lines.length - 1].depth = depth;
+  const newLine = (depth: number, preserveEmpty = false) => {
+    if (!lines.at(-1)?.text) {
+      lines[lines.length - 1].depth = depth;
+      if (preserveEmpty) lines.push({ depth, text: "" });
+    }
     else lines.push({ depth, text: "" });
   };
   const appendText = (value: string, depth: number) => {
@@ -1455,13 +1459,17 @@ function htmlToPlainText(html: string) {
     const childDepth = node.tagName === "BLOCKQUOTE" ? depth + 1 : depth;
     if (node.tagName === "BLOCKQUOTE") newLine(childDepth);
     Array.from(node.childNodes).forEach((child) => walk(child, childDepth));
-    if (["P", "DIV", "LI", "BLOCKQUOTE"].includes(node.tagName)) newLine(depth);
+    if (["P", "DIV", "LI", "BLOCKQUOTE"].includes(node.tagName)) {
+      const hasVisibleContent = Boolean((node.textContent || "").trim() || node.querySelector("br, img, hr"));
+      newLine(depth, !hasVisibleContent);
+    }
   };
   Array.from(body.childNodes).forEach((node) => walk(node, 0));
-  return lines
+  const result = lines
     .map(({ depth, text }) => `${depth ? `${">".repeat(depth)} ` : ""}${text.trimEnd()}`.trimEnd())
     .join("\n")
-    .trim();
+    .trimEnd();
+  return result.trim() ? result : "";
 }
 
 function splitRecipientValues(value: string) {
@@ -1532,7 +1540,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const recipientDraftRef = useRef("");
   const signatureInitializedRef = useRef(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
-  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false }), ReplyQuote, EmailSignatureExtension, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
+  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false, paragraph: false }), EmailParagraph, ReplyQuote, EmailSignatureExtension, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
 
@@ -1961,7 +1969,7 @@ function SignatureSettings({ copy }: { copy: Copy }) {
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
   const [error, setError] = useState("");
-  const editor = useEditor({ extensions: [StarterKit, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
+  const editor = useEditor({ extensions: [StarterKit.configure({ paragraph: false }), EmailParagraph, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
   const persist = useMutation({
     mutationFn: ({ items }: { items: EmailSignature[]; operation: "create" | "update" | "delete" }) => saveSignatures(items),
     onSuccess: async (_, variables) => {
