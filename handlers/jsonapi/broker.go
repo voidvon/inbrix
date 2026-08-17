@@ -105,10 +105,14 @@ var brokerDialIMAP = func(spec brokerSpec) (api.MailClient, error) {
 // implies implicit TLS; anything else (typically 587) uses STARTTLS.
 func brokerSMTPClient(spec brokerSpec) *api.SMTPClient {
 	useStartTLS := spec.SMTPPort != 465
+	var client *api.SMTPClient
 	if spec.Auth == brokerAuthXOAuth2 {
-		return api.NewSMTPClientOAuth(spec.SMTPHost, spec.SMTPPort, spec.Email, spec.Secret, brokerAuthXOAuth2, useStartTLS)
+		client = api.NewSMTPClientOAuth(spec.SMTPHost, spec.SMTPPort, spec.Email, spec.Secret, brokerAuthXOAuth2, useStartTLS)
+	} else {
+		client = api.NewSMTPClient(spec.SMTPHost, spec.SMTPPort, spec.Email, spec.Secret, useStartTLS)
 	}
-	return api.NewSMTPClient(spec.SMTPHost, spec.SMTPPort, spec.Email, spec.Secret, useStartTLS)
+	client.SetAuthUsername(spec.Username)
+	return client
 }
 
 // calDAVClient is the subset of *api.CalDAVClient the JSON calendar handlers use.

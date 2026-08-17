@@ -15,8 +15,13 @@ function ScrollArea({ className, viewportClassName, contentClassName, viewportRe
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn("size-full overscroll-contain outline-none", viewportClassName)}
+        style={{ overflowX: "hidden" }}
       >
-        <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className={cn("min-h-full min-w-0", contentClassName)}>
+        <ScrollAreaPrimitive.Content
+          data-slot="scroll-area-content"
+          className={cn("min-h-full min-w-0 max-w-full", contentClassName)}
+          style={{ width: "100%", minWidth: "100%", maxWidth: "100%" }}
+        >
           {children}
         </ScrollAreaPrimitive.Content>
       </ScrollAreaPrimitive.Viewport>

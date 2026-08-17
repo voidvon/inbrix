@@ -14,6 +14,7 @@ import (
 	"lilmail/config"
 	"lilmail/handlers/api"
 	"lilmail/models"
+	"lilmail/storage"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -242,6 +243,80 @@ func TestHandleDelete_HardExpunges(t *testing.T) {
 	}
 	if len(rc.deleted) != 1 || rc.deleted[0] != [2]string{"INBOX", "7"} {
 		t.Fatalf("expected hard expunge, got %+v", rc.deleted)
+	}
+}
+
+func TestHandleDelete_ClearsAttachmentCacheBeforeExpunge(t *testing.T) {
+	rc := newRich()
+	rc.attachmentMetadata = []models.Attachment{{PartID: "2.1"}, {PartID: "3"}}
+	var deletedPaths []string
+	storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("storage method = %s", r.Method)
+		}
+		if len(rc.deleted) != 0 {
+			t.Error("mail was expunged before attachment cache cleanup")
+		}
+		deletedPaths = append(deletedPaths, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer storageServer.Close()
+
+	t.Setenv("VULOS_STORAGE_BROKER_SECRET", "storage-secret")
+	app := newBrokeredAppCfg(t, &config.Config{}, rc)
+	extra := map[string]string{
+		storage.HdrStorageBrokerAuth: "storage-secret",
+		storage.HdrStorageEndpoint:   storageServer.URL,
+		storage.HdrStorageBucket:     "bucket",
+		storage.HdrStorageAccessKey:  "access",
+		storage.HdrStorageSecretKey:  "secret",
+		storage.HdrStoragePrefix:     "tenant",
+	}
+	resp, _ := app.Test(brokeredReq("DELETE", "/v1/messages/7?folder=INBOX&hard=true", nil, extra))
+	if resp.StatusCode != fiber.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 204, got %d: %s", resp.StatusCode, body)
+	}
+	wantPaths := map[string]bool{
+		"/bucket/tenant/mail/attachments/INBOX/7/2.1": true,
+		"/bucket/tenant/mail/attachments/INBOX/7/3":   true,
+	}
+	if len(deletedPaths) != len(wantPaths) {
+		t.Fatalf("storage deletes = %q", deletedPaths)
+	}
+	for _, path := range deletedPaths {
+		if !wantPaths[path] {
+			t.Fatalf("unexpected storage delete %q", path)
+		}
+	}
+	if len(rc.deleted) != 1 || rc.deleted[0] != [2]string{"INBOX", "7"} {
+		t.Fatalf("message was not expunged after cache cleanup: %q", rc.deleted)
+	}
+}
+
+func TestHandleDelete_CacheFailureBlocksExpunge(t *testing.T) {
+	rc := newRich()
+	rc.attachmentMetadata = []models.Attachment{{PartID: "2.1"}}
+	storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer storageServer.Close()
+
+	t.Setenv("VULOS_STORAGE_BROKER_SECRET", "storage-secret")
+	app := newBrokeredAppCfg(t, &config.Config{}, rc)
+	extra := map[string]string{
+		storage.HdrStorageBrokerAuth: "storage-secret",
+		storage.HdrStorageEndpoint:   storageServer.URL,
+		storage.HdrStorageBucket:     "bucket",
+		storage.HdrStorageAccessKey:  "access",
+		storage.HdrStorageSecretKey:  "secret",
+	}
+	resp, _ := app.Test(brokeredReq("DELETE", "/v1/messages/7?folder=INBOX&hard=true", nil, extra))
+	if resp.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("want 502, got %d", resp.StatusCode)
+	}
+	if len(rc.deleted) != 0 || len(rc.moved) != 0 {
+		t.Fatalf("mail changed after cache cleanup failed: deleted=%q moved=%q", rc.deleted, rc.moved)
 	}
 }
 

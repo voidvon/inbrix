@@ -18,8 +18,9 @@ import (
 // fakeMailClient is a no-network MailClient used to assert that the brokered
 // path builds a client from headers without contacting a live IMAP server.
 type fakeMailClient struct {
-	folders []*api.MailboxInfo
-	closed  bool
+	folders            []*api.MailboxInfo
+	attachmentMetadata []models.Attachment
+	closed             bool
 }
 
 func (f *fakeMailClient) FetchFolders() ([]*api.MailboxInfo, error) { return f.folders, nil }
@@ -37,6 +38,9 @@ func (f *fakeMailClient) SearchMessages(string, string, uint32) ([]models.Email,
 }
 func (f *fakeMailClient) FetchAttachment(string, string, string) ([]byte, string, string, error) {
 	return nil, "", "", nil
+}
+func (f *fakeMailClient) FetchAttachmentMetadata(string, string) ([]models.Attachment, error) {
+	return f.attachmentMetadata, nil
 }
 func (f *fakeMailClient) DeleteMessage(string, string) error                { return nil }
 func (f *fakeMailClient) SetMessageFlag(string, string, string, bool) error { return nil }

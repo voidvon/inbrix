@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"lilmail/handlers/api"
 	"lilmail/models"
 	"strings"
 	"time"
@@ -126,7 +127,7 @@ func decodeMessage(
 		ID:                       fmt.Sprintf("%d", uid),
 		Folder:                   folderName,
 		From:                     fromAddr,
-		FromName:                 fromName,
+		FromName:                 api.DecodeMIMEHeader(fromName),
 		To:                       toAddrs,
 		Cc:                       cc,
 		Subject:                  subject,
@@ -141,6 +142,9 @@ func decodeMessage(
 		InReplyTo:                inReplyTo,
 	}
 	unmarshalJSON(toNamesJSON, "[]", &email.ToNames)
+	for i := range email.ToNames {
+		email.ToNames[i] = api.DecodeMIMEHeader(email.ToNames[i])
+	}
 	unmarshalJSON(flagsJSON, "[]", &email.Flags)
 	unmarshalJSON(attachmentsJSON, "[]", &email.Attachments)
 	unmarshalJSON(referencesJSON, "[]", &email.References)

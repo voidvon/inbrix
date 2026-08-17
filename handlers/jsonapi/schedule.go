@@ -67,6 +67,7 @@ var scheduleSMTPFactory = func(rec *scheduledSend) smtpSender {
 		cl = api.NewSMTPClient(rec.SMTPHost, rec.SMTPPort, rec.From, rec.Secret, rec.UseSTARTTLS)
 	}
 	if cl != nil {
+		cl.SetAuthUsername(rec.AuthUsername)
 		cl.SetInsecureSkipVerify(rec.InsecureSkip)
 	}
 	return cl
@@ -308,6 +309,7 @@ func (h *Handler) scheduleSend(c *fiber.Ctx, body composeBody, plain string, att
 		Attachments:  atts,
 		SMTPHost:     tr.Server,
 		SMTPPort:     tr.Port,
+		AuthUsername: tr.AuthUsername,
 		SMTPUseOAuth: tr.UseOAuth,
 		OAuthMech:    tr.Mechanism,
 		UseSTARTTLS:  tr.UseSTARTTLS,

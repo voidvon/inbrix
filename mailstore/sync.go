@@ -147,6 +147,76 @@ func (m *SyncManager) Trigger(accountID string) {
 	}
 }
 
+// SyncNewMessagesNow pulls only messages newer than the local high-water mark
+// for one mailbox. Compose calls this after APPENDing to Sent so the local
+// conversation view is current before the success response reaches the browser.
+func (m *SyncManager) SyncNewMessagesNow(ctx context.Context, accountID, folderName string) error {
+	if m == nil || m.store == nil || accountID == "" || strings.TrimSpace(folderName) == "" {
+		return nil
+	}
+	account, err := m.store.GetAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(account.AuthType, "oauth2") {
+		return fmt.Errorf("mail sync: immediate OAuth2 sync is not available")
+	}
+	var password string
+	if err := api.DecryptJSON(account.EncryptedPassword, &password, m.key); err != nil {
+		return fmt.Errorf("decrypt credentials: %w", err)
+	}
+	client, err := api.NewClientTLS(account.IMAPServer, account.IMAPPort, account.Username, password, account.IMAPTLS)
+	if err != nil {
+		return fmt.Errorf("connect IMAP: %w", err)
+	}
+	defer client.Close()
+
+	cursor, err := m.store.MaxMessageUID(ctx, accountID, folderName)
+	if err != nil {
+		return err
+	}
+	batch := uint32(m.config.BatchSize)
+	if batch == 0 {
+		batch = 200
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		page, err := client.FetchMessagesSinceUID(folderName, cursor, batch)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			break
+		}
+		if err := m.store.UpsertMessages(ctx, accountID, folderName, page); err != nil {
+			return err
+		}
+		maxUID := cursor
+		for _, email := range page {
+			if m.config.SyncBodies {
+				if full, fetchErr := client.FetchSingleMessage(folderName, email.ID); fetchErr != nil {
+					log.Printf("mail sync: immediate body fetch %s/%s: %v", folderName, email.ID, fetchErr)
+				} else if err := m.store.UpsertMessages(ctx, accountID, folderName, []models.Email{full}); err != nil {
+					return err
+				}
+			}
+			if uid, parseErr := parseUIDString(email.ID); parseErr == nil && uint32(uid) > maxUID {
+				maxUID = uint32(uid)
+			}
+		}
+		if maxUID <= cursor {
+			break
+		}
+		cursor = maxUID
+		if len(page) < int(batch) {
+			break
+		}
+	}
+	return m.store.UpdateFolderStats(ctx, accountID, folderName)
+}
+
 func (m *SyncManager) Stop() {
 	if m == nil {
 		return
@@ -209,10 +279,12 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	var folderErrors int
+	seenFolders := make([]string, 0, len(folders))
 	for _, remote := range folders {
 		if remote == nil || isNoSelect(remote.Attributes) || strings.TrimSpace(remote.Name) == "" {
 			continue
 		}
+		seenFolders = append(seenFolders, remote.Name)
 		folder := Folder{
 			AccountID:  accountID,
 			Name:       remote.Name,
@@ -227,6 +299,10 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 			log.Printf("mail sync: account %s folder %q: %v", accountID, remote.Name, err)
 			_ = m.store.MarkFolderSync(ctx, accountID, remote.Name, false, err)
 		}
+	}
+	if err := m.store.PruneFolders(ctx, accountID, seenFolders); err != nil {
+		_ = m.store.SetAccountError(ctx, accountID, "reconcile folders: "+err.Error())
+		return err
 	}
 	if folderErrors > 0 {
 		err := fmt.Errorf("%d folder(s) failed to synchronize", folderErrors)
@@ -329,6 +405,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 	}
 
 	cursor := lastUID
+	var newMessages []models.Email
 	for {
 		page, err := client.FetchMessagesSinceUID(folderName, cursor, batch)
 		if err != nil {
@@ -343,6 +420,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 		if err := m.syncBodies(ctx, client, accountID, folderName, page); err != nil {
 			return err
 		}
+		newMessages = append(newMessages, page...)
 		maxUID := cursor
 		for _, email := range page {
 			if uid, parseErr := parseUIDString(email.ID); parseErr == nil && uint32(uid) > maxUID {
@@ -368,7 +446,17 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 	if err := m.store.UpdateFolderStats(ctx, accountID, folderName); err != nil {
 		return err
 	}
-	return m.store.MarkFolderSync(ctx, accountID, folderName, true, nil)
+	if err := m.store.MarkFolderSync(ctx, accountID, folderName, true, nil); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(folderName), "INBOX") && len(newMessages) > 0 {
+		account, err := m.store.GetAccount(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		m.notifyNewMessages(ctx, client, account, newMessages)
+	}
+	return nil
 }
 
 func (m *SyncManager) syncBodies(ctx context.Context, client *api.Client, accountID, folderName string, page []models.Email) error {

@@ -252,6 +252,71 @@ func TestMessageMetadataRefreshPreservesCachedAttachments(t *testing.T) {
 	}
 }
 
+func TestGetMessageDecodesLegacyEncodedDisplayNames(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "encoded-name@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "encoded-name@example.com", true)
+	if err := s.UpsertMessages(ctx, account.ID, "Deleted Messages", []models.Email{{
+		ID:       "174",
+		From:     "sales@spiraxsteam.com",
+		FromName: "=?utf-8?B?U2FsZXM=?=",
+		ToNames:  []string{"=?utf-8?B?8J+lpQ==?="},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := s.GetMessage(ctx, account.ID, "Deleted Messages", "174")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.FromName != "Sales" || len(message.ToNames) != 1 || message.ToNames[0] != "🥥" {
+		t.Fatalf("legacy display names were not decoded: %+v", message)
+	}
+}
+
+func TestPruneFoldersRemovesStaleFolderMessagesOnlyForAccount(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "folder-prune@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "folder-prune@example.com", true)
+	other := testAccount(t, s, owner.ID, "other-folder-prune@example.com", false)
+	for _, folder := range []string{"INBOX", "Old Name"} {
+		if err := s.UpsertFolder(ctx, Folder{AccountID: account.ID, Name: folder}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.UpsertFolder(ctx, Folder{AccountID: other.ID, Name: "Old Name"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMessages(ctx, account.ID, "Old Name", []models.Email{{ID: "9", Subject: "stale"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMessages(ctx, other.ID, "Old Name", []models.Email{{ID: "9", Subject: "keep"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.PruneFolders(ctx, account.ID, []string{"INBOX", "New Name"}); err != nil {
+		t.Fatalf("PruneFolders: %v", err)
+	}
+	folders, err := s.ListFolders(ctx, account.ID)
+	if err != nil || len(folders) != 1 || folders[0].Name != "INBOX" {
+		t.Fatalf("account folders after prune = %+v, err=%v", folders, err)
+	}
+	if _, err := s.GetMessage(ctx, account.ID, "Old Name", "9"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale folder message survived: %v", err)
+	}
+	if _, err := s.GetMessage(ctx, other.ID, "Old Name", "9"); err != nil {
+		t.Fatalf("other account message was pruned: %v", err)
+	}
+}
+
 func TestAttachmentMetadataCanBeRefreshedWithoutBody(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

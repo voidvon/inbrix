@@ -21,7 +21,7 @@
 // a second SSRF guard the injected endpoint must be https:// unless it names a
 // loopback or private-network host.
 //
-// No new dependency: this is a minimal, self-contained AWS SigV4 GET/PUT client
+// No new dependency: this is a minimal, self-contained AWS SigV4 GET/PUT/DELETE client
 // (stdlib only), preserving lilmail's single-static-binary property.
 package storage
 
@@ -80,10 +80,12 @@ type Object struct {
 }
 
 // ObjectStore is the supplementary blob store. Get returns ErrNotFound for a
-// missing key. Implementations must be safe for concurrent use.
+// missing key. Delete is idempotent so lifecycle cleanup can safely be retried.
+// Implementations must be safe for concurrent use.
 type ObjectStore interface {
 	Get(ctx context.Context, key string) (*Object, error)
 	Put(ctx context.Context, key string, body []byte, contentType string, meta map[string]string) error
+	Delete(ctx context.Context, key string) error
 }
 
 // storageBrokerAuthorized reports whether the request is authenticated as having
@@ -151,7 +153,7 @@ func ObjectStoreFromHeaders(get func(string) string) (ObjectStore, bool) {
 	}, true
 }
 
-// s3Store is a minimal path-style S3 client (GET/PUT) signed with AWS SigV4.
+// s3Store is a minimal path-style S3 client (GET/PUT/DELETE) signed with AWS SigV4.
 type s3Store struct {
 	scheme    string
 	host      string
@@ -228,6 +230,27 @@ func (s *s3Store) Put(ctx context.Context, key string, body []byte, contentType 
 		return fmt.Errorf("storage: PUT %s: %s", key, resp.Status)
 	}
 	return nil
+}
+
+func (s *s3Store) Delete(ctx context.Context, key string) error {
+	u, canonURI := s.buildURL(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.URL = u
+	s.sign(req, canonURI, emptyPayloadHash, time.Now())
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode/100 == 2 {
+		return nil
+	}
+	return fmt.Errorf("storage: DELETE %s: %s", key, resp.Status)
 }
 
 // buildURL returns the request URL and the SigV4 canonical URI (the percent-

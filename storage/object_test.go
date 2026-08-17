@@ -298,6 +298,9 @@ func TestRoundTrip(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusOK)
 			w.Write(o.body)
+		case http.MethodDelete:
+			delete(objects, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -343,6 +346,15 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got.Meta["filename"] != "report.pdf" {
 		t.Fatalf("filename meta = %q", got.Meta["filename"])
+	}
+	if err := st.Delete(ctx, "attachments/abc"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := objects["/b/t1/mail/attachments/abc"]; ok {
+		t.Fatal("object still exists after Delete")
+	}
+	if err := st.Delete(ctx, "attachments/abc"); err != nil {
+		t.Fatalf("idempotent Delete: %v", err)
 	}
 }
 

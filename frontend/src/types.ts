@@ -22,6 +22,13 @@ export type Attachment = {
   contentId?: string;
 };
 
+export type MailSummary = {
+  text: string;
+  status: "ready" | "generating" | "failed";
+  stale: boolean;
+  updatedAt?: string;
+};
+
 export type ConversationSummary = {
   id: string;
   title: string;
@@ -57,6 +64,7 @@ export type ConversationMessage = {
   inReplyTo?: string;
   references?: string[];
   outgoing: boolean;
+  mailSummary?: MailSummary;
 };
 
 export type ConversationDetail = {

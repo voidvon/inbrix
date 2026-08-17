@@ -18,6 +18,11 @@ export default defineConfig(({ command, mode }) => {
   return {
     root: "frontend",
     base: command === "serve" ? "/" : "/app/",
+    resolve: {
+      alias: {
+        "@": new URL("./src", import.meta.url).pathname,
+      },
+    },
     plugins: [react(), tailwindcss()],
     build: {
       outDir: "dist",

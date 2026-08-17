@@ -201,6 +201,22 @@ func TestDecodeMIMEHeaderGB18030(t *testing.T) {
 	}
 }
 
+func TestParseAddressHeaderDecodesQuotedQQDisplayNames(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: `"=?utf-8?B?U2FsZXM=?=" <sales@spiraxsteam.com>`, want: "Sales"},
+		{raw: `"=?utf-8?B?8J+lpQ==?=" <virjay@qq.com>`, want: "🥥"},
+	}
+	for _, test := range tests {
+		addresses := parseAddressHeader(test.raw)
+		if len(addresses) != 1 || addresses[0].Name != test.want {
+			t.Errorf("parseAddressHeader(%q) = %+v, want name %q", test.raw, addresses, test.want)
+		}
+	}
+}
+
 func TestMarkInlineAttachmentsFromHTML(t *testing.T) {
 	attachments := []models.Attachment{
 		{ID: "image-1", Filename: "=?gbk?B?NTc1Njc2MjhAMjE3RDkxMTcuNEUzNzdDNkEwMDAw?=", ContentType: "image/jpeg", ContentID: "57567628@217D9117.4E377C6A00000000.jpg"},

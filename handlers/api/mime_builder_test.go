@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -20,6 +21,53 @@ func parseMail(t *testing.T, raw []byte) *mail.Message {
 		t.Fatalf("parse mail: %v", err)
 	}
 	return msg
+}
+
+func TestWriteMIMEMessageStreamsAttachmentSource(t *testing.T) {
+	payload := bytes.Repeat([]byte("streamed attachment contents\n"), 16*1024)
+	opened := 0
+	var raw bytes.Buffer
+	err := WriteMIMEMessage(&raw, MIMEMessageOptions{
+		From:      "alice@example.com",
+		To:        "bob@example.com",
+		Subject:   "Streamed attachment",
+		PlainBody: "See attached.",
+		Attachments: []OutgoingAttachment{{
+			Filename:    "streamed.bin",
+			ContentType: "application/octet-stream",
+			Open: func() (io.ReadCloser, error) {
+				opened++
+				return io.NopCloser(bytes.NewReader(payload)), nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("WriteMIMEMessage: %v", err)
+	}
+	if opened != 1 {
+		t.Fatalf("attachment source opened %d times, want 1", opened)
+	}
+
+	msg := parseMail(t, raw.Bytes())
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/mixed" {
+		t.Fatalf("Content-Type = %q, params=%v, err=%v", mediaType, params, err)
+	}
+	mr := multipart.NewReader(msg.Body, params["boundary"])
+	if _, err := mr.NextPart(); err != nil {
+		t.Fatalf("read body part: %v", err)
+	}
+	attachment, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("read attachment part: %v", err)
+	}
+	decoded, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, attachment))
+	if err != nil {
+		t.Fatalf("decode attachment: %v", err)
+	}
+	if !bytes.Equal(decoded, payload) {
+		t.Fatalf("decoded attachment length = %d, want %d", len(decoded), len(payload))
+	}
 }
 
 func TestBuildMIMEMessage_PlainOnly(t *testing.T) {

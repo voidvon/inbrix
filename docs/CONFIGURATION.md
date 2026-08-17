@@ -192,7 +192,9 @@ existing subscriptions.
 lilmail's primary stores are IMAP (the mail) and the KV seam above; it does **not**
 keep mail or state in object storage. The only object-storage use is a **supplementary
 read-through cache of immutable attachment blobs**, avoiding repeated IMAP pulls of the
-same MIME part.
+same MIME part. Moving or deleting a message removes its known attachment cache objects
+before changing the message on IMAP. If that lifecycle cleanup fails, the message
+operation is stopped so a successful deletion cannot knowingly leave cached blobs behind.
 
 This is **off by default** and is **authenticated**, exactly like the MAIL credential
 broker (`LILMAIL_BROKER_SECRET`). It activates only when **all** of these hold:

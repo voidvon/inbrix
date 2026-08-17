@@ -188,12 +188,15 @@ address, `*.internal`/`*.local`); a plaintext endpoint to a public host is
 refused.
 
 Properties: objects live under the gateway-provided prefix (`<userID>/<appID>/`)
-in a `mail/` sub-space (`<prefix>/mail/attachments/<id>`); the cache is pure
-read-through (IMAP stays authoritative; a cache miss or any S3 error falls back to
-IMAP and is never surfaced to the user); the client is a minimal self-contained
-AWS SigV4 GET/PUT (no new dependency, single binary preserved). The seam is **off
-by default** so standalone lilmail never trusts injected storage headers — the
-same fail-closed posture as the mail credential-injection seam.
+in a `mail/attachments/` sub-space; the cache is read-through and IMAP stays
+authoritative. Cache read/write errors during downloads fall back to IMAP and are
+not surfaced. Message move/delete operations are different: known attachment
+objects are deleted first, and a lifecycle cleanup error stops the IMAP mutation
+so a successful deletion cannot knowingly leave cached blobs behind. The client
+is a minimal self-contained AWS SigV4 GET/PUT/DELETE implementation (no new
+dependency, single binary preserved). The seam is **off by default** so
+standalone lilmail never trusts injected storage headers — the same fail-closed
+posture as the mail credential-injection seam.
 
 ### JSON API (`handlers/jsonapi`)
 

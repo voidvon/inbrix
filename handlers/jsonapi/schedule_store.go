@@ -70,6 +70,7 @@ type scheduledSend struct {
 	// transiently in memory right before a send.
 	SMTPHost     string `json:"smtpHost"`
 	SMTPPort     int    `json:"smtpPort"`
+	AuthUsername string `json:"authUsername,omitempty"`
 	SMTPUseOAuth bool   `json:"smtpUseOauth"`
 	OAuthMech    string `json:"oauthMech"`
 	UseSTARTTLS  bool   `json:"useStartTls"`

@@ -65,6 +65,18 @@ export function saveConversationNote(id: string, note: string) {
   });
 }
 
+export function markConversationRead(id: string) {
+  return apiFetch<{ ok: boolean; updated: number }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "PATCH" });
+}
+
+export function markConversationUnread(id: string) {
+  return apiFetch<{ ok: boolean; updated: number }>(`/api/conversations/${encodeURIComponent(id)}/unread`, { method: "PATCH" });
+}
+
+export function deleteConversation(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export function deleteConversationMessage(conversationId: string, uid: string, folder: string) {
   return apiFetch<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(uid)}`, {
     method: "DELETE",
@@ -74,6 +86,151 @@ export function deleteConversationMessage(conversationId: string, uid: string, f
 
 export function resyncAttachments() {
   return apiFetch<{ ok: boolean; queued: boolean; account: string }>("/api/accounts/resync-attachments", { method: "POST" });
+}
+
+export type FeishuWebhookSettings = { enabled: boolean; url: string };
+
+export function getFeishuWebhookSettings() {
+  return apiFetch<FeishuWebhookSettings>("/api/settings/feishu-webhook");
+}
+
+export function saveFeishuWebhookSettings(settings: FeishuWebhookSettings) {
+  return apiFetch<FeishuWebhookSettings>("/api/settings/feishu-webhook", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export function testFeishuWebhook(url: string) {
+  return apiFetch<{ ok: boolean }>("/api/settings/feishu-webhook/test", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+}
+
+export type EmailSignature = {
+  id: string;
+  name: string;
+  html: string;
+  default?: boolean;
+};
+
+export function getSignatures() {
+  return apiFetch<{ signatures: EmailSignature[] }>("/v1/settings/signatures");
+}
+
+export function saveSignatures(signatures: EmailSignature[]) {
+  return apiFetch<{ signatures: EmailSignature[] }>("/v1/settings/signatures", {
+    method: "PUT",
+    body: JSON.stringify({ signatures }),
+  });
+}
+
+export type AIModel = {
+  id: string;
+  provider: "openai";
+  baseUrl: string;
+  model: string;
+  reasoningEffort: "low" | "medium";
+  isDefault: boolean;
+};
+
+export type AddAIModelInput = {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  reasoningEffort: "low" | "medium";
+};
+
+export function getAIModels() {
+  return apiFetch<{ models: AIModel[] }>("/api/settings/ai/models");
+}
+
+export function addAIModel(model: AddAIModelInput) {
+  return apiFetch<AIModel>("/api/settings/ai/models", {
+    method: "POST",
+    body: JSON.stringify(model),
+  });
+}
+
+export function updateAIModel(id: string, model: AddAIModelInput) {
+  return apiFetch<AIModel>(`/api/settings/ai/models/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(model),
+  });
+}
+
+export function testAIModel(model: AddAIModelInput) {
+  return apiFetch<{ ok: boolean; output: string; latencyMs: number }>("/api/settings/ai/models/test", {
+    method: "POST",
+    body: JSON.stringify(model),
+  });
+}
+
+export function testSavedAIModel(id: string, model: AddAIModelInput) {
+  return apiFetch<{ ok: boolean; output: string; latencyMs: number }>(`/api/settings/ai/models/${encodeURIComponent(id)}/test`, {
+    method: "POST",
+    body: JSON.stringify(model),
+  });
+}
+
+export function deleteAIModel(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/settings/ai/models/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function setDefaultAIModel(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/settings/ai/models/${encodeURIComponent(id)}/default`, { method: "POST" });
+}
+
+export function summarizeMailThread(thread: string) {
+  return apiFetch<{ summary: string }>("/api/ai/summary", {
+    method: "POST",
+    body: JSON.stringify({ thread }),
+  });
+}
+
+export type MailSummaryResult = {
+  summary: string;
+  status: "ready";
+  cached: boolean;
+  stale: boolean;
+  updatedAt: string;
+};
+
+export function summarizeMailMessage(accountEmail: string, folder: string, messageId: string, regenerate = false) {
+  return apiFetch<MailSummaryResult>("/api/ai/mail-summary", {
+    method: "POST",
+    body: JSON.stringify({ accountEmail, folder, messageId, regenerate }),
+  });
+}
+
+export type AIAgent = {
+  id: string;
+  name: string;
+  prompt: string;
+};
+
+export type AIAgentInput = {
+  name: string;
+  prompt: string;
+};
+
+export function getAIAgents() {
+  return apiFetch<{ agents: AIAgent[] }>("/api/settings/ai/agents");
+}
+
+export function addAIAgent(agent: AIAgentInput) {
+  return apiFetch<AIAgent>("/api/settings/ai/agents", {
+    method: "POST",
+    body: JSON.stringify(agent),
+  });
+}
+
+export function updateAIAgent(id: string, agent: AIAgentInput) {
+  return apiFetch<AIAgent>(`/api/settings/ai/agents/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(agent),
+  });
 }
 
 export function sendMessage(form: FormData) {
@@ -108,15 +265,29 @@ export function switchLanguage(locale: string) {
 }
 
 export function getFolders() {
-  return apiFetch<{ folders: Mailbox[] }>("/v1/folders");
+  return apiFetch<{ folders: Mailbox[] }>("/api/mail/folders");
 }
 
 export function getFolderMessages(folder: string) {
-  return apiFetch<{ messages: MailMessage[] }>(`/v1/messages?folder=${encodeURIComponent(folder)}&limit=100`);
+  return apiFetch<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(`/api/mail/messages?folder=${encodeURIComponent(folder)}&limit=100`);
 }
 
 export function getMessage(folder: string, id: string) {
-  return apiFetch<MailMessage>(`/v1/messages/${encodeURIComponent(id)}?folder=${encodeURIComponent(folder)}`);
+  return apiFetch<MailMessage>(`/api/mail/messages/${encodeURIComponent(id)}?folder=${encodeURIComponent(folder)}`);
+}
+
+function mailMessageMutationPath(folder: string, id: string, accountEmail?: string, suffix = "") {
+  const query = new URLSearchParams({ folder });
+  if (accountEmail) query.set("account_email", accountEmail);
+  return `/api/mail/messages/${encodeURIComponent(id)}${suffix}?${query.toString()}`;
+}
+
+export function restoreJunkMessage(folder: string, id: string, accountEmail?: string) {
+  return apiFetch<{ ok: boolean; folder: string }>(mailMessageMutationPath(folder, id, accountEmail, "/not-spam"), { method: "POST" });
+}
+
+export function permanentlyDeleteJunkMessage(folder: string, id: string, accountEmail?: string) {
+  return apiFetch<{ ok: boolean }>(mailMessageMutationPath(folder, id, accountEmail), { method: "DELETE" });
 }
 
 export function getAccounts() {

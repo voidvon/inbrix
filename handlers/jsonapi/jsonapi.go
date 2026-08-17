@@ -447,16 +447,22 @@ func (h *Handler) handleDelete(c *fiber.Ctx) error {
 	}
 	defer cl.Close()
 
+	trash := ""
 	if !hard {
 		// Soft delete: move to Trash when we can resolve a distinct Trash folder.
-		if trash, terr := cl.DiscoverTrashFolder(); terr == nil &&
-			trash != "" && !strings.EqualFold(trash, folder) {
-			if err := cl.MoveMessage(folder, uid, trash); err != nil {
-				return fail(c, fiber.StatusBadGateway, "could not delete message")
-			}
-			return c.SendStatus(fiber.StatusNoContent)
+		if discovered, terr := cl.DiscoverTrashFolder(); terr == nil &&
+			discovered != "" && !strings.EqualFold(discovered, folder) {
+			trash = discovered
 		}
-		// No usable Trash folder (or already in Trash): fall through to hard delete.
+	}
+	if err := deleteMessageAttachmentCache(c, cl, folder, uid); err != nil {
+		return fail(c, fiber.StatusBadGateway, "could not clear attachment cache; message was not deleted")
+	}
+	if trash != "" {
+		if err := cl.MoveMessage(folder, uid, trash); err != nil {
+			return fail(c, fiber.StatusBadGateway, "could not delete message")
+		}
+		return c.SendStatus(fiber.StatusNoContent)
 	}
 
 	if err := cl.DeleteMessage(folder, uid); err != nil {

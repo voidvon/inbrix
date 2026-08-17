@@ -598,6 +598,11 @@ func (h *AuthHandler) CreateSMTPClientForAccount(entry AccountEntry) (*api.SMTPC
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client for %s", entry.Email)
 	}
+	username := entry.Email
+	if !h.config.Server.UsernameIsEmail {
+		username = api.GetUsernameFromEmail(entry.Email)
+	}
+	client.SetAuthUsername(username)
 	client.SetInsecureSkipVerify(h.config.SMTP.InsecureSkipVerify)
 	return client, nil
 }
@@ -699,6 +704,11 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client")
 	}
+	username := creds.Email
+	if !h.config.Server.UsernameIsEmail {
+		username = api.GetUsernameFromEmail(creds.Email)
+	}
+	client.SetAuthUsername(username)
 	client.SetInsecureSkipVerify(h.config.SMTP.InsecureSkipVerify)
 
 	return client, nil
@@ -723,6 +733,7 @@ func (h *AuthHandler) CreateSMTPClientForMirrorAccount(account mailstore.Account
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client")
 	}
+	client.SetAuthUsername(account.Username)
 	client.SetInsecureSkipVerify(h.config.SMTP.InsecureSkipVerify)
 	return client, nil
 }

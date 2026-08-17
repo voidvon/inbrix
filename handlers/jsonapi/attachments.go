@@ -18,12 +18,15 @@ package jsonapi
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"regexp"
 	"strings"
 
+	"lilmail/handlers/api"
+	"lilmail/models"
 	"lilmail/storage"
 
 	"github.com/gofiber/fiber/v2"
@@ -180,4 +183,29 @@ func rfc5987Escape(s string) string {
 // namespaces everything under the gateway prefix + "mail/".
 func attachmentCacheKey(folder, uid, partID string) string {
 	return "attachments/" + url.PathEscape(folder) + "/" + url.PathEscape(uid) + "/" + url.PathEscape(partID)
+}
+
+func deleteMessageAttachmentCache(c *fiber.Ctx, client api.MailClient, folder, uid string) error {
+	objectStore, enabled := storage.ObjectStoreFromHeaders(func(key string) string { return c.Get(key) })
+	if !enabled {
+		return nil
+	}
+	metadataClient, ok := client.(interface {
+		FetchAttachmentMetadata(folderName, uid string) ([]models.Attachment, error)
+	})
+	if !ok {
+		return errors.New("mail client cannot load attachment metadata")
+	}
+	attachments, err := metadataClient.FetchAttachmentMetadata(folder, uid)
+	if err != nil {
+		return fmt.Errorf("load attachment metadata: %w", err)
+	}
+	for _, attachment := range attachments {
+		if partID := strings.TrimSpace(attachment.PartID); partID != "" {
+			if err := objectStore.Delete(c.UserContext(), attachmentCacheKey(folder, uid, partID)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

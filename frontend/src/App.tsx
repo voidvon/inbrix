@@ -28,22 +28,31 @@ import {
   Pencil,
   Plus,
   Search,
+  RotateCcw,
   Send,
+  Signature as SignatureIcon,
+  Sparkles,
   Settings,
+  ShieldCheck,
   Sun,
   Trash2,
   TriangleAlert,
   Underline,
   X,
   Bold,
+  Bot,
 } from "lucide-react";
+import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
+import ImageExtension from "@tiptap/extension-image";
 import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
+import { toast } from "sonner";
+import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, createCalendarEvent, deleteAccount, deleteConversationMessage, getAccounts, getCalendarEvents, getCapabilities, getConversation, getConversations, getFolderMessages, getMessage, register, saveConversationNote, sendMessage, signIn, signOut, switchAccount, switchLanguage } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, getAccounts, getAIAgents, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMessage, getSignatures, markConversationRead, markConversationUnread, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AIModel, type EmailSignature } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -53,8 +62,12 @@ import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Separator } from "./components/ui/separator";
 import { ScrollArea } from "./components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Skeleton } from "./components/ui/skeleton";
-import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationMessage, ConversationSummary, ConversationListResponse, MailMessage, Mailbox } from "./types";
+import { Textarea } from "./components/ui/textarea";
+import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailMessage, Mailbox, MailSummary } from "./types";
+
+const EmailImageExtension = ImageExtension.configure({ inline: true, allowBase64: false });
 
 const zh = {
   conversations: "对话",
@@ -114,6 +127,70 @@ const zh = {
   enablePush: "启用推送通知",
   disablePush: "停用推送通知",
   pushUnavailable: "当前浏览器或服务器未启用推送通知",
+  feishuWebhook: "飞书 Webhook",
+  feishuWebhookDescription: "刷新到新的收件箱邮件时，通过飞书自定义机器人发送通知。",
+  feishuWebhookURL: "Webhook URL",
+  feishuWebhookEnabled: "启用飞书通知",
+  feishuWebhookSaved: "飞书 Webhook 设置已保存",
+  feishuWebhookURLRequired: "启用飞书通知前请先填写 Webhook URL",
+  feishuWebhookTest: "发送测试",
+  feishuWebhookTesting: "发送中…",
+  feishuWebhookTestSent: "飞书测试消息已发送",
+  feishuWebhookUnavailable: "飞书 Webhook 仅在本地邮件同步启用时可用",
+  aiSettings: "模型管理",
+  aiSettingsDescription: "管理用于邮件总结的 OpenAI 模型，API Key 会加密保存。",
+  addAIModel: "新增模型",
+  addingAIModel: "正在添加…",
+  editAIModel: "编辑模型",
+  updatingAIModel: "正在更新…",
+  aiModelUpdated: "模型已更新",
+  aiAPIKeyKeep: "留空则保留当前 API Key",
+  noAIModels: "暂无模型配置",
+  defaultModel: "默认",
+  setDefaultModel: "设为默认",
+  aiProvider: "提供商",
+  aiBaseURL: "Base URL",
+  aiModel: "模型",
+  aiAPIKey: "API Key",
+  aiReasoningEffort: "思考等级",
+  aiReasoningLow: "低",
+  aiReasoningMedium: "中",
+  aiModelTest: "测试模型",
+  aiModelTesting: "测试中…",
+  aiModelTestSuccess: "模型测试成功",
+  aiSettingsSaved: "模型已添加",
+  summarize: "AI 总结",
+  summarizing: "正在总结…",
+  summaryTitle: "AI 总结",
+  mailSummaryTitle: "邮件总结",
+  regenerateSummary: "重新总结",
+  summaryStale: "配置已更新",
+  agentSettings: "智能体",
+  agentSettingsDescription: "管理智能体的纯文本提示词。",
+  addAgent: "新增智能体",
+  editAgent: "编辑智能体",
+  agentName: "名称",
+  agentPrompt: "提示词",
+  noAgents: "暂无智能体",
+  agentSaved: "智能体已新增",
+  agentUpdated: "智能体已更新",
+  savingAgent: "正在保存…",
+  signatureSettings: "邮件签名",
+  signatureSettingsDescription: "管理写邮件和回复时可使用的富文本签名。",
+  addSignature: "新建签名",
+  editSignature: "编辑签名",
+  signatureName: "名称",
+  signatureContent: "签名内容",
+  signaturePreview: "预览",
+  defaultSignature: "默认签名",
+  noSignatures: "暂无邮件签名",
+  noSignature: "不使用签名",
+  signatureSaved: "签名已创建",
+  signatureUpdated: "签名已更新",
+  signatureDeleted: "签名已删除",
+  deleteSignatureTitle: "删除这个签名？",
+  deleteSignatureDescription: "删除后，新邮件和回复将不再使用这个签名。",
+  savingSignature: "正在保存…",
   connectedAccounts: "已连接账户",
   color: "颜色",
   language: "语言",
@@ -132,14 +209,27 @@ const zh = {
   adding: "正在添加…",
   addNote: "添加备注",
   noteSaveFailed: "备注保存失败",
+  markUnread: "标为未读",
+  markUnreadFailed: "标记未读失败",
+  deleteConversation: "删除对话",
+  deleteConversationTitle: "将整个对话移到已删除？",
+  deleteConversationDescription: "该对话中的收件和已发送邮件都会移到邮箱服务器的已删除文件夹。",
+  deleteConversationFailed: "删除对话失败",
   deleteEmail: "删除邮件",
   deleteEmailTitle: "将邮件移到已删除？",
   deleteEmailDescription: "这封邮件会移到邮箱服务器的已删除文件夹，可在 QQ 邮箱中恢复。",
   deleting: "正在删除…",
   deleteEmailFailed: "删除邮件失败",
+  notSpam: "不是垃圾邮件",
+  notSpamFailed: "移回收件箱失败",
+  permanentDelete: "彻底删除",
+  permanentDeleteTitle: "彻底删除这封邮件？",
+  permanentDeleteDescription: "邮件将从邮箱服务器上永久删除，且无法恢复。",
+  permanentDeleteFailed: "彻底删除失败",
   sourceCode: "显示源代码",
   richText: "返回富文本",
   removeAttachment: "移除附件",
+  attachmentsTooLarge: "附件总大小不能超过 18 MB",
   invalidRecipient: "请输入有效的邮箱地址",
   removeRecipient: "删除收件人",
   sendEmail: "发送邮件",
@@ -203,6 +293,70 @@ const en = {
   enablePush: "Enable push notifications",
   disablePush: "Disable push notifications",
   pushUnavailable: "Push notifications are unavailable in this browser or server",
+  feishuWebhook: "Feishu webhook",
+  feishuWebhookDescription: "Send a custom bot notification when refresh finds new inbox mail.",
+  feishuWebhookURL: "Webhook URL",
+  feishuWebhookEnabled: "Enable Feishu notifications",
+  feishuWebhookSaved: "Feishu webhook settings saved",
+  feishuWebhookURLRequired: "Enter a webhook URL before enabling Feishu notifications",
+  feishuWebhookTest: "Send test",
+  feishuWebhookTesting: "Sending…",
+  feishuWebhookTestSent: "Feishu test message sent",
+  feishuWebhookUnavailable: "Feishu webhooks require local mail sync",
+  aiSettings: "Model management",
+  aiSettingsDescription: "Manage OpenAI models used for mail summaries. API keys are stored encrypted.",
+  addAIModel: "Add model",
+  addingAIModel: "Adding…",
+  editAIModel: "Edit model",
+  updatingAIModel: "Updating…",
+  aiModelUpdated: "Model updated",
+  aiAPIKeyKeep: "Leave blank to keep the current API key",
+  noAIModels: "No models configured",
+  defaultModel: "Default",
+  setDefaultModel: "Set as default",
+  aiProvider: "Provider",
+  aiBaseURL: "Base URL",
+  aiModel: "Model",
+  aiAPIKey: "API Key",
+  aiReasoningEffort: "Reasoning effort",
+  aiReasoningLow: "Low",
+  aiReasoningMedium: "Medium",
+  aiModelTest: "Test model",
+  aiModelTesting: "Testing…",
+  aiModelTestSuccess: "Model test succeeded",
+  aiSettingsSaved: "Model added",
+  summarize: "AI summary",
+  summarizing: "Summarizing…",
+  summaryTitle: "AI summary",
+  mailSummaryTitle: "Mail summary",
+  regenerateSummary: "Regenerate summary",
+  summaryStale: "Configuration changed",
+  agentSettings: "Agents",
+  agentSettingsDescription: "Manage plain-text prompts for agents.",
+  addAgent: "Add agent",
+  editAgent: "Edit agent",
+  agentName: "Name",
+  agentPrompt: "Prompt",
+  noAgents: "No agents configured",
+  agentSaved: "Agent added",
+  agentUpdated: "Agent updated",
+  savingAgent: "Saving…",
+  signatureSettings: "Email signatures",
+  signatureSettingsDescription: "Manage rich-text signatures used for new messages and replies.",
+  addSignature: "New signature",
+  editSignature: "Edit signature",
+  signatureName: "Name",
+  signatureContent: "Signature content",
+  signaturePreview: "Preview",
+  defaultSignature: "Default signature",
+  noSignatures: "No email signatures",
+  noSignature: "No signature",
+  signatureSaved: "Signature created",
+  signatureUpdated: "Signature updated",
+  signatureDeleted: "Signature deleted",
+  deleteSignatureTitle: "Delete this signature?",
+  deleteSignatureDescription: "New messages and replies will no longer use this signature.",
+  savingSignature: "Saving…",
   connectedAccounts: "Connected accounts",
   color: "Color",
   language: "Language",
@@ -221,14 +375,27 @@ const en = {
   adding: "Adding…",
   addNote: "Add note",
   noteSaveFailed: "Could not save note",
+  markUnread: "Mark as unread",
+  markUnreadFailed: "Could not mark conversation as unread",
+  deleteConversation: "Delete conversation",
+  deleteConversationTitle: "Move the entire conversation to Trash?",
+  deleteConversationDescription: "Received and sent emails in this conversation will be moved to the mail server's Trash folder.",
+  deleteConversationFailed: "Could not delete conversation",
   deleteEmail: "Delete email",
   deleteEmailTitle: "Move email to Trash?",
   deleteEmailDescription: "This email will be moved to the mail server's Trash folder and can be restored from QQ Mail.",
   deleting: "Deleting…",
   deleteEmailFailed: "Could not delete email",
+  notSpam: "Not spam",
+  notSpamFailed: "Could not move the email to Inbox",
+  permanentDelete: "Delete permanently",
+  permanentDeleteTitle: "Permanently delete this email?",
+  permanentDeleteDescription: "This email will be permanently removed from the mail server and cannot be recovered.",
+  permanentDeleteFailed: "Could not permanently delete email",
   sourceCode: "Show source",
   richText: "Back to rich text",
   removeAttachment: "Remove attachment",
+  attachmentsTooLarge: "Attachments cannot exceed 18 MB in total",
   invalidRecipient: "Enter a valid email address",
   removeRecipient: "Remove recipient",
   sendEmail: "Send email",
@@ -321,6 +488,10 @@ function InboxPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const autoReadRef = useRef(new Set<string>());
+  const manuallyUnreadRef = useRef(new Set<string>());
   const debouncedSearch = useDebouncedValue(search, 250);
 
   useEffect(() => {
@@ -366,6 +537,53 @@ function InboxPage() {
     queryFn: () => getConversation(selectedId!),
     enabled: Boolean(selectedId),
   });
+  const deleteMutation = useMutation({
+    mutationFn: (conversation: ConversationSummary) => deleteConversation(conversation.id),
+    onSuccess: async (_, conversation) => {
+      setDeleteTarget(null);
+      setDeleteError("");
+      if (selectedId === conversation.id) {
+        setSelectedId(null);
+        setChatOpen(false);
+        setConversationURL(null, "replace");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.removeQueries({ queryKey: ["conversation", conversation.id] });
+    },
+    onError: (value) => setDeleteError(value instanceof Error ? value.message : locale.deleteConversationFailed),
+  });
+
+  useEffect(() => {
+    const conversation = detail.data?.conversation;
+    if (!conversation || manuallyUnreadRef.current.has(conversation.id)) return;
+    const unread = conversation.messages.filter((message) => !message.outgoing && !message.flags?.some((flag) => flag.toLowerCase() === "\\seen"));
+    if (unread.length === 0) return;
+    const fingerprint = `${conversation.id}:${unread.map((message) => `${message.folder || "INBOX"}/${message.id}`).join(",")}`;
+    if (autoReadRef.current.has(fingerprint)) return;
+    autoReadRef.current.add(fingerprint);
+    void markConversationRead(conversation.id).then(async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
+      ]);
+    }).catch(() => {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    });
+  }, [detail.data?.conversation, queryClient]);
+
+  const markUnread = async (conversation: ConversationSummary) => {
+    manuallyUnreadRef.current.add(conversation.id);
+    try {
+      await markConversationUnread(conversation.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
+      ]);
+    } catch (value) {
+      manuallyUnreadRef.current.delete(conversation.id);
+      toast.error(value instanceof Error ? value.message : locale.markUnreadFailed);
+    }
+  };
 
   useEffect(() => {
     if (!conversations.data) return;
@@ -431,11 +649,14 @@ function InboxPage() {
             error={conversations.error}
             selectedId={selectedId}
             onSelect={(id) => {
+              manuallyUnreadRef.current.delete(id);
               setSelectedId(id);
               setChatOpen(true);
               setSidebarOpen(false);
               if (conversationIdFromURL() !== id) setConversationURL(id);
             }}
+            onMarkUnread={(conversation) => void markUnread(conversation)}
+            onDelete={(conversation) => { setDeleteError(""); setDeleteTarget(conversation); }}
             onRefresh={() => void conversations.refetch()}
             className={chatOpen ? "hidden lg:flex" : "flex"}
           />
@@ -455,8 +676,24 @@ function InboxPage() {
             className={chatOpen ? "flex" : "hidden lg:flex"}
           />
         </main>
-      <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
+      <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => {
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversation"] });
+      }} />
       <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{locale.deleteConversationTitle}</DialogTitle>
+            <DialogDescription>{locale.deleteConversationDescription}</DialogDescription>
+          </DialogHeader>
+          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+          <DialogFooter>
+            <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>{locale.cancel}</Button>
+            <Button variant="destructive" disabled={deleteMutation.isPending || !deleteTarget} onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}><Trash2 />{deleteMutation.isPending ? locale.deleting : locale.deleteConversation}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -525,7 +762,7 @@ function folderKind(folder: Mailbox) {
   if (attributes.includes("\\sent") || ["sent", "sent items", "sent mail", "sent messages"].includes(name)) return "sent";
   if (attributes.includes("\\drafts") || name === "draft" || name === "drafts") return "drafts";
   if (attributes.includes("\\trash") || ["trash", "deleted", "deleted items", "deleted messages", "bin"].includes(name)) return "trash";
-  if (attributes.includes("\\junk") || ["junk", "junk mail", "spam"].includes(name)) return "junk";
+  if (attributes.includes("\\junk") || ["junk", "junk mail", "junk email", "junk e-mail", "spam", "bulk mail"].includes(name)) return "junk";
   if (attributes.includes("\\archive") || name === "archive" || name === "archives") return "archive";
   return "custom";
 }
@@ -549,7 +786,7 @@ function FolderLink({ copy, folder, selected = false, onClose }: { copy: Copy; f
   return <Button asChild variant={selected ? "secondary" : "ghost"} size="sm" className={cn("w-full justify-start gap-2.5 pl-9 text-muted-foreground", selected && "text-sidebar-accent-foreground")}><a href={`/folder/${encodeURIComponent(folder.name)}`} onClick={onClose}><Icon /><span className="min-w-0 flex-1 truncate">{folderLabel(copy, folder)}</span>{folder.unreadCount ? <Badge variant="secondary" className="min-w-5 justify-center px-1.5 text-[10px]">{folder.unreadCount}</Badge> : null}</a></Button>;
 }
 
-function ConversationList({ copy, data, search, onSearch, onMenu, loading, error, selectedId, onSelect, onRefresh, className }: { copy: Copy; data?: ConversationListResponse; search: string; onSearch: (value: string) => void; onMenu: () => void; loading: boolean; error: Error | null; selectedId: string | null; onSelect: (id: string) => void; onRefresh: () => void; className?: string }) {
+function ConversationList({ copy, data, search, onSearch, onMenu, loading, error, selectedId, onSelect, onMarkUnread, onDelete, onRefresh, className }: { copy: Copy; data?: ConversationListResponse; search: string; onSearch: (value: string) => void; onMenu: () => void; loading: boolean; error: Error | null; selectedId: string | null; onSelect: (id: string) => void; onMarkUnread: (conversation: ConversationSummary) => void; onDelete: (conversation: ConversationSummary) => void; onRefresh: () => void; className?: string }) {
   const rows = data?.conversations || [];
   return (
     <section data-testid="conversation-list" className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", className)}>
@@ -567,13 +804,13 @@ function ConversationList({ copy, data, search, onSearch, onMenu, loading, error
         {loading && <ListSkeleton />}
         {!loading && error && <ErrorState copy={copy} onRetry={onRefresh} />}
         {!loading && !error && rows.length === 0 && <EmptyState icon={<MessageCircle />} text={search ? copy.noConversations : copy.noConversations} />}
-        {!loading && !error && rows.map((conversation) => <ConversationRow key={conversation.id} copy={copy} conversation={conversation} selected={conversation.id === selectedId} onClick={() => onSelect(conversation.id)} />)}
+        {!loading && !error && rows.map((conversation) => <ConversationRow key={conversation.id} copy={copy} conversation={conversation} selected={conversation.id === selectedId} onClick={() => onSelect(conversation.id)} onMarkUnread={() => onMarkUnread(conversation)} onDelete={() => onDelete(conversation)} />)}
       </ScrollArea>
     </section>
   );
 }
 
-function ConversationRow({ copy, conversation, selected, onClick }: { copy: Copy; conversation: ConversationSummary; selected: boolean; onClick: () => void }) {
+function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, onDelete }: { copy: Copy; conversation: ConversationSummary; selected: boolean; onClick: () => void; onMarkUnread: () => void; onDelete: () => void }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -618,21 +855,38 @@ function ConversationRow({ copy, conversation, selected, onClick }: { copy: Copy
     inputRef.current?.blur();
   };
   return (
-    <article data-testid="conversation-row" className={cn("relative border-b bg-card px-4 py-3 transition-colors hover:bg-muted", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}>
-      <button className="flex w-full items-start gap-3 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onClick={onClick} type="button">
-        <span className="min-w-0 flex-1">
-          <span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time></span>
-          <span className="mt-1 block truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
+    <ContextMenuPrimitive.Root>
+      <ContextMenuPrimitive.Trigger className="block">
+      <article data-testid="conversation-row" className={cn("relative w-full max-w-full overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}>
+      <button className="flex w-full min-w-0 max-w-full items-start gap-3 overflow-hidden text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onClick={onClick} type="button">
+        <span className="min-w-0 max-w-full flex-1 overflow-hidden">
+          <span className="flex min-w-0 max-w-full items-baseline justify-between gap-2 overflow-hidden"><strong className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time></span>
+          <span className="mt-1 block max-w-full truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
         </span>
         {conversation.unreadCount > 0 && <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="mt-0.5 min-w-5 justify-center px-1.5 text-[10px] leading-4">{conversation.unreadCount}</Badge>}
       </button>
-      {editing ? (
-        <Input ref={inputRef} className="mt-1.5 h-7 bg-background text-xs" value={draft} maxLength={200} onChange={(event) => setDraft(event.target.value)} onBlur={() => void saveNote()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") cancelEditing(); }} aria-label={copy.addNote} />
-      ) : (
-        <button type="button" className={cn("mt-1.5 block w-full truncate text-left text-xs", conversation.note ? "text-primary" : "text-muted-foreground/60")} onClick={beginEditing}>{conversation.note || copy.addNote}</button>
-      )}
+      <div className="mt-1.5 h-4 w-full overflow-hidden">
+        {editing ? (
+          <Input ref={inputRef} className="block h-full rounded-none border-0 bg-transparent px-0 py-0 text-xs leading-4 shadow-none focus-visible:border-transparent focus-visible:ring-0" value={draft} maxLength={200} onChange={(event) => setDraft(event.target.value)} onBlur={() => void saveNote()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") cancelEditing(); }} aria-label={copy.addNote} />
+        ) : (
+          <div className="group/note relative h-full w-full">
+            <button type="button" className={cn("block h-full w-full truncate pr-6 text-left text-xs leading-4", conversation.note ? "text-primary" : "text-muted-foreground/60")} onClick={onClick}>{conversation.note || copy.addNote}</button>
+            <button type="button" className="absolute top-0 right-0 grid size-4 place-items-center text-muted-foreground opacity-0 transition-opacity group-hover/note:opacity-100 hover:text-foreground focus-visible:opacity-100" onClick={beginEditing} aria-label={copy.addNote} title={copy.addNote}><Pencil className="size-3" /></button>
+          </div>
+        )}
+      </div>
       {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-    </article>
+      </article>
+      </ContextMenuPrimitive.Trigger>
+      <ContextMenuPrimitive.Portal>
+        <ContextMenuPrimitive.Positioner className="z-40 outline-none">
+          <ContextMenuPrimitive.Popup className="w-44 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onMarkUnread}><Mail className="size-4" />{copy.markUnread}</ContextMenuPrimitive.Item>
+            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteConversation}</ContextMenuPrimitive.Item>
+          </ContextMenuPrimitive.Popup>
+        </ContextMenuPrimitive.Positioner>
+      </ContextMenuPrimitive.Portal>
+    </ContextMenuPrimitive.Root>
   );
 }
 
@@ -650,6 +904,23 @@ function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpt
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [summary, setSummary] = useState("");
+  const aiSettings = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
+  const summarizeMutation = useMutation({
+    mutationFn: () => summarizeMailThread(detail.messages.map((message) => [
+      `From: ${message.fromName ? `${message.fromName} <${message.from}>` : message.from}`,
+      `To: ${message.to}`,
+      `Date: ${message.date}`,
+      `Subject: ${message.subject}`,
+      "",
+      message.body || message.preview,
+    ].join("\n")).join("\n\n---\n\n")),
+    onSuccess: (result) => setSummary(result.summary),
+  });
+  useEffect(() => {
+    setSummary("");
+    summarizeMutation.reset();
+  }, [detail.id]);
   const deleteMutation = useMutation({
     mutationFn: (message: ConversationMessage) => deleteConversationMessage(detail.id, message.id, message.folder || "INBOX"),
     onSuccess: async () => {
@@ -696,10 +967,11 @@ function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpt
       <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
         <div className="flex min-w-0 items-center justify-start"><Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button></div>
         <div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{detail.subject || copy.noSubject}<span className="px-1.5">·</span>{detail.count} {copy.messages}</p></div>
-        <div className="flex min-w-0 items-center justify-end"><Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button></div>
+        <div className="flex min-w-0 items-center justify-end">{aiSettings.data?.models.length ? <Button variant="outline" size="sm" disabled={summarizeMutation.isPending} onClick={() => summarizeMutation.mutate()}><Sparkles />{summarizeMutation.isPending ? copy.summarizing : copy.summarize}</Button> : <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button>}</div>
       </header>
       <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8" viewportRef={scrollRef}>
         <div ref={contentRef}>
+          {(summary || summarizeMutation.error) && <div className="mx-auto mb-6 max-w-3xl rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4" />{copy.summaryTitle}</h3><Button variant="ghost" size="icon" className="size-7" onClick={() => { setSummary(""); summarizeMutation.reset(); }} aria-label={copy.cancel}><X /></Button></div>{summary ? <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">{summary}</p> : <p className="mt-3 text-sm text-destructive">{summarizeMutation.error instanceof Error ? summarizeMutation.error.message : copy.loadFailed}</p>}</div>}
           {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
         </div>
       </ScrollArea>
@@ -732,7 +1004,7 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
         <article>
           <div className={cn("mb-1 flex items-center gap-2 text-xs leading-tight text-muted-foreground", outgoing && "justify-end")}><span className="font-medium">{sender}</span><time title={formattedDate}>{formattedDate}</time></div>
           <div className={cn("flex items-end", outgoing && "justify-end")}>
-            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed", message.html && "w-full", outgoing ? "border-transparent bg-secondary text-secondary-foreground" : "border-border bg-background text-foreground")}>
+            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border border-transparent bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground", message.html && "w-full")}>
               {message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(visibleText)}</div>}
               {!message.html && split.quoted && <details className="mt-2 border-t border-border/60 pt-2 text-muted-foreground">
                 <summary className="flex cursor-pointer list-none items-center gap-1 text-xs [&::-webkit-details-marker]:hidden"><ChevronDown className="size-3.5" />{copy.showQuoted}</summary>
@@ -741,6 +1013,7 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
               {message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((attachment) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={attachment.id} href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{attachment.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small></a>)}</div></> : null}
             </div>
           </div>
+          <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} />
         </article>
       </ContextMenuPrimitive.Trigger>
       <ContextMenuPrimitive.Portal>
@@ -753,6 +1026,43 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
         </ContextMenuPrimitive.Positioner>
       </ContextMenuPrimitive.Portal>
     </ContextMenuPrimitive.Root>
+  );
+}
+
+function MailMessageSummary({ copy, accountEmail, folder, messageId, initialSummary, outgoing = false }: { copy: Copy; accountEmail?: string; folder: string; messageId: string; initialSummary?: ConversationMessage["mailSummary"]; outgoing?: boolean }) {
+  const queryClient = useQueryClient();
+  const [savedSummary, setSavedSummary] = useState(initialSummary);
+  const mutation = useMutation({
+    mutationFn: (regenerate: boolean) => summarizeMailMessage(accountEmail || "", folder, messageId, regenerate),
+    onSuccess: (result) => {
+      const summary: MailSummary = { text: result.summary, status: result.status, stale: result.stale, updatedAt: result.updatedAt };
+      setSavedSummary(summary);
+      queryClient.setQueryData<MailMessage>(["message", folder, messageId], (current) => current ? { ...current, mailSummary: summary } : current);
+      queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
+        if (!current || (accountEmail && current.conversation.accountEmail !== accountEmail)) return current;
+        let changed = false;
+        const messages = current.conversation.messages.map((message) => {
+          if (message.id !== messageId || (message.folder || "INBOX") !== folder) return message;
+          changed = true;
+          return { ...message, mailSummary: summary };
+        });
+        return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
+      });
+    },
+  });
+  useEffect(() => {
+    setSavedSummary(initialSummary);
+    mutation.reset();
+  }, [accountEmail, folder, messageId, initialSummary]);
+  return (
+    <div className={cn("mt-1.5 max-w-[80%]", outgoing && "ml-auto")}>
+      {!savedSummary && <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(false)}><Sparkles className="size-3.5" />{mutation.isPending ? copy.summarizing : copy.summarize}</Button>}
+      {savedSummary && <div className="mt-1 border-l-2 border-primary/40 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+        <div className="mb-1 flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><strong className="text-xs font-medium text-muted-foreground">{copy.mailSummaryTitle}</strong>{savedSummary.stale && <span className="truncate text-[10px] text-amber-700 dark:text-amber-400">{copy.summaryStale}</span>}</div><Button type="button" variant="ghost" size="icon" className="size-6 shrink-0" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(true)} aria-label={copy.regenerateSummary} title={copy.regenerateSummary}><RotateCcw className={cn("size-3.5", mutation.isPending && "animate-spin")} /></Button></div>
+        <p className="whitespace-pre-wrap">{savedSummary.text}</p>
+      </div>}
+      {mutation.error && <p className="mt-1 px-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.loadFailed}</p>}
+    </div>
   );
 }
 
@@ -971,6 +1281,7 @@ function normalizeQuoteHTML(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
   const quoteSelector = "blockquote, includetail, .gmail_quote, .yahoo_quoted, .protonmail_quote, .outlook_quote, .quoted-text, .quotedcontent, .original-message";
   Array.from(document.body.querySelectorAll(quoteSelector)).reverse().forEach((element) => {
+    if (element.closest("[data-lilmail-signature]")) return;
     const tag = element.tagName.toLowerCase();
     if (tag !== "blockquote" && tag !== "includetail" && element.querySelector(quoteSelector)) return;
     let attribution = element.getAttribute("data-attribution") || "";
@@ -1009,6 +1320,55 @@ function serializeQuoteHTML(html: string) {
     element.replaceWith(blockquote);
   });
   return document.body.innerHTML;
+}
+
+function serializeComposeHTML(html: string) {
+  const document = new DOMParser().parseFromString(serializeQuoteHTML(html), "text/html");
+  Array.from(document.body.querySelectorAll("[data-lilmail-signature]")).forEach((element) => {
+    element.replaceWith(...Array.from(element.childNodes));
+  });
+  return document.body.innerHTML;
+}
+
+function signatureNodeHTML(signature: EmailSignature) {
+  return `<div data-lilmail-signature="${escapeHTML(signature.id)}" data-signature-name="${escapeHTML(signature.name)}">${signature.html.trim() || "<p></p>"}</div>`;
+}
+
+function setEditorSignature(editor: Editor, signature: EmailSignature | null) {
+  let existingRange: { from: number; to: number } | null = null;
+  let quotePosition: number | null = null;
+  editor.state.doc.descendants((node, position) => {
+    if (!existingRange && node.type.name === "emailSignature") {
+      existingRange = { from: position, to: position + node.nodeSize };
+      return false;
+    }
+    if (quotePosition === null && node.type.name === "replyQuote") {
+      quotePosition = position;
+      return false;
+    }
+    return true;
+  });
+
+  if (existingRange) {
+    if (signature) editor.commands.insertContentAt(existingRange, signatureNodeHTML(signature));
+    else editor.commands.deleteRange(existingRange);
+    return;
+  }
+  if (signature) editor.commands.insertContentAt(quotePosition ?? editor.state.doc.content.size, signatureNodeHTML(signature));
+}
+
+function RichTextButtons({ editor, disabled = false }: { editor: Editor | null; disabled?: boolean }) {
+  return (
+    <>
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => editor?.chain().focus().toggleBold().run()} aria-label="Bold" title="Bold"><Bold /></Button>
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => editor?.chain().focus().toggleItalic().run()} aria-label="Italic" title="Italic"><Italic /></Button>
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-label="Underline" title="Underline"><Underline /></Button>
+      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => editor?.chain().focus().toggleBulletList().run()} aria-label="Bullet list" title="Bullet list"><List /></Button>
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => editor?.chain().focus().toggleOrderedList().run()} aria-label="Numbered list" title="Numbered list"><ListOrdered /></Button>
+      <Button type="button" variant="ghost" size="icon" disabled={disabled || !editor} onClick={() => { const href = window.prompt("URL"); if (href) editor?.chain().focus().setLink({ href }).run(); }} aria-label="Link" title="Link"><Link /></Button>
+    </>
+  );
 }
 
 function htmlToPlainText(html: string) {
@@ -1115,7 +1475,10 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const [attachments, setAttachments] = useState<File[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const recipientDraftRef = useRef("");
-  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false }), ReplyQuote, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
+  const signatureInitializedRef = useRef(false);
+  const [selectedSignatureId, setSelectedSignatureId] = useState("none");
+  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false }), ReplyQuote, EmailSignatureExtension, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
+  const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
 
   useEffect(() => {
@@ -1125,12 +1488,22 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     setError("");
     setSourceMode(false);
     setSourceCode(defaults.html || "");
+    setSelectedSignatureId("none");
+    signatureInitializedRef.current = false;
     setAttachments([]);
     recipientDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     editor.commands.setContent(normalizeQuoteHTML(defaults.html || ""));
     editor.commands.focus("start");
   }, [open, defaults, editor]);
+
+  useEffect(() => {
+    if (!open || !editor || !signatures.data || signatureInitializedRef.current) return;
+    const signature = signatures.data.signatures.find((item) => item.default) || signatures.data.signatures[0] || null;
+    setEditorSignature(editor, signature);
+    setSelectedSignatureId(signature?.id || "none");
+    signatureInitializedRef.current = true;
+  }, [open, editor, signatures.data]);
 
   const toggleSourceMode = () => {
     if (!editor) return;
@@ -1148,7 +1521,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     event.preventDefault();
     const pendingRecipients = splitRecipientValues(recipientDraftRef.current);
     const submittedRecipients = [...recipients, ...pendingRecipients.filter((value) => isValidRecipient(value))];
-    const htmlBody = sourceMode ? sourceCode : serializeQuoteHTML(editor?.getHTML() || "");
+    const htmlBody = serializeComposeHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
     const plainBody = htmlToPlainText(htmlBody);
     if (!submittedRecipients.length || pendingRecipients.some((value) => !isValidRecipient(value))) {
       setError(copy.invalidRecipient);
@@ -1176,13 +1549,26 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
           <DialogHeader className="border-b px-5 py-4 pr-12 text-left"><DialogTitle className="truncate text-base">{subject || copy.writeMessage}</DialogTitle><DialogDescription className="sr-only">{copy.compose}</DialogDescription></DialogHeader>
           <div className="grid gap-3 border-b px-5 py-4"><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.to}<RecipientTagInput copy={copy} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">{copy.subject}<Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} /></Label></div>
-          <div className="flex items-center gap-1 border-b bg-muted px-4 py-1"><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => editor?.chain().focus().toggleBold().run()} aria-label="Bold" title="Bold"><Bold /></Button><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => editor?.chain().focus().toggleItalic().run()} aria-label="Italic" title="Italic"><Italic /></Button><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-label="Underline" title="Underline"><Underline /></Button><Separator orientation="vertical" className="mx-1 h-5" /><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => editor?.chain().focus().toggleBulletList().run()} aria-label="Bullet list" title="Bullet list"><List /></Button><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => editor?.chain().focus().toggleOrderedList().run()} aria-label="Numbered list" title="Numbered list"><ListOrdered /></Button><Button type="button" variant="ghost" size="icon" disabled={sourceMode} onClick={() => { const href = window.prompt("URL"); if (href) editor?.chain().focus().setLink({ href }).run(); }} aria-label="Link" title="Link"><Link /></Button><Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="sm" className="ml-auto" onClick={toggleSourceMode} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}><Code2 />{sourceMode ? copy.richText : copy.sourceCode}</Button></div>
+          <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
+            <RichTextButtons editor={editor} disabled={sourceMode} />
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <Select value={selectedSignatureId} disabled={sourceMode || signatures.isPending} onValueChange={(value) => {
+                if (!value) return;
+                setSelectedSignatureId(value);
+                if (editor) setEditorSignature(editor, signatures.data?.signatures.find((item) => item.id === value) || null);
+              }}>
+                <SelectTrigger className="h-8 w-44" aria-label={copy.signatureSettings} title={copy.signatureSettings}><SignatureIcon /><SelectValue>{selectedSignatureId === "none" ? copy.noSignature : signatures.data?.signatures.find((item) => item.id === selectedSignatureId)?.name || copy.noSignature}</SelectValue></SelectTrigger>
+                <SelectContent><SelectItem value="none">{copy.noSignature}</SelectItem>{signatures.data?.signatures.map((signature) => <SelectItem key={signature.id} value={signature.id}>{signature.name}</SelectItem>)}</SelectContent>
+              </Select>
+              <Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="sm" onClick={toggleSourceMode} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}><Code2 />{sourceMode ? copy.richText : copy.sourceCode}</Button>
+            </div>
+          </div>
           {sourceMode
             ? <textarea className="min-h-0 flex-1 resize-none bg-background px-5 py-4 font-mono text-sm leading-6 outline-none" value={sourceCode} onChange={(event) => setSourceCode(event.target.value)} spellCheck={false} aria-label={copy.sourceCode} />
             : <ScrollArea className="min-h-0 flex-1" contentClassName="px-5 py-4"><EditorContent editor={editor} /></ScrollArea>}
           {attachments.length > 0 && <div className="flex flex-wrap gap-2 border-t px-5 py-2">{attachments.map((file, index) => <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate" title={file.name}>{file.name}</span><span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span><Button type="button" variant="ghost" size="icon" className="size-5" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`${copy.removeAttachment}: ${file.name}`} title={copy.removeAttachment}><X className="size-3" /></Button></span>)}</div>}
           {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
-          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => [...current, ...selected]); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
+          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => { const next = [...current, ...selected]; if (next.reduce((total, file) => total + file.size, 0) > 18 * 1024 * 1024) { setError(copy.attachmentsTooLarge); return current; } setError(""); return next; }); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -1209,7 +1595,26 @@ function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
   return <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6"><a className="flex items-center gap-2 font-semibold" href="/inbox"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</a><h1 className="text-sm font-semibold">{title}</h1><div>{action}</div></header>;
 }
 
+function FolderMessageRow({ copy, message, address, selected, junkActions, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; junkActions: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
+  const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{address}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span><span className="mt-1 block truncate text-xs text-muted-foreground/70">{message.subject || copy.noSubject}</span></button>;
+  if (!junkActions) return row;
+  return (
+    <ContextMenuPrimitive.Root>
+      <ContextMenuPrimitive.Trigger className="block">{row}</ContextMenuPrimitive.Trigger>
+      <ContextMenuPrimitive.Portal>
+        <ContextMenuPrimitive.Positioner className="z-40 outline-none">
+          <ContextMenuPrimitive.Popup className="w-44 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+            <ContextMenuPrimitive.Item disabled={actionPending} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50" onClick={onNotSpam}><ShieldCheck className="size-4" />{copy.notSpam}</ContextMenuPrimitive.Item>
+            <ContextMenuPrimitive.Item disabled={actionPending} className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted data-disabled:pointer-events-none data-disabled:opacity-50" onClick={onPermanentDelete}><Trash2 className="size-4" />{copy.permanentDelete}</ContextMenuPrimitive.Item>
+          </ContextMenuPrimitive.Popup>
+        </ContextMenuPrimitive.Positioner>
+      </ContextMenuPrimitive.Portal>
+    </ContextMenuPrimitive.Root>
+  );
+}
+
 function FolderPage({ folder }: { folder: string }) {
+  const queryClient = useQueryClient();
   const metadata = useQuery({ queryKey: ["conversations", "folder-shell"], queryFn: () => getConversations() });
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
   const locale = useLocale(metadata.data?.locale);
@@ -1220,15 +1625,50 @@ function FolderPage({ folder }: { folder: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<MailMessage | null>(null);
+  const [permanentDeleteError, setPermanentDeleteError] = useState("");
   const list = useQuery({ queryKey: ["folder", folder], queryFn: () => getFolderMessages(folder) });
   const detail = useQuery({ queryKey: ["message", folder, selected], queryFn: () => getMessage(folder, selected!), enabled: Boolean(selected) });
   const select = (id: string) => { setSelected(id); setDetailOpen(true); const url = new URL(window.location.href); url.searchParams.set("message", id); window.history.pushState({}, "", url); };
   const closeDetail = () => { setDetailOpen(false); setSelected(null); const url = new URL(window.location.href); url.searchParams.delete("message"); window.history.pushState({}, "", url); };
   const currentMailbox = metadata.data?.folders.find((mailbox) => mailbox.name === folder) || { name: folder, delimiter: "/", attributes: [] };
   const folderTitle = folderLabel(locale, currentMailbox);
+  const isJunkFolder = folderKind(currentMailbox) === "junk";
   const messages = (list.data?.messages || []).filter((message) => {
     const query = search.trim().toLowerCase();
     return !query || [message.from, message.fromName, message.to, message.subject, message.preview].some((value) => value?.toLowerCase().includes(query));
+  });
+
+  const messageAddress = (message: MailMessage) => {
+    const from = message.from?.trim() || "";
+    const accountEmail = message.accountEmail?.trim() || metadata.data?.accountEmail?.trim() || "";
+    return accountEmail && from.toLowerCase() === accountEmail.toLowerCase()
+      ? message.to || from || locale.me
+      : from || message.to || locale.me;
+  };
+  const removeMessageFromView = async (message: MailMessage) => {
+    if (selected === message.id) closeDetail();
+    queryClient.removeQueries({ queryKey: ["message", folder, message.id] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["folder", folder] }),
+      queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+    ]);
+  };
+  const restoreMutation = useMutation({
+    mutationFn: (message: MailMessage) => restoreJunkMessage(folder, message.id, message.accountEmail || metadata.data?.accountEmail),
+    onSuccess: async (_, message) => {
+      await removeMessageFromView(message);
+    },
+    onError: (value) => toast.error(value instanceof Error ? value.message : locale.notSpamFailed),
+  });
+  const permanentDeleteMutation = useMutation({
+    mutationFn: (message: MailMessage) => permanentlyDeleteJunkMessage(folder, message.id, message.accountEmail || metadata.data?.accountEmail),
+    onSuccess: async (_, message) => {
+      setPermanentDeleteTarget(null);
+      setPermanentDeleteError("");
+      await removeMessageFromView(message);
+    },
+    onError: (value) => setPermanentDeleteError(value instanceof Error ? value.message : locale.permanentDeleteFailed),
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -1261,23 +1701,30 @@ function FolderPage({ folder }: { folder: string }) {
             {list.isPending && <ListSkeleton />}
             {!list.isPending && list.error && <ErrorState copy={locale} onRetry={() => void list.refetch()} />}
             {!list.isPending && !list.error && messages.length === 0 && <EmptyState icon={<Mail />} text={locale.noConversations} />}
-            {messages.map((message) => <button key={message.id} type="button" onClick={() => select(message.id)} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected === message.id && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm font-semibold">{message.fromName || message.from || locale.me}</strong><time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span><span className="mt-1 block truncate text-xs text-muted-foreground/70">{message.preview || message.subject || locale.noBody}</span></button>)}
+            {messages.map((message) => <FolderMessageRow key={message.id} copy={locale} message={message} address={messageAddress(message)} selected={selected === message.id} junkActions={isJunkFolder} actionPending={restoreMutation.isPending || permanentDeleteMutation.isPending} onSelect={() => select(message.id)} onNotSpam={() => restoreMutation.mutate(message)} onPermanentDelete={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(message); }} />)}
           </ScrollArea>
         </section>
         <section className={cn("min-w-0 flex-1 flex-col bg-surface", detailOpen ? "flex" : "hidden lg:flex")}>
           {detailOpen && <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5"><div><Button variant="ghost" size="icon" className="lg:hidden" onClick={closeDetail} aria-label={locale.back}><ArrowLeft /></Button></div><h2 className="truncate text-center text-sm font-semibold">{detail.data?.subject || folderTitle}</h2><div /></header>}
-          <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8">{detail.isPending && selected ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{locale.loading}</div> : detail.data ? <MailDetail copy={locale} message={detail.data} folder={folder} /> : <EmptyState icon={<Mail />} text={locale.selectConversation} />}</ScrollArea>
+          <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8">{detail.isPending && selected ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{locale.loading}</div> : detail.error ? <ErrorState copy={locale} onRetry={() => void detail.refetch()} /> : detail.data ? <MailDetail copy={locale} message={detail.data} /> : <EmptyState icon={<Mail />} text={locale.selectConversation} />}</ScrollArea>
         </section>
       </main>
       <ComposeDialog copy={locale} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void list.refetch()} />
       <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <Dialog open={Boolean(permanentDeleteTarget)} onOpenChange={(open) => { if (!open && !permanentDeleteMutation.isPending) { setPermanentDeleteTarget(null); setPermanentDeleteError(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{locale.permanentDeleteTitle}</DialogTitle><DialogDescription>{locale.permanentDeleteDescription}</DialogDescription></DialogHeader>
+          {permanentDeleteError && <p className="text-sm text-destructive">{permanentDeleteError}</p>}
+          <DialogFooter><Button variant="ghost" disabled={permanentDeleteMutation.isPending} onClick={() => setPermanentDeleteTarget(null)}>{locale.cancel}</Button><Button variant="destructive" disabled={permanentDeleteMutation.isPending || !permanentDeleteTarget} onClick={() => permanentDeleteTarget && permanentDeleteMutation.mutate(permanentDeleteTarget)}><Trash2 />{permanentDeleteMutation.isPending ? locale.deleting : locale.permanentDelete}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function MailDetail({ copy, message, folder }: { copy: Copy; message: MailMessage; folder: string }) {
+function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  return <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl"><div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.fromName || message.from}</span><time>{formatTime(message.date)}</time></div><div className="min-w-0 max-w-[80%] overflow-x-auto rounded-xl border bg-background px-3 py-2 text-sm leading-relaxed">{message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={scrollRef} eager /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(message.body || message.preview || copy.noBody)}</div>}{message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((item) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={item.partId} href={`/v1/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(item.partId)}?folder=${encodeURIComponent(folder)}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate">{item.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small></a>)}</div></> : null}</div></article>;
+  return <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl"><div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.fromName || message.from}</span><time>{formatTime(message.date)}</time></div><div className="min-w-0 max-w-[80%] overflow-x-auto rounded-xl border bg-background px-3 py-2 text-sm leading-relaxed">{message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={scrollRef} eager /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(message.body || message.preview || copy.noBody)}</div>}{message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((item) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={item.id || item.partId} href={`/api/attachment/${encodeURIComponent(item.id)}?account_email=${encodeURIComponent(message.accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate">{item.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small></a>)}</div></> : null}</div><MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} /></article>;
 }
 
 function SettingsPage({ copy }: { copy: Copy }) {
@@ -1301,25 +1748,355 @@ function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolea
 }
 
 function SettingsContent({ copy }: { copy: Copy }) {
-  const [section, setSection] = useState<"general" | "mailboxes">("general");
+  const [section, setSection] = useState<"general" | "signatures" | "ai" | "agents" | "mailboxes">("general");
   return (
     <div className="grid min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
-      <nav className="flex gap-1 border-b pb-4 md:flex-col md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
-        <Button className="justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => setSection("general")}><Settings />{copy.generalSettings}</Button>
-        <Button className="justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => setSection("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
+      <nav className="flex gap-1 overflow-x-auto border-b pb-4 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
+        <Button className="shrink-0 justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => setSection("general")}><Settings />{copy.generalSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => setSection("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => setSection("ai")}><Sparkles />{copy.aiSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => setSection("agents")}><Bot />{copy.agentSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => setSection("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "general" ? <GeneralSettings copy={copy} /> : <MailboxSettings copy={copy} />}
+        {section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : <MailboxSettings copy={copy} />}
       </div>
     </div>
   );
 }
 
+function SignatureSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const signatures = useQuery({ queryKey: ["signatures"], queryFn: getSignatures, retry: false });
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<EmailSignature | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<EmailSignature | null>(null);
+  const [name, setName] = useState("");
+  const [isDefault, setIsDefault] = useState(false);
+  const [contentEmpty, setContentEmpty] = useState(true);
+  const [sourceMode, setSourceMode] = useState(false);
+  const [sourceCode, setSourceCode] = useState("");
+  const [error, setError] = useState("");
+  const editor = useEditor({ extensions: [StarterKit, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
+  const persist = useMutation({
+    mutationFn: ({ items }: { items: EmailSignature[]; operation: "create" | "update" | "delete" }) => saveSignatures(items),
+    onSuccess: async (_, variables) => {
+      setOpen(false);
+      setEditing(null);
+      setDeleteTarget(null);
+      setError("");
+      toast.success(variables.operation === "create" ? copy.signatureSaved : variables.operation === "update" ? copy.signatureUpdated : copy.signatureDeleted);
+      await queryClient.invalidateQueries({ queryKey: ["signatures"] });
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+
+  useEffect(() => {
+    if (!open || !editor) return;
+    const html = editing?.html || "";
+    setSourceMode(false);
+    setSourceCode(html);
+    editor.commands.setContent(html);
+    setContentEmpty(editor.isEmpty);
+    editor.commands.focus("start");
+  }, [open, editing, editor]);
+
+  const toggleSignatureSource = () => {
+    if (!editor) return;
+    if (sourceMode) {
+      editor.commands.setContent(sourceCode);
+      setContentEmpty(editor.isEmpty);
+      setSourceMode(false);
+      editor.commands.focus("start");
+      return;
+    }
+    setSourceCode(editor.getHTML());
+    setContentEmpty(editor.isEmpty);
+    setSourceMode(true);
+  };
+
+  const openAdd = () => {
+    setEditing(null);
+    setName("");
+    setIsDefault(!signatures.data?.signatures.length);
+    setError("");
+    setOpen(true);
+  };
+  const openEdit = (signature: EmailSignature) => {
+    setEditing(signature);
+    setName(signature.name);
+    setIsDefault(Boolean(signature.default));
+    setError("");
+    setOpen(true);
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const html = sourceMode ? sourceCode : editor?.getHTML() || "";
+    if (!name.trim() || !editor || (sourceMode ? !sourceCode.trim() : editor.isEmpty)) return;
+    const current = signatures.data?.signatures || [];
+    const makeDefault = isDefault || current.length === 0;
+    const nextItem: EmailSignature = { id: editing?.id || "", name: name.trim(), html, default: makeDefault };
+    const next = editing
+      ? current.map((item) => item.id === editing.id ? nextItem : { ...item, default: makeDefault ? false : item.default })
+      : [...current.map((item) => ({ ...item, default: makeDefault ? false : item.default })), nextItem];
+    persist.mutate({ items: next, operation: editing ? "update" : "create" });
+  };
+  const removeSignature = () => {
+    if (!deleteTarget) return;
+    const remaining = (signatures.data?.signatures || []).filter((item) => item.id !== deleteTarget.id);
+    const next = remaining.length && !remaining.some((item) => item.default)
+      ? remaining.map((item, index) => ({ ...item, default: index === 0 }))
+      : remaining;
+    setError("");
+    persist.mutate({ items: next, operation: "delete" });
+  };
+
+  return (
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="flex items-center gap-2 text-lg font-semibold"><SignatureIcon className="size-5" />{copy.signatureSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.signatureSettingsDescription}</p></div>
+        <Button onClick={openAdd}><Plus />{copy.addSignature}</Button>
+      </div>
+      <div className="mt-5 overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[36rem] text-left text-sm">
+          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.signatureName}</th><th className="px-4 py-2.5 font-medium">{copy.signaturePreview}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
+          <tbody>{signatures.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.loading}</td></tr> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <tr className="border-b last:border-b-0" key={signature.id}><td className="px-4 py-3"><div className="flex items-center gap-2"><span className="font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></td><td className="max-w-md px-4 py-3 text-muted-foreground"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></td><td className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => { setError(""); setDeleteTarget(signature); }} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</td></tr>}</tbody>
+        </table>
+      </div>
+      {(signatures.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (signatures.error instanceof Error ? signatures.error.message : copy.loadFailed)}</p>}
+      <Dialog open={open} onOpenChange={(next) => { if (!persist.isPending) setOpen(next); }}>
+        <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editSignature : copy.addSignature}</DialogTitle><DialogDescription>{copy.signatureSettingsDescription}</DialogDescription></DialogHeader>
+          <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
+            <ScrollArea className="min-h-0 flex-1" contentClassName="grid gap-4 p-5">
+              <div className="grid gap-2"><Label htmlFor="signature-name">{copy.signatureName}</Label><Input id="signature-name" value={name} onChange={(event) => setName(event.target.value)} disabled={persist.isPending} required /></div>
+              <div className="grid gap-2">
+                <Label>{copy.signatureContent}</Label>
+                <div className="overflow-hidden rounded-lg border bg-background">
+                  <div className="flex items-center gap-1 border-b bg-muted px-2 py-1"><Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="icon" disabled={persist.isPending || !editor} onClick={toggleSignatureSource} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}><Code2 /></Button><Separator orientation="vertical" className="mx-1 h-5" /><RichTextButtons editor={editor} disabled={persist.isPending || sourceMode} /></div>
+                  {sourceMode
+                    ? <textarea className="min-h-64 w-full resize-y bg-background px-4 py-3 font-mono text-sm leading-6 outline-none" value={sourceCode} onChange={(event) => { setSourceCode(event.target.value); setContentEmpty(!event.target.value.trim()); }} spellCheck={false} aria-label={copy.sourceCode} />
+                    : <div className="max-h-72 overflow-y-auto px-4 py-3"><EditorContent editor={editor} /></div>}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm"><input className="size-4 accent-primary" type="checkbox" checked={isDefault} disabled={persist.isPending} onChange={(event) => setIsDefault(event.target.checked)} />{copy.defaultSignature}</label>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+            </ScrollArea>
+            <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending || !name.trim() || contentEmpty}>{persist.isPending ? copy.savingSignature : copy.save}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(next) => { if (!next && !persist.isPending) setDeleteTarget(null); }}>
+        <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{copy.deleteSignatureTitle}</DialogTitle><DialogDescription>{copy.deleteSignatureDescription}</DialogDescription></DialogHeader>{error && <p className="text-xs text-destructive">{error}</p>}<DialogFooter><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setDeleteTarget(null)}>{copy.cancel}</Button><Button type="button" variant="destructive" disabled={persist.isPending} onClick={removeSignature}><Trash2 />{persist.isPending ? copy.deleting : copy.remove}</Button></DialogFooter></DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function AgentSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, retry: false });
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<AIAgent | null>(null);
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [error, setError] = useState("");
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
+  const create = useMutation({
+    mutationFn: addAIAgent,
+    onSuccess: () => { setOpen(false); setEditing(null); setError(""); toast.success(copy.agentSaved); refresh(); },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateAIAgent>[1] }) => updateAIAgent(id, input),
+    onSuccess: () => { setOpen(false); setEditing(null); setError(""); toast.success(copy.agentUpdated); refresh(); },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setError(""); setOpen(true); };
+  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setError(""); setOpen(true); };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    const input = { name: name.trim(), prompt: prompt.trim() };
+    if (editing) update.mutate({ id: editing.id, input });
+    else create.mutate(input);
+  };
+  const pending = create.isPending || update.isPending;
+  return (
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Bot className="size-5" />{copy.agentSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.agentSettingsDescription}</p></div>
+        <Button onClick={openAdd}><Plus />{copy.addAgent}</Button>
+      </div>
+      <div className="mt-5 overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[36rem] text-left text-sm">
+          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.agentName}</th><th className="px-4 py-2.5 font-medium">{copy.agentPrompt}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
+          <tbody>{agents.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.loading}</td></tr> : agents.data?.agents.length ? agents.data.agents.map((agent) => <tr className="border-b last:border-b-0" key={agent.id}><td className="px-4 py-3 font-medium">{agent.name}</td><td className="max-w-md px-4 py-3 text-muted-foreground"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p></td><td className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</td></tr>}</tbody>
+        </table>
+      </div>
+      {(agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (agents.error instanceof Error ? agents.error.message : copy.loadFailed)}</p>}
+      <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
+          <form className="grid gap-4" onSubmit={submit}>
+            <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} required /></div>
+            <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-64 resize-y" value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={pending} required /></div>
+            {(create.isError || update.isError) && error && <p className="text-xs text-destructive">{error}</p>}
+            <DialogFooter><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function AISettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
+  const [addOpen, setAddOpen] = useState(false);
+  const [editingModel, setEditingModel] = useState<AIModel | null>(null);
+  const [baseURL, setBaseURL] = useState("https://api.openai.com/v1");
+  const [model, setModel] = useState("gpt-5.6-sol");
+  const [apiKey, setAPIKey] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("medium");
+  const [error, setError] = useState("");
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["ai-models"] });
+  };
+  const add = useMutation({
+    mutationFn: addAIModel,
+    onSuccess: () => {
+      setAPIKey("");
+      setModel("gpt-5.6-sol");
+      setBaseURL("https://api.openai.com/v1");
+      setReasoningEffort("medium");
+      setAddOpen(false);
+      setError("");
+      toast.success(copy.aiSettingsSaved);
+      refresh();
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateAIModel>[1] }) => updateAIModel(id, input),
+    onSuccess: () => {
+      setAPIKey("");
+      setEditingModel(null);
+      setAddOpen(false);
+      setError("");
+      toast.success(copy.aiModelUpdated);
+      refresh();
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const remove = useMutation({ mutationFn: deleteAIModel, onSuccess: () => { setError(""); refresh(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const makeDefault = useMutation({ mutationFn: setDefaultAIModel, onSuccess: () => { setError(""); refresh(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const test = useMutation({
+    mutationFn: ({ input, id }: { input: Parameters<typeof testAIModel>[0]; id?: string }) => id ? testSavedAIModel(id, input) : testAIModel(input),
+    onSuccess: (result) => {
+      setError("");
+      toast.success(copy.aiModelTestSuccess, { description: `${result.latencyMs} ms · ${result.output}` });
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    const input = { baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort };
+    if (editingModel) update.mutate({ id: editingModel.id, input });
+    else add.mutate(input);
+  };
+  const openAdd = () => {
+    setEditingModel(null);
+    setBaseURL("https://api.openai.com/v1");
+    setModel("gpt-5.6-sol");
+    setReasoningEffort("medium");
+    setAPIKey("");
+    setError("");
+    setAddOpen(true);
+  };
+  const openEdit = (item: AIModel) => {
+    setEditingModel(item);
+    setBaseURL(item.baseUrl);
+    setModel(item.model);
+    setReasoningEffort(item.reasoningEffort);
+    setAPIKey("");
+    setError("");
+    setAddOpen(true);
+  };
+  return (
+    <section className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-5" />{copy.aiSettings}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.aiSettingsDescription}</p></div>
+        <Button onClick={openAdd}><Plus />{copy.addAIModel}</Button>
+      </div>
+      <div className="mt-5 overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[40rem] text-left text-sm">
+          <thead className="border-b bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">{copy.aiModel}</th><th className="px-4 py-2.5 font-medium">{copy.aiProvider}</th><th className="px-4 py-2.5 font-medium">{copy.aiReasoningEffort}</th><th className="px-4 py-2.5 font-medium">{copy.aiBaseURL}</th><th className="px-4 py-2.5 text-right font-medium">{copy.actions}</th></tr></thead>
+          <tbody>{models.isPending ? <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={5}>{copy.loading}</td></tr> : models.data?.models.length ? models.data.models.map((item) => <tr className="border-b last:border-b-0" key={item.id}><td className="px-4 py-3"><div className="flex items-center gap-2"><span className="font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></td><td className="px-4 py-3">OpenAI</td><td className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</td><td className="max-w-64 truncate px-4 py-3 text-muted-foreground" title={item.baseUrl}>{item.baseUrl}</td><td className="px-4 py-3"><div className="flex justify-end gap-2">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></td></tr>) : <tr><td className="px-4 py-8 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</td></tr>}</tbody>
+        </table>
+      </div>
+      {(models.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (models.error instanceof Error ? models.error.message : copy.loadFailed)}</p>}
+      <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setEditingModel(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle><DialogDescription>{copy.aiSettingsDescription}</DialogDescription></DialogHeader>
+          <form className="grid gap-4" onSubmit={submit}>
+            <div className="grid gap-2"><Label htmlFor="add-ai-provider">{copy.aiProvider}</Label><Input id="add-ai-provider" value="OpenAI" disabled /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setBaseURL(event.target.value)} placeholder="https://api.openai.com/v1" /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.6-sol" /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setAPIKey(event.target.value)} placeholder={editingModel ? copy.aiAPIKeyKeep : "sk-..."} autoComplete="off" /></div>
+            {(add.isError || update.isError || test.isError) && error && <p className="text-xs text-destructive">{error}</p>}
+            <DialogFooter><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
 function GeneralSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
+  const webhook = useQuery({ queryKey: ["feishu-webhook"], queryFn: getFeishuWebhookSettings, retry: false });
+  const [webhookEnabled, setWebhookEnabled] = useState(false);
+  const [webhookURL, setWebhookURL] = useState("");
+  const [webhookMessage, setWebhookMessage] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushMessage, setPushMessage] = useState("");
   useEffect(() => { void currentPushSubscription().then((subscription) => setPushEnabled(Boolean(subscription))); }, []);
+  useEffect(() => {
+    if (!webhook.data) return;
+    setWebhookEnabled(webhook.data.enabled);
+    setWebhookURL(webhook.data.url);
+  }, [webhook.data]);
+  const saveWebhook = useMutation({
+    mutationFn: saveFeishuWebhookSettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(["feishu-webhook"], settings);
+      setWebhookMessage("");
+      toast.success(copy.feishuWebhookSaved);
+    },
+    onError: (value) => setWebhookMessage(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const testWebhook = useMutation({
+    mutationFn: testFeishuWebhook,
+    onSuccess: () => {
+      setWebhookMessage("");
+      toast.success(copy.feishuWebhookTestSent);
+    },
+    onError: (value) => setWebhookMessage(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const persistWebhook = (enabled = webhookEnabled, url = webhookURL) => {
+    const settings = { enabled, url: url.trim() };
+    if (settings.enabled && !settings.url) {
+      setWebhookMessage(copy.feishuWebhookURLRequired);
+      return;
+    }
+    if (webhook.data?.enabled === settings.enabled && webhook.data.url === settings.url) return;
+    setWebhookMessage("");
+    saveWebhook.mutate(settings);
+  };
   const togglePush = async () => {
     setPushMessage("");
     try {
@@ -1347,6 +2124,25 @@ function GeneralSettings({ copy }: { copy: Copy }) {
         <Button className="mt-3 max-w-full whitespace-normal" variant="secondary" disabled={!pushAvailable} onClick={() => void togglePush()}>{pushEnabled ? <BellOff /> : <Bell />}{pushEnabled ? copy.disablePush : copy.enablePush}</Button>
         {pushMessage && <p className="mt-2 text-xs text-destructive">{pushMessage}</p>}
         {!pushAvailable && !capabilities.isPending && <p className="mt-2 text-xs text-muted-foreground">{copy.pushUnavailable}</p>}
+      </section>
+      <section className="mt-7 border-t pt-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold"><MessageCircle className="size-4" />{copy.feishuWebhook}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{copy.feishuWebhookDescription}</p>
+        <div className="mt-4 grid max-w-xl gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input className="size-4 accent-primary" type="checkbox" checked={webhookEnabled} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { setWebhookEnabled(event.target.checked); setWebhookMessage(""); }} onBlur={() => persistWebhook()} />
+              {copy.feishuWebhookEnabled}
+            </label>
+            <Button type="button" variant="outline" size="sm" disabled={webhook.isPending || testWebhook.isPending || !webhookURL.trim()} onClick={() => { setWebhookMessage(""); testWebhook.mutate(webhookURL.trim()); }}><Send />{testWebhook.isPending ? copy.feishuWebhookTesting : copy.feishuWebhookTest}</Button>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="feishu-webhook-url">{copy.feishuWebhookURL}</Label>
+            <Input id="feishu-webhook-url" type="url" inputMode="url" autoComplete="off" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhookURL} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { setWebhookURL(event.target.value); setWebhookMessage(""); }} onBlur={() => persistWebhook()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+          </div>
+          {webhook.isError && <p className="text-xs text-destructive">{webhook.error instanceof Error ? webhook.error.message : copy.feishuWebhookUnavailable}</p>}
+          {webhookMessage && <p className={cn("text-xs", saveWebhook.isError || testWebhook.isError ? "text-destructive" : "text-muted-foreground")}>{webhookMessage}</p>}
+        </div>
       </section>
     </div>
   );

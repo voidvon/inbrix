@@ -27,6 +27,15 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/session"
 )
 
+type webhookSettingsInput struct {
+	Enabled bool   `json:"enabled"`
+	URL     string `json:"url"`
+}
+
+type webhookTestInput struct {
+	URL string `json:"url"`
+}
+
 // AccountsHandler manages multi-account operations.
 type AccountsHandler struct {
 	store     *session.Store
@@ -142,6 +151,76 @@ func (h *AccountsHandler) HandleResyncAttachments(c *fiber.Ctx) error {
 		"queued":  true,
 		"account": account.Email,
 	})
+}
+
+// HandleGetWebhookSettings returns the current user's Feishu bot settings.
+func (h *AccountsHandler) HandleGetWebhookSettings(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "mail mirror sync is not enabled")
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	cfg, err := h.mailDB.GetWebhookSettings(c.UserContext(), owner)
+	if err != nil {
+		log.Printf("webhook settings: load: %v", err)
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(cfg)
+}
+
+// HandlePutWebhookSettings validates and replaces the current user's settings.
+func (h *AccountsHandler) HandlePutWebhookSettings(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "mail mirror sync is not enabled")
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	var input webhookSettingsInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	cfg := mailstore.WebhookSettings{Enabled: input.Enabled, URL: strings.TrimSpace(input.URL)}
+	if cfg.Enabled && cfg.URL == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "an enabled webhook needs a URL")
+	}
+	if cfg.URL != "" {
+		if err := mailstore.ValidateFeishuWebhookURL(cfg.URL); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+	}
+	if err := h.mailDB.SaveWebhookSettings(c.UserContext(), owner, cfg); err != nil {
+		log.Printf("webhook settings: save: %v", err)
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(cfg)
+}
+
+// HandleTestWebhook sends one test message to the supplied Feishu bot URL.
+// It deliberately does not save or enable the setting.
+func (h *AccountsHandler) HandleTestWebhook(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "mail mirror sync is not enabled")
+	}
+	if h.mirrorOwner(c) == "" {
+		return fiber.ErrUnauthorized
+	}
+	var input webhookTestInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	input.URL = strings.TrimSpace(input.URL)
+	if err := mailstore.ValidateFeishuWebhookURL(input.URL); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := mailstore.SendFeishuTestWebhook(c.UserContext(), input.URL); err != nil {
+		log.Printf("webhook settings: test send failed: %v", err)
+		return fiber.NewError(fiber.StatusBadGateway, "could not send test message: "+err.Error())
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 type mirrorSafeAccount struct {

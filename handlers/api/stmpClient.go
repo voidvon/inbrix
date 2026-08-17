@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/smtp"
@@ -16,6 +18,7 @@ type SMTPClient struct {
 	server             string
 	port               int
 	email              string
+	authUsername       string
 	password           string
 	useOAuth           bool
 	token              string
@@ -29,11 +32,12 @@ type SMTPClient struct {
 // (port 587), false → implicit TLS from the start (port 465).
 func NewSMTPClient(server string, port int, email, password string, useStartTLS bool) *SMTPClient {
 	return &SMTPClient{
-		server:      server,
-		port:        port,
-		email:       email,
-		password:    password,
-		useStartTLS: useStartTLS,
+		server:       server,
+		port:         port,
+		email:        email,
+		authUsername: email,
+		password:     password,
+		useStartTLS:  useStartTLS,
 	}
 }
 
@@ -41,13 +45,23 @@ func NewSMTPClient(server string, port int, email, password string, useStartTLS 
 // access token (XOAUTH2 or OAUTHBEARER).
 func NewSMTPClientOAuth(server string, port int, email, token, mechanism string, useStartTLS bool) *SMTPClient {
 	return &SMTPClient{
-		server:      server,
-		port:        port,
-		email:       email,
-		token:       token,
-		mechanism:   mechanism,
-		useOAuth:    true,
-		useStartTLS: useStartTLS,
+		server:       server,
+		port:         port,
+		email:        email,
+		authUsername: email,
+		token:        token,
+		mechanism:    mechanism,
+		useOAuth:     true,
+		useStartTLS:  useStartTLS,
+	}
+}
+
+// SetAuthUsername overrides the SMTP authentication identity while preserving
+// email as the envelope sender. Most hosted providers require the full email
+// address; self-hosted servers may instead use a bare account name.
+func (c *SMTPClient) SetAuthUsername(username string) {
+	if username = strings.TrimSpace(username); username != "" {
+		c.authUsername = username
 	}
 }
 
@@ -66,6 +80,7 @@ type SMTPTransport struct {
 	Server       string
 	Port         int
 	Email        string
+	AuthUsername string
 	UseOAuth     bool
 	Mechanism    string
 	UseSTARTTLS  bool
@@ -86,6 +101,7 @@ func (c *SMTPClient) Transport() SMTPTransport {
 		Server:       c.server,
 		Port:         c.port,
 		Email:        c.email,
+		AuthUsername: c.authUsername,
 		UseOAuth:     c.useOAuth,
 		Mechanism:    c.mechanism,
 		UseSTARTTLS:  c.useStartTLS,
@@ -163,7 +179,7 @@ func (c *SMTPClient) SendMail(to, subject, body string, opts *MailOptions) error
 	defer client.Close()
 
 	domain := GetDomainFromEmail(c.email)
-	username := GetUsernameFromEmail(c.email)
+	username := c.authUsername
 
 	// Authenticate.
 	var auth smtp.Auth
@@ -247,6 +263,13 @@ func (c *SMTPClient) SendMail(to, subject, body string, opts *MailOptions) error
 // responsible for constructing the full message including all headers and body.
 // allRcpts is the union of To, CC, and BCC addresses to use as RCPT TO.
 func (c *SMTPClient) SendRawMessage(allRcpts []string, rawMessage []byte) error {
+	return c.SendRawMessageReader(allRcpts, bytes.NewReader(rawMessage))
+}
+
+// SendRawMessageReader sends a pre-built message without first materializing it
+// as a byte slice. The SMTP DATA writer handles dot-stuffing while io.Copy keeps
+// memory usage bounded for messages backed by a temporary file.
+func (c *SMTPClient) SendRawMessageReader(allRcpts []string, rawMessage io.Reader) error {
 	addr := fmt.Sprintf("%s:%d", c.server, c.port)
 	tlsCfg := &tls.Config{
 		ServerName:         c.server,
@@ -284,7 +307,7 @@ func (c *SMTPClient) SendRawMessage(allRcpts []string, rawMessage []byte) error 
 	}
 	defer smtpClient.Close()
 
-	username := GetUsernameFromEmail(c.email)
+	username := c.authUsername
 	var auth smtp.Auth
 	if c.useOAuth {
 		switch strings.ToLower(c.mechanism) {
@@ -313,7 +336,7 @@ func (c *SMTPClient) SendRawMessage(allRcpts []string, rawMessage []byte) error 
 	if err != nil {
 		return fmt.Errorf("data failed: %v", err)
 	}
-	if _, err = writer.Write(rawMessage); err != nil {
+	if _, err = io.Copy(writer, rawMessage); err != nil {
 		return fmt.Errorf("write failed: %v", err)
 	}
 	if err = writer.Close(); err != nil {

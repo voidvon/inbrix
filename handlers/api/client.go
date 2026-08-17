@@ -2,7 +2,9 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"lilmail/models"
 	"log"
 	"net"
@@ -289,17 +291,46 @@ func (c *Client) discoverSentFolder() (string, error) {
 // SMTP). When rawMessage is nil, a minimal plain-text message is synthesised
 // from to/subject/body for backwards compatibility.
 func (c *Client) SaveToSent(to, subject, body string, rawMessage []byte) error {
-	folder, err := c.discoverSentFolder()
-	if err != nil {
-		return err
-	}
+	_, err := c.SaveToSentWithFolder(to, subject, body, rawMessage)
+	return err
+}
 
+// SaveToSentWithFolder appends a sent message and returns the mailbox selected
+// for the copy. Callers with a local mirror use the mailbox name for an
+// immediate, focused incremental refresh.
+func (c *Client) SaveToSentWithFolder(to, subject, body string, rawMessage []byte) (string, error) {
 	if rawMessage == nil {
 		// Fallback: build a minimal plain-text message.
 		msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 			c.username, to, subject, time.Now().Format(time.RFC1123Z), body)
 		rawMessage = []byte(msg)
 	}
-
-	return c.client.Append(folder, []string{`\Seen`}, time.Now(), strings.NewReader(string(rawMessage)))
+	return c.SaveToSentReaderWithFolder(bytes.NewReader(rawMessage), len(rawMessage))
 }
+
+// SaveToSentReader appends a complete RFC 2822 message from a bounded stream.
+// IMAP literals require the byte length up front, which is supplied by the
+// temporary MIME file used by the web compose path.
+func (c *Client) SaveToSentReader(rawMessage io.Reader, size int) error {
+	_, err := c.SaveToSentReaderWithFolder(rawMessage, size)
+	return err
+}
+
+// SaveToSentReaderWithFolder is the streaming variant of SaveToSentWithFolder.
+func (c *Client) SaveToSentReaderWithFolder(rawMessage io.Reader, size int) (string, error) {
+	folder, err := c.discoverSentFolder()
+	if err != nil {
+		return "", err
+	}
+	if err := c.client.Append(folder, []string{`\Seen`}, time.Now(), sizedLiteral{Reader: rawMessage, size: size}); err != nil {
+		return "", err
+	}
+	return folder, nil
+}
+
+type sizedLiteral struct {
+	io.Reader
+	size int
+}
+
+func (l sizedLiteral) Len() int { return l.size }

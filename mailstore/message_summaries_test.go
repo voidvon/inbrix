@@ -1,0 +1,254 @@
+package mailstore
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	mailapi "lilmail/handlers/api"
+	"lilmail/models"
+)
+
+type summaryTestClient struct {
+	mu       sync.Mutex
+	calls    int
+	block    <-chan struct{}
+	entered  chan<- struct{}
+	failCall int
+}
+
+func (c *summaryTestClient) Do(*http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.calls++
+	call := c.calls
+	c.mu.Unlock()
+	if c.entered != nil {
+		select {
+		case c.entered <- struct{}{}:
+		default:
+		}
+	}
+	if c.block != nil {
+		<-c.block
+	}
+	if call == c.failCall {
+		return nil, errors.New("model unavailable")
+	}
+	body := fmt.Sprintf(`{"output_text":"{\"company\":\"测试客户\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"这是第%d次生成，需确认型号和交期。\",\"question\":\"\"}"}`, call)
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+}
+
+func (c *summaryTestClient) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func setupMailSummaryTest(t *testing.T) (*Store, Account, models.Email, string) {
+	t.Helper()
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "summary-owner@example.com", "", "hash")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	account := testAccount(t, s, owner.ID, "sales@example.com", true)
+	message := models.Email{
+		ID: "42", Folder: "INBOX", From: "buyer@example.com", To: account.Email,
+		Subject: "Valve RFQ", Body: "Please quote 10 valves", BodyCached: true,
+	}
+	if err := s.UpsertMessages(ctx, account.ID, message.Folder, []models.Email{message}); err != nil {
+		t.Fatalf("UpsertMessages: %v", err)
+	}
+	const encryptionKey = "0123456789abcdef0123456789abcdef"
+	encryptedKey, err := mailapi.EncryptJSON("test-api-key", encryptionKey)
+	if err != nil {
+		t.Fatalf("EncryptJSON: %v", err)
+	}
+	if _, err := s.CreateAIModel(ctx, AIModelRecord{OwnerID: owner.ID, BaseURL: "https://api.openai.com/v1", Model: "gpt-test", ReasoningEffort: "low", EncryptedAPIKey: encryptedKey}); err != nil {
+		t.Fatalf("CreateAIModel: %v", err)
+	}
+	if _, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: owner.ID, Name: "Mail summary", Prompt: "请总结邮件。", Purpose: "mail_summary"}); err != nil {
+		t.Fatalf("CreateAIAgent: %v", err)
+	}
+	return s, account, message, encryptionKey
+}
+
+func TestMessageSummaryLeaseAndCascade(t *testing.T) {
+	s, account, message, _ := setupMailSummaryTest(t)
+	ctx := context.Background()
+	claim := MessageSummaryRecord{
+		MessageSummaryKey: MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID},
+		SourceHash:        "source", ConfigHash: "config", ModelID: "model", ModelName: "gpt-test", AgentID: "agent", PipelineVersion: 1,
+	}
+	first, claimed, err := s.ClaimMessageSummaryGeneration(ctx, claim, false, time.Minute)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
+	}
+	if _, claimed, err := s.ClaimMessageSummaryGeneration(ctx, claim, false, time.Minute); err != nil || claimed {
+		t.Fatalf("second claim: claimed=%v err=%v", claimed, err)
+	}
+	ready, err := s.CompleteMessageSummaryGeneration(ctx, claim, first.GenerationToken, "已保存的总结")
+	if err != nil || ready.Status != "ready" || ready.Summary != "已保存的总结" {
+		t.Fatalf("complete summary: %+v err=%v", ready, err)
+	}
+	other := testAccount(t, s, account.OwnerID, "other-summary@example.com", false)
+	if err := s.UpsertMessages(ctx, other.ID, message.Folder, []models.Email{message}); err != nil {
+		t.Fatalf("UpsertMessages other account: %v", err)
+	}
+	otherKey := MessageSummaryKey{AccountID: other.ID, FolderName: message.Folder, UID: message.ID}
+	if _, err := s.GetMessageSummary(ctx, otherKey); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("summary leaked to another account: %v", err)
+	}
+	if err := s.DeleteMessage(ctx, account.ID, message.Folder, message.ID); err != nil {
+		t.Fatalf("DeleteMessage: %v", err)
+	}
+	if _, err := s.GetMessageSummary(ctx, claim.MessageSummaryKey); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("summary survived message deletion: %v", err)
+	}
+}
+
+func TestMessageSummaryExpiredLeaseCanBeReclaimed(t *testing.T) {
+	s, account, message, _ := setupMailSummaryTest(t)
+	ctx := context.Background()
+	claim := MessageSummaryRecord{MessageSummaryKey: MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID}}
+	if _, claimed, err := s.ClaimMessageSummaryGeneration(ctx, claim, false, -time.Second); err != nil || !claimed {
+		t.Fatalf("expired claim setup: claimed=%v err=%v", claimed, err)
+	}
+	if _, claimed, err := s.ClaimMessageSummaryGeneration(ctx, claim, false, time.Minute); err != nil || !claimed {
+		t.Fatalf("reclaim: claimed=%v err=%v", claimed, err)
+	}
+}
+
+func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
+	s, account, message, encryptionKey := setupMailSummaryTest(t)
+	ctx := context.Background()
+	client := &summaryTestClient{}
+
+	first, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
+	if err != nil || first.Cached || first.Record.Status != "ready" {
+		t.Fatalf("first summary: %+v err=%v", first, err)
+	}
+	second, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
+	if err != nil || !second.Cached || second.Stale || second.Record.Summary != first.Record.Summary {
+		t.Fatalf("cached summary: %+v err=%v", second, err)
+	}
+	changed := message
+	changed.Body = "Please quote 20 valves"
+	stale, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, changed, false)
+	if err != nil || !stale.Cached || !stale.Stale {
+		t.Fatalf("source-stale summary: %+v err=%v", stale, err)
+	}
+	if client.callCount() != 1 {
+		t.Fatalf("model calls after cache reads: got %d, want 1", client.callCount())
+	}
+
+	agent, err := s.GetMailSummaryAgent(ctx, account.OwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Prompt = "请用新的格式总结邮件。"
+	if _, err := s.UpdateAIAgent(ctx, agent); err != nil {
+		t.Fatalf("UpdateAIAgent: %v", err)
+	}
+	stale, err = GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
+	if err != nil || !stale.Stale || client.callCount() != 1 {
+		t.Fatalf("config-stale summary: %+v calls=%d err=%v", stale, client.callCount(), err)
+	}
+	if _, err := CurrentMailSummaryConfigHash(ctx, s, account.OwnerID); err != nil {
+		t.Fatalf("config fingerprint should not decrypt API key: %v", err)
+	}
+}
+
+func TestFormatMailSummaryUsesCompactTemplate(t *testing.T) {
+	got, err := formatMailSummary(`{
+		"company":" Acme GmbH ",
+		"country":"德国",
+		"products":"10 台\nFT14 浮球式蒸汽疏水阀",
+		"requirements":"需提供交期、运费和 CE 认证资料。",
+		"question":""
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "客户：Acme GmbH、德国\n需求：10 台 FT14 浮球式蒸汽疏水阀\n要求：需提供交期、运费和 CE 认证资料。"
+	if got != want {
+		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "问题：") {
+		t.Fatalf("empty question was rendered: %q", got)
+	}
+}
+
+func TestFormatMailSummaryShowsQuestionAndMissingValues(t *testing.T) {
+	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"是否支持 16 bar 工况？"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "客户：未提及\n需求：未提及\n要求：未提及具体要求\n问题：是否支持 16 bar 工况？"
+	if got != want {
+		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatMailSummaryRejectsFreeformOutput(t *testing.T) {
+	if _, err := formatMailSummary("客户询价十台阀门。"); err == nil {
+		t.Fatal("freeform output was accepted")
+	}
+}
+
+func TestGetOrCreateMailSummarySerializesConcurrentGeneration(t *testing.T) {
+	s, account, message, encryptionKey := setupMailSummaryTest(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	client := &summaryTestClient{block: release, entered: entered}
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := GetOrCreateMailSummary(context.Background(), client, s, encryptionKey, account, message, false)
+			results <- err
+		}()
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("model call did not start")
+	}
+	time.Sleep(150 * time.Millisecond)
+	close(release)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent summary: %v", err)
+		}
+	}
+	if client.callCount() != 1 {
+		t.Fatalf("concurrent model calls: got %d, want 1", client.callCount())
+	}
+}
+
+func TestRegenerateMailSummaryReplacesResultAndPreservesItOnFailure(t *testing.T) {
+	s, account, message, encryptionKey := setupMailSummaryTest(t)
+	ctx := context.Background()
+	client := &summaryTestClient{failCall: 3}
+	first, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, true)
+	if err != nil || second.Cached || second.Record.Summary == first.Record.Summary {
+		t.Fatalf("regenerated summary: %+v err=%v", second, err)
+	}
+	if _, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, true); err == nil {
+		t.Fatal("expected regeneration failure")
+	}
+	saved, err := s.GetMessageSummary(ctx, MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID})
+	if err != nil || saved.Status != "ready" || saved.Summary != second.Record.Summary {
+		t.Fatalf("saved result after failed regeneration: %+v err=%v", saved, err)
+	}
+}

@@ -274,16 +274,32 @@ func parseAddressHeader(raw string) []*mail.Address {
 	decoder := messageWordDecoder()
 	addresses, err := (&mail.AddressParser{WordDecoder: decoder}).ParseList(raw)
 	if err == nil {
+		decodeAddressNames(addresses)
 		return addresses
 	}
 	address, err := (&mail.AddressParser{WordDecoder: decoder}).Parse(raw)
 	if err != nil {
 		return nil
 	}
+	decodeAddressNames([]*mail.Address{address})
 	return []*mail.Address{address}
 }
 
-func decodeMIMEHeader(raw string) string {
+// decodeAddressNames repairs a common QQ/RFC 2047 interoperability issue.
+// QQ sometimes puts an encoded-word inside a quoted display name. net/mail
+// correctly parses the address but deliberately leaves that quoted text
+// untouched, so decode the parsed name once more.
+func decodeAddressNames(addresses []*mail.Address) {
+	for _, address := range addresses {
+		if address != nil {
+			address.Name = DecodeMIMEHeader(address.Name)
+		}
+	}
+}
+
+// DecodeMIMEHeader decodes RFC 2047 encoded-words, including the Chinese
+// charset aliases commonly emitted by QQ Mail.
+func DecodeMIMEHeader(raw string) string {
 	if raw == "" {
 		return ""
 	}
@@ -292,6 +308,10 @@ func decodeMIMEHeader(raw string) string {
 		return raw
 	}
 	return decoded
+}
+
+func decodeMIMEHeader(raw string) string {
+	return DecodeMIMEHeader(raw)
 }
 
 func messageWordDecoder() *mime.WordDecoder {

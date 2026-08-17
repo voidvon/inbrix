@@ -83,6 +83,59 @@ type SyncState struct {
 	LastError    string
 }
 
+// WebhookSettings controls per-user Feishu notifications emitted by the
+// background mail synchronizer. The URL is retained while disabled so users
+// can turn notifications back on without pasting the bot URL again.
+type WebhookSettings struct {
+	Enabled bool   `json:"enabled"`
+	URL     string `json:"url"`
+}
+
+type AIModelRecord struct {
+	ID              string
+	OwnerID         string
+	Provider        string
+	BaseURL         string
+	Model           string
+	ReasoningEffort string
+	EncryptedAPIKey string
+	IsDefault       bool
+	CreatedAt       time.Time
+}
+
+type AIAgentRecord struct {
+	ID        string
+	OwnerID   string
+	Name      string
+	Prompt    string
+	Purpose   string
+	CreatedAt time.Time
+}
+
+type MessageSummaryKey struct {
+	AccountID  string
+	FolderName string
+	UID        string
+}
+
+type MessageSummaryRecord struct {
+	MessageSummaryKey
+	SummaryType     string
+	Summary         string
+	Status          string
+	SourceHash      string
+	ConfigHash      string
+	ModelID         string
+	ModelName       string
+	AgentID         string
+	PipelineVersion int
+	GenerationToken string
+	LeaseUntil      time.Time
+	ErrorMessage    string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 // Open creates the database directory, enables WAL mode, and applies the
 // schema. A single SQLite file is deliberately used for all users/accounts so
 // the process can share one writer and the web handlers can use one pool.
@@ -154,6 +207,49 @@ func (s *Store) migrate(ctx context.Context) error {
 			UNIQUE(owner_id, email)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_mail_accounts_owner ON mail_accounts(owner_id, is_default DESC, email)`,
+		`CREATE TABLE IF NOT EXISTS webhook_settings (
+			owner_id TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			url TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_model_settings (
+			owner_id TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			base_url TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			encrypted_api_key TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_models (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT 'openai',
+			base_url TEXT NOT NULL,
+			model TEXT NOT NULL,
+			reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+			encrypted_api_key TEXT NOT NULL,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(owner_id, provider, base_url, model)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_models_owner ON ai_models(owner_id, is_default DESC, created_at)`,
+		`CREATE TABLE IF NOT EXISTS ai_agents (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			purpose TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(owner_id, name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_agents_owner ON ai_agents(owner_id, created_at, name)`,
+		`INSERT OR IGNORE INTO ai_models(id, owner_id, provider, base_url, model, encrypted_api_key, is_default, created_at, updated_at)
+			SELECT 'legacy_' || owner_id, owner_id, 'openai', base_url, model, encrypted_api_key, 1, updated_at, updated_at
+			FROM ai_model_settings WHERE model <> '' AND encrypted_api_key <> ''`,
+		`DELETE FROM ai_model_settings WHERE model <> '' AND encrypted_api_key <> ''`,
 		`CREATE TABLE IF NOT EXISTS folders (
 			account_id TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -199,6 +295,28 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_list ON messages(account_id, folder_name, date_unix DESC, uid DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, folder_name, subject)`,
+		`CREATE TABLE IF NOT EXISTS message_summaries (
+			account_id TEXT NOT NULL,
+			folder_name TEXT NOT NULL,
+			uid INTEGER NOT NULL,
+			summary_type TEXT NOT NULL DEFAULT 'mail_summary',
+			summary_text TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'generating',
+			source_hash TEXT NOT NULL DEFAULT '',
+			config_hash TEXT NOT NULL DEFAULT '',
+			model_id TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			agent_id TEXT NOT NULL DEFAULT '',
+			pipeline_version INTEGER NOT NULL DEFAULT 1,
+			generation_token TEXT NOT NULL DEFAULT '',
+			lease_until INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, folder_name, uid, summary_type),
+			FOREIGN KEY(account_id, folder_name, uid) REFERENCES messages(account_id, folder_name, uid) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_summaries_account ON message_summaries(account_id, updated_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS conversation_notes (
 			account_id TEXT NOT NULL,
 			conversation_id TEXT NOT NULL,
@@ -214,10 +332,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("mailstore: migrate: %w", err)
 		}
 	}
+	if err := s.ensureAIAgentPurposeColumn(ctx); err != nil {
+		return err
+	}
 	// The messages table predates attachment_metadata_cached. CREATE TABLE IF
 	// NOT EXISTS cannot alter that existing table, so add the column lazily for
 	// users upgrading an existing mirror database.
 	if err := s.ensureMessageAttachmentMetadataColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAIModelReasoningEffortColumn(ctx); err != nil {
 		return err
 	}
 	return nil
@@ -289,6 +413,60 @@ func (s *Store) ensureMessageAttachmentMetadataColumn(ctx context.Context) error
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN attachment_metadata_cached INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("mailstore: add attachment metadata column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureAIModelReasoningEffortColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_models)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI models schema: %w", err)
+		}
+		if name == "reasoning_effort" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'medium'`); err != nil {
+		return fmt.Errorf("mailstore: add AI model reasoning effort column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureAIAgentPurposeColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_agents)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI agents schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI agents schema: %w", err)
+		}
+		if name == "purpose" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI agents schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_agents ADD COLUMN purpose TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("mailstore: add AI agent purpose column: %w", err)
 	}
 	return nil
 }
@@ -682,6 +860,62 @@ func (s *Store) MarkFolderSync(ctx context.Context, accountID, folderName string
 func (s *Store) ClearFolder(ctx context.Context, accountID, folderName string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE account_id = ? AND folder_name = ?`, accountID, folderName)
 	return err
+}
+
+// PruneFolders removes local mailboxes that were absent from a successful
+// remote LIST. Message rows do not reference folders directly, so both tables
+// are cleaned in one transaction to prevent renamed/deleted folders lingering
+// in local navigation or search results.
+func (s *Store) PruneFolders(ctx context.Context, accountID string, seen []string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("mailstore: account is required to prune folders")
+	}
+	seenSet := make(map[string]struct{}, len(seen))
+	for _, name := range seen {
+		if strings.TrimSpace(name) != "" {
+			seenSet[name] = struct{}{}
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mailstore: begin folder prune: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM folders WHERE account_id = ?`, accountID)
+	if err != nil {
+		return fmt.Errorf("mailstore: list folders for prune: %w", err)
+	}
+	var stale []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("mailstore: scan folder for prune: %w", err)
+		}
+		if _, ok := seenSet[name]; !ok {
+			stale = append(stale, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("mailstore: iterate folders for prune: %w", err)
+	}
+	rows.Close()
+
+	for _, name := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE account_id = ? AND folder_name = ?`, accountID, name); err != nil {
+			return fmt.Errorf("mailstore: prune messages for folder %q: %w", name, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM folders WHERE account_id = ? AND name = ?`, accountID, name); err != nil {
+			return fmt.Errorf("mailstore: prune folder %q: %w", name, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mailstore: commit folder prune: %w", err)
+	}
+	return nil
 }
 
 func parseUIDString(id string) (int64, error) {

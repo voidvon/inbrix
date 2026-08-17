@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func TestFlagsWithSeen(t *testing.T) {
+	tests := []struct {
+		name        string
+		flags       []string
+		seen        bool
+		want        []string
+		wantChanged bool
+	}{
+		{name: "mark read", flags: []string{`\Flagged`}, seen: true, want: []string{`\Flagged`, `\Seen`}, wantChanged: true},
+		{name: "already read", flags: []string{`\Seen`, `\Flagged`}, seen: true, want: []string{`\Seen`, `\Flagged`}},
+		{name: "mark unread", flags: []string{`\Seen`, `\Flagged`}, seen: false, want: []string{`\Flagged`}, wantChanged: true},
+		{name: "already unread", flags: []string{`\Flagged`}, seen: false, want: []string{`\Flagged`}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, changed := flagsWithSeen(test.flags, test.seen)
+			if changed != test.wantChanged {
+				t.Fatalf("changed = %v, want %v", changed, test.wantChanged)
+			}
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Fatalf("flags = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildConversationsMergesInboxAndSent(t *testing.T) {
 	account := mailstore.Account{ID: "acct-1", Email: "me@example.com", Label: "Work"}
 	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)

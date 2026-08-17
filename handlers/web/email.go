@@ -3,8 +3,10 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"lilmail/config"
 	"lilmail/handlers/api"
 	"lilmail/handlers/htmlsafe"
@@ -14,10 +16,12 @@ import (
 	"lilmail/utils"
 	"log"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
@@ -757,6 +761,16 @@ func (h *EmailHandler) HandleDeleteEmail(c *fiber.Ctx) error {
 	}
 	defer client.Close()
 
+	email := models.Email{ID: emailID, Folder: folderName}
+	if account.ID != "" {
+		if cached, cacheErr := h.mailDB.GetMessage(c.UserContext(), account.ID, folderName, emailID); cacheErr == nil {
+			email = cached
+		}
+	}
+	if err := deleteMessageAttachmentCache(c, client, account.ID, email); err != nil {
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not clear the attachment cache; the email was not deleted"})
+	}
+
 	// Delete the email
 	err = client.DeleteMessage(folderName, emailID)
 	if err != nil {
@@ -912,31 +926,43 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 	}
 
 	// Collect file attachments from the multipart form.
-	var attachments []api.OutgoingAttachment
-	form, _ := c.MultipartForm()
-	if form != nil {
+	const (
+		maxComposeAttachmentBytes = int64(18 * 1024 * 1024)
+		maxOutgoingMessageBytes   = int64(25 * 1024 * 1024)
+	)
+	var (
+		attachments         []api.OutgoingAttachment
+		totalAttachmentSize int64
+	)
+	form, formErr := c.MultipartForm()
+	if formErr != nil && strings.HasPrefix(strings.ToLower(c.Get(fiber.HeaderContentType)), "multipart/form-data") {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid multipart compose request"})
+	}
+	if formErr == nil && form != nil {
 		for _, fhs := range form.File {
 			for _, fh := range fhs {
-				f, err := fh.Open()
-				if err != nil {
-					log.Printf("compose: open attachment %q: %v", fh.Filename, err)
-					continue
+				if fh.Size <= 0 {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("Attachment %q is empty", fh.Filename)})
 				}
-				data := make([]byte, fh.Size)
-				if _, err := f.Read(data); err != nil {
-					f.Close()
-					log.Printf("compose: read attachment %q: %v", fh.Filename, err)
-					continue
+				totalAttachmentSize += fh.Size
+				if fh.Size > maxComposeAttachmentBytes || totalAttachmentSize > maxComposeAttachmentBytes {
+					return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{"error": "Attachments exceed the 18 MiB total size limit"})
 				}
-				f.Close()
 				ct := fh.Header.Get("Content-Type")
 				if ct == "" {
 					ct = "application/octet-stream"
 				}
+				fileHeader := fh
+				filename := filepath.Base(fh.Filename)
+				if filename == "" || filename == "." || filename == string(filepath.Separator) {
+					filename = "attachment"
+				}
 				attachments = append(attachments, api.OutgoingAttachment{
-					Filename:    fh.Filename,
+					Filename:    filename,
 					ContentType: ct,
-					Data:        data,
+					Open: func() (io.ReadCloser, error) {
+						return fileHeader.Open()
+					},
 				})
 			}
 		}
@@ -970,12 +996,38 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		HTMLBody:    htmlBody,
 		Attachments: attachments,
 	}
-	rawMessage, err := api.BuildMIMEMessage(mimeOpts)
+	var (
+		rawMessage []byte
+		mimeFile   *os.File
+		mimeSize   int64
+		err        error
+	)
+	if len(attachments) == 0 {
+		rawMessage, err = api.BuildMIMEMessage(mimeOpts)
+		mimeSize = int64(len(rawMessage))
+	} else {
+		mimeFile, err = os.CreateTemp("", "lilmail-compose-*.eml")
+		if err == nil {
+			defer func() {
+				mimeFile.Close()
+				os.Remove(mimeFile.Name())
+			}()
+			err = api.WriteMIMEMessage(mimeFile, mimeOpts)
+		}
+		if err == nil {
+			var info os.FileInfo
+			info, err = mimeFile.Stat()
+			if err == nil {
+				mimeSize = info.Size()
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("compose: build MIME message: %v", err)
-		return c.Status(500).JSON(fiber.Map{
-			"error": fmt.Sprintf("Failed to build message: %v", err),
-		})
+		return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Failed to build message: %v", err)})
+	}
+	if mimeSize > maxOutgoingMessageBytes {
+		return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{"error": "Encoded email exceeds the 25 MiB message size limit"})
 	}
 
 	// Collect all RCPT TO addresses (To + CC + BCC).
@@ -1024,7 +1076,15 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		})
 	}
 
-	if err = smtpClient.SendRawMessage(allRcpts, rawMessage); err != nil {
+	if mimeFile != nil {
+		_, err = mimeFile.Seek(0, io.SeekStart)
+		if err == nil {
+			err = smtpClient.SendRawMessageReader(allRcpts, mimeFile)
+		}
+	} else {
+		err = smtpClient.SendRawMessage(allRcpts, rawMessage)
+	}
+	if err != nil {
 		log.Printf("Email sending error: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"error": fmt.Sprintf("Failed to send email: %v", err),
@@ -1073,8 +1133,48 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		log.Printf("IMAP client error when saving to Sent: %v", err)
 	} else {
 		defer imapClient.Close()
-		if err := imapClient.SaveToSent(to, subject, plainBody, rawMessage); err != nil {
-			log.Printf("Error saving to Sent folder: %v", err)
+		var (
+			saveErr    error
+			sentFolder string
+		)
+		if mimeFile != nil {
+			if _, seekErr := mimeFile.Seek(0, io.SeekStart); seekErr != nil {
+				saveErr = seekErr
+			} else if streamingClient, ok := imapClient.(interface {
+				SaveToSentReaderWithFolder(io.Reader, int) (string, error)
+			}); ok {
+				sentFolder, saveErr = streamingClient.SaveToSentReaderWithFolder(mimeFile, int(mimeSize))
+			} else if streamingClient, ok := imapClient.(interface {
+				SaveToSentReader(io.Reader, int) error
+			}); ok {
+				saveErr = streamingClient.SaveToSentReader(mimeFile, int(mimeSize))
+			} else {
+				var buffered []byte
+				buffered, saveErr = io.ReadAll(mimeFile)
+				if saveErr == nil {
+					saveErr = imapClient.SaveToSent(to, subject, plainBody, buffered)
+				}
+			}
+		} else {
+			if folderClient, ok := imapClient.(interface {
+				SaveToSentWithFolder(string, string, string, []byte) (string, error)
+			}); ok {
+				sentFolder, saveErr = folderClient.SaveToSentWithFolder(to, subject, plainBody, rawMessage)
+			} else {
+				saveErr = imapClient.SaveToSent(to, subject, plainBody, rawMessage)
+			}
+		}
+		if saveErr != nil {
+			log.Printf("Error saving to Sent folder: %v", saveErr)
+		} else if sentFolder != "" && h.auth.syncer != nil {
+			if account, ok := h.mirrorAccountForEmail(c, fromEmail); ok {
+				syncCtx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
+				if syncErr := h.auth.syncer.SyncNewMessagesNow(syncCtx, account.ID, sentFolder); syncErr != nil {
+					log.Printf("mail mirror: refresh sent folder after compose: %v", syncErr)
+					h.auth.syncer.Trigger(account.ID)
+				}
+				cancel()
+			}
 		}
 		// If this was a draft, delete it from the Drafts folder.
 		if draftUID != "" {
@@ -1330,6 +1430,8 @@ func (h *EmailHandler) HandleMarkUnread(c *fiber.Ctx) error {
 			}
 			if dbErr := h.mailDB.UpdateFlags(c.UserContext(), account.ID, folderName, emailID, flags); dbErr != nil {
 				log.Printf("mail mirror: mark unread %s/%s: %v", folderName, emailID, dbErr)
+			} else if dbErr := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, folderName); dbErr != nil {
+				log.Printf("mail mirror: recount after mark unread %s/%s: %v", folderName, emailID, dbErr)
 			}
 		}
 	}

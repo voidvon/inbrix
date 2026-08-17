@@ -160,7 +160,7 @@ func TestVacationIsolation(t *testing.T) {
 func TestSignaturesRoundTripAndSanitize(t *testing.T) {
 	app, _ := newParityApp(t)
 	code, b := doAs(t, app, "user@gmail.com", "PUT", "/v1/settings/signatures",
-		`{"signatures":[{"name":"Work","html":"<b>Jane</b><script>x</script>","default":true}]}`)
+		`{"signatures":[{"name":"Work","html":"<b>Jane</b><img src=\"https://cdn.example/logo.png\" alt=\"Logo\" width=\"120\" onerror=\"alert(1)\"><script>x</script>","default":true}]}`)
 	if code != fiber.StatusOK {
 		t.Fatalf("put: %d %s", code, b)
 	}
@@ -173,6 +173,9 @@ func TestSignaturesRoundTripAndSanitize(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(out.Signatures[0].HTML), "<script") {
 		t.Fatalf("signature not sanitized: %s", out.Signatures[0].HTML)
+	}
+	if !strings.Contains(out.Signatures[0].HTML, `<img src="https://cdn.example/logo.png" alt="Logo" width="120">`) {
+		t.Fatalf("safe signature image was not preserved: %s", out.Signatures[0].HTML)
 	}
 	// GET returns it.
 	code, b = doAs(t, app, "user@gmail.com", "GET", "/v1/settings/signatures", "")

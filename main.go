@@ -343,7 +343,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || strings.HasPrefix(c.Path(), "/api/accounts")
+		optionalMailboxPath := c.Path() == "/settings" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/settings/")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -393,7 +393,15 @@ func main() {
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
+		apiRoutes.Get("/mail/folders", webEmailHandler.HandleLocalFoldersJSON)
+		apiRoutes.Get("/mail/messages", webEmailHandler.HandleLocalFolderMessagesJSON)
+		apiRoutes.Get("/mail/messages/:uid", webEmailHandler.HandleLocalFolderMessageJSON)
+		apiRoutes.Post("/mail/messages/:uid/not-spam", webEmailHandler.HandleLocalJunkMessageRestoreJSON)
+		apiRoutes.Delete("/mail/messages/:uid", webEmailHandler.HandleLocalJunkMessageDeleteJSON)
 		apiRoutes.Put("/conversations/:id/note", webEmailHandler.HandleConversationNoteJSON)
+		apiRoutes.Patch("/conversations/:id/read", webEmailHandler.HandleConversationReadJSON)
+		apiRoutes.Patch("/conversations/:id/unread", webEmailHandler.HandleConversationUnreadJSON)
+		apiRoutes.Delete("/conversations/:id", webEmailHandler.HandleConversationDeleteJSON)
 		apiRoutes.Delete("/conversations/:id/messages/:uid", webEmailHandler.HandleConversationMessageDeleteJSON)
 
 		// Attachment download (ID encodes folder + UID + MIME part)
@@ -419,6 +427,20 @@ func main() {
 		},
 	})
 	apiRoutes.Use("/ai", aiLimiter)
+	userAIHandler := web.NewAISettingsHandler(store, config, mailMirror)
+	protected.Get("/api/settings/ai/models", userAIHandler.HandleListModels)
+	protected.Post("/api/settings/ai/models", userAIHandler.HandleCreateModel)
+	protected.Post("/api/settings/ai/models/test", userAIHandler.HandleTestModel)
+	protected.Post("/api/settings/ai/models/:id/test", userAIHandler.HandleTestSavedModel)
+	protected.Put("/api/settings/ai/models/:id", userAIHandler.HandleUpdateModel)
+	protected.Delete("/api/settings/ai/models/:id", userAIHandler.HandleDeleteModel)
+	protected.Post("/api/settings/ai/models/:id/default", userAIHandler.HandleSetDefaultModel)
+	protected.Get("/api/settings/ai/agents", userAIHandler.HandleListAgents)
+	protected.Post("/api/settings/ai/agents", userAIHandler.HandleCreateAgent)
+	protected.Put("/api/settings/ai/agents/:id", userAIHandler.HandleUpdateAgent)
+	protected.Delete("/api/settings/ai/agents/:id", userAIHandler.HandleDeleteAgent)
+	apiRoutes.Post("/ai/summary", userAIHandler.HandleSummarize)
+	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
 	// Build the completion backend before registering. With [ai] enabled = false
 	// this builds nothing at all; with mode = "embedded" it constructs the
 	// in-process llmux gateway and fails startup on a configuration that could
@@ -483,6 +505,9 @@ func main() {
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
+		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
+		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
+		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}
@@ -494,6 +519,9 @@ func main() {
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
+		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
+		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
+		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}

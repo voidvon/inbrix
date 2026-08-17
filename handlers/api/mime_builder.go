@@ -38,6 +38,10 @@ type OutgoingAttachment struct {
 	Filename    string
 	ContentType string // e.g. "application/pdf"; if empty, "application/octet-stream"
 	Data        []byte
+	// Open optionally supplies attachment bytes without loading the whole file into
+	// memory. It may be called once per MIME build and the returned reader is closed
+	// by the builder. Data remains the compatibility path for existing callers.
+	Open func() (io.ReadCloser, error)
 
 	// ContentID is the bare cid token (WITHOUT the surrounding angle brackets and
 	// WITHOUT the "cid:" scheme). For an HTML body containing
@@ -58,6 +62,13 @@ type OutgoingAttachment struct {
 // attachment.
 func (a OutgoingAttachment) isInline() bool {
 	return a.Inline && a.ContentID != ""
+}
+
+func (a OutgoingAttachment) open() (io.ReadCloser, error) {
+	if a.Open != nil {
+		return a.Open()
+	}
+	return io.NopCloser(bytes.NewReader(a.Data)), nil
 }
 
 // MIMEMessageOptions carries everything needed to build a well-formed RFC 2822
@@ -87,12 +98,23 @@ type MIMEMessageOptions struct {
 //     When there are no regular attachments the outer mixed is elided and the
 //     related container is the top-level body.
 func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
+	var out bytes.Buffer
+	if err := WriteMIMEMessage(&out, opts); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// WriteMIMEMessage assembles the message directly into w. Attachment data is
+// read incrementally, so callers can build large messages into a temporary file
+// without retaining the raw attachment and its base64 representation in memory.
+func WriteMIMEMessage(w io.Writer, opts MIMEMessageOptions) error {
 	// Normalize at the MIME boundary as a final defense for every delivery path,
 	// including scheduled sends and callers outside the web handlers.
 	if opts.HTMLBody != "" {
 		normalized, err := htmlsafe.NormalizeHTML(opts.HTMLBody)
 		if err != nil {
-			return nil, fmt.Errorf("normalize HTML body: %w", err)
+			return fmt.Errorf("normalize HTML body: %w", err)
 		}
 		opts.HTMLBody = normalized
 		if opts.PlainBody == "" && normalized != "" {
@@ -100,7 +122,7 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 		}
 	}
 	if opts.PlainBody == "" && opts.HTMLBody == "" {
-		return nil, fmt.Errorf("message must have at least a plain or HTML body")
+		return fmt.Errorf("message must have at least a plain or HTML body")
 	}
 
 	// SMTP header-injection guard. From/To/Cc and the threading headers are written
@@ -121,7 +143,7 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 		{"Message-ID", opts.MessageID},
 	} {
 		if err := validateHeaderValue(f.val); err != nil {
-			return nil, fmt.Errorf("%s header: %w", f.name, err)
+			return fmt.Errorf("%s header: %w", f.name, err)
 		}
 	}
 
@@ -132,7 +154,7 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 	for _, att := range opts.Attachments {
 		if att.isInline() && opts.HTMLBody != "" {
 			if err := validateContentID(att.ContentID); err != nil {
-				return nil, fmt.Errorf("attachment %q: %w", att.Filename, err)
+				return fmt.Errorf("attachment %q: %w", att.Filename, err)
 			}
 			inline = append(inline, att)
 		} else {
@@ -171,7 +193,7 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 	// Build the body part (may be multipart/alternative if HTML is present).
 	bodyBytes, bodyContentType, err := buildBodyPart(opts.PlainBody, opts.HTMLBody)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// If there are inline (cid) parts, wrap the body + inline parts in a
@@ -180,7 +202,7 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 	if len(inline) > 0 {
 		relBytes, relContentType, err := buildRelatedPart(bodyBytes, bodyContentType, inline)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		bodyBytes, bodyContentType = relBytes, relContentType
 	}
@@ -190,10 +212,13 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 		// and write it.
 		hdr.WriteString("Content-Type: " + bodyContentType + "\r\n")
 		hdr.WriteString("\r\n")
-		var out bytes.Buffer
-		out.WriteString(hdr.String())
-		out.Write(bodyBytes)
-		return out.Bytes(), nil
+		if _, err := io.WriteString(w, hdr.String()); err != nil {
+			return fmt.Errorf("write message headers: %w", err)
+		}
+		if _, err := w.Write(bodyBytes); err != nil {
+			return fmt.Errorf("write message body: %w", err)
+		}
+		return nil
 	}
 
 	// With regular attachments: wrap everything in multipart/mixed.
@@ -201,12 +226,13 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 	hdr.WriteString("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n")
 	hdr.WriteString("\r\n")
 
-	var out bytes.Buffer
-	out.WriteString(hdr.String())
+	if _, err := io.WriteString(w, hdr.String()); err != nil {
+		return fmt.Errorf("write message headers: %w", err)
+	}
 
-	mw := multipart.NewWriter(&out)
+	mw := multipart.NewWriter(w)
 	if err := mw.SetBoundary(boundary); err != nil {
-		return nil, fmt.Errorf("set boundary: %w", err)
+		return fmt.Errorf("set boundary: %w", err)
 	}
 
 	// First part: the body (plain or alternative).
@@ -214,10 +240,10 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 	bodyHdr.Set("Content-Type", bodyContentType)
 	bw, err := mw.CreatePart(bodyHdr)
 	if err != nil {
-		return nil, fmt.Errorf("create body part: %w", err)
+		return fmt.Errorf("create body part: %w", err)
 	}
 	if _, err := bw.Write(bodyBytes); err != nil {
-		return nil, fmt.Errorf("write body part: %w", err)
+		return fmt.Errorf("write body part: %w", err)
 	}
 
 	// Attachment parts.
@@ -232,19 +258,19 @@ func BuildMIMEMessage(opts MIMEMessageOptions) ([]byte, error) {
 		attHdr.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", att.Filename))
 		aw, err := mw.CreatePart(attHdr)
 		if err != nil {
-			return nil, fmt.Errorf("create attachment part %q: %w", att.Filename, err)
+			return fmt.Errorf("create attachment part %q: %w", att.Filename, err)
 		}
 		// Write base64-encoded content with 76-char line breaks (RFC 2045).
-		if err := writeBase64Lines(aw, att.Data); err != nil {
-			return nil, fmt.Errorf("write attachment data: %w", err)
+		if err := writeAttachmentBase64(aw, att); err != nil {
+			return fmt.Errorf("write attachment %q: %w", att.Filename, err)
 		}
 	}
 
 	if err := mw.Close(); err != nil {
-		return nil, fmt.Errorf("close multipart writer: %w", err)
+		return fmt.Errorf("close multipart writer: %w", err)
 	}
 
-	return out.Bytes(), nil
+	return nil
 }
 
 // buildRelatedPart wraps the message body (the plain/alternative bytes produced
@@ -299,7 +325,7 @@ func buildRelatedPart(bodyBytes []byte, bodyContentType string, inline []Outgoin
 		if err != nil {
 			return nil, "", fmt.Errorf("create inline part %q: %w", att.ContentID, err)
 		}
-		if err := writeBase64Lines(pw, att.Data); err != nil {
+		if err := writeAttachmentBase64(pw, att); err != nil {
 			return nil, "", fmt.Errorf("write inline part %q: %w", att.ContentID, err)
 		}
 	}
@@ -312,19 +338,69 @@ func buildRelatedPart(bodyBytes []byte, bodyContentType string, inline []Outgoin
 
 // writeBase64Lines writes data as base64 with RFC 2045 76-char line breaks.
 func writeBase64Lines(w io.Writer, data []byte) error {
-	encoded := base64.StdEncoding.EncodeToString(data)
-	for len(encoded) > 76 {
-		if _, err := w.Write([]byte(encoded[:76] + "\r\n")); err != nil {
-			return err
-		}
-		encoded = encoded[76:]
+	return writeBase64LinesFrom(w, bytes.NewReader(data))
+}
+
+func writeAttachmentBase64(w io.Writer, att OutgoingAttachment) error {
+	r, err := att.open()
+	if err != nil {
+		return err
 	}
-	if len(encoded) > 0 {
-		if _, err := w.Write([]byte(encoded + "\r\n")); err != nil {
-			return err
+	defer r.Close()
+	return writeBase64LinesFrom(w, r)
+}
+
+func writeBase64LinesFrom(w io.Writer, r io.Reader) error {
+	lw := &base64LineWriter{w: w}
+	encoder := base64.NewEncoder(base64.StdEncoding, lw)
+	if _, err := io.Copy(encoder, r); err != nil {
+		return err
+	}
+	if err := encoder.Close(); err != nil {
+		return err
+	}
+	return lw.Close()
+}
+
+type base64LineWriter struct {
+	w      io.Writer
+	column int
+}
+
+func (w *base64LineWriter) Write(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		remaining := 76 - w.column
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		n, err := w.w.Write(p[:remaining])
+		written += n
+		w.column += n
+		p = p[n:]
+		if err != nil {
+			return written, err
+		}
+		if n < remaining {
+			return written, io.ErrShortWrite
+		}
+		if w.column == 76 {
+			if _, err := io.WriteString(w.w, "\r\n"); err != nil {
+				return written, err
+			}
+			w.column = 0
 		}
 	}
-	return nil
+	return written, nil
+}
+
+func (w *base64LineWriter) Close() error {
+	if w.column == 0 {
+		return nil
+	}
+	_, err := io.WriteString(w.w, "\r\n")
+	w.column = 0
+	return err
 }
 
 // validateContentID rejects a Content-ID that could break the MIME structure or

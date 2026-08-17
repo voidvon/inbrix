@@ -109,5 +109,5 @@ func (c *Client) DiscoverSnoozedFolder() (string, error) {
 // a Spam folder is surfaced as an error so the report-spam action degrades
 // clearly rather than silently creating a folder the server does not expect.
 func (c *Client) DiscoverJunkFolder() (string, error) {
-	return c.discoverSpecialFolder([]string{`\Junk`}, []string{"junk", "spam", "junk email", "bulk mail"}, "")
+	return c.discoverSpecialFolder([]string{`\Junk`}, []string{"junk", "spam", "junk mail", "junk email", "junk e-mail", "bulk mail"}, "")
 }
