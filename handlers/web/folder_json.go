@@ -299,7 +299,8 @@ func (h *EmailHandler) HandleLocalFolderMessageJSON(c *fiber.Ctx) error {
 	response := FolderMessageDetailJSON{Email: folderMessageDetailJSON(email, account, CurrentLocale(c))}
 	if record, summaryErr := h.mailDB.GetMessageSummary(c.UserContext(), mailstore.MessageSummaryKey{AccountID: account.ID, FolderName: folder, UID: email.ID}); summaryErr == nil {
 		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account.OwnerID)
-		stale := record.SourceHash != mailstore.MailSummarySourceHash(account, email) || (configHash != "" && record.ConfigHash != configHash)
+		sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, email)
+		stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
 		response.MailSummary = mailSummaryJSON(record, stale)
 	} else if !errors.Is(summaryErr, mailstore.ErrNotFound) {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read saved mail summary"})

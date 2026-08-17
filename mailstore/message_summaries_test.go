@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,12 +22,20 @@ type summaryTestClient struct {
 	block    <-chan struct{}
 	entered  chan<- struct{}
 	failCall int
+	inputs   []string
 }
 
-func (c *summaryTestClient) Do(*http.Request) (*http.Response, error) {
+func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
+	var request struct {
+		Input string `json:"input"`
+	}
+	if raw, err := io.ReadAll(req.Body); err == nil {
+		_ = json.Unmarshal(raw, &request)
+	}
 	c.mu.Lock()
 	c.calls++
 	call := c.calls
+	c.inputs = append(c.inputs, request.Input)
 	c.mu.Unlock()
 	if c.entered != nil {
 		select {
@@ -40,8 +49,17 @@ func (c *summaryTestClient) Do(*http.Request) (*http.Response, error) {
 	if call == c.failCall {
 		return nil, errors.New("model unavailable")
 	}
-	body := fmt.Sprintf(`{"output_text":"{\"company\":\"测试客户\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"这是第%d次生成，需确认型号和交期。\",\"question\":\"\"}"}`, call)
+	body := fmt.Sprintf(`{"output_text":"{\"company\":\"测试客户\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"这是第%d次生成，需确认型号和交期。\",\"question\":\"\",\"summary\":\"客户询价十台阀门。\"}"}`, call)
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+}
+
+func (c *summaryTestClient) lastInput() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.inputs) == 0 {
+		return ""
+	}
+	return c.inputs[len(c.inputs)-1]
 }
 
 func (c *summaryTestClient) callCount() int {
@@ -135,6 +153,9 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	if err != nil || first.Cached || first.Record.Status != "ready" {
 		t.Fatalf("first summary: %+v err=%v", first, err)
 	}
+	if strings.HasPrefix(first.Record.Summary, "上一封:") {
+		t.Fatalf("summary without a ready parent should not have a previous-message prefix: %q", first.Record.Summary)
+	}
 	second, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
 	if err != nil || !second.Cached || second.Stale || second.Record.Summary != first.Record.Summary {
 		t.Fatalf("cached summary: %+v err=%v", second, err)
@@ -166,6 +187,57 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	}
 }
 
+func TestGetOrCreateMailSummaryReusesDirectParentSummaryAndStripsQuote(t *testing.T) {
+	s, account, message, encryptionKey := setupMailSummaryTest(t)
+	ctx := context.Background()
+
+	parent := message
+	parent.ID = "41"
+	parent.Folder = "Sent Messages"
+	parent.MessageID = "<parent@example.com>"
+	parent.Body = "Original request"
+	if err := s.UpsertMessages(ctx, account.ID, parent.Folder, []models.Email{parent}); err != nil {
+		t.Fatal(err)
+	}
+	claim := MessageSummaryRecord{
+		MessageSummaryKey: MessageSummaryKey{AccountID: account.ID, FolderName: parent.Folder, UID: parent.ID},
+		SourceHash:        "parent-source", ConfigHash: "parent-config", PipelineVersion: mailSummaryPipelineVersion,
+	}
+	claimed, acquired, err := s.ClaimMessageSummaryGeneration(ctx, claim, false, time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("claim parent summary: acquired=%v err=%v", acquired, err)
+	}
+	parentSummary := "上一封：不应继续向前嵌套\n客户：Acme GmbH、德国\n需求：10 台阀门\n要求：请确认交期。"
+	if _, err := s.CompleteMessageSummaryGeneration(ctx, claim, claimed.GenerationToken, parentSummary); err != nil {
+		t.Fatal(err)
+	}
+
+	message.InReplyTo = parent.MessageID
+	message.References = []string{parent.MessageID}
+	message.Body = "Please add CE certificates.\n\nOn Monday, buyer@example.com wrote:\n> Original request"
+	if err := s.UpsertMessages(ctx, account.ID, message.Folder, []models.Email{message}); err != nil {
+		t.Fatal(err)
+	}
+	client := &summaryTestClient{}
+	result, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := "上一封: 客户：Acme GmbH、德国；需求：10 台阀门；要求：请确认交期\n客户："
+	if !strings.HasPrefix(result.Record.Summary, wantPrefix) {
+		t.Fatalf("summary did not reuse only the direct parent's own result:\n%s", result.Record.Summary)
+	}
+	input := client.lastInput()
+	if !strings.Contains(input, "Please add CE certificates.") || strings.Contains(input, "Original request") || strings.Contains(input, "wrote:") {
+		t.Fatalf("model input did not isolate the current body:\n%s", input)
+	}
+
+	currentHash, err := CurrentMailSummarySourceHash(ctx, s, account, message)
+	if err != nil || currentHash != result.Record.SourceHash {
+		t.Fatalf("source hash mismatch: current=%q saved=%q err=%v", currentHash, result.Record.SourceHash, err)
+	}
+}
+
 func TestFormatMailSummaryUsesCompactTemplate(t *testing.T) {
 	got, err := formatMailSummary(`{
 		"company":" Acme GmbH ",
@@ -186,14 +258,30 @@ func TestFormatMailSummaryUsesCompactTemplate(t *testing.T) {
 	}
 }
 
-func TestFormatMailSummaryShowsQuestionAndMissingValues(t *testing.T) {
-	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"是否支持 16 bar 工况？"}`)
+func TestFormatMailSummaryOmitsMissingValues(t *testing.T) {
+	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"是否支持 16 bar 工况？","summary":"客户询问产品是否支持 16 bar 工况。"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "客户：未提及\n需求：未提及\n要求：未提及具体要求\n问题：是否支持 16 bar 工况？"
+	want := "问题：是否支持 16 bar 工况？"
 	if got != want {
 		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestFormatMailSummaryUsesSentenceWhenAllStructuredFieldsAreEmpty(t *testing.T) {
+	got, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"","summary":"发件人向收件人表示感谢。"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "发件人向收件人表示感谢。"; got != want {
+		t.Fatalf("summary: got %q, want %q", got, want)
+	}
+}
+
+func TestFormatMailSummaryRequiresSentenceWhenAllStructuredFieldsAreEmpty(t *testing.T) {
+	if _, err := formatMailSummary(`{"company":"","country":"","products":"","requirements":"","question":"","summary":""}`); err == nil {
+		t.Fatal("empty summary was accepted when all structured fields were empty")
 	}
 }
 

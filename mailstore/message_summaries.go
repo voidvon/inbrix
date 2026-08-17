@@ -53,6 +53,38 @@ func (s *Store) GetMessageSummary(ctx context.Context, key MessageSummaryKey) (M
 	return record, nil
 }
 
+// GetReadyMessageSummaryByMessageID finds a completed summary for a message
+// across all folders in one account. The same RFC Message-ID can appear in an
+// archive and another mailbox, so a ready result is preferred over its folder.
+func (s *Store) GetReadyMessageSummaryByMessageID(ctx context.Context, accountID, messageID string) (MessageSummaryRecord, error) {
+	accountID = strings.TrimSpace(accountID)
+	messageID = strings.TrimSpace(messageID)
+	if accountID == "" || messageID == "" {
+		return MessageSummaryRecord{}, ErrNotFound
+	}
+	record, err := scanMessageSummary(s.db.QueryRowContext(ctx, `
+		SELECT `+prefixedMessageSummaryColumns("s")+`
+		FROM message_summaries s
+		JOIN messages m ON m.account_id = s.account_id AND m.folder_name = s.folder_name AND m.uid = s.uid
+		WHERE m.account_id = ? AND m.message_id = ? AND s.summary_type = ? AND s.status = 'ready'
+		ORDER BY s.updated_at DESC LIMIT 1`, accountID, messageID, defaultMessageSummaryType))
+	if errors.Is(err, sql.ErrNoRows) {
+		return MessageSummaryRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return MessageSummaryRecord{}, fmt.Errorf("mailstore: get message summary by Message-ID: %w", err)
+	}
+	return record, nil
+}
+
+func prefixedMessageSummaryColumns(prefix string) string {
+	columns := strings.Split(messageSummaryColumns, ", ")
+	for i := range columns {
+		columns[i] = prefix + "." + columns[i]
+	}
+	return strings.Join(columns, ", ")
+}
+
 func MessageSummaryLookupKey(folderName, uid string) string {
 	return folderName + "\x00" + uid
 }

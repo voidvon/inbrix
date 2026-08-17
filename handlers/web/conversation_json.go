@@ -417,7 +417,8 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 			if !exists {
 				continue
 			}
-			stale := record.SourceHash != mailstore.MailSummarySourceHash(account, message.Email) || (configHash != "" && record.ConfigHash != configHash)
+			sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, message.Email)
+			stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
 			response.Messages[index].MailSummary = mailSummaryJSON(record, stale)
 		}
 	}

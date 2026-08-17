@@ -141,7 +141,7 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err != nil || agent.ID != createdAgent.ID {
 		t.Fatalf("GetWebhookInquiryAgent: %+v, %v", agent, err)
 	}
-	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"{\"company\":\"Acme GmbH\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"需要确认具体型号和交期。\",\"question\":\"\"}"}`}
+	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"{\"company\":\"Acme GmbH\",\"country\":\"德国\",\"products\":\"十台阀门\",\"requirements\":\"需要确认具体型号和交期。\",\"question\":\"\",\"summary\":\"客户询价十台阀门。\"}"}`}
 	m := &SyncManager{store: s, key: encryptionKey}
 	summary, err := m.summarizeInquiryForWebhook(ctx, client, Account{OwnerID: "alice", Email: "sales@example.com"}, models.Email{From: "buyer@example.com", To: "sales@example.com", Subject: "Valve RFQ", Body: "Please quote 10 valves", BodyCached: true})
 	if err != nil {
@@ -179,6 +179,9 @@ func TestStripMarkdownAndChineseValidation(t *testing.T) {
 	}
 	if !isSimplifiedChineseDominant(got) {
 		t.Fatalf("simplified Chinese text rejected: %q", got)
+	}
+	if !isSimplifiedChineseDominant("表示感谢。") {
+		t.Fatal("short simplified Chinese summary was rejected")
 	}
 	if isSimplifiedChineseDominant("Please quote ten Spirax Sarco valves as soon as possible.") {
 		t.Fatal("English response accepted")

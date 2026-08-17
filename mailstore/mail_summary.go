@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,9 +17,11 @@ import (
 )
 
 const (
-	mailSummaryPipelineVersion = 2
+	mailSummaryPipelineVersion = 4
 	mailSummaryGenerationLease = 2 * time.Minute
 )
+
+var mailSummaryMessageIDRe = regexp.MustCompile(`<[^>]+>`)
 
 // HTTPClient is the minimal client contract needed by mail summarization and
 // optional delivery channels.
@@ -51,7 +54,17 @@ func hashMailSummaryValue(value string) string {
 }
 
 func MailSummarySourceHash(account Account, message models.Email) string {
-	return hashMailSummaryValue(fullEmailForInquiryAnalysis(account, message))
+	return hashMailSummaryValue(mailSummaryInput(account, message, ""))
+}
+
+// CurrentMailSummarySourceHash includes the ready summary of the direct parent,
+// when available, because changing that summary changes the composed result.
+func CurrentMailSummarySourceHash(ctx context.Context, store *Store, account Account, message models.Email) (string, error) {
+	previous, err := previousMailSummary(ctx, store, account.ID, message)
+	if err != nil {
+		return "", err
+	}
+	return hashMailSummaryValue(mailSummaryInput(account, message, previous)), nil
 }
 
 func CurrentMailSummaryConfigHash(ctx context.Context, store *Store, ownerID string) (string, error) {
@@ -91,7 +104,7 @@ func resolveMailSummaryConfig(ctx context.Context, store *Store, encryptionKey, 
 	return mailSummaryConfig{agent: agent, model: model, apiKey: apiKey, effort: effort, configHash: mailSummaryConfigHash(agent, model, effort)}, nil
 }
 
-func generateMailSummary(ctx context.Context, client HTTPClient, account Account, message models.Email, cfg mailSummaryConfig) (string, error) {
+func generateMailSummary(ctx context.Context, client HTTPClient, account Account, message models.Email, previous string, cfg mailSummaryConfig) (string, error) {
 	raw, err := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, cfg.agent.Prompt+"\n\n"+inquiryOutputRules, fullEmailForInquiryAnalysis(account, message), cfg.effort)
 	if err != nil {
 		return "", err
@@ -103,7 +116,57 @@ func generateMailSummary(ctx context.Context, client HTTPClient, account Account
 	if !isSimplifiedChineseDominant(summary) {
 		return "", errors.New("OpenAI analysis did not satisfy simplified Chinese requirements")
 	}
+	if previous != "" {
+		if oneLine := oneLinePreviousSummary(previous); oneLine != "" {
+			summary = "上一封: " + oneLine + "\n" + summary
+		}
+	}
 	return summary, nil
+}
+
+func mailSummaryInput(account Account, message models.Email, previous string) string {
+	return oneLinePreviousSummary(previous) + "\x00" + fullEmailForInquiryAnalysis(account, message)
+}
+
+func previousMailSummary(ctx context.Context, store *Store, accountID string, message models.Email) (string, error) {
+	parentID := directParentMessageID(message)
+	if parentID == "" {
+		return "", nil
+	}
+	record, err := store.GetReadyMessageSummaryByMessageID(ctx, accountID, parentID)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(record.Summary), nil
+}
+
+func directParentMessageID(message models.Email) string {
+	parentID := strings.TrimSpace(message.InReplyTo)
+	if parentID == "" && len(message.References) > 0 {
+		parentID = strings.TrimSpace(message.References[len(message.References)-1])
+	}
+	if matches := mailSummaryMessageIDRe.FindAllString(parentID, -1); len(matches) > 0 {
+		return matches[len(matches)-1]
+	}
+	return parentID
+}
+
+func oneLinePreviousSummary(summary string) string {
+	lines := strings.Split(strings.ReplaceAll(summary, "\r\n", "\n"), "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "上一封：") || strings.HasPrefix(line, "上一封:") {
+			continue
+		}
+		if line != "" {
+			parts = append(parts, strings.TrimRight(line, "。；;"))
+		}
+	}
+	return strings.Join(parts, "；")
 }
 
 type mailSummaryFields struct {
@@ -112,6 +175,7 @@ type mailSummaryFields struct {
 	Products     string `json:"products"`
 	Requirements string `json:"requirements"`
 	Question     string `json:"question"`
+	Summary      string `json:"summary"`
 }
 
 func formatMailSummary(raw string) (string, error) {
@@ -122,24 +186,28 @@ func formatMailSummary(raw string) (string, error) {
 	company := compactMailSummaryField(fields.Company, 40)
 	country := compactMailSummaryField(fields.Country, 24)
 	customer := strings.Join(nonEmptyStrings(company, country), "、")
-	if customer == "" {
-		customer = "未提及"
-	}
 	products := compactMailSummaryField(fields.Products, 80)
-	if products == "" {
-		products = "未提及"
-	}
 	requirements := compactMailSummaryField(fields.Requirements, 80)
-	if requirements == "" {
-		requirements = "未提及具体要求"
+	question := compactMailSummaryField(fields.Question, 80)
+	lines := make([]string, 0, 4)
+	if customer != "" {
+		lines = append(lines, "客户："+customer)
 	}
-	lines := []string{
-		"客户：" + customer,
-		"需求：" + products,
-		"要求：" + requirements,
+	if products != "" {
+		lines = append(lines, "需求："+products)
 	}
-	if question := compactMailSummaryField(fields.Question, 80); question != "" {
+	if requirements != "" {
+		lines = append(lines, "要求："+requirements)
+	}
+	if question != "" {
 		lines = append(lines, "问题："+question)
+	}
+	if len(lines) == 0 {
+		summary := compactMailSummaryField(fields.Summary, 80)
+		if summary == "" {
+			return "", errors.New("OpenAI analysis did not summarize the mail content")
+		}
+		return summary, nil
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -171,7 +239,11 @@ func SummarizeMail(ctx context.Context, client HTTPClient, store *Store, encrypt
 	if err != nil {
 		return "", err
 	}
-	return generateMailSummary(ctx, client, account, message, cfg)
+	previous, err := previousMailSummary(ctx, store, account.ID, message)
+	if err != nil {
+		return "", err
+	}
+	return generateMailSummary(ctx, client, account, message, previous, cfg)
 }
 
 // GetOrCreateMailSummary returns a durable summary and only calls the model
@@ -179,7 +251,11 @@ func SummarizeMail(ctx context.Context, client HTTPClient, store *Store, encrypt
 // choice; model or prompt changes merely mark an existing result stale.
 func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email, regenerate bool) (MailSummaryResult, error) {
 	key := MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID}
-	sourceHash := MailSummarySourceHash(account, message)
+	previous, err := previousMailSummary(ctx, store, account.ID, message)
+	if err != nil {
+		return MailSummaryResult{}, err
+	}
+	sourceHash := hashMailSummaryValue(mailSummaryInput(account, message, previous))
 	if existing, err := store.GetMessageSummary(ctx, key); err == nil && existing.Status == "ready" && !regenerate {
 		stale := existing.SourceHash != sourceHash
 		if configHash, cfgErr := CurrentMailSummaryConfigHash(ctx, store, account.OwnerID); cfgErr == nil {
@@ -235,7 +311,7 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 		}
 	}
 
-	summary, generationErr := generateMailSummary(ctx, client, account, message, cfg)
+	summary, generationErr := generateMailSummary(ctx, client, account, message, previous, cfg)
 	if generationErr != nil {
 		_ = store.FailMessageSummaryGeneration(ctx, key, current.GenerationToken, generationErr)
 		return MailSummaryResult{}, generationErr

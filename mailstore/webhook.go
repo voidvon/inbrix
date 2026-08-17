@@ -27,13 +27,14 @@ const (
 
 const inquiryOutputRules = `最高优先级输出规则：
 1. 只输出一个合法的 JSON 对象，不要输出 Markdown、代码块或任何解释。
-2. JSON 必须且只能包含 company、country、products、requirements、question 五个字符串字段。
+2. JSON 必须且只能包含 company、country、products、requirements、question、summary 六个字符串字段。
 3. 字段内容使用简体中文；产品型号、公司名、人名和国家名可保留原文。不得推测邮件中没有的信息。
 4. company 是客户公司名称，country 是客户国家，缺失时填空字符串。
-5. products 只写询价产品，可包含型号和数量；缺失时填“未提及”。
-6. requirements 用一句话概括交期、技术参数、认证、价格或其他要求，最多 80 个字；缺失时填“未提及具体要求”。
+5. products 只写询价产品，可包含型号和数量；缺失时填空字符串。
+6. requirements 用一句话概括交期、技术参数、认证、价格或其他要求，最多 80 个字；缺失时填空字符串。
 7. question 只写客户明确提出的问题，最多 80 个字；没有问题时必须填空字符串。
-输出示例：{"company":"Acme GmbH","country":"德国","products":"10 台 FT14 浮球式蒸汽疏水阀","requirements":"报价需包含交期、运费及 CE 认证资料。","question":"该型号是否适用于 16 bar 工况？"}`
+8. summary 用一句简洁的简体中文概括当前邮件正文实际表达的内容，最多 80 个字，即使正文只有致谢、确认、问候等简短内容也要准确概括。
+输出示例：{"company":"Acme GmbH","country":"德国","products":"10 台 FT14 浮球式蒸汽疏水阀","requirements":"报价需包含交期、运费及 CE 认证资料。","question":"该型号是否适用于 16 bar 工况？","summary":"客户询价 10 台 FT14，并询问其是否适用于 16 bar 工况。"}`
 
 var (
 	markdownLinkPattern = regexp.MustCompile(`!?\[([^\]]*)\]\(([^)]+)\)`)
@@ -267,17 +268,14 @@ func isSimplifiedChineseDominant(text string) bool {
 			latin++
 		}
 	}
-	if han < 8 || han*2 < latin {
+	if han < 2 || han*2 < latin {
 		return false
 	}
 	return !strings.ContainsAny(text, "體為與個這還後發應務產專聯絡數壓溫閥號項報價風險議確")
 }
 
 func fullEmailForInquiryAnalysis(account Account, message models.Email) string {
-	content := strings.TrimSpace(message.Body)
-	if content == "" {
-		content = strings.TrimSpace(message.HTML)
-	}
+	content := currentMessageText(message.Body, message.HTML)
 	var attachments []string
 	for _, attachment := range message.Attachments {
 		if name := strings.TrimSpace(attachment.Filename); name != "" {

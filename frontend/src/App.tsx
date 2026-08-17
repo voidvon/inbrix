@@ -36,6 +36,7 @@ import {
   Plus,
   Search,
   RotateCcw,
+  ReplyAll,
   Send,
   Signature as SignatureIcon,
   Sparkles,
@@ -123,9 +124,11 @@ const zh = {
   noSubject: "无主题",
   me: "我",
   reply: "回复",
+  replyAll: "回复全部",
   send: "发送",
   cancel: "取消",
   to: "收件人",
+  cc: "抄送",
   subject: "主题",
   writeMessage: "写下邮件内容…",
   sending: "正在发送…",
@@ -311,9 +314,11 @@ const en = {
   noSubject: "No subject",
   me: "Me",
   reply: "Reply",
+  replyAll: "Reply all",
   send: "Send",
   cancel: "Cancel",
   to: "To",
+  cc: "Cc",
   subject: "Subject",
   writeMessage: "Write your message…",
   sending: "Sending…",
@@ -459,6 +464,7 @@ type Copy = typeof zh;
 
 type ComposeDefaults = {
   to: string;
+  cc?: string;
   subject: string;
   html?: string;
   inReplyTo?: string;
@@ -682,6 +688,33 @@ function InboxPage() {
     });
   };
 
+  const openReplyAll = (conversation: ConversationDetail, message?: ConversationMessage) => {
+    const source = message || conversation.messages.at(-1);
+    if (!source) return;
+    const subject = source.subject || conversation.subject;
+    const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+    const self = conversation.accountEmail || conversations.data?.accountEmail || "";
+    const originalTo = splitRecipientValues(source.to);
+    const originalCc = splitRecipientValues(source.cc || "");
+    const to = source.outgoing
+      ? uniqueRecipients(originalTo, [self])
+      : uniqueRecipients([source.from], [self]);
+    const cc = uniqueRecipients([...originalTo, ...originalCc], [self, ...to]);
+    const sender = source.fromName && source.from ? `${source.fromName} <${source.from}>` : source.from || conversation.peerEmail || "";
+    const quoteLead = `On ${new Date(source.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
+    const originalBody = source.body || source.preview || "";
+    const references = [...(source.references || [])];
+    if (source.messageId && !references.includes(source.messageId)) references.push(source.messageId);
+    openCompose({
+      to: to.join(", "),
+      cc: cc.join(", "),
+      subject: replySubject,
+      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
+      inReplyTo: source.messageId,
+      references,
+    });
+  };
+
   const openNewMailForMessage = (conversation: ConversationDetail, message: ConversationMessage) => {
     const recipient = message.outgoing ? message.to : message.from || conversation.peerEmail || "";
     openCompose({ to: recipient, subject: "" });
@@ -723,6 +756,7 @@ function InboxPage() {
             error={detail.error}
             onBack={() => setChatOpen(false)}
             onReply={openReply}
+            onReplyAll={openReplyAll}
             onNewMail={openNewMailForMessage}
             onConversationEmpty={() => {
               setSelectedId(null);
@@ -947,15 +981,15 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
   );
 }
 
-function ChatPanel({ copy, detail, loading, error, onBack, onReply, onNewMail, onConversationEmpty, className }: { copy: Copy; detail?: ConversationDetail; loading: boolean; error: Error | null; onBack: () => void; onReply: (conversation: ConversationDetail, message: ConversationMessage) => void; onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void; onConversationEmpty: () => void; className?: string }) {
+function ChatPanel({ copy, detail, loading, error, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty, className }: { copy: Copy; detail?: ConversationDetail; loading: boolean; error: Error | null; onBack: () => void; onReply: (conversation: ConversationDetail, message: ConversationMessage) => void; onReplyAll: (conversation: ConversationDetail, message: ConversationMessage) => void; onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void; onConversationEmpty: () => void; className?: string }) {
   const panelClass = cn("min-w-0 flex-1 flex-col bg-surface", className);
   if (loading) return <section className={cn(panelClass, "items-center justify-center")}><div className="text-sm text-muted-foreground">{copy.loading}</div></section>;
   if (error) return <section className={panelClass}><ErrorState copy={copy} /></section>;
   if (!detail) return <section className={panelClass}><EmptyState icon={<MessageCircle />} text={copy.selectConversation} /></section>;
-  return <ChatView copy={copy} detail={detail} onBack={onBack} onReply={(message) => onReply(detail, message)} onNewMail={(message) => onNewMail(detail, message)} onConversationEmpty={onConversationEmpty} />;
+  return <ChatView copy={copy} detail={detail} onBack={onBack} onReply={(message) => onReply(detail, message)} onReplyAll={(message) => onReplyAll(detail, message)} onNewMail={(message) => onNewMail(detail, message)} onConversationEmpty={onConversationEmpty} />;
 }
 
-function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpty }: { copy: Copy; detail: ConversationDetail; onBack: () => void; onReply: (message: ConversationMessage) => void; onNewMail: (message: ConversationMessage) => void; onConversationEmpty: () => void }) {
+function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty }: { copy: Copy; detail: ConversationDetail; onBack: () => void; onReply: (message: ConversationMessage) => void; onReplyAll: (message: ConversationMessage) => void; onNewMail: (message: ConversationMessage) => void; onConversationEmpty: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -967,6 +1001,7 @@ function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpt
     mutationFn: () => summarizeMailThread(detail.messages.map((message) => [
       `From: ${message.fromName ? `${message.fromName} <${message.from}>` : message.from}`,
       `To: ${message.to}`,
+      ...(message.cc ? [`Cc: ${message.cc}`] : []),
       `Date: ${message.date}`,
       `Subject: ${message.subject}`,
       "",
@@ -1029,7 +1064,7 @@ function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpt
       <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8" viewportRef={scrollRef}>
         <div ref={contentRef}>
           {(summary || summarizeMutation.error) && <div className="mx-auto mb-6 max-w-3xl rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4" />{copy.summaryTitle}</h3><Button variant="ghost" size="icon" className="size-7" onClick={() => { setSummary(""); summarizeMutation.reset(); }} aria-label={copy.cancel}><X /></Button></div>{summary ? <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">{summary}</p> : <p className="mt-3 text-sm text-destructive">{summarizeMutation.error instanceof Error ? summarizeMutation.error.message : copy.loadFailed}</p>}</div>}
-          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
+          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onReplyAll={() => onReplyAll(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
         </div>
       </ScrollArea>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
@@ -1049,7 +1084,7 @@ function ChatView({ copy, detail, onBack, onReply, onNewMail, onConversationEmpt
   );
 }
 
-function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, onNewMail, onDelete }: { copy: Copy; message: ConversationMessage; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onNewMail: () => void; onDelete: () => void }) {
+function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, onReplyAll, onNewMail, onDelete }: { copy: Copy; message: ConversationMessage; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onReplyAll: () => void; onNewMail: () => void; onDelete: () => void }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
@@ -1059,7 +1094,7 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
     <ContextMenuPrimitive.Root>
       <ContextMenuPrimitive.Trigger className="mb-5 block select-text">
         <article>
-          <div className={cn("mb-1 flex items-center gap-2 text-xs leading-tight text-muted-foreground", outgoing && "justify-end")}><span className="font-medium">{sender}</span><time title={formattedDate}>{formattedDate}</time></div>
+          <div className={cn("mb-1 flex min-w-0 items-start gap-2 text-xs leading-tight text-muted-foreground", outgoing && "justify-end text-right")}><div className="min-w-0"><div><span className="font-medium">{sender}</span><time className="ml-2" title={formattedDate}>{formattedDate}</time></div><div className="mt-1 max-w-full break-words text-[11px]"><span className="font-medium">{copy.to}:</span> {message.to || "-"}{message.cc && <><span className="mx-1.5">·</span><span className="font-medium">{copy.cc}:</span> {message.cc}</>}</div></div></div>
           <div className={cn("flex items-end", outgoing && "justify-end")}>
             <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border border-transparent bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground", message.html && "w-full")}>
               {message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(visibleText)}</div>}
@@ -1077,6 +1112,7 @@ function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, o
         <ContextMenuPrimitive.Positioner className="z-40 outline-none">
           <ContextMenuPrimitive.Popup className="w-40 origin-[var(--transform-origin)] rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
             <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onReply}><Send className="size-4" />{copy.reply}</ContextMenuPrimitive.Item>
+            <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onReplyAll}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuPrimitive.Item>
             <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-highlighted:bg-muted" onClick={onNewMail}><Mail className="size-4" />{copy.sendEmail}</ContextMenuPrimitive.Item>
             <ContextMenuPrimitive.Item className="flex cursor-default items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none data-highlighted:bg-muted" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteEmail}</ContextMenuPrimitive.Item>
           </ContextMenuPrimitive.Popup>
@@ -1476,12 +1512,27 @@ function splitRecipientValues(value: string) {
   return value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
 }
 
+function recipientAddress(value: string) {
+  const match = value.trim().match(/<([^<>]+)>\s*$/);
+  return (match?.[1] || value).trim().toLowerCase();
+}
+
+function uniqueRecipients(values: string[], excluded: string[] = []) {
+  const seen = new Set(excluded.map(recipientAddress).filter(Boolean));
+  return values.filter((value) => {
+    const address = recipientAddress(value);
+    if (!address || seen.has(address)) return false;
+    seen.add(address);
+    return true;
+  });
+}
+
 function isValidRecipient(value: string) {
   const match = value.trim().match(/^(?:[^<>]*<)?([^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+)>?$/);
   return Boolean(match);
 }
 
-function RecipientTagInput({ copy, recipients, onChange, draftRef, autoFocus = false }: { copy: Copy; recipients: string[]; onChange: (recipients: string[]) => void; draftRef: MutableRefObject<string>; autoFocus?: boolean }) {
+function RecipientTagInput({ copy, label, recipients, onChange, draftRef, autoFocus = false }: { copy: Copy; label: string; recipients: string[]; onChange: (recipients: string[]) => void; draftRef: MutableRefObject<string>; autoFocus?: boolean }) {
   const [draft, setDraft] = useState("");
   const [invalid, setInvalid] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1522,7 +1573,7 @@ function RecipientTagInput({ copy, recipients, onChange, draftRef, autoFocus = f
           if (!/[,;\n]/.test(value)) return;
           event.preventDefault();
           addValues(splitRecipientValues(value));
-        }} onBlur={() => { if (draft.trim()) addValues(splitRecipientValues(draft)); }} placeholder={recipients.length ? "" : "name@example.com"} autoFocus={autoFocus} inputMode="email" aria-invalid={invalid} aria-label={copy.to} />
+        }} onBlur={() => { if (draft.trim()) addValues(splitRecipientValues(draft)); }} placeholder={recipients.length ? "" : "name@example.com"} autoFocus={autoFocus} inputMode="email" aria-invalid={invalid} aria-label={label} />
       </div>
       {invalid && <p className="mt-1 text-xs text-destructive">{copy.invalidRecipient}</p>}
     </div>
@@ -1531,6 +1582,7 @@ function RecipientTagInput({ copy, recipients, onChange, draftRef, autoFocus = f
 
 function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSent }: { copy: Copy; open: boolean; defaults: ComposeDefaults; accountEmail: string; onOpenChange: (value: boolean) => void; onSent: () => void }) {
   const [recipients, setRecipients] = useState<string[]>([]);
+  const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
   const [error, setError] = useState("");
   const [sourceMode, setSourceMode] = useState(false);
@@ -1538,6 +1590,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const [attachments, setAttachments] = useState<File[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const recipientDraftRef = useRef("");
+  const ccDraftRef = useRef("");
   const signatureInitializedRef = useRef(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
   const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false, paragraph: false }), EmailParagraph, ReplyQuote, EmailSignatureExtension, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
@@ -1547,6 +1600,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   useEffect(() => {
     if (!open || !editor) return;
     setRecipients(splitRecipientValues(defaults.to));
+    setCcRecipients(splitRecipientValues(defaults.cc || ""));
     setSubject(defaults.subject);
     setError("");
     setSourceMode(false);
@@ -1555,6 +1609,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     signatureInitializedRef.current = false;
     setAttachments([]);
     recipientDraftRef.current = "";
+    ccDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     editor.commands.setContent(normalizeQuoteHTML(defaults.html || ""));
     editor.commands.focus("start");
@@ -1583,10 +1638,12 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const pendingRecipients = splitRecipientValues(recipientDraftRef.current);
+    const pendingCcRecipients = splitRecipientValues(ccDraftRef.current);
     const submittedRecipients = [...recipients, ...pendingRecipients.filter((value) => isValidRecipient(value))];
+    const submittedCcRecipients = uniqueRecipients([...ccRecipients, ...pendingCcRecipients.filter((value) => isValidRecipient(value))], submittedRecipients);
     const htmlBody = serializeComposeHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
     const plainBody = htmlToPlainText(htmlBody);
-    if (!submittedRecipients.length || pendingRecipients.some((value) => !isValidRecipient(value))) {
+    if (!submittedRecipients.length || [...pendingRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
       setError(copy.invalidRecipient);
       return;
     }
@@ -1596,6 +1653,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     }
     const form = new FormData();
     form.set("to", submittedRecipients.join(", "));
+    if (submittedCcRecipients.length) form.set("cc", submittedCcRecipients.join(", "));
     form.set("subject", subject.trim());
     form.set("body", plainBody);
     form.set("html_body", htmlBody);
@@ -1611,7 +1669,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
       <DialogContent data-testid="compose-dialog" className="flex h-[80vh] w-[80vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
           <DialogHeader className="border-b px-5 py-4 pr-12 text-left"><DialogTitle className="truncate text-base">{subject || copy.writeMessage}</DialogTitle><DialogDescription className="sr-only">{copy.compose}</DialogDescription></DialogHeader>
-          <div className="grid gap-3 border-b px-5 py-4"><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.to}<RecipientTagInput copy={copy} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">{copy.subject}<Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} /></Label></div>
+          <div className="grid gap-3 border-b px-5 py-4"><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.to}<RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.cc}<RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">{copy.subject}<Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} /></Label></div>
           <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
             <RichTextButtons editor={editor} disabled={sourceMode} />
             <div className="ml-auto flex shrink-0 items-center gap-1">
