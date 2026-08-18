@@ -273,10 +273,11 @@ Resulting MIME structure:
   `multipart/mixed( multipart/related( multipart/alternative(text, html), inline-parts… ), attachments… )`
 - **no inline parts** → unchanged (`multipart/mixed`/`alternative`/plain as before).
 
-This lets a client stop shipping fat `data:image/…;base64,…` URIs inside the HTML
+This lets clients avoid shipping fat `data:image/…;base64,…` URIs inside the HTML
 body (which inflate every message ~33 %) and reference `cid:` parts instead. The
-client-side switch (paste handler emitting `cid:` + an inline attachment ref) is
-a follow-up; the backend is capable and documented as of wave 44.
+web composer inserts CID images from its image picker, clipboard, and drag/drop.
+New images are proportionally sized so their longest edge is at most 480 pixels;
+the editor resize handle can then set a larger proportional `width`/`height`.
 
 ### Scheduled send (send-later)
 

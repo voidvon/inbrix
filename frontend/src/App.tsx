@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Eye,
   Italic,
+  ImagePlus,
   Link,
   Languages,
   List,
@@ -50,13 +51,13 @@ import {
 } from "lucide-react";
 import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
-import ImageExtension from "@tiptap/extension-image";
 import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import { toast } from "sonner";
 import { EmailParagraph } from "./extensions/email-paragraph";
+import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
 import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature } from "./lib/api";
@@ -78,8 +79,6 @@ import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigg
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
 import { Textarea } from "./components/ui/textarea";
 import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailAttachment, MailMessage, Mailbox, MailSummary } from "./types";
-
-const EmailImageExtension = ImageExtension.configure({ inline: true, allowBase64: false });
 
 const zh = {
   conversations: "对话",
@@ -134,6 +133,9 @@ const zh = {
   writeMessage: "写下邮件内容…",
   sending: "正在发送…",
   attach: "添加附件",
+  insertImage: "插入图片",
+  unsupportedImage: "仅支持 JPEG、PNG 和 GIF 图片",
+  inlineImageMissing: "正文中有找不到原始文件的内嵌图片，请删除后重新插入",
   login: "登录",
   appAccount: "应用账号",
   password: "密码",
@@ -350,6 +352,9 @@ const en = {
   writeMessage: "Write your message…",
   sending: "Sending…",
   attach: "Attach file",
+  insertImage: "Insert image",
+  unsupportedImage: "Only JPEG, PNG, and GIF images are supported",
+  inlineImageMissing: "An inline image is missing its original file. Remove it and insert it again",
   login: "Sign in",
   appAccount: "Application account",
   password: "Password",
@@ -514,6 +519,35 @@ const en = {
 };
 
 type Copy = typeof zh;
+
+const MAX_COMPOSE_ATTACHMENT_BYTES = 18 * 1024 * 1024;
+const DEFAULT_INLINE_IMAGE_MAX_SIZE = 480;
+const SUPPORTED_INLINE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif"]);
+
+type InlineComposeImage = {
+  contentId: string;
+  file: File;
+  previewURL: string;
+};
+
+function inlineImageDimensions(previewURL: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        reject(new Error("Image has no dimensions"));
+        return;
+      }
+      const scale = Math.min(1, DEFAULT_INLINE_IMAGE_MAX_SIZE / Math.max(image.naturalWidth, image.naturalHeight));
+      resolve({
+        width: Math.max(1, Math.round(image.naturalWidth * scale)),
+        height: Math.max(1, Math.round(image.naturalHeight * scale)),
+      });
+    };
+    image.onerror = () => reject(new Error("Image could not be decoded"));
+    image.src = previewURL;
+  });
+}
 
 type ComposeDefaults = {
   accountEmail?: string;
@@ -1448,6 +1482,12 @@ function normalizeQuoteHTML(html: string) {
   return document.body.innerHTML;
 }
 
+function serializeEmailHTML(html: string) {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.body.querySelectorAll("p:empty").forEach((paragraph) => paragraph.appendChild(document.createElement("br")));
+  return document.body.innerHTML;
+}
+
 function serializeQuoteHTML(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
   Array.from(document.body.querySelectorAll("[data-lilmail-reply-quote]")).reverse().forEach((element) => {
@@ -1459,11 +1499,31 @@ function serializeQuoteHTML(html: string) {
     element.before(paragraph);
     element.replaceWith(blockquote);
   });
+  return serializeEmailHTML(document.body.innerHTML);
+}
+
+function serializeInlineImageReferences(html: string, removeMetadata: boolean) {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.body.querySelectorAll<HTMLImageElement>("img[data-inline-image-id]").forEach((image) => {
+    const contentId = image.dataset.inlineImageId;
+    if (contentId) image.setAttribute("src", `cid:${contentId}`);
+    if (removeMetadata) image.removeAttribute("data-inline-image-id");
+  });
+  return document.body.innerHTML;
+}
+
+function restoreInlineImagePreviews(html: string, inlineImages: InlineComposeImage[]) {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const previews = new Map(inlineImages.map((image) => [image.contentId, image.previewURL]));
+  document.body.querySelectorAll<HTMLImageElement>("img[data-inline-image-id]").forEach((image) => {
+    const previewURL = previews.get(image.dataset.inlineImageId || "");
+    if (previewURL) image.setAttribute("src", previewURL);
+  });
   return document.body.innerHTML;
 }
 
 function serializeComposeHTML(html: string) {
-  const document = new DOMParser().parseFromString(serializeQuoteHTML(html), "text/html");
+  const document = new DOMParser().parseFromString(serializeInlineImageReferences(serializeQuoteHTML(html), true), "text/html");
   Array.from(document.body.querySelectorAll("[data-lilmail-signature]")).forEach((element) => {
     element.replaceWith(...Array.from(element.childNodes));
   });
@@ -1644,6 +1704,10 @@ function htmlToPlainText(html: string) {
       lines.push({ depth, text: "" });
       return;
     }
+    if (node.tagName === "IMG") {
+      appendText(`[Image: ${node.getAttribute("alt")?.trim() || "Image"}]`, depth);
+      return;
+    }
     const childDepth = node.tagName === "BLOCKQUOTE" ? depth + 1 : depth;
     if (node.tagName === "BLOCKQUOTE") newLine(childDepth);
     Array.from(node.childNodes).forEach((child) => walk(child, childDepth));
@@ -1740,14 +1804,35 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [inlineImages, setInlineImages] = useState<InlineComposeImage[]>([]);
+  const inlineImagesRef = useRef<InlineComposeImage[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const inlineImageInputRef = useRef<HTMLInputElement>(null);
   const recipientDraftRef = useRef("");
   const ccDraftRef = useRef("");
   const signatureInitializedRef = useRef(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
-  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false, paragraph: false }), EmailParagraph, ReplyQuote, EmailSignatureExtension, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
+  const editor = useEditor({ extensions: [StarterKit.configure({ blockquote: false, paragraph: false }), EmailParagraph, ReplyQuote, EmailSignatureExtension, EmailImage, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.writeMessage })], content: "", immediatelyRender: false });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
+
+  const replaceInlineImages = (images: InlineComposeImage[]) => {
+    inlineImagesRef.current = images;
+    setInlineImages(images);
+  };
+
+  const clearInlineImages = () => {
+    inlineImagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewURL));
+    replaceInlineImages([]);
+  };
+
+  useEffect(() => () => {
+    inlineImagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewURL));
+  }, []);
+
+  useEffect(() => {
+    if (!open && inlineImagesRef.current.length) clearInlineImages();
+  }, [open]);
 
   useEffect(() => {
     if (!open || !editor) return;
@@ -1760,12 +1845,50 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     setSelectedSignatureId("none");
     signatureInitializedRef.current = false;
     setAttachments([]);
+    clearInlineImages();
     recipientDraftRef.current = "";
     ccDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     editor.commands.setContent(normalizeQuoteHTML(defaults.html || ""));
     editor.commands.focus("start");
   }, [open, defaults, editor]);
+
+  const insertInlineImages = async (files: File[], position?: number) => {
+    if (!editor || !files.length) return;
+    if (files.some((file) => !SUPPORTED_INLINE_IMAGE_TYPES.has(file.type) || file.size <= 0)) {
+      setError(copy.unsupportedImage);
+      return;
+    }
+    const totalSize = [...attachments, ...inlineImages.map((image) => image.file), ...files].reduce((total, file) => total + file.size, 0);
+    if (totalSize > MAX_COMPOSE_ATTACHMENT_BYTES) {
+      setError(copy.attachmentsTooLarge);
+      return;
+    }
+
+    const previews = files.map((file) => {
+      const contentId = `${crypto.randomUUID().replaceAll("-", "")}@lilmail`;
+      return { contentId, file, previewURL: URL.createObjectURL(file) };
+    });
+    let additions: Array<InlineComposeImage & { width: number; height: number }>;
+    try {
+      additions = await Promise.all(previews.map(async (image) => ({ ...image, ...await inlineImageDimensions(image.previewURL) })));
+    } catch {
+      previews.forEach((image) => URL.revokeObjectURL(image.previewURL));
+      setError(copy.unsupportedImage);
+      return;
+    }
+    replaceInlineImages([...inlineImages, ...additions]);
+    additions.forEach((image, index) => {
+      const chain = editor.chain();
+      if (index === 0 && position !== undefined) chain.focus(position);
+      else chain.focus();
+      chain.insertContent({
+        type: "image",
+        attrs: { src: image.previewURL, alt: image.file.name, title: image.file.name, width: image.width, height: image.height, inlineImageId: image.contentId },
+      }).run();
+    });
+    setError("");
+  };
 
   useEffect(() => {
     if (!open || !editor || !signatures.data || signatureInitializedRef.current) return;
@@ -1778,12 +1901,12 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const toggleSourceMode = () => {
     if (!editor) return;
     if (sourceMode) {
-      editor.commands.setContent(normalizeQuoteHTML(sourceCode));
+      editor.commands.setContent(normalizeQuoteHTML(restoreInlineImagePreviews(sourceCode, inlineImages)));
       editor.commands.focus("start");
       setSourceMode(false);
       return;
     }
-    setSourceCode(serializeQuoteHTML(editor.getHTML()));
+    setSourceCode(serializeInlineImageReferences(serializeQuoteHTML(editor.getHTML()), false));
     setSourceMode(true);
   };
 
@@ -1795,12 +1918,18 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     const submittedCcRecipients = uniqueRecipients([...ccRecipients, ...pendingCcRecipients.filter((value) => isValidRecipient(value))], submittedRecipients);
     const htmlBody = serializeComposeHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
     const plainBody = htmlToPlainText(htmlBody);
+    const referencedContentIds = new Set(Array.from(new DOMParser().parseFromString(htmlBody, "text/html").querySelectorAll<HTMLImageElement>('img[src^="cid:"]')).map((image) => image.getAttribute("src")?.slice(4) || "").filter(Boolean));
+    const submittedInlineImages = inlineImages.filter((image) => referencedContentIds.has(image.contentId));
     if (!submittedRecipients.length || [...pendingRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
       setError(copy.invalidRecipient);
       return;
     }
     if (!plainBody) {
       setError(copy.noBody);
+      return;
+    }
+    if (Array.from(referencedContentIds).some((contentId) => !submittedInlineImages.some((image) => image.contentId === contentId))) {
+      setError(copy.inlineImageMissing);
       return;
     }
     const form = new FormData();
@@ -1813,6 +1942,12 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     if (defaults.references?.length) form.set("references", defaults.references.join(" "));
     if (accountEmail) form.set("account_email", accountEmail);
     attachments.forEach((file) => form.append("attachments", file, file.name));
+    const inlineManifest = submittedInlineImages.map((image, index) => {
+      const field = `inline_image_${index}`;
+      form.append(field, image.file, image.file.name);
+      return { field, contentId: image.contentId };
+    });
+    if (inlineManifest.length) form.set("inline_attachments", JSON.stringify(inlineManifest));
     mutation.mutate(form, { onSuccess: () => { onSent(); onOpenChange(false); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
   };
 
@@ -1824,6 +1959,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
           <div className="grid gap-3 border-b px-5 py-4"><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.to}<RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground">{copy.cc}<RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">{copy.subject}<Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} /></Label></div>
           <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
             <RichTextButtons editor={editor} disabled={sourceMode} />
+            <Button type="button" variant="ghost" size="icon" disabled={sourceMode || !editor} onClick={() => inlineImageInputRef.current?.click()} aria-label={copy.insertImage} title={copy.insertImage}><ImagePlus /></Button>
             <Separator orientation="vertical" className="mx-1 h-5" />
             <AIAssistantButton copy={copy} editor={editor} disabled={sourceMode} composeOpen={open} accountEmail={accountEmail} subject={subject} recipients={[...recipients, ...ccRecipients].join(", ")} conversation={defaults.conversation} />
             <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -1840,10 +1976,21 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
           </div>
           {sourceMode
             ? <textarea className="min-h-0 flex-1 resize-none bg-background px-5 py-4 font-mono text-sm leading-6 outline-none" value={sourceCode} onChange={(event) => setSourceCode(event.target.value)} spellCheck={false} aria-label={copy.sourceCode} />
-            : <ScrollArea className="min-h-0 flex-1" contentClassName="px-5 py-4"><EditorContent editor={editor} /></ScrollArea>}
+            : <ScrollArea className="min-h-0 flex-1" contentClassName="px-5 py-4"><EditorContent editor={editor} onPaste={(event) => {
+              const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+              if (!images.length) return;
+              event.preventDefault();
+              void insertInlineImages(images);
+            }} onDrop={(event) => {
+              const images = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith("image/"));
+              if (!images.length) return;
+              event.preventDefault();
+              const position = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+              void insertInlineImages(images, position);
+            }} /></ScrollArea>}
           {attachments.length > 0 && <div className="flex flex-wrap gap-2 border-t px-5 py-2">{attachments.map((file, index) => <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate" title={file.name}>{file.name}</span><span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span><Button type="button" variant="ghost" size="icon" className="size-5" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`${copy.removeAttachment}: ${file.name}`} title={copy.removeAttachment}><X className="size-3" /></Button></span>)}</div>}
           {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
-          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => { const next = [...current, ...selected]; if (next.reduce((total, file) => total + file.size, 0) > 18 * 1024 * 1024) { setError(copy.attachmentsTooLarge); return current; } setError(""); return next; }); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
+          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => { const next = [...current, ...selected]; if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) { setError(copy.attachmentsTooLarge); return current; } setError(""); return next; }); event.target.value = ""; }} /><input ref={inlineImageInputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/gif" multiple onChange={(event) => { void insertInlineImages(Array.from(event.target.files || [])); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -2207,7 +2354,7 @@ function SignatureSettings({ copy }: { copy: Copy }) {
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
   const [error, setError] = useState("");
-  const editor = useEditor({ extensions: [StarterKit.configure({ paragraph: false }), EmailParagraph, EmailImageExtension, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
+  const editor = useEditor({ extensions: [StarterKit.configure({ paragraph: false }), EmailParagraph, EmailImage, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
   const persist = useMutation({
     mutationFn: ({ items }: { items: EmailSignature[]; operation: "create" | "update" | "delete" }) => saveSignatures(items),
     onSuccess: async (_, variables) => {
@@ -2240,7 +2387,7 @@ function SignatureSettings({ copy }: { copy: Copy }) {
       editor.commands.focus("start");
       return;
     }
-    setSourceCode(editor.getHTML());
+    setSourceCode(serializeEmailHTML(editor.getHTML()));
     setContentEmpty(editor.isEmpty);
     setSourceMode(true);
   };
@@ -2261,7 +2408,7 @@ function SignatureSettings({ copy }: { copy: Copy }) {
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const html = sourceMode ? sourceCode : editor?.getHTML() || "";
+    const html = serializeEmailHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
     if (!name.trim() || !editor || (sourceMode ? !sourceCode.trim() : editor.isEmpty)) return;
     const current = signatures.data?.signatures || [];
     const makeDefault = isDefault || current.length === 0;

@@ -898,6 +898,7 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 // Supports:
 //   - Plain-text and HTML (rich-text) bodies — multipart/alternative when both present
 //   - File attachments — multipart/mixed wrapper with base64-encoded parts
+//   - CID inline images — multipart/related with Content-ID-referenced image parts
 //   - CC, BCC, In-Reply-To, References for reply/forward threading
 //   - Draft deletion by UID when "draft_uid" form field is set (replaces draft on send)
 //
@@ -939,7 +940,11 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid multipart compose request"})
 	}
 	if formErr == nil && form != nil {
-		for _, fhs := range form.File {
+		inlineAttachments, inlineErr := parseComposeInlineAttachments(c.FormValue("inline_attachments"), form.File)
+		if inlineErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": inlineErr.Error()})
+		}
+		for field, fhs := range form.File {
 			for _, fh := range fhs {
 				if fh.Size <= 0 {
 					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("Attachment %q is empty", fh.Filename)})
@@ -952,6 +957,13 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 				if ct == "" {
 					ct = "application/octet-stream"
 				}
+				inlineAttachment, isInline := inlineAttachments[field]
+				if isInline {
+					ct, inlineErr = sniffComposeInlineImage(fh)
+					if inlineErr != nil {
+						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": inlineErr.Error()})
+					}
+				}
 				fileHeader := fh
 				filename := filepath.Base(fh.Filename)
 				if filename == "" || filename == "." || filename == string(filepath.Separator) {
@@ -960,6 +972,8 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 				attachments = append(attachments, api.OutgoingAttachment{
 					Filename:    filename,
 					ContentType: ct,
+					ContentID:   inlineAttachment.ContentID,
+					Inline:      isInline,
 					Open: func() (io.ReadCloser, error) {
 						return fileHeader.Open()
 					},

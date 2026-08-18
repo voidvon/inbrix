@@ -198,6 +198,58 @@
   height: auto;
 }
 
+.ProseMirror [data-resize-container][data-node="image"] {
+  vertical-align: middle;
+}
+
+.ProseMirror [data-resize-wrapper] > img {
+  display: block;
+}
+
+.ProseMirror [data-resize-handle="bottom-right"] {
+  width: 12px;
+  height: 12px;
+  right: -5px !important;
+  bottom: -5px !important;
+  border: 2px solid var(--background);
+  border-radius: 3px;
+  background: var(--foreground);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  transition: opacity 120ms ease;
+}
+
+.ProseMirror [data-resize-container][data-node="image"]:hover [data-resize-handle="bottom-right"],
+.ProseMirror [data-resize-container][data-node="image"]:focus-within [data-resize-handle="bottom-right"],
+.ProseMirror [data-resize-container][data-node="image"].ProseMirror-selectednode [data-resize-handle="bottom-right"],
+.ProseMirror [data-resize-container][data-resize-state="true"] [data-resize-handle="bottom-right"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ProseMirror [data-resize-size] {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
+  display: none;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 82%, transparent);
+  color: var(--background);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ProseMirror [data-resize-container][data-resize-state="true"] [data-resize-size] {
+  display: block;
+}
+
 .reply-quote {
   margin: 0.75rem 0;
   overflow: hidden;

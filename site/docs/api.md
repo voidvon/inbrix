@@ -12,12 +12,12 @@ mail request.
 `/v1` is the shared source of truth other UIs build on:
 
 - the **Vulos OS** thin Calendar/Contacts widgets and mail surface consume it;
-- lilmail's own server-rendered HTMX/Alpine UI is a first-class consumer too;
+- lilmail's own React browser client is a first-class consumer too;
 - any third-party tool or script can drive it.
 
 The API returns `models.Email` / `MailboxInfo` / `models.Calendar*` /
-`models.Contact` JSON and never renders templates, so it is a stable seam an
-external UI can build against. It runs **alongside** the HTMX UI and shares the
+`models.Contact` JSON and never renders HTML, so it is a stable seam an
+external UI can build against. It is the backend used by the React SPA and shares the
 same engine + authentication — using `/v1` never changes the standalone UI.
 
 > **Stability.** `/v1` is load-bearing: external UIs build on it. The mail,
@@ -39,7 +39,7 @@ There are exactly **two** ways a request can be authenticated:
 
 | Mode | How the caller proves itself | Who uses it |
 |------|------------------------------|-------------|
-| **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's own HTMX UI |
+| **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's React client |
 | **Injected credentials** (opt-in, off by default) | `X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers | an embedding host that already holds the user's mailbox credentials |
 
 Both resolve to the same thing — one mailbox connection for the duration of one
@@ -52,9 +52,8 @@ token scheme. The local SQLite mirror is used by the HTML inbox path; `/v1`
 continues to expose the live mail engine contract and is not a second database
 API.
 
-The one behavioural difference from the HTMX routes: when the session is missing
-or unauthenticated, the API responds **`401` with a JSON body** (the HTMX UI
-`302`-redirects to `/login`), so a `fetch()`-based client can react in code:
+When the session is missing or unauthenticated, the API responds **`401` with a
+JSON body**, so a `fetch()`-based client can react in code:
 
 ```json
 { "error": "not authenticated" }
@@ -121,7 +120,7 @@ covered by this CalDAV/CardDAV path; only accounts that expose CalDAV/CardDAV
 (e.g. Gmail, generic DAV) work here.
 
 The headers are only ever read **inside** the `/v1` group, after the secret has
-been validated — never on unauthenticated or HTMX paths.
+been validated — never on unauthenticated paths.
 
 **The exact wire format** — header-by-header semantics, the acceptance algorithm,
 and an explicit list of the properties this scheme does *not* have (no HMAC, no
@@ -275,10 +274,11 @@ Resulting MIME structure:
   `multipart/mixed( multipart/related( multipart/alternative(text, html), inline-parts… ), attachments… )`
 - **no inline parts** → unchanged (`multipart/mixed`/`alternative`/plain as before).
 
-This lets a client stop shipping fat `data:image/…;base64,…` URIs inside the HTML
+This lets clients avoid shipping fat `data:image/…;base64,…` URIs inside the HTML
 body (which inflate every message ~33 %) and reference `cid:` parts instead. The
-client-side switch (paste handler emitting `cid:` + an inline attachment ref) is
-a follow-up; the backend is capable and documented as of wave 44.
+web composer inserts CID images from its image picker, clipboard, and drag/drop.
+New images are proportionally sized so their longest edge is at most 480 pixels;
+the editor resize handle can then set a larger proportional `width`/`height`.
 
 ### Scheduled send (send-later)
 
@@ -316,7 +316,7 @@ unconfigured build simply has no send-later, rather than silently dropping mail.
 
 Times are RFC 3339 strings. The `start`/`end` range defaults to the current
 month when omitted. These reuse the same CalDAV client + `models.Calendar*`
-types as the HTMX calendar UI.
+types as the React calendar UI.
 
 | Method | Path | Query | Body | Returns |
 |--------|------|-------|------|---------|
@@ -680,7 +680,7 @@ curl -b cookies.txt 'http://localhost:3000/v1/unified?folder=INBOX&limit=50'
   "hasAttachments": true,
   "attachments": [
     {
-      "id": "SU5CT1gAMzQAMi4x",   // opaque token (HTMX web download route)
+      "id": "SU5CT1gAMzQAMi4x",   // opaque attachment identifier
       "partId": "2.1",             // IMAP MIME part path — use with the /v1 download route
       "filename": "invoice.pdf",
       "contentType": "application/pdf",

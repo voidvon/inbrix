@@ -424,6 +424,12 @@ func validateContentID(cid string) error {
 	return nil
 }
 
+// ValidateContentID checks a bare Content-ID supplied by an API or web
+// transport before it is copied into an outgoing MIME header.
+func ValidateContentID(cid string) error {
+	return validateContentID(cid)
+}
+
 // validateHeaderValue rejects a structured header value that would break the
 // RFC 2822 header block. Any bare CR, LF, or NUL terminates the current header
 // line (a folded continuation must begin with SP/HTAB, which callers here never

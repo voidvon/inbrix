@@ -150,8 +150,6 @@ service). This document tracks where we are and where we're going.
 ## 🔜 Next up
 
 - 🔜 **Nix package + NixOS module** for declarative, reproducible self-hosting.
-- 🔜 Client-side paste support for inline `cid:` images in the rich-text
-  compose editor (the server-side `multipart/related` plumbing already ships).
 - 🔜 IMAP-backed folder move for Archive / Junk in the reading-pane toolbar
   (currently laid out but not yet wired to a backend move).
 

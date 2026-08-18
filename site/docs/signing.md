@@ -213,7 +213,7 @@ is that order):
 ### 3.3 Canonical request
 
 Six `\n`-joined fields. Note the third field is the raw query string, which is
-always empty for lilmail's GET/PUT (producing an empty line), and the fourth
+always empty for lilmail's GET/PUT/DELETE (producing an empty line), and the fourth
 field — the canonical headers block — itself ends in `\n`, producing the blank
 line before `SignedHeaders`:
 
