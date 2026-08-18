@@ -142,14 +142,14 @@ mode*.
 git clone https://github.com/vul-os/lilmail.git
 cd lilmail
 
-# Configure — copy the example and fill in your mail server details + secrets
+# Configure — copy the example and replace its security secrets
 cp config.toml.example config.toml   # then edit
 
 # Build and run the single-process production-style server
 make build && ./lilmail
 ```
 
-Open **http://localhost:3000** and sign in.
+Open **http://localhost:2342** and sign in.
 
 Prefer a pre-built binary? Grab the archive for your OS and CPU from the
 [latest release](https://github.com/vul-os/lilmail/releases/latest): macOS and
@@ -183,21 +183,18 @@ refusal still fires; CI runs the same matrix on every push.
 
 ## Configuration
 
-All configuration lives in `config.toml`. A minimal setup needs only an IMAP
-server and a couple of secrets:
+Deployment settings live in `config.toml`; mailbox servers and AI models are
+managed from the Settings UI. A minimal setup needs only connection policies
+and two security secrets:
 
 ```toml
 [server]
-port = 3000
+port = 2342
 
 [imap]
-server = "mail.example.com"
-port   = 993
 tls    = true
 
 [smtp]
-# Derived from the IMAP server if omitted
-port         = 587
 use_starttls = true
 
 [jwt]
@@ -207,11 +204,11 @@ secret = "your-secure-jwt-secret"
 key = "your-32-character-encryption-key"   # exactly 32 chars (AES-256)
 ```
 
-Optional sections — `[oauth2]`, `[ssl]`, `[notifications]`, `[caldav]`,
-`[carddav]`, `[ai]` — are default-disabled. `[mail_sync]` is enabled by default
-and provides the local user/multi-mailbox flow. See
-[`config.toml.example`](config.toml.example) for an annotated reference of every
-key, or [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full walkthrough.
+Optional deployment sections — `[oauth2]`, `[ssl]`, `[notifications]`,
+`[caldav]`, and `[carddav]` — are default-disabled. `[mail_sync]` is enabled by
+default and provides the local user/multi-mailbox flow. See
+[`config.toml.example`](config.toml.example) for the starter template, or
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for every available key.
 
 ## Documentation
 
@@ -243,7 +240,7 @@ regenerate screenshots.
 
 ```bash
 npm install
-make dev             # Vite HMR on :3000; Go API/auth server on :3001
+make dev             # Vite HMR on :2342; Go API/auth server on :3001
 make build         # build frontend + Go binary
 make test          # go test ./...
 make vet           # go vet ./...
@@ -252,11 +249,12 @@ go run main.go     # single-process run (after npm run build for React UI)
 ./lilmail -version # print version and exit
 ```
 
-During frontend development, open **http://localhost:3000** after `make dev`.
+During frontend development, open **http://localhost:2342** after `make dev`.
 Vite serves the React source with HMR and proxies `/api`, `/v1`, authentication,
 and other backend routes to Go on `3001`; `go run main.go` by itself serves the
 embedded `frontend/dist` bundle and therefore does not provide HMR. To run the
-two processes manually, use `go run main.go -port 3001` in one terminal and
+two processes manually, use `LILMAIL_RUNTIME_DIR="$PWD" go run main.go -port 3001`
+in one terminal and
 `npm run dev` in another. Set `VITE_BACKEND_URL` if the Go server runs elsewhere.
 
 Cross-compile for any supported platform:

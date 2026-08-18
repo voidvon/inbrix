@@ -60,7 +60,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getSignatures, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -74,6 +74,7 @@ import { Separator } from "./components/ui/separator";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Skeleton } from "./components/ui/skeleton";
+import { Switch } from "./components/ui/switch";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "./components/ui/pagination";
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
@@ -140,6 +141,7 @@ const zh = {
   appAccount: "应用账号",
   password: "密码",
   loginFailed: "登录失败",
+  invalidCredentials: "账号或密码错误",
   loading: "正在加载…",
   loadFailed: "本地会话加载失败",
   retry: "重试",
@@ -246,6 +248,20 @@ const zh = {
   color: "颜色",
   language: "语言",
   generalSettings: "通用设置",
+  systemSettings: "系统设置",
+  systemSettingsDescription: "管理应用用户及其系统权限。",
+  systemVersion: "系统版本",
+  openRegistration: "开放注册",
+  openRegistrationDescription: "允许访客创建新的应用账号。",
+  registrationSettingUpdated: "注册设置已更新",
+  registrationClosed: "当前系统暂未开放注册。",
+  userManagement: "用户与权限",
+  role: "角色",
+  ordinaryUser: "普通用户",
+  superAdmin: "超级管理员",
+  currentUser: "当前账号",
+  roleUpdated: "用户角色已更新",
+  noUsers: "暂无用户",
   mailboxManagement: "邮箱管理",
   mailboxDescription: "管理已连接的 IMAP / SMTP 邮箱账户",
   account: "账户",
@@ -359,6 +375,7 @@ const en = {
   appAccount: "Application account",
   password: "Password",
   loginFailed: "Sign in failed",
+  invalidCredentials: "Incorrect account or password",
   loading: "Loading…",
   loadFailed: "Could not load local conversations",
   retry: "Retry",
@@ -465,6 +482,20 @@ const en = {
   color: "Color",
   language: "Language",
   generalSettings: "General",
+  systemSettings: "System settings",
+  systemSettingsDescription: "Manage application users and system permissions.",
+  systemVersion: "System version",
+  openRegistration: "Open registration",
+  openRegistrationDescription: "Allow visitors to create new application accounts.",
+  registrationSettingUpdated: "Registration setting updated",
+  registrationClosed: "Registration is currently closed.",
+  userManagement: "Users and permissions",
+  role: "Role",
+  ordinaryUser: "User",
+  superAdmin: "Super administrator",
+  currentUser: "Current account",
+  roleUpdated: "User role updated",
+  noUsers: "No users",
   mailboxManagement: "Mailboxes",
   mailboxDescription: "Manage connected IMAP / SMTP mail accounts",
   account: "Account",
@@ -2000,17 +2031,22 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
 function LoginScreen({ copy }: { copy: Copy }) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const mutation = useMutation({ mutationFn: () => signIn(login, password), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>lilmail</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form><Button nativeButton={false} render={<a href="/register" />} variant="link" size="sm">Create an application account</Button></div></main>;
+  const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
+  const mutation = useMutation({
+    mutationFn: () => signIn(login, password),
+    onSuccess: (result) => window.location.assign(result.next),
+    onError: (value) => toast.error(value instanceof ApiError && value.status === 401 ? copy.invalidCredentials : copy.loginFailed),
+  });
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>lilmail</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label><Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form>{publicSettings.data?.registrationOpen && <Button nativeButton={false} render={<a href="/register" />} variant="link" size="sm">{copy.createAccount}</Button>}</div></main>;
 }
 
 function RegisterScreen({ copy }: { copy: Copy }) {
   const [form, setForm] = useState({ login: "", displayName: "", password: "", confirmation: "" });
   const [error, setError] = useState("");
+  const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
   const mutation = useMutation({ mutationFn: () => register(form.login, form.displayName, form.password, form.confirmation), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
   const field = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form><Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1>{publicSettings.isPending ? <Skeleton className="h-48 w-full" /> : publicSettings.data?.registrationOpen ? <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form> : <p className="py-6 text-sm text-muted-foreground">{copy.registrationClosed}</p>}<Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
 }
 
 function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
@@ -2325,7 +2361,9 @@ function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolea
 }
 
 function SettingsContent({ copy }: { copy: Copy }) {
-  const [section, setSection] = useState<"general" | "signatures" | "ai" | "agents" | "mailboxes">("general");
+  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
+  const isSuperAdmin = capabilities.data?.role === "super_admin";
+  const [section, setSection] = useState<"general" | "signatures" | "ai" | "agents" | "mailboxes" | "system">("general");
   return (
     <div className="grid min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
       <nav className="flex gap-1 overflow-x-auto border-b pb-4 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
@@ -2334,11 +2372,73 @@ function SettingsContent({ copy }: { copy: Copy }) {
         <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => setSection("ai")}><Sparkles />{copy.aiSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => setSection("agents")}><Bot />{copy.agentSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => setSection("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
+        {isSuperAdmin && <Button className="shrink-0 justify-start" variant={section === "system" ? "secondary" : "ghost"} onClick={() => setSection("system")}><ShieldCheck />{copy.systemSettings}</Button>}
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : <MailboxSettings copy={copy} />}
+        {section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : <MailboxSettings copy={copy} />}
       </div>
     </div>
+  );
+}
+
+function SystemSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const settings = useQuery({ queryKey: ["system-settings"], queryFn: getSystemSettings, retry: false });
+  const updateRegistration = useMutation({
+    mutationFn: updateRegistrationOpen,
+    onSuccess: (updated) => {
+      queryClient.setQueryData<SystemSettingsData>(["system-settings"], (current) => current ? { ...current, registrationOpen: updated.registrationOpen } : current);
+      queryClient.setQueryData(["public-settings"], updated);
+      toast.success(copy.registrationSettingUpdated);
+    },
+    onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const updateRole = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: UserRole }) => updateSystemUserRole(id, role),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<SystemSettingsData>(["system-settings"], (current) => current ? {
+        ...current,
+        users: current.users.map((user) => user.id === updated.id ? updated : user),
+      } : current);
+      toast.success(copy.roleUpdated);
+    },
+    onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  return (
+    <section className="min-w-0">
+      <h2 className="text-lg font-semibold">{copy.systemSettings}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{copy.systemSettingsDescription}</p>
+      {settings.isPending && <div className="mt-6 grid gap-3"><Skeleton className="h-16 w-full" /><Skeleton className="h-40 w-full" /></div>}
+      {settings.error && <p className="mt-6 text-sm text-destructive">{settings.error.message}</p>}
+      {settings.data && <>
+        <div className="mt-6 flex items-center justify-between border-y py-4 text-sm"><span className="text-muted-foreground">{copy.systemVersion}</span><strong className="font-mono font-medium">{settings.data.version}</strong></div>
+        <div className="flex items-center justify-between gap-6 border-b py-4">
+          <div><Label htmlFor="open-registration">{copy.openRegistration}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.openRegistrationDescription}</p></div>
+          <Switch id="open-registration" checked={settings.data.registrationOpen} disabled={updateRegistration.isPending} onCheckedChange={(checked) => updateRegistration.mutate(checked)} />
+        </div>
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold">{copy.userManagement}</h3>
+          <div className="mt-3 overflow-hidden rounded-lg border">
+            <Table className="min-w-[38rem] table-fixed">
+              <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[44%] px-4">{copy.account}</TableHead><TableHead className="w-[28%] px-4">{copy.role}</TableHead><TableHead className="w-[28%] px-4">{copy.actions}</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {settings.data.users.map((user) => {
+                  const isCurrent = user.id === settings.data.currentUserId;
+                  return <TableRow key={user.id}>
+                    <TableCell className="px-4 py-3"><strong className="block truncate font-medium">{user.displayName || user.login}</strong><span className="block truncate text-xs text-muted-foreground">{user.login}</span></TableCell>
+                    <TableCell className="px-4 py-3"><Badge variant={user.role === "super_admin" ? "default" : "secondary"}>{user.role === "super_admin" ? copy.superAdmin : copy.ordinaryUser}</Badge></TableCell>
+                    <TableCell className="px-4 py-3">
+                      {isCurrent ? <span className="text-xs text-muted-foreground">{copy.currentUser}</span> : <Select value={user.role} disabled={updateRole.isPending} onValueChange={(role) => updateRole.mutate({ id: user.id, role: role as UserRole })}><SelectTrigger className="w-full" aria-label={`${user.login} ${copy.role}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="user">{copy.ordinaryUser}</SelectItem><SelectItem value="super_admin">{copy.superAdmin}</SelectItem></SelectContent></Select>}
+                    </TableCell>
+                  </TableRow>;
+                })}
+                {!settings.data.users.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noUsers}</TableCell></TableRow>}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </>}
+    </section>
   );
 }
 

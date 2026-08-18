@@ -29,6 +29,11 @@ var (
 	ErrNotReady = errors.New("mailstore: account has not completed its first sync")
 )
 
+const (
+	RoleUser       = "user"
+	RoleSuperAdmin = "super_admin"
+)
+
 type Store struct {
 	db   *sql.DB
 	path string
@@ -40,6 +45,7 @@ type User struct {
 	Login        string
 	DisplayName  string
 	PasswordHash string
+	Role         string
 	CreatedAt    time.Time
 }
 
@@ -190,9 +196,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			login TEXT NOT NULL UNIQUE,
 			display_name TEXT NOT NULL DEFAULT '',
 			password_hash TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'super_admin')),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS system_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`INSERT OR IGNORE INTO system_settings(key, value, updated_at) VALUES('registration_open', 'true', 0)`,
 		`CREATE TABLE IF NOT EXISTS mail_accounts (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,
@@ -393,6 +406,43 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if err := s.ensureAIModelReasoningEffortColumn(ctx); err != nil {
 		return err
+	}
+	if err := s.ensureUserRoleColumn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureUserRoleColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(users)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect users schema: %w", err)
+	}
+	hasRole := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("mailstore: scan users schema: %w", err)
+		}
+		if name == "role" {
+			hasRole = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("mailstore: inspect users schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("mailstore: inspect users schema: %w", err)
+	}
+	if !hasRole {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'super_admin'))`); err != nil {
+			return fmt.Errorf("mailstore: add user role column: %w", err)
+		}
 	}
 	return nil
 }
@@ -609,17 +659,17 @@ func (s *Store) CreateUser(ctx context.Context, login, displayName, passwordHash
 		return User{}, err
 	}
 	now := time.Now().Unix()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO users(id, login, display_name, password_hash, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)`, id, login, displayName, passwordHash, now, now)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO users(id, login, display_name, password_hash, role, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, id, login, displayName, passwordHash, RoleUser, now, now)
 	if err != nil {
 		return User{}, fmt.Errorf("mailstore: create user: %w", err)
 	}
-	return User{ID: id, Login: login, DisplayName: displayName, PasswordHash: passwordHash, CreatedAt: timeFromUnix(now)}, nil
+	return User{ID: id, Login: login, DisplayName: displayName, PasswordHash: passwordHash, Role: RoleUser, CreatedAt: timeFromUnix(now)}, nil
 }
 
 func (s *Store) GetUserByLogin(ctx context.Context, login string) (User, error) {
 	var u User
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, login, display_name, password_hash, created_at FROM users WHERE login = ?`, strings.ToLower(strings.TrimSpace(login))).Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id, login, display_name, password_hash, role, created_at FROM users WHERE login = ?`, strings.ToLower(strings.TrimSpace(login))).Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &u.Role, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -633,7 +683,7 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (User, error) 
 func (s *Store) GetUser(ctx context.Context, id string) (User, error) {
 	var u User
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, login, display_name, password_hash, created_at FROM users WHERE id = ?`, id).Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id, login, display_name, password_hash, role, created_at FROM users WHERE id = ?`, id).Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &u.Role, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -662,7 +712,7 @@ func (s *Store) EnsureLegacyUser(ctx context.Context, login string) (User, error
 		return User{}, err
 	}
 	now := time.Now().Unix()
-	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO users(id, login, display_name, password_hash, created_at, updated_at) VALUES(?, ?, ?, '', ?, ?)`, id, login, login, now, now)
+	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO users(id, login, display_name, password_hash, role, created_at, updated_at) VALUES(?, ?, ?, '', ?, ?, ?)`, id, login, login, RoleUser, now, now)
 	if err != nil {
 		return User{}, fmt.Errorf("mailstore: create legacy user: %w", err)
 	}
@@ -679,6 +729,64 @@ func (s *Store) SetUserPassword(ctx context.Context, userID, passwordHash string
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func ValidUserRole(role string) bool {
+	return role == RoleUser || role == RoleSuperAdmin
+}
+
+func (s *Store) SetUserRole(ctx context.Context, userID, role string) error {
+	if !ValidUserRole(role) {
+		return fmt.Errorf("mailstore: invalid user role %q", role)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE users SET role = ?, updated_at = ? WHERE id = ?`, role, time.Now().Unix(), userID)
+	if err != nil {
+		return fmt.Errorf("mailstore: set user role: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, login, display_name, password_hash, role, created_at FROM users ORDER BY created_at, login`)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list users: %w", err)
+	}
+	defer rows.Close()
+	users := make([]User, 0)
+	for rows.Next() {
+		var user User
+		var created int64
+		if err := rows.Scan(&user.ID, &user.Login, &user.DisplayName, &user.PasswordHash, &user.Role, &created); err != nil {
+			return nil, fmt.Errorf("mailstore: scan user: %w", err)
+		}
+		user.CreatedAt = timeFromUnix(created)
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) RegistrationOpen(ctx context.Context) (bool, error) {
+	var value string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_settings WHERE key = 'registration_open'`).Scan(&value); err != nil {
+		return false, fmt.Errorf("mailstore: get registration setting: %w", err)
+	}
+	open, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("mailstore: parse registration setting: %w", err)
+	}
+	return open, nil
+}
+
+func (s *Store) SetRegistrationOpen(ctx context.Context, open bool) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO system_settings(key, value, updated_at) VALUES('registration_open', ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, strconv.FormatBool(open), time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("mailstore: set registration setting: %w", err)
 	}
 	return nil
 }

@@ -538,6 +538,29 @@ At most one signature may be `default:true`.
 { "id": "a1b2c3d4", "name": "Work", "html": "<b>Jane Doe</b>", "default": true }
 ```
 
+### System settings and roles (`/api/system`)
+
+Application accounts have role `user` or `super_admin`. New and migrated users
+default to `user`. These session-authenticated endpoints require
+`super_admin`; ordinary users receive `403` even if they call the endpoints
+directly. Password hashes are never returned.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| `GET` | `/api/public/settings` | — | `{ registrationOpen }` (public) |
+| `GET` | `/api/system/settings` | — | `{ version, currentUserId, registrationOpen, users: SystemUser[] }` |
+| `PATCH` | `/api/system/settings/registration` | `{ "registrationOpen": boolean }` | `{ registrationOpen }` |
+| `PATCH` | `/api/system/users/:id/role` | `{ "role": "user" | "super_admin" }` | Updated `SystemUser` |
+
+A super administrator may change another user's role but cannot demote its own
+account. `/api/capabilities` includes the current account's `role`, which the UI
+uses to hide the System settings entry from ordinary users; server-side checks
+remain authoritative.
+
+Registration is open by default for backward compatibility. Closing it hides
+the registration entry points in the browser and makes `POST /register` return
+`403`; the server-side check remains authoritative.
+
 ### Settings — send-as identities (`/v1/settings/identities`)
 
 The From/identity list the compose window offers. The primary mailbox is **always**
@@ -607,59 +630,59 @@ merged message is tagged with its source via `accountEmail` / `accountLabel` /
 
 ```bash
 # List mailboxes
-curl -b cookies.txt http://localhost:3000/v1/folders
+curl -b cookies.txt http://localhost:2342/v1/folders
 
 # 50 most recent messages in INBOX
-curl -b cookies.txt 'http://localhost:3000/v1/messages?folder=INBOX&limit=50'
+curl -b cookies.txt 'http://localhost:2342/v1/messages?folder=INBOX&limit=50'
 
 # Read one message
-curl -b cookies.txt 'http://localhost:3000/v1/messages/42?folder=INBOX'
+curl -b cookies.txt 'http://localhost:2342/v1/messages/42?folder=INBOX'
 
 # Full-text search
-curl -b cookies.txt 'http://localhost:3000/v1/search?folder=INBOX&q=invoice'
+curl -b cookies.txt 'http://localhost:2342/v1/search?folder=INBOX&q=invoice'
 
 # Mark as read (\Seen)  /  star (\Flagged)
-curl -b cookies.txt -X PATCH 'http://localhost:3000/v1/messages/42/flags?folder=INBOX' \
+curl -b cookies.txt -X PATCH 'http://localhost:2342/v1/messages/42/flags?folder=INBOX' \
   -H 'Content-Type: application/json' -d '{"flag":"\\Seen","add":true}'
 
 # Delete (moves to Trash by default)
-curl -b cookies.txt -X DELETE 'http://localhost:3000/v1/messages/42?folder=INBOX'
+curl -b cookies.txt -X DELETE 'http://localhost:2342/v1/messages/42?folder=INBOX'
 
 # Permanently delete (expunge, skip Trash)
-curl -b cookies.txt -X DELETE 'http://localhost:3000/v1/messages/42?folder=INBOX&hard=true'
+curl -b cookies.txt -X DELETE 'http://localhost:2342/v1/messages/42?folder=INBOX&hard=true'
 
 # Move / archive a message
-curl -b cookies.txt -X POST 'http://localhost:3000/v1/messages/42/move?folder=INBOX' \
+curl -b cookies.txt -X POST 'http://localhost:2342/v1/messages/42/move?folder=INBOX' \
   -H 'Content-Type: application/json' -d '{"toFolder":"Archive"}'
 
 # Send a message
-curl -b cookies.txt -X POST http://localhost:3000/v1/messages \
+curl -b cookies.txt -X POST http://localhost:2342/v1/messages \
   -H 'Content-Type: application/json' \
   -d '{"to":"alice@example.com","subject":"Hi","text":"Hello from /v1"}'
 
 # Save a draft
-curl -b cookies.txt -X POST http://localhost:3000/v1/drafts \
+curl -b cookies.txt -X POST http://localhost:2342/v1/drafts \
   -H 'Content-Type: application/json' \
   -d '{"to":"alice@example.com","subject":"WIP","text":"unfinished…"}'
 
 # List calendar events for a range (CalDAV must be enabled)
-curl -b cookies.txt 'http://localhost:3000/v1/calendar/events?start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z'
+curl -b cookies.txt 'http://localhost:2342/v1/calendar/events?start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z'
 
 # Search contacts (CardDAV must be enabled)
-curl -b cookies.txt 'http://localhost:3000/v1/contacts?q=alice'
+curl -b cookies.txt 'http://localhost:2342/v1/contacts?q=alice'
 
 # Set the vacation responder
-curl -b cookies.txt -X PUT http://localhost:3000/v1/settings/vacation \
+curl -b cookies.txt -X PUT http://localhost:2342/v1/settings/vacation \
   -H 'Content-Type: application/json' \
   -d '{"enabled":true,"subject":"Out of office","body":"<p>Back Monday</p>"}'
 
 # Add a connected account (password is validated against IMAP, then encrypted at rest)
-curl -b cookies.txt -X POST http://localhost:3000/v1/accounts \
+curl -b cookies.txt -X POST http://localhost:2342/v1/accounts \
   -H 'Content-Type: application/json' \
   -d '{"email":"work@corp.com","password":"…","label":"Work","imapServer":"imap.corp.com"}'
 
 # Unified inbox across the primary + all connected accounts
-curl -b cookies.txt 'http://localhost:3000/v1/unified?folder=INBOX&limit=50'
+curl -b cookies.txt 'http://localhost:2342/v1/unified?folder=INBOX&limit=50'
 ```
 
 ### `Email` shape (abridged)

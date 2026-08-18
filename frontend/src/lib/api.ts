@@ -11,29 +11,43 @@ export class ApiError extends Error {
   }
 }
 
+async function fetchCSRFToken() {
+  const response = await fetch("/csrf", {
+    headers: { Accept: "application/json" },
+    credentials: "include",
+  });
+  if (!response.ok) throw new ApiError("Failed to initialize request security", response.status);
+  const payload = await response.json() as { token?: string };
+  return payload.token || getCookie("_csrf");
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   const method = (init.method || "GET").toUpperCase();
+  const mutates = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
   let csrf = getCookie("_csrf");
-  if (!csrf && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    const response = await fetch("/csrf", {
-      headers: { Accept: "application/json" },
-      credentials: "include",
-    });
-    if (!response.ok) throw new ApiError("Failed to initialize request security", response.status);
-    const payload = await response.json() as { token?: string };
-    csrf = payload.token || getCookie("_csrf");
+  if (!csrf && mutates) {
+    csrf = await fetchCSRFToken();
   }
   if (csrf) headers.set("X-CSRF-Token", csrf);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(path, {
+  const send = () => fetch(path, {
     ...init,
     headers,
     credentials: "include",
   });
+  let response = await send();
+  // Fiber keeps CSRF tokens in process memory. After a backend restart, the
+  // browser can retain a cookie whose server-side token no longer exists. The
+  // first rejected mutation expires that stale cookie; refresh and retry once.
+  if (response.status === 403 && mutates) {
+    csrf = await fetchCSRFToken();
+    if (csrf) headers.set("X-CSRF-Token", csrf);
+    response = await send();
+  }
   const contentType = response.headers.get("content-type") || "";
   const payload: unknown = contentType.includes("application/json") ? await response.json() as unknown : await response.text();
   if (!response.ok) {
@@ -50,8 +64,51 @@ export function getConversations(query = "") {
   return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
 }
 
+export type UserRole = "user" | "super_admin";
+
 export function getCapabilities() {
-  return apiFetch<{ notifications: boolean; webPush: boolean; calendar: boolean }>("/api/capabilities");
+  return apiFetch<{ notifications: boolean; webPush: boolean; calendar: boolean; role: UserRole }>("/api/capabilities");
+}
+
+export type SystemUser = {
+  id: string;
+  login: string;
+  displayName: string;
+  role: UserRole;
+  createdAt: string;
+};
+
+export type SystemSettings = {
+  version: string;
+  currentUserId: string;
+  registrationOpen: boolean;
+  users: SystemUser[];
+};
+
+export type PublicSettings = {
+  registrationOpen: boolean;
+};
+
+export function getPublicSettings() {
+  return apiFetch<PublicSettings>("/api/public/settings");
+}
+
+export function getSystemSettings() {
+  return apiFetch<SystemSettings>("/api/system/settings");
+}
+
+export function updateSystemUserRole(id: string, role: UserRole) {
+  return apiFetch<SystemUser>(`/api/system/users/${encodeURIComponent(id)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function updateRegistrationOpen(registrationOpen: boolean) {
+  return apiFetch<PublicSettings>("/api/system/settings/registration", {
+    method: "PATCH",
+    body: JSON.stringify({ registrationOpen }),
+  });
 }
 
 export function getConversation(id: string) {

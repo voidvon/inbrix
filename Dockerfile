@@ -1,7 +1,7 @@
 # lilmail — single-binary IMAP/SMTP webmail client (React UI + JSON API).
 #
 # Build: docker build -t vulos/lilmail .
-# Run:   docker run -p 3000:3000 -v $PWD/config.toml:/app/config.toml vulos/lilmail
+# Run:   docker run -p 2342:2342 -v $PWD/config.toml:/app/config.toml vulos/lilmail
 #
 # A config.toml must be present at /app/config.toml (mount it, or bake your own
 # layer). Pure-Go build (CGO disabled) — bbolt and the optional pgx Postgres
@@ -31,5 +31,5 @@ WORKDIR /app
 COPY --from=build /lilmail /app/lilmail
 # Cache dir for the default embedded bbolt store (override with [storage] for Postgres).
 RUN mkdir -p /app/cache
-EXPOSE 3000
+EXPOSE 2342
 ENTRYPOINT ["/app/lilmail"]

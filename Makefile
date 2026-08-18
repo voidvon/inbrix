@@ -1,6 +1,6 @@
 .PHONY: dev build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest check clean
 
-# Local React/Vite development. Vite owns :3000 and proxies backend requests
+# Local React/Vite development. Vite owns :2342 and proxies backend requests
 # to Go on :3001, so the browser never renders the embedded frontend/dist copy.
 dev:
 	bash scripts/dev.sh

@@ -24,7 +24,7 @@ go.work.sum
 # env file
 .env
 
-/cache
+/data
 /sessions
 
 # Local config — contains secrets; copy config.toml.example → config.toml and edit

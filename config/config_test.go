@@ -236,8 +236,11 @@ func TestLoadConfig_CacheFolderDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Cache.Folder != "./cache" {
-		t.Fatalf("Cache.Folder default = %q, want \"./cache\" (staging would 503 without it)", cfg.Cache.Folder)
+	if cfg.Cache.Folder != "./data" {
+		t.Fatalf("Cache.Folder default = %q, want \"./data\" (staging would 503 without it)", cfg.Cache.Folder)
+	}
+	if cfg.MailSync.Database != filepath.Join("data", "mail.db") {
+		t.Fatalf("MailSync.Database default = %q, want data/mail.db", cfg.MailSync.Database)
 	}
 
 	// Explicit [cache] folder overrides the default.
@@ -247,6 +250,25 @@ func TestLoadConfig_CacheFolderDefault(t *testing.T) {
 	}
 	if cfg2.Cache.Folder != "/var/lib/lilmail/cache" {
 		t.Fatalf("Cache.Folder override = %q, want the configured value", cfg2.Cache.Folder)
+	}
+	if cfg2.MailSync.Database != "/var/lib/lilmail/cache/mail.db" {
+		t.Fatalf("MailSync.Database did not follow cache override: %q", cfg2.MailSync.Database)
+	}
+}
+
+func TestExampleConfigLoadsWithoutUIManagedConnections(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join("..", "config.toml.example"))
+	if err != nil {
+		t.Fatalf("LoadConfig(config.toml.example): %v", err)
+	}
+	if cfg.IMAP.Server != "" || cfg.IMAP.Port != 0 {
+		t.Fatalf("example should leave IMAP endpoint to the UI, got %q:%d", cfg.IMAP.Server, cfg.IMAP.Port)
+	}
+	if cfg.SMTP.Server != "" {
+		t.Fatalf("example should leave SMTP host to the UI, got %q", cfg.SMTP.Server)
+	}
+	if cfg.AI.APIKey != "" || cfg.AI.Model != "" {
+		t.Fatal("example should leave AI model credentials to the UI")
 	}
 }
 

@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -58,6 +59,23 @@ func TestUsersAndAccountsAreIsolated(t *testing.T) {
 	if alice.Login != "alice@example.com" {
 		t.Fatalf("login was not normalized: %q", alice.Login)
 	}
+	if alice.Role != RoleUser || bob.Role != RoleUser {
+		t.Fatalf("new users must default to %q: alice=%q bob=%q", RoleUser, alice.Role, bob.Role)
+	}
+	if err := s.SetUserRole(ctx, alice.ID, RoleSuperAdmin); err != nil {
+		t.Fatalf("SetUserRole: %v", err)
+	}
+	alice, err = s.GetUser(ctx, alice.ID)
+	if err != nil || alice.Role != RoleSuperAdmin {
+		t.Fatalf("super-admin role was not persisted: user=%+v err=%v", alice, err)
+	}
+	if err := s.SetUserRole(ctx, alice.ID, "owner"); err == nil {
+		t.Fatal("SetUserRole accepted an unknown role")
+	}
+	users, err := s.ListUsers(ctx)
+	if err != nil || len(users) != 2 {
+		t.Fatalf("ListUsers = %d users, err=%v; want 2", len(users), err)
+	}
 	if _, err := s.GetUserByLogin(ctx, "nobody@example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing user error: got %v", err)
 	}
@@ -98,6 +116,41 @@ func TestUsersAndAccountsAreIsolated(t *testing.T) {
 	bobAccounts, _ := s.ListAccounts(ctx, bob.ID)
 	if len(bobAccounts) != 1 || bobAccounts[0].OwnerID != bob.ID {
 		t.Fatalf("bob accounts leaked or disappeared: %+v", bobAccounts)
+	}
+}
+
+func TestOpenMigratesLegacyUsersToOrdinaryRole(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE users (
+		id TEXT PRIMARY KEY,
+		login TEXT NOT NULL UNIQUE,
+		display_name TEXT NOT NULL DEFAULT '',
+		password_hash TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	); INSERT INTO users(id, login, password_hash, created_at, updated_at) VALUES('legacy', 'legacy-user', 'hash', 1, 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy database: %v", err)
+	}
+	defer store.Close()
+	user, err := store.GetUserByLogin(context.Background(), "legacy-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Role != RoleUser {
+		t.Fatalf("legacy user role = %q, want %q", user.Role, RoleUser)
 	}
 }
 
@@ -418,5 +471,22 @@ func TestConversationNotesPersistClearAndStayAccountScoped(t *testing.T) {
 	secondNotes, _ = s.ListConversationNotes(ctx, second.ID)
 	if secondNotes["conversation-1"] != "Different account" {
 		t.Fatalf("clearing first account changed second account: %v", secondNotes)
+	}
+}
+
+func TestRegistrationSettingDefaultsOpenAndPersists(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	open, err := s.RegistrationOpen(ctx)
+	if err != nil || !open {
+		t.Fatalf("default registration setting = %t, err=%v", open, err)
+	}
+	if err := s.SetRegistrationOpen(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	open, err = s.RegistrationOpen(ctx)
+	if err != nil || open {
+		t.Fatalf("updated registration setting = %t, err=%v", open, err)
 	}
 }

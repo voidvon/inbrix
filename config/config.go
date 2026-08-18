@@ -295,7 +295,7 @@ func (c AIConfig) EmbeddedAI() bool { return c.Mode == AIModeEmbedded }
 //	idle         = true           # start an IMAP IDLE watcher when enabled
 //	desktop      = false          # native OS toast via gen2brain/beeep (local runs)
 //	webpush      = false          # VAPID Web Push (background, even with no open tab)
-//	vapid_key_file = "vapid.json" # path to persisted VAPID key-pair (auto-generated)
+//	vapid_key_file = "vapid.json" # relative paths live under the runtime data directory
 type NotificationsConfig struct {
 	Enabled      bool   `toml:"enabled"`        // master switch; default false
 	Idle         bool   `toml:"idle"`           // IMAP IDLE watcher; default true when Enabled
@@ -310,7 +310,7 @@ type NotificationsConfig struct {
 //
 //	[accounts]
 //	enabled      = false          # master switch
-//	store_file   = "accounts.db"  # bbolt database that persists extra accounts
+//	store_file   = "accounts.db"  # relative paths live under the runtime data directory
 type AccountsConfig struct {
 	Enabled   bool   `toml:"enabled"`    // master switch; default false
 	StoreFile string `toml:"store_file"` // bbolt path; default accounts.db
@@ -384,20 +384,22 @@ func LoadConfig(filepath string) (*Config, error) {
 	var config Config
 
 	config.Server.UsernameIsEmail = true
-	config.Server.Port = 3000
+	config.Server.Port = 2342
 	// Durable store defaults to the embedded bbolt backend (single-binary, no
 	// external services). Postgres is opt-in via [storage].
 	config.Storage.Backend = "bolt"
-	// Cache/staging directory. Defaults to ./cache (matching config.toml.example)
+	// Cache/staging directory. Defaults to ./data (matching config.toml.example)
 	// so the embedded bbolt store AND — crucially — outbound attachment staging
 	// (POST /v1/attachments, see handlers/jsonapi/compose_attachments.go) work out
 	// of the box. When this is empty, attachment UPLOADS fail with 503 "staging
 	// unavailable" while downloads keep working, which reads to a user as
 	// "attachments are broken" even though received mail attaches fine. A config
 	// file may still override it via [cache] folder.
-	config.Cache.Folder = "./cache"
+	config.Cache.Folder = "./data"
 	config.MailSync.Enabled = true
-	config.MailSync.Database = filepathpkg.Join(config.Cache.Folder, "mail.db")
+	// Derive this after TOML decoding so overriding only [cache].folder also
+	// moves the default SQLite database.
+	config.MailSync.Database = ""
 	config.MailSync.Interval = 60
 	config.MailSync.BatchSize = 200
 	config.MailSync.MaxMessagesPerFolder = 5000

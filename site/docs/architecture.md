@@ -32,7 +32,7 @@ lilmail/
 │   ├── bolt.go              # Embedded bbolt backend (default)
 │   ├── postgres.go          # Optional shared Postgres backend (opt-in)
 │   └── object.go            # Optional shared-object (S3) seam — attachment cache only
-├── sessions/                # Runtime session state (file-based)
+├── data/                    # Runtime databases, cache, sessions, and local state
 ├── utils/
 │   └── cache.go             # On-disk cache helpers
 ├── assets/
@@ -99,6 +99,13 @@ key and is never used as the local application password. Direct mailbox login
 remains supported and creates a legacy local user record so that mailbox users
 can later claim the same login with an application password.
 
+Application users have one of two roles: `user` (the default) or
+`super_admin`. Role checks are performed against SQLite on every protected
+system-settings request rather than trusted from browser state. Super
+administrators can list users and change another user's role through
+`/api/system/*`; they cannot demote their own account, which prevents the last
+active administrator from accidentally locking itself out of the management UI.
+
 OAuth2: lilmail runs the full authorization-code flow with PKCE. After callback,
 the access + refresh tokens are encrypted and stored in the session exactly like
 passwords. Token refresh happens transparently on the next IMAP/SMTP operation
@@ -148,7 +155,7 @@ which opens its own database file directly.
 
 (`storage/session.go` is unrelated to threading despite the neighbouring name:
 it is `FileStorage`, the fiber session store, and it writes one JSON file per
-session key under `./sessions`. No bbolt is involved.)
+session key under `data/sessions` beside the executable. No bbolt is involved.)
 
 ### Durable storage seam
 
@@ -258,7 +265,7 @@ serves the SPA shell and JSON/session endpoints; it does not render page
 templates. Shared browser assets and the service worker are served from
 `assets/`.
 
-For local frontend development, `make dev` starts Vite on `:3000` and Go on
+For local frontend development, `make dev` starts Vite on `:2342` and Go on
 `:3001`. Vite proxies `/api`, `/v1`, authentication, and SPA page routes to
 the Go server. `go run main.go` alone is the single-process production-style
 path and serves the embedded `frontend/dist` bundle.

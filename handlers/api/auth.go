@@ -195,6 +195,10 @@ func SessionMiddleware(store *session.Store) fiber.Handler {
 		if email != nil {
 			c.Locals("email", email)
 		}
+		userID := sess.Get("user_id")
+		if userID != nil {
+			c.Locals("user_id", userID)
+		}
 
 		return c.Next()
 	}

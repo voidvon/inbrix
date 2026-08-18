@@ -63,6 +63,42 @@ func isAPIRequest(c *fiber.Ctx) bool {
 	return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/v1")
 }
 
+// resolveRuntimePaths anchors relative persistent paths to the executable
+// directory. This keeps a packaged binary's data beside the binary even when
+// it is launched from another working directory (for example via Finder).
+func resolveRuntimePaths(cfg *config.Config) {
+	resolveRuntimePathsAt(cfg, runtimeBaseDir())
+}
+
+func runtimeBaseDir() string {
+	if override := strings.TrimSpace(os.Getenv("LILMAIL_RUNTIME_DIR")); override != "" {
+		if absolute, err := filepath.Abs(override); err == nil {
+			return absolute
+		}
+		return filepath.Clean(override)
+	}
+	path, err := os.Executable()
+	if err != nil {
+		path, _ = os.Getwd()
+		return path
+	}
+	return filepath.Dir(path)
+}
+
+func resolveRuntimePathsAt(cfg *config.Config, baseDir string) {
+	cfg.Cache.Folder = resolveRuntimePath(baseDir, cfg.Cache.Folder)
+	cfg.MailSync.Database = resolveRuntimePath(baseDir, cfg.MailSync.Database)
+	cfg.Notifications.VAPIDKeyFile = resolveRuntimePath(cfg.Cache.Folder, cfg.Notifications.VAPIDKeyFile)
+	cfg.Accounts.StoreFile = resolveRuntimePath(cfg.Cache.Folder, cfg.Accounts.StoreFile)
+}
+
+func resolveRuntimePath(baseDir, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
+}
+
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	portOverride := flag.Int("port", 0, "HTTP listen port (overrides [server] port)")
@@ -77,13 +113,14 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to load config:", err)
 	}
+	resolveRuntimePaths(config)
 	if *portOverride > 0 {
 		config.Server.Port = *portOverride
 	}
 
 	// Initialize session store now that we have the config (CookieSecure needs it).
 	{
-		fileStorage, err := storage.NewFileStorage("./sessions")
+		fileStorage, err := storage.NewFileStorage(filepath.Join(config.Cache.Folder, "sessions"))
 		if err != nil {
 			log.Fatal("Failed to initialize session storage:", err)
 		}
@@ -200,6 +237,10 @@ func main() {
 	webAuthHandler.SetMailMirror(mailMirror, mailSync)
 	webEmailHandler := web.NewEmailHandler(store, config, webAuthHandler)
 	webEmailHandler.SetMailMirror(mailMirror)
+	var systemSettings *web.SystemSettingsHandler
+	if mailMirror != nil {
+		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
+	}
 
 	// Browser mutations use the double-submit cookie pattern. The same handler
 	// is composed into /v1 below; its Next hook skips requests that the JSON API's
@@ -265,6 +306,9 @@ func main() {
 		token, _ := c.Locals("csrfToken").(string)
 		return c.JSON(fiber.Map{"token": token})
 	})
+	if systemSettings != nil {
+		app.Get("/api/public/settings", systemSettings.HandleRegistrationStatus)
+	}
 	app.Get("/folder/*", csrfMiddleware, serveSPA)
 	app.Post("/login", loginLimiter, csrfMiddleware, webAuthHandler.HandleLogin)
 	app.Post("/user-login", loginLimiter, csrfMiddleware, webAuthHandler.HandleUserLogin)
@@ -343,7 +387,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/settings/")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -380,10 +424,18 @@ func main() {
 	apiRoutes := protected.Group("/api")
 	{
 		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
+			role := mailstore.RoleUser
+			if mailMirror != nil {
+				userID, _ := c.Locals("user_id").(string)
+				if user, userErr := mailMirror.GetUser(c.UserContext(), userID); userErr == nil {
+					role = user.Role
+				}
+			}
 			return c.JSON(fiber.Map{
 				"notifications": config.Notifications.Enabled,
 				"webPush":       config.Notifications.Enabled && config.Notifications.WebPush,
 				"calendar":      config.CalDAV.Enabled,
+				"role":          role,
 			})
 		})
 		apiRoutes.Get("/csrf", func(c *fiber.Ctx) error {
@@ -410,6 +462,12 @@ func main() {
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)
 
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
+		if systemSettings != nil {
+			systemRoutes := apiRoutes.Group("/system", systemSettings.RequireSuperAdmin)
+			systemRoutes.Get("/settings", systemSettings.HandleGet)
+			systemRoutes.Patch("/settings/registration", systemSettings.HandleUpdateRegistration)
+			systemRoutes.Patch("/users/:id/role", systemSettings.HandleUpdateUserRole)
+		}
 	}
 
 	// AI mail-assistant routes — registered always (gated internally on config.AI.Enabled).

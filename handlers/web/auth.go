@@ -141,6 +141,13 @@ func (h *AuthHandler) HandleRegister(c *fiber.Ctx) error {
 	if h.mirror == nil {
 		return c.Status(fiber.StatusNotFound).SendString("Local user accounts are not enabled")
 	}
+	registrationOpen, err := h.mirror.RegistrationOpen(c.UserContext())
+	if err != nil {
+		return RenderStatus(c, fiber.StatusInternalServerError, "register", fiber.Map{"Error": "Failed to load registration settings"})
+	}
+	if !registrationOpen {
+		return RenderStatus(c, fiber.StatusForbidden, "register", fiber.Map{"Error": "Registration is closed"})
+	}
 	login := strings.TrimSpace(strings.ToLower(c.FormValue("login")))
 	displayName := strings.TrimSpace(c.FormValue("display_name"))
 	password := c.FormValue("password")

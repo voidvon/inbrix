@@ -30,7 +30,7 @@ installation required to run it.
 2. Extract the archive to a directory of your choice.
 3. Copy `config.toml.example` to `config.toml` in the same directory (or use
    the example below).
-4. Edit `config.toml` with your mail server details.
+4. Replace the JWT and encryption secrets in `config.toml`.
 5. Run the binary: `./lilmail`
 
 ### Option B — build from source
@@ -49,25 +49,21 @@ Create `config.toml` in the same directory as the binary:
 
 ```toml
 [server]
-port = 3000
+port = 2342
 username_is_email = true
 
 [imap]
-server = "imap.example.com"
-port   = 993
 tls    = true
 
 [smtp]
-server       = "smtp.example.com"
-port         = 587
 use_starttls = true
 
 [cache]
-folder = "./cache"
+folder = "./data"
 
 [mail_sync]
 enabled = true
-database = "./cache/mail.db"
+database = "./data/mail.db"
 interval = 60
 batch_size = 200
 max_messages_per_folder = 5000
@@ -91,16 +87,19 @@ key = "a-32-character-encryption-key!!"
 # or: go run main.go (after `npm run build`)
 ```
 
-Open **http://localhost:3000** in your browser. You can sign in directly with a
+Open **http://localhost:2342** in your browser. You can sign in directly with a
 mailbox, or choose the lilmail application-account flow: create an application
 account, then add one or more mailboxes from Settings. The first mailbox is
 validated against IMAP and immediately gets a background synchronization worker.
+Mailbox IMAP/SMTP hosts, ports, credentials, labels, and colours are entered in
+Settings; OpenAI-compatible models and API keys are managed there as well.
 Click **Sign in with OAuth2** instead when OAuth2 is configured.
 
 After the first successful mailbox login, the inbox and message details are
 served from the local SQLite mirror. The worker refreshes folders, metadata, and
-full message bodies every `mail_sync.interval` seconds. Back up `cache/mail.db`,
-`sessions/`, `cache/`, and `config.toml` together. The encryption key in
+full message bodies every `mail_sync.interval` seconds. Relative data paths are
+resolved from the directory containing the `lilmail` executable. Back up
+`data/` and `config.toml` together. The encryption key in
 `config.toml` is required to decrypt stored mailbox credentials.
 
 ## Frontend development
@@ -111,10 +110,10 @@ with the project helper:
 
 ```bash
 npm install                 # first run only
-make dev                    # Vite :3000, Go backend :3001
+make dev                    # Vite :2342, Go backend :3001
 ```
 
-Open **http://localhost:3000**. Vite serves `frontend/src` and proxies API,
+Open **http://localhost:2342**. Vite serves `frontend/src` and proxies API,
 authentication, and other backend routes to Go, so the browser uses the same
 origin during development. The Go process uses `-port 3001` without changing
 the `[server] port` used by the normal single-binary mode.
@@ -123,7 +122,7 @@ The equivalent manual setup is:
 
 ```bash
 # terminal 1
-go run main.go -port 3001
+LILMAIL_RUNTIME_DIR="$PWD" go run main.go -port 3001
 
 # terminal 2
 npm run dev
@@ -147,7 +146,7 @@ insecure_skip_verify = true
 
 lilmail does not terminate TLS. It serves plain HTTP on `[server] port` and
 nothing else, so HTTPS means a reverse proxy in front of it (nginx, Caddy,
-Traefik — whatever you already run). Point the proxy at `http://127.0.0.1:3000`
+Traefik — whatever you already run). Point the proxy at `http://127.0.0.1:2342`
 and give it the certificate.
 
 Then tell lilmail it is being served over HTTPS, so the session and CSRF
@@ -194,7 +193,7 @@ the proxy.
 ## Verifying the installation
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:2342/health
 # OK
 ```
 

@@ -1,225 +1,96 @@
-[server]
-port = 3000
-# Legacy alias for [auth] allow_full_email_username (kept for backwards
-# compatibility). If [auth] allow_full_email_username is set, it takes
-# precedence over this key.
-username_is_email = true
-# Allow a host shell (e.g. Vulos OS) to embed LilMail as an iframe. Space-separated
-# list of origins in CSP frame-ancestors syntax. Leave empty for same-origin only.
-# Example for the Vulos OS shell:  frame_ancestors = "'self' http://localhost:8080"
-frame_ancestors = ""
-# Set to true when serving over HTTPS (direct [ssl] or TLS reverse proxy) to
-# add the Secure flag to session cookies. STRONGLY recommended for any
-# internet-facing deployment; set to false only for plain-HTTP local dev.
-secure_cookies = true
+# LilMail starter configuration.
+#
+# Mailbox servers, ports, credentials, labels, and colours are configured after
+# signing in under Settings > Mailboxes. OpenAI-compatible models and API keys
+# are configured under Settings > Model management, so they do not belong here.
+# See docs/CONFIGURATION.md for the complete deployment reference.
 
-# Authentication / login preferences.
+[server]
+port = 2342
+# Keep false for local HTTP. Set true when LilMail is served through HTTPS.
+secure_cookies = false
+# Optional: origins allowed to embed LilMail in an iframe.
+# frame_ancestors = "'self' https://example.com"
+
+# Mailbox connection policy. Hosts and ports are entered in the UI.
 [auth]
-# Controls what LilMail sends as the IMAP/SMTP login username.
-#   true  → the FULL email address is used as the username (e.g.
-#           "alice@example.com"). This is what most hosted providers expect
-#           (Gmail, Fastmail, Migadu, Zoho, …) and is the default.
-#   false → only the local part before "@" is sent (e.g. "alice"). Use this for
-#           self-hosted Dovecot/Postfix setups that authenticate the bare handle.
-# This takes precedence over the legacy [server] username_is_email key above.
 allow_full_email_username = true
 
 [imap]
-server = "mail.example.com"
-port = 993
 tls = true
 
-# Cache / working directory. Used for the embedded bbolt store AND for staging
-# OUTBOUND attachment uploads (POST /v1/attachments) before a message is sent.
-# Defaults to "./cache" when omitted; set it to a writable, persistent path.
-# If this points nowhere writable, composing with attachments fails with a 503
-# "attachment staging unavailable" while reading/downloading attachments still
-# works — which looks like "attachments are broken" but is a config issue.
-[cache]
-folder = "./cache"
-
-# Local SQLite mail mirror. The background worker synchronizes headers and full
-# MIME bodies here so inbox/list/detail/search requests do not need to contact
-# IMAP. Set sync_bodies = false to reduce local disk/network use at the cost of
-# an IMAP request when an uncached message is opened.
-[mail_sync]
-enabled = true
-database = "./cache/mail.db"
-interval = 60
-batch_size = 200
-max_messages_per_folder = 5000 # 0 = all messages
-sync_bodies = true
-
-# Durable key-value store for caches and shared state (thread metadata,
-# recipients, push subscriptions). Optional — omit this whole section to use the
-# default embedded bbolt backend (single binary, no external services).
-# Set backend = "postgres" only when several instances must share one store, or
-# when another Vulos service needs to read the same data.
-[storage]
-backend = "bolt"   # "bolt" (default) | "postgres"
-# postgres_dsn = "postgres://user:password@localhost:5432/lilmail?sslmode=require"
-
-[jwt]
-secret = "your-secure-jwt-secret"
-
-[encryption]
-key = "your-32-character-encryption-key"
-
 [smtp]
-# If not specified, SMTP server will be derived from IMAP server
-server = "mail.example.com"
-port = 587
+# true for STARTTLS (normally port 587); false for implicit TLS (normally 465).
 use_starttls = true
 
+# Replace both values before using LilMail outside local development.
+[jwt]
+secret = "replace-with-a-long-random-secret"
 
-# LilMail does not terminate TLS. It serves plain HTTP on [server] port and is
-# meant to run behind a reverse proxy or host shell that holds the certificate.
-# Enabling this block does not give you HTTPS — the only thing it changes is
-# that a Strict-Transport-Security header is sent, which is why it also wants a
-# domain. Leave it off unless something in front of LilMail is doing TLS.
-#
-# Note that enabling it is fail-fast: cert_file and key_file must both be set
-# and must load as an X.509 pair, or the server exits at startup. Shipping this
-# block enabled with placeholder paths meant that copying this file verbatim —
-# which is exactly what the install docs tell you to do — produced an install
-# that would not boot.
-[ssl]
-enabled = false
-# cert_file = "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
-# key_file = "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
-# domain = "yourdomain.com"
-# hsts_max_age = 31536000  # 1 year in seconds
+[encryption]
+# Exactly 16, 24, or 32 bytes. Changing it later makes stored credentials unreadable.
+key = "replace-this-32-byte-key-now!!!!"
 
-# Optional: OAuth2 / OpenID Connect login. When enabled, a "Sign in with
-# OAuth2" button appears on the login page. The access token is presented to
-# IMAP and SMTP using the XOAUTH2 or OAUTHBEARER SASL mechanism. Password login
-# keeps working when this is disabled.
-[oauth2]
-enabled = false
-client_id = "lilmail"
-client_secret = "your-oauth2-client-secret"      # leave empty for public PKCE clients
-auth_url = "https://auth.example.com/application/o/authorize/"
-token_url = "https://auth.example.com/application/o/token/"
-# Optional. Used to look up the user's email. If omitted, the email is read
-# from the id_token (request the "openid email" scopes).
-userinfo_url = "https://auth.example.com/application/o/userinfo/"
-redirect_url = "https://yourdomain.com/auth/oauth/callback"
-scopes = ["openid", "email", "profile"]
-mechanism = "xoauth2"     # "xoauth2" or "oauthbearer"
-email_claim = "email"     # claim holding the email address
-use_pkce = true           # PKCE (S256); recommended
+# Runtime data defaults to ./data beside the lilmail executable. Override only
+# when the deployment needs a different persistent location.
+# [cache]
+# folder = "/var/lib/lilmail"
 
-# Optional: Phase-6 real-time notifications. Everything below is OPT-IN and
-# DEFAULT-DISABLED. With enabled = false (the default) the application behaves
-# exactly as before — no extra goroutines, no SSE route, no JS changes.
-#
-# SSE + browser notifications (while a tab is open):
-#   1. Set enabled = true.
-#   2. Restart the server.
-#   3. Open LilMail; grant Notification permission when prompted.
-#
-# Web Push (background, even with no open tab) — requires HTTPS:
-#   4. Set webpush = true.  A VAPID key pair is auto-generated on first start
-#      and persisted to vapid_key_file (default: vapid.json in the working dir).
-#   5. Go to the React Settings page and enable Push notifications.
-#
+# Mail synchronization is enabled by default. These are optional tuning values.
+# [mail_sync]
+# interval = 60
+# batch_size = 200
+# max_messages_per_folder = 5000 # 0 = all messages
+# sync_bodies = true
+
+# Optional shared storage for multi-instance deployments. A local bbolt database
+# under data/ is used when this section is omitted.
+# [storage]
+# backend = "postgres"
+# postgres_dsn = "postgres://user:password@localhost:5432/lilmail?sslmode=require"
+
+# Optional OAuth2 / OpenID Connect login.
+# [oauth2]
+# enabled = true
+# client_id = "lilmail"
+# client_secret = ""
+# auth_url = "https://auth.example.com/application/o/authorize/"
+# token_url = "https://auth.example.com/application/o/token/"
+# userinfo_url = "https://auth.example.com/application/o/userinfo/"
+# redirect_url = "https://mail.example.com/auth/oauth/callback"
+# scopes = ["openid", "email", "profile"]
+# mechanism = "xoauth2"
+# use_pkce = true
+
+# Optional server-side notification capability. Users enable or disable their
+# own browser subscription from Settings after this capability is enabled.
 # [notifications]
-# enabled       = false   # master switch — must be true to activate anything
-# idle          = true    # IMAP IDLE watcher (recommended; falls back to NOOP poll)
-# desktop       = false   # native OS toast via gen2brain/beeep (local/desktop runs)
-# webpush       = false   # VAPID Web Push — background notifications; needs HTTPS
-# vapid_key_file = "vapid.json"  # path for persisted VAPID key pair (auto-generated)
+# enabled = true
+# idle = true
+# desktop = false
+# webpush = true
+# vapid_key_file = "vapid.json"
 
-# Optional: CalDAV calendar integration. Routes appear in the sidebar only when enabled.
-#
+# Optional DAV integrations. These connection settings are not currently
+# managed by the UI.
 # [caldav]
-# enabled  = true
-# url      = "https://cal.example.com/dav/"   # CalDAV endpoint or principal URL
-# auth     = "basic"                           # "basic" or "oauth2"
-# username = "alice@example.com"               # used when auth = "basic"
-# password = "app-password"                    # used when auth = "basic"
+# enabled = true
+# url = "https://dav.example.com/calendars/"
+# auth = "basic"
+# username = "user@example.com"
+# password = "app-password"
 
-# Optional: CardDAV address-book for recipient autocomplete in the compose modal.
-# When enabled, the To/CC autocomplete also queries the configured address book.
-#
 # [carddav]
-# enabled  = false
-# url      = "https://dav.example.com"
-# username = "alice@example.com"
-# password = "secret"
+# enabled = true
+# url = "https://dav.example.com/addressbooks/"
+# username = "user@example.com"
+# password = "app-password"
 
-# Optional: Mail AI assistant. Routes:
-#   POST /api/ai/compose         — smart compose / continue / rewrite
-#   POST /api/ai/summarize       — thread summary + key points + action items
-#   POST /api/ai/reply           — 3 reply suggestions (concise / detailed / decline)
-#   POST /api/ai/extract-actions — action items with optional due dates
-#   POST /api/ai/phishing        — phishing / suspicious / clean classification
-#
-# All routes are gated on [ai] enabled. When false they return 404 {"error":"ai_disabled"},
-# no completion backend is built at all, and the feature can emit no packets.
-#
-# mode = "remote" (the default) forwards to an OpenAI-compatible SSE endpoint.
-# The default endpoint is the Vulos OS airouter (/api/ai/chat) — no extra
-# configuration needed when LilMail is embedded in a Vulos installation.
-# For standalone use, point at any OpenAI-compatible SSE chat-completion API.
-#
-# [ai]
-# enabled  = false
-# mode     = "remote"
-# endpoint = "http://localhost:8080/api/ai/chat"  # Vulos OS airouter (default)
-# api_key  = ""    # Bearer token — leave empty for local Vulos airouter
-# model    = ""    # model slug forwarded to endpoint; empty = endpoint default
-#
-# mode = "embedded" runs llmux (github.com/vul-os/llmux) as an in-process Go
-# library instead: no gateway to deploy, no completion hop. llmux does the
-# routing, retries, failover, sovereignty enforcement and BYOK inside LilMail's
-# process, using its OWN JSON config (providers/routes/keys) at llmux_config.
-# LilMail overrides four things in it, whatever the file says: no listener, no
-# price-feed sync, no Postgres/Redis, and no response cache unless llmux_cache
-# is true. `model` is REQUIRED here and must be routable by that config.
-#
-# llmux_cache = true opts into llmux's in-memory TTL'd LRU: model output derived
-# from your mail is then retained in process memory until it expires or is
-# evicted (never written to disk). It is off by default.
-#
-# [ai]
-# enabled      = true
-# mode         = "embedded"
-# model        = "llama3.1"                 # required; must be routable by llmux_config
-# llmux_config = "/etc/lilmail/llmux.json"  # empty = llmux defaults + env auto-detection
-# llmux_cache  = false
-
-# Optional: per-IP rate limits for brute-force / abuse protection.
-# All limits are sane-defaulted in code; this section is purely for override.
-#
+# Optional per-IP rate-limit overrides. Built-in defaults are used when omitted.
 # [rate_limit]
-# login_max    = 10    # POST /login — attempts per window per source IP
-# login_window = 60    # window in seconds
-# send_max     = 30    # POST /v1/messages (send) — messages per window per IP
-# send_window  = 60
-# ai_max       = 20    # /api/ai/* routes — requests per window per IP
-# ai_window    = 60
-
-# Legacy multi-account support used only when [mail_sync] is disabled. With the
-# default SQLite mirror, create a lilmail application account at /register and
-# add/switch mailboxes from Settings. Mailbox credentials are stored encrypted
-# (AES-256-GCM, using the same key as session credentials) in cache/mail.db.
-#
-# Routes added when enabled:
-#   GET    /api/accounts              — list attached accounts (no passwords)
-#   POST   /api/accounts              — add an account (validates IMAP credentials)
-#   DELETE /api/accounts/:email       — remove an account
-#   POST   /api/accounts/:email/switch — switch the active session to this account
-#
-# Unified inbox:
-#   Once two accounts are added, a "Unified" toggle appears in the inbox toolbar.
-#   With SQLite enabled it merges the local mirrors without opening IMAP.
-#   Each row shows a colour badge from the account's configured colour.
-#   Access directly: GET /inbox?unified=1
-#   React client:    GET /api/conversations?q=project
-#   Reply/send from a unified-view message uses the correct account's SMTP
-#   credentials automatically (pass account_email in the compose form).
-#
-# [accounts]
-# enabled    = false          # legacy bbolt path; default false
-# store_file = "accounts.db"  # used only when mail_sync.enabled = false
+# login_max = 10
+# login_window = 60
+# send_max = 30
+# send_window = 60
+# ai_max = 20
+# ai_window = 60

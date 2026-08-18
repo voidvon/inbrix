@@ -14,6 +14,14 @@ export default defineConfig(({ command, mode }) => {
     changeOrigin: true,
     cookieDomainRewrite: "",
   };
+  const pageActionProxy = {
+    ...backendProxy,
+    bypass(request: { method?: string; headers: { accept?: string } }) {
+      if (request.method === "GET" && request.headers.accept?.includes("text/html")) {
+        return "/index.html";
+      }
+    },
+  };
 
   return {
     root: "frontend",
@@ -31,21 +39,20 @@ export default defineConfig(({ command, mode }) => {
     },
     server: {
       host: "127.0.0.1",
-      port: 3000,
+      port: 2342,
       strictPort: true,
       proxy: {
         "/api": backendProxy,
         "/v1": backendProxy,
         "/assets": backendProxy,
         "/csrf": backendProxy,
-        "/user-login": backendProxy,
-        "/login": backendProxy,
-        "/register": backendProxy,
-        "/demo-login": backendProxy,
+        "/user-login": pageActionProxy,
+        "/login": pageActionProxy,
+        "/register": pageActionProxy,
+        "/demo-login": pageActionProxy,
         "/logout": backendProxy,
         "/language": backendProxy,
         "/auth": backendProxy,
-        "/settings": backendProxy,
         "/events": backendProxy,
         "/sw.js": backendProxy,
         "/licenses.txt": backendProxy,

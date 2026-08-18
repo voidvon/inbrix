@@ -7,9 +7,11 @@ lilmail reads `config.toml` from the current working directory at startup. Copy
 cp config.toml.example config.toml
 ```
 
-All sections except `[server]`, `[imap]`, `[smtp]`, `[cache]`, `[mail_sync]`,
-`[jwt]`, and `[encryption]` are **optional**. The local SQLite mail mirror is
-enabled by default.
+The starter file contains only deployment settings and transport policies.
+Mailbox hosts, ports, credentials, labels, and colours are managed from Settings
+> Mailboxes; OpenAI-compatible models and API keys are managed from Settings >
+Model management. The local SQLite mail mirror is enabled by default. The
+sections below remain the complete reference for advanced deployments.
 
 ### How the file is located
 
@@ -20,10 +22,9 @@ flag lilmail accepts is `-version`, which prints the version and exits. If the
 file is missing or malformed the process exits immediately with
 `Failed to load config: …`.
 
-Several other paths default to being relative to the working directory too
-(`./cache`, `./sessions`, `./accounts.db`, `./vapid.json`), so **the working
-directory is part of your configuration**. If you run lilmail from a service
-manager, set the working directory explicitly — see
+Persistent paths are resolved relative to the directory containing the
+`lilmail` executable, so launching the same binary from a different working
+directory does not select a different database. See
 [What lilmail writes to disk](CONFIGURATION.md#what-lilmail-writes-to-disk).
 
 ### Config errors that stop startup, and warnings that do not
@@ -52,7 +53,7 @@ you configure Postgres, check the log on first start.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `port` | int | `3000` | HTTP listen port |
+| `port` | int | `2342` | HTTP listen port |
 | `username_is_email` | bool | `true` | Send the full email address as the IMAP/SMTP login username |
 | `frame_ancestors` | string | `""` | Space-separated CSP `frame-ancestors` origins. Leave empty for same-origin only. Example: `"'self' http://localhost:8080"` |
 | `secure_cookies` | bool | `false` | Set the `Secure` flag on the session and CSRF cookies. Enable when serving over HTTPS (direct `[ssl]` or TLS reverse proxy) |
@@ -169,20 +170,18 @@ backend = "bolt"   # default; omit the section entirely for the same effect
 
 ### What lilmail writes to disk
 
-Five paths, all relative to the process's working directory unless you set them
-to something absolute. This is why the working directory is part of your
-configuration.
+Persistent paths are relative to the directory containing the executable unless
+you set them to something absolute.
 
 | Path | Default | Written when |
 |------|---------|--------------|
-| `./cache` | `[cache] folder` | Always — cached message bodies and metadata |
-| `./cache/mail.db` | `[mail_sync] database` | When the local SQLite mirror is enabled — users, encrypted mailbox credentials, folders, message metadata, and cached bodies |
-| `./sessions` | not configurable | Always — server-side session records |
-| `accounts.db` | `[accounts] store_file` | Only when the legacy bbolt multi-account path is enabled while `[mail_sync]` is disabled |
-| `vapid.json` | `[notifications] vapid_key_file` | Only with `[notifications] webpush = true` — the generated VAPID key pair |
+| `./data` | `[cache] folder` | Always — cached message bodies, metadata, and other local state |
+| `./data/mail.db` | `[mail_sync] database` | When the local SQLite mirror is enabled — users, encrypted mailbox credentials, folders, message metadata, and cached bodies |
+| `./data/sessions` | not configurable | Always — server-side session records |
+| `./data/accounts.db` | `[accounts] store_file` | Only when the legacy bbolt multi-account path is enabled while `[mail_sync]` is disabled |
+| `./data/vapid.json` | `[notifications] vapid_key_file` | Only with `[notifications] webpush = true` — the generated VAPID key pair |
 
-Back up `cache/mail.db`, `sessions/`, `config.toml`, and any enabled bbolt/VAPID
-files together. `mail.db` contains encrypted mailbox credentials that are
+Back up `data/` and `config.toml` together. `mail.db` contains encrypted mailbox credentials that are
 useless without the `[encryption] key` from `config.toml`; `vapid.json` is the
 identity your push subscriptions are bound to, so regenerating it invalidates
 existing subscriptions.
@@ -503,7 +502,7 @@ inbox. This section is only used when the SQLite mirror is disabled.
 
 ```toml
 [server]
-port = 3000
+port = 2342
 username_is_email = true
 
 [imap]
@@ -517,7 +516,7 @@ port         = 587
 use_starttls = true
 
 [cache]
-folder = "./cache"
+folder = "./data"
 
 [jwt]
 secret = "change-me-to-a-long-random-string"
