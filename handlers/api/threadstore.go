@@ -17,7 +17,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"lilmail/models"
+	"inbrix/models"
 	"log"
 	"sync"
 	"time"

@@ -1,4 +1,4 @@
-// Package storage defines lilmail's durable key-value seam and its backends.
+// Package storage defines inbrix's durable key-value seam and its backends.
 //
 // The seam is one small interface (KV) with two implementations:
 //
@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	"lilmail/config"
+	"inbrix/config"
 )
 
 // ErrNotFound is returned by Get when a namespace/key pair does not exist.

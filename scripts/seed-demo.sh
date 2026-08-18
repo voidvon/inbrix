@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/seed-demo.sh
 #
-# Start lilmail in demo mode and (optionally) capture screenshots.
+# Start inbrix in demo mode and (optionally) capture screenshots.
 #
 # Demo mode uses an in-memory mail client seeded with realistic messages — no
 # IMAP server, no real credentials. The binary is configured via a temporary
@@ -19,18 +19,18 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BINARY="$REPO/lilmail"
+BINARY="$REPO/inbrix"
 TMP_DIR="$REPO/.demo-tmp"
 TMP_CFG="$TMP_DIR/config.toml"
-PORT="${LILMAIL_PORT:-3099}"
+PORT="${INBRIX_PORT:-3099}"
 BASE_URL="http://localhost:$PORT"
 
-DEMO_EMAIL="${LILMAIL_DEMO_EMAIL:-demo@lilmail.dev}"
-DEMO_PASSWORD="${LILMAIL_DEMO_PASSWORD:-demo}"
+DEMO_EMAIL="${INBRIX_DEMO_EMAIL:-demo@inbrix.dev}"
+DEMO_PASSWORD="${INBRIX_DEMO_PASSWORD:-demo}"
 
 # Reproducible secrets (safe for local use; not for production).
-JWT_SECRET="${LILMAIL_JWT_SECRET:-lilmail-demo-jwt-secret-not-for-production}"
-ENC_KEY="${LILMAIL_ENC_KEY:-lilmail-demo-enc-key-32-bytes!!!}"  # exactly 32 chars
+JWT_SECRET="${INBRIX_JWT_SECRET:-inbrix-demo-jwt-secret-not-for-production}"
+ENC_KEY="${INBRIX_ENC_KEY:-inbrix-demo-enc-key-32-bytes!!!!}"  # exactly 32 chars
 
 DO_SCREENSHOTS=0
 WITH_CALENDAR=0
@@ -52,12 +52,12 @@ done
 # Hand-rolling a fake CalDAV endpoint was the obvious shortcut and is the
 # wrong one — the screenshot would then be a picture of the fake, and this
 # repo's claim is that its screens are real captures. So this runs Radicale,
-# an actual CalDAV server, and lilmail talks to it over the wire exactly as
+# an actual CalDAV server, and inbrix talks to it over the wire exactly as
 # it would to Fastmail or a self-hosted box.
 #
 # Opt-in, because it needs Python and Radicale which the rest of the pipeline
 # does not: `--with-calendar`. Without it everything behaves as before.
-CALDAV_PORT="${LILMAIL_CALDAV_PORT:-5232}"
+CALDAV_PORT="${INBRIX_CALDAV_PORT:-5232}"
 CALDAV_URL="http://127.0.0.1:${CALDAV_PORT}/demo/work"
 CALDAV_PID=""
 
@@ -95,8 +95,8 @@ fi
 # Build binary if needed
 # -----------------------------------------------------------------------
 if [[ ! -f "$BINARY" ]]; then
-  echo "[seed-demo] Building frontend and lilmail binary..."
-  cd "$REPO" && npm run build && go build -o lilmail .
+  echo "[seed-demo] Building frontend and inbrix binary..."
+  cd "$REPO" && npm run build && go build -o inbrix .
 fi
 
 # -----------------------------------------------------------------------
@@ -146,7 +146,7 @@ fi
 
 echo "[seed-demo] Demo config written to $TMP_CFG"
 echo "[seed-demo] Demo login URL (no credentials needed): $BASE_URL/demo-login"
-echo "[seed-demo] Starting lilmail on $BASE_URL ..."
+echo "[seed-demo] Starting inbrix on $BASE_URL ..."
 
 # -----------------------------------------------------------------------
 # Start server
@@ -200,11 +200,11 @@ if [[ $DO_SCREENSHOTS -eq 1 ]]; then
     cd scripts && npm install && cd ..
   fi
 
-  LILMAIL_EXTERNAL=1 \
+  INBRIX_EXTERNAL=1 \
   BASE_URL="$BASE_URL" \
-  LILMAIL_USERNAME="$DEMO_EMAIL" \
-  LILMAIL_PASSWORD="$DEMO_PASSWORD" \
-  LILMAIL_IMAP_SERVER="imap.example.com" \
+  INBRIX_USERNAME="$DEMO_EMAIL" \
+  INBRIX_PASSWORD="$DEMO_PASSWORD" \
+  INBRIX_IMAP_SERVER="imap.example.com" \
   node scripts/demo-screenshots.mjs
 
   echo "[seed-demo] Screenshots written to docs/screenshots/"

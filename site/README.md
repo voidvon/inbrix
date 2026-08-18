@@ -1,4 +1,4 @@
-# site/ — the lilmail website
+# site/ — the inbrix website
 
 Two static pages, no build step, nothing fetched from a CDN — the same rules the
 binary follows. Open `index.html` over any static server and it works offline.
@@ -35,7 +35,7 @@ generator re-points each one:
 | `docs/API.md`, `API.md`, `../docs/API.md` | `api.md` | `docs.html` rule 5 turns a `<chapter>.md` href into in-page navigation |
 | `#attachments` | `api.md#attachments` | the hash router reads a bare `#foo` as a *document slug* and navigates away |
 | `CONFIGURATION.md#shared-object-storage-vulos_storage_broker_secret` | `configuration.md#shared-object-storage-vulosstoragebrokersecret` | `docs.html`'s `slugify()` deletes underscores and backticks and collapses hyphen runs; GitHub's does not |
-| `TASKS.md`, `../config.toml.example` | `https://github.com/vul-os/lilmail/blob/main/…` | not in the bundle, so it leaves the bundle honestly |
+| `TASKS.md`, `../config.toml.example` | `https://github.com/vul-os/inbrix/blob/main/…` | not in the bundle, so it leaves the bundle honestly |
 | `docs/screenshots/hero.png` | `screenshots/hero.png` | `docs.html` rule 4 re-points it at `site/screenshots/` |
 
 `site/gen/gen_test.go` fails on drift **and** on any link or heading anchor that
@@ -55,7 +55,7 @@ disagree.
 pages swap between them with the theme. Regenerate with the demo server:
 
 ```bash
-scripts/seed-demo.sh          # starts lilmail on :3099 with the in-memory inbox
+scripts/seed-demo.sh          # starts inbrix on :3099 with the in-memory inbox
 # then drive Playwright against http://localhost:3099 in the colour scheme you want
 ```
 

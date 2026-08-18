@@ -22,7 +22,7 @@ import (
 	"github.com/emersion/go-imap"
 	idle "github.com/emersion/go-imap-idle"
 	imapClient "github.com/emersion/go-imap/client"
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // WatchInbox selects INBOX on the receiver's underlying IMAP connection, then

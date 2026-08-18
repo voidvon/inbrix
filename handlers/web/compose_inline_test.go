@@ -30,11 +30,11 @@ func inlineTestForm(t *testing.T, field string, data []byte) *multipart.Form {
 
 func TestParseComposeInlineAttachments(t *testing.T) {
 	form := inlineTestForm(t, "inline_image_0", []byte("\x89PNG\r\n\x1a\nimage"))
-	got, err := parseComposeInlineAttachments(`[{"field":"inline_image_0","contentId":"image123@lilmail"}]`, form.File)
+	got, err := parseComposeInlineAttachments(`[{"field":"inline_image_0","contentId":"image123@inbrix"}]`, form.File)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["inline_image_0"].ContentID != "image123@lilmail" {
+	if got["inline_image_0"].ContentID != "image123@inbrix" {
 		t.Fatalf("unexpected manifest: %+v", got)
 	}
 	if contentType, err := sniffComposeInlineImage(form.File["inline_image_0"][0]); err != nil || contentType != "image/png" {

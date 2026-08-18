@@ -4,6 +4,6 @@ export {};
 
 declare global {
   interface Window {
-    lilmailLocale?: string;
+    inbrixLocale?: string;
   }
 }

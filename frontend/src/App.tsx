@@ -606,7 +606,7 @@ function useLocale(value?: string): Copy {
 
 function prefersDarkMode() {
   if (typeof window === "undefined") return false;
-  const stored = window.localStorage.getItem("lilmail-theme");
+  const stored = window.localStorage.getItem("inbrix-theme");
   if (stored === "dark") return true;
   if (stored === "light") return false;
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -678,7 +678,7 @@ function InboxPage() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("lilmail-theme", darkMode ? "dark" : "light");
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
   useEffect(() => {
@@ -1346,9 +1346,9 @@ function EmailHTMLFrame({ html, title, rootRef, eager }: { html: string; title: 
       clearDocumentObservers();
 
       const installTransparentBackground = () => {
-        if (!doc.head || doc.head.querySelector("[data-lilmail-frame-style]")) return;
+        if (!doc.head || doc.head.querySelector("[data-inbrix-frame-style]")) return;
         const style = doc.createElement("style");
-        style.dataset.lilmailFrameStyle = "";
+        style.dataset.inbrixFrameStyle = "";
         style.textContent = "html, body { background-color: transparent !important; }";
         doc.head.append(style);
       };
@@ -1486,7 +1486,7 @@ function normalizeQuoteHTML(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
   const quoteSelector = "blockquote, includetail, .gmail_quote, .yahoo_quoted, .protonmail_quote, .outlook_quote, .quoted-text, .quotedcontent, .original-message";
   Array.from(document.body.querySelectorAll(quoteSelector)).reverse().forEach((element) => {
-    if (element.closest("[data-lilmail-signature]")) return;
+    if (element.closest("[data-inbrix-signature]")) return;
     const tag = element.tagName.toLowerCase();
     if (tag !== "blockquote" && tag !== "includetail" && element.querySelector(quoteSelector)) return;
     let attribution = element.getAttribute("data-attribution") || "";
@@ -1496,7 +1496,7 @@ function normalizeQuoteHTML(html: string) {
       previous.remove();
     }
     const wrapper = document.createElement("div");
-    wrapper.dataset.lilmailReplyQuote = "";
+    wrapper.dataset.inbrixReplyQuote = "";
     wrapper.dataset.attribution = quoteAttribution(attribution);
     while (element.firstChild) wrapper.appendChild(element.firstChild);
     element.replaceWith(wrapper);
@@ -1505,7 +1505,7 @@ function normalizeQuoteHTML(html: string) {
   const separatorIndex = children.findIndex((element) => /^[-_\s]*original(?:\s+message)?[-_\s]*$/i.test((element.textContent || "").replace(/\u00a0/g, " ").trim()));
   if (separatorIndex >= 0) {
     const wrapper = document.createElement("div");
-    wrapper.dataset.lilmailReplyQuote = "";
+    wrapper.dataset.inbrixReplyQuote = "";
     wrapper.dataset.attribution = quoteAttribution(children[separatorIndex].textContent || "Original message");
     children.slice(separatorIndex + 1).forEach((element) => wrapper.appendChild(element));
     children[separatorIndex].replaceWith(wrapper);
@@ -1521,7 +1521,7 @@ function serializeEmailHTML(html: string) {
 
 function serializeQuoteHTML(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
-  Array.from(document.body.querySelectorAll("[data-lilmail-reply-quote]")).reverse().forEach((element) => {
+  Array.from(document.body.querySelectorAll("[data-inbrix-reply-quote]")).reverse().forEach((element) => {
     const attribution = element.getAttribute("data-attribution") || "Quoted message";
     const paragraph = document.createElement("p");
     paragraph.textContent = attribution.endsWith(":") ? attribution : `${attribution}:`;
@@ -1555,14 +1555,14 @@ function restoreInlineImagePreviews(html: string, inlineImages: InlineComposeIma
 
 function serializeComposeHTML(html: string) {
   const document = new DOMParser().parseFromString(serializeInlineImageReferences(serializeQuoteHTML(html), true), "text/html");
-  Array.from(document.body.querySelectorAll("[data-lilmail-signature]")).forEach((element) => {
+  Array.from(document.body.querySelectorAll("[data-inbrix-signature]")).forEach((element) => {
     element.replaceWith(...Array.from(element.childNodes));
   });
   return document.body.innerHTML;
 }
 
 function signatureNodeHTML(signature: EmailSignature) {
-  return `<div data-lilmail-signature="${escapeHTML(signature.id)}" data-signature-name="${escapeHTML(signature.name)}">${signature.html.trim() || "<p></p>"}</div>`;
+  return `<div data-inbrix-signature="${escapeHTML(signature.id)}" data-signature-name="${escapeHTML(signature.name)}">${signature.html.trim() || "<p></p>"}</div>`;
 }
 
 function setEditorSignature(editor: Editor, signature: EmailSignature | null) {
@@ -1897,7 +1897,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     }
 
     const previews = files.map((file) => {
-      const contentId = `${crypto.randomUUID().replaceAll("-", "")}@lilmail`;
+      const contentId = `${crypto.randomUUID().replaceAll("-", "")}@inbrix`;
       return { contentId, file, previewURL: URL.createObjectURL(file) };
     });
     let additions: Array<InlineComposeImage & { width: number; height: number }>;
@@ -2037,7 +2037,7 @@ function LoginScreen({ copy }: { copy: Copy }) {
     onSuccess: (result) => window.location.assign(result.next),
     onError: (value) => toast.error(value instanceof ApiError && value.status === 401 ? copy.invalidCredentials : copy.loginFailed),
   });
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>lilmail</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label><Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form>{publicSettings.data?.registrationOpen && <Button nativeButton={false} render={<a href="/register" />} variant="link" size="sm">{copy.createAccount}</Button>}</div></main>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-xl border bg-card p-6 ring-1 ring-foreground/5"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span><strong>Inbrix AI</strong></div><h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.login}</h1><p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">{copy.appAccount}<Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required /></Label><Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">{copy.password}<Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></Label><Button type="submit" className="w-full" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.login}</Button></form>{publicSettings.data?.registrationOpen && <Button nativeButton={false} render={<a href="/register" />} variant="link" size="sm">{copy.createAccount}</Button>}</div></main>;
 }
 
 function RegisterScreen({ copy }: { copy: Copy }) {
@@ -2046,11 +2046,11 @@ function RegisterScreen({ copy }: { copy: Copy }) {
   const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
   const mutation = useMutation({ mutationFn: () => register(form.login, form.displayName, form.password, form.confirmation), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
   const field = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1>{publicSettings.isPending ? <Skeleton className="h-48 w-full" /> : publicSettings.data?.registrationOpen ? <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form> : <p className="py-6 text-sm text-muted-foreground">{copy.registrationClosed}</p>}<Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>Inbrix AI</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1>{publicSettings.isPending ? <Skeleton className="h-48 w-full" /> : publicSettings.data?.registrationOpen ? <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form> : <p className="py-6 text-sm text-muted-foreground">{copy.registrationClosed}</p>}<Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
 }
 
 function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
-  return <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6"><a className="flex items-center gap-2 font-semibold" href="/inbox"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>lilmail</a><h1 className="text-sm font-semibold">{title}</h1><div>{action}</div></header>;
+  return <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6"><a className="flex items-center gap-2 font-semibold" href="/inbox"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>Inbrix AI</a><h1 className="text-sm font-semibold">{title}</h1><div>{action}</div></header>;
 }
 
 type AttachmentKind = "all" | "images" | "pdf" | "documents" | "spreadsheets" | "archives";
@@ -2103,7 +2103,7 @@ function AttachmentsPage() {
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("lilmail-theme", darkMode ? "dark" : "light");
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
   const authenticated = (metadata.error instanceof ApiError && metadata.error.status === 401) || (attachments.error instanceof ApiError && attachments.error.status === 401);
@@ -2265,7 +2265,7 @@ function FolderPage({ folder }: { folder: string }) {
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("lilmail-theme", darkMode ? "dark" : "light");
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
   useEffect(() => {
     const restoreMessageFromURL = () => {
@@ -3093,7 +3093,7 @@ function CalendarPage() {
   const create = useMutation({ mutationFn: () => createCalendarEvent({ ...form, start: new Date(form.start).toISOString(), end: new Date(form.end).toISOString(), allDay: false }), onSuccess: () => { setForm({ summary: "", location: "", start: "", end: "" }); void queryClient.invalidateQueries({ queryKey: ["calendar"] }); } });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("lilmail-theme", darkMode ? "dark" : "light");
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
   if (metadata.error instanceof ApiError && metadata.error.status === 401) return <LoginScreen copy={copy} />;
   return (

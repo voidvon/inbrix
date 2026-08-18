@@ -1,4 +1,4 @@
-module lilmail
+module inbrix
 
 go 1.25.0
 

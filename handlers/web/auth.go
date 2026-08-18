@@ -4,10 +4,10 @@ package web
 import (
 	"errors"
 	"fmt"
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/mailstore"
-	"lilmail/utils"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/mailstore"
+	"inbrix/utils"
 	"log"
 	"os"
 	"path/filepath"
@@ -72,7 +72,7 @@ func (h *AuthHandler) ShowRegister(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"page": "register"})
 }
 
-// HandleUserLogin authenticates a lilmail application user. Mailbox
+// HandleUserLogin authenticates a inbrix application user. Mailbox
 // credentials are never used as the application password; the selected
 // mailbox is loaded separately from the encrypted account table.
 func (h *AuthHandler) HandleUserLogin(c *fiber.Ctx) error {
@@ -530,7 +530,7 @@ func (h *AuthHandler) HandleDemoLogin(c *fiber.Ctx) error {
 
 	email := h.config.Demo.Email
 	if email == "" {
-		email = "demo@lilmail.dev"
+		email = "demo@inbrix.dev"
 	}
 	username := api.GetUsernameFromEmail(email)
 	if username == "" {
@@ -549,6 +549,60 @@ func (h *AuthHandler) HandleDemoLogin(c *fiber.Ctx) error {
 		}
 	}
 
+	var userID, accountID string
+	if h.mirror != nil {
+		user, err := h.mirror.EnsureLegacyUser(c.UserContext(), email)
+		if err != nil {
+			return c.Status(500).SendString("Failed to create demo user")
+		}
+		account, err := h.mirror.UpsertAccount(c.UserContext(), mailstore.Account{
+			OwnerID:      user.ID,
+			Email:        email,
+			Username:     email,
+			Label:        "Demo mailbox",
+			Color:        "#2FB8AC",
+			IMAPServer:   h.config.IMAP.Server,
+			IMAPPort:     h.config.IMAP.Port,
+			IMAPTLS:      h.config.IMAP.TLS,
+			SMTPServer:   h.config.SMTP.Server,
+			SMTPPort:     h.config.SMTP.Port,
+			SMTPStartTLS: h.config.SMTP.UseSTARTTLS,
+			AuthType:     demoAuthType,
+			IsDefault:    true,
+		})
+		if err != nil {
+			return c.Status(500).SendString("Failed to create demo mailbox")
+		}
+		folders, err := demoClient.FetchFolders()
+		if err != nil {
+			return c.Status(500).SendString("Failed to seed demo folders")
+		}
+		for _, folder := range folders {
+			messages, err := demoClient.FetchMessages(folder.Name, 1000)
+			if err != nil {
+				return c.Status(500).SendString("Failed to seed demo messages")
+			}
+			for index := range messages {
+				messages[index].Folder = folder.Name
+			}
+			if err := h.mirror.UpsertFolder(c.UserContext(), mailstore.Folder{
+				AccountID:    account.ID,
+				Name:         folder.Name,
+				Delimiter:    folder.Delimiter,
+				Attributes:   folder.Attributes,
+				UnreadCount:  folder.UnreadCount,
+				MessageCount: len(messages),
+				SyncComplete: true,
+			}); err != nil {
+				return c.Status(500).SendString("Failed to seed demo folders")
+			}
+			if err := h.mirror.UpsertMessages(c.UserContext(), account.ID, folder.Name, messages); err != nil {
+				return c.Status(500).SendString("Failed to seed demo messages")
+			}
+		}
+		userID, accountID = user.ID, account.ID
+	}
+
 	token, err := api.GenerateToken(username, email, h.config.JWT.Secret)
 	if err != nil {
 		return c.Status(500).SendString("Failed to create token")
@@ -559,6 +613,10 @@ func (h *AuthHandler) HandleDemoLogin(c *fiber.Ctx) error {
 	sess.Set("username", username)
 	sess.Set("token", token)
 	sess.Set("auth_type", demoAuthType)
+	if userID != "" {
+		sess.Set("user_id", userID)
+		sess.Set("account_id", accountID)
+	}
 	sess.SetExpiry(24 * 60 * 60 * time.Second)
 
 	if err := sess.Save(); err != nil {

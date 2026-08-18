@@ -1,4 +1,4 @@
-# LilMail Tasks 📋
+# Inbrix AI Tasks 📋
 
 Working backlog derived from [ROADMAP.md](ROADMAP.md). Checked items are done;
 phases are executed in order. Each task must leave `go build ./...`,

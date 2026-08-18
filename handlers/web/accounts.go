@@ -17,9 +17,9 @@ package web
 
 import (
 	"fmt"
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/mailstore"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/mailstore"
 	"log"
 	"strings"
 

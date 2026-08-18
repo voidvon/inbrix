@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"lilmail/handlers/api"
+	"inbrix/handlers/api"
 	"mime/multipart"
 	"net/http"
 	"strings"

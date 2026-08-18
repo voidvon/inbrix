@@ -21,8 +21,8 @@ package web
 import (
 	"context"
 	"fmt"
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 	"log"
 	"sort"
 	"sync"

@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"lilmail/models"
+	"inbrix/models"
 	"testing"
 	"time"
 )

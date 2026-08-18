@@ -2,8 +2,8 @@ package web
 
 import (
 	"encoding/json"
-	"lilmail/mailstore"
-	"lilmail/models"
+	"inbrix/mailstore"
+	"inbrix/models"
 	"strings"
 	"testing"
 	"time"
@@ -254,7 +254,7 @@ func TestConversationJSONRepairsCIDImagesFromLegacyMetadata(t *testing.T) {
 
 func TestCollapseQuotedHTML(t *testing.T) {
 	out := collapseQuotedHTML(`<div>New reply</div><div class="gmail_quote"><blockquote>Original</blockquote></div>`)
-	if !strings.Contains(out, `<details class="lilmail-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Original") {
+	if !strings.Contains(out, `<details class="inbrix-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Original") {
 		t.Fatalf("quoted HTML was not collapsed: %s", out)
 	}
 }
@@ -268,20 +268,20 @@ func TestCollapseQuotedHTMLUsesLocale(t *testing.T) {
 
 func TestCollapseQuotedHTMLIncludetail(t *testing.T) {
 	out := collapseQuotedHTML(`<div>New reply</div><includetail><div>------------------ Original ------------------</div><div>From: old@example.com</div><div>Old message</div></includetail>`)
-	if !strings.Contains(out, `<details class="lilmail-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Old message") {
+	if !strings.Contains(out, `<details class="inbrix-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Old message") {
 		t.Fatalf("includetail quoted HTML was not collapsed: %s", out)
 	}
-	if strings.Contains(out, `<details class="lilmail-quoted"><summary>Show quoted message</summary><div>New reply`) {
+	if strings.Contains(out, `<details class="inbrix-quoted"><summary>Show quoted message</summary><div>New reply`) {
 		t.Fatalf("new reply was incorrectly placed inside quoted block: %s", out)
 	}
 }
 
 func TestCollapseQuotedHTMLOriginalSeparator(t *testing.T) {
 	out := collapseQuotedHTML(`<div>New reply</div><div>------------------ Original ------------------</div><div>From: old@example.com</div><div>Old message</div>`)
-	if !strings.Contains(out, `<details class="lilmail-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Old message") {
+	if !strings.Contains(out, `<details class="inbrix-quoted">`) || !strings.Contains(out, "New reply") || !strings.Contains(out, "Old message") {
 		t.Fatalf("original separator HTML was not collapsed: %s", out)
 	}
-	if strings.Contains(out, `<details class="lilmail-quoted"><summary>Show quoted message</summary><div>New reply`) {
+	if strings.Contains(out, `<details class="inbrix-quoted"><summary>Show quoted message</summary><div>New reply`) {
 		t.Fatalf("new reply was incorrectly placed inside quoted block: %s", out)
 	}
 }

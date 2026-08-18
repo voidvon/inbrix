@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/handlers/api"
-	"lilmail/mailstore"
+	"inbrix/handlers/api"
+	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
 )

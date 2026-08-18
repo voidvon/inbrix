@@ -5,10 +5,10 @@
 dev:
 	bash scripts/dev.sh
 
-# Build the React frontend and embed it into the lilmail binary
+# Build the React frontend and embed it into the inbrix binary
 build:
 	npm run build
-	go build -o lilmail .
+	go build -o inbrix .
 
 # Regenerate THIRD-PARTY-NOTICES.txt from the real dependency graph (Go modules
 # + browser assets). The file is embedded in the binary and served at
@@ -59,8 +59,8 @@ verify-selftest:
 check: build fmt-check vet test site-docs-check site-render verify-selftest
 
 # Regenerate docs/screenshots/*.png using Playwright.
-# Boots lilmail with a minimal demo config (login page captured without credentials).
-# Set LILMAIL_* env vars for inbox/message/compose/settings screenshots (see docs/SCREENSHOTS.md).
+# Boots inbrix with a minimal demo config (login page captured without credentials).
+# Set INBRIX_* env vars for inbox/message/compose/settings screenshots (see docs/SCREENSHOTS.md).
 screenshots: build
 	@echo "==> Installing Playwright dependencies (first run only)..."
 	cd scripts && npm install --silent && npx --yes playwright install chromium 2>/dev/null || true
@@ -84,4 +84,4 @@ site-docs:
 	go run ./site/gen
 
 clean:
-	rm -f lilmail
+	rm -f inbrix

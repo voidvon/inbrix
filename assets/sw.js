@@ -1,8 +1,8 @@
-// sw.js — LilMail Service Worker
+// sw.js — Inbrix AI Service Worker
 //
 // Responsibilities:
 //   1. Handle 'push' events: decrypt the JSON payload and show a notification.
-//   2. Handle 'notificationclick': focus an existing LilMail tab or open a new one.
+//   2. Handle 'notificationclick': focus an existing Inbrix AI tab or open a new one.
 //   3. Handle 'pushsubscriptionchange': re-subscribe and POST the new subscription.
 //
 // This file is intentionally kept minimal — no caching / offline logic. The
@@ -10,7 +10,7 @@
 
 'use strict';
 
-const LILMAIL_ORIGIN = self.location.origin;
+const INBRIX_ORIGIN = self.location.origin;
 const SW_LOCALE = (new URL(self.location.href).searchParams.get('locale') || navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 /** @type {Record<string, string>} */
 const SW_TRANSLATIONS = {
@@ -87,7 +87,7 @@ addEventListener('push', function (event) {
         badge: '/assets/icon.png',
         tag: data.tag || 'newmail',          // collapse multiple notifications
         renotify: false,
-        data: { url: LILMAIL_ORIGIN + '/inbox' },
+        data: { url: INBRIX_ORIGIN + '/inbox' },
     };
 
     event.waitUntil(registration.showNotification(title, options));
@@ -101,14 +101,14 @@ addEventListener('notificationclick', function (event) {
     const notifData = event.notification.data;
     const targetUrl = (isUrlBag(notifData) && typeof notifData.url === 'string')
         ? notifData.url
-        : LILMAIL_ORIGIN + '/inbox';
+        : INBRIX_ORIGIN + '/inbox';
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (windowClients) {
-            // Focus an existing LilMail tab if one is open.
+            // Focus an existing Inbrix AI tab if one is open.
             for (let i = 0; i < windowClients.length; i++) {
                 const client = windowClients[i];
-                if (client.url.startsWith(LILMAIL_ORIGIN) && 'focus' in client) {
+                if (client.url.startsWith(INBRIX_ORIGIN) && 'focus' in client) {
                     return client.focus();
                 }
             }
@@ -146,6 +146,19 @@ addEventListener('notificationclick', function (event) {
  */
 function isVapidPublicKeyResponse(v) {
     return typeof v === 'object' && v !== null && typeof (/** @type {{ publicKey?: unknown }} */ (v)).publicKey === 'string';
+}
+
+/**
+ * @typedef {Object} CsrfTokenResponse
+ * @property {string} token
+ */
+
+/**
+ * @param {unknown} v
+ * @returns {v is CsrfTokenResponse}
+ */
+function isCsrfTokenResponse(v) {
+    return typeof v === 'object' && v !== null && typeof (/** @type {{ token?: unknown }} */ (v)).token === 'string';
 }
 
 /**
@@ -189,7 +202,7 @@ addEventListener('pushsubscriptionchange', function (event) {
                 return fetch('/api/csrf', { credentials: 'include' })
                     .then(function (r) { return r.json(); })
                     .then(function (csrf) {
-                        if (!csrf || typeof csrf.token !== 'string' || csrf.token === '') {
+                        if (!isCsrfTokenResponse(csrf) || csrf.token === '') {
                             throw new Error('CSRF token unavailable');
                         }
                         return fetch('/api/push/subscribe', {

@@ -8,7 +8,7 @@ import (
 )
 
 // boltKV is the default embedded backend: one bbolt file, one bucket per
-// namespace. It needs no external services and keeps lilmail a single binary.
+// namespace. It needs no external services and keeps inbrix a single binary.
 type boltKV struct {
 	db *bolt.DB
 }

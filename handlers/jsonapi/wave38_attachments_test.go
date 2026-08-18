@@ -18,7 +18,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	"github.com/gofiber/fiber/v2"
 )

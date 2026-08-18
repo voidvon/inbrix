@@ -4,7 +4,7 @@
 //
 // The web client sends Gmail-flavoured operator queries (e.g.
 // `from:alice subject:"quarterly report" has:attachment is:unread -draft`).
-// lilmail delegates the search to the account's own IMAP server via IMAP SEARCH.
+// inbrix delegates the search to the account's own IMAP server via IMAP SEARCH.
 // This file maps the operator grammar onto an *imap.SearchCriteria program so the
 // IMAP server does the filtering natively, instead of a single raw TEXT match.
 //

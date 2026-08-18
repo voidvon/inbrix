@@ -16,7 +16,7 @@
 // small files and fully stateless. Both forms funnel through resolveAttachments.
 //
 // Staging is per-account (namespaced by the sanitized sender email, same scheme
-// the rest of lilmail uses for cache dirs) under config.Cache.Folder, so one
+// the rest of inbrix uses for cache dirs) under config.Cache.Folder, so one
 // account can never read another's staged uploads, and it works identically in
 // session and brokered modes on a single instance. Tokens are 128-bit random
 // hex and path-validated, so an attacker cannot traverse out of the staging dir.
@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/handlers/api"
+	"inbrix/handlers/api"
 
 	"github.com/gofiber/fiber/v2"
 )

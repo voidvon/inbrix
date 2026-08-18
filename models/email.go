@@ -84,7 +84,7 @@ type BrandIndicator struct {
 }
 
 // Unsubscribe is the distilled List-Unsubscribe / List-Unsubscribe-Post value
-// pair (RFC 2369 + RFC 8058) advertised by bulk senders. lilmail parses it
+// pair (RFC 2369 + RFC 8058) advertised by bulk senders. inbrix parses it
 // read-only from the delivered message headers; it never itself unsubscribes.
 //
 // A List-Unsubscribe header holds one or more angle-bracketed URIs, e.g.
@@ -111,7 +111,7 @@ type Unsubscribe struct {
 // AuthResults is the distilled SPF/DKIM/DMARC verdict from a message's
 // Authentication-Results header (RFC 8601), as stamped by the RECEIVING mail
 // server (the boundary MTA that authenticated the message on delivery). It is
-// read-only metadata for a "verified sender" / "why in spam" badge — lilmail does
+// read-only metadata for a "verified sender" / "why in spam" badge — inbrix does
 // not itself perform the checks; it surfaces the trusted receiver's verdict.
 //
 // Each verdict is the raw result token, lower-cased: "pass", "fail", "softfail",

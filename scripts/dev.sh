@@ -10,7 +10,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${repo_dir}"
 
-backend_port="${LILMAIL_BACKEND_PORT:-3001}"
+backend_port="${INBRIX_BACKEND_PORT:-3001}"
 backend_url="${VITE_BACKEND_URL:-http://127.0.0.1:${backend_port}}"
 backend_pid=""
 frontend_pid=""
@@ -37,7 +37,7 @@ echo "Vite frontend: http://localhost:2342"
 # `go run` executes from a temporary go-build directory. Pin runtime data to the
 # repository so development uses ./data while packaged binaries keep data beside
 # the real executable.
-LILMAIL_RUNTIME_DIR="${repo_dir}" go run main.go -port "${backend_port}" &
+INBRIX_RUNTIME_DIR="${repo_dir}" go run main.go -port "${backend_port}" &
 backend_pid=$!
 
 VITE_BACKEND_URL="${backend_url}" npm run dev &

@@ -45,7 +45,7 @@ import (
 	"syscall"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 const (

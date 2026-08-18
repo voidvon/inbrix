@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/mailstore"
+	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/mailstore"
+	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
 )

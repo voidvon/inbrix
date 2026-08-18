@@ -1,6 +1,6 @@
 # Configuration Reference
 
-lilmail reads `config.toml` from the current working directory at startup. Copy
+inbrix reads `config.toml` from the current working directory at startup. Copy
 `config.toml.example` as a starting point:
 
 ```bash
@@ -16,16 +16,16 @@ sections below remain the complete reference for advanced deployments.
 ### How the file is located
 
 The path is the literal string `config.toml`, resolved against the process's
-current working directory. There is no `--config` flag, no `$LILMAIL_CONFIG`
+current working directory. There is no `--config` flag, no `$INBRIX_CONFIG`
 environment variable, and no search of `/etc` or `$HOME` — the only command-line
-flag lilmail accepts is `-version`, which prints the version and exits. If the
+flag inbrix accepts is `-version`, which prints the version and exits. If the
 file is missing or malformed the process exits immediately with
 `Failed to load config: …`.
 
 Persistent paths are resolved relative to the directory containing the
-`lilmail` executable, so launching the same binary from a different working
+`inbrix` executable, so launching the same binary from a different working
 directory does not select a different database. See
-[What lilmail writes to disk](CONFIGURATION.md#what-lilmail-writes-to-disk).
+[What inbrix writes to disk](CONFIGURATION.md#what-inbrix-writes-to-disk).
 
 ### Config errors that stop startup, and warnings that do not
 
@@ -62,7 +62,7 @@ The session cookie is named `session_id`; it is `HttpOnly` and `SameSite=Lax`,
 and it holds only an opaque session id — never your mail password. A second,
 deliberately JS-readable cookie `_csrf` carries the double-submit CSRF token.
 
-**lilmail does not read `X-Forwarded-For`.** No proxy-header trust is configured,
+**inbrix does not read `X-Forwarded-For`.** No proxy-header trust is configured,
 so the client IP used for rate limiting is the address of whatever connected
 directly. Behind a reverse proxy that is the proxy, which means the per-IP login,
 send and AI limits become **global** limits rather than per-client ones. If you
@@ -92,7 +92,7 @@ handle.
 | `port` | int | `993` | IMAP port |
 | `tls` | bool | `true` | `true` dials implicit TLS (imaps, port 993). `false` dials **plaintext IMAP** |
 
-**`tls = false` is not STARTTLS.** lilmail's IMAP path has no STARTTLS upgrade —
+**`tls = false` is not STARTTLS.** inbrix's IMAP path has no STARTTLS upgrade —
 setting `tls = false` opens an unencrypted connection and sends your password over
 it in the clear. It exists for a plain-IMAP server on a trusted local network (or
 a stunnel/sidecar that terminates TLS for you), and for nothing else. STARTTLS is
@@ -157,18 +157,18 @@ the default embedded backend.
 | `backend` | string | `"bolt"` | `"bolt"` (embedded bbolt, single binary, nothing to run) or `"postgres"` (shared SQL store) |
 | `postgres_dsn` | string | `""` | Connection string, required when `backend = "postgres"`. e.g. `postgres://user:pw@host:5432/db?sslmode=require` |
 
-Use `postgres` only when several lilmail/Vulos instances must share one store, or
+Use `postgres` only when several inbrix/Vulos instances must share one store, or
 when another Vulos service needs to read the same data. The Postgres schema
-(a single `lilmail_kv` table) is created automatically on first connect.
+(a single `inbrix_kv` table) is created automatically on first connect.
 
 ```toml
 [storage]
 backend = "bolt"   # default; omit the section entirely for the same effect
 # backend = "postgres"
-# postgres_dsn = "postgres://lilmail:secret@localhost:5432/lilmail?sslmode=require"
+# postgres_dsn = "postgres://inbrix:secret@localhost:5432/inbrix?sslmode=require"
 ```
 
-### What lilmail writes to disk
+### What inbrix writes to disk
 
 Persistent paths are relative to the directory containing the executable unless
 you set them to something absolute.
@@ -188,7 +188,7 @@ existing subscriptions.
 
 ### Shared object storage (`VULOS_STORAGE_BROKER_SECRET`)
 
-lilmail's primary stores are IMAP (the mail) and the KV seam above; it does **not**
+inbrix's primary stores are IMAP (the mail) and the KV seam above; it does **not**
 keep mail or state in object storage. The only object-storage use is a **supplementary
 read-through cache of immutable attachment blobs**, avoiding repeated IMAP pulls of the
 same MIME part. Moving or deleting a message removes its known attachment cache objects
@@ -196,12 +196,12 @@ before changing the message on IMAP. If that lifecycle cleanup fails, the messag
 operation is stopped so a successful deletion cannot knowingly leave cached blobs behind.
 
 This is **off by default** and is **authenticated**, exactly like the MAIL credential
-broker (`LILMAIL_BROKER_SECRET`). It activates only when **all** of these hold:
+broker (`INBRIX_BROKER_SECRET`). It activates only when **all** of these hold:
 
 1. The operator sets the environment variable `VULOS_STORAGE_BROKER_SECRET` to a shared
    secret (set only in deployments behind the Vulos OS gateway). **Setting it is the
    enable signal — there is no separate on/off toggle.** When unset, injected storage
-   headers are ignored entirely and lilmail behaves as standalone (IMAP-only).
+   headers are ignored entirely and inbrix behaves as standalone (IMAP-only).
 2. The request presents a matching `X-Vulos-Storage-Broker-Auth` header. It is compared
    against the secret in constant time; an absent or mismatched value means the storage
    headers are ignored entirely (standalone behaviour). This proves the headers came
@@ -241,7 +241,7 @@ to set for standalone use.
 
 ## `[ssl]`
 
-**lilmail does not terminate TLS.** There is one listener and it is plain HTTP
+**inbrix does not terminate TLS.** There is one listener and it is plain HTTP
 on `[server] port` (`app.Listen` in `main.go`). Enabling this section does not
 open a socket on 443, does not redirect HTTP → HTTPS, and does not serve
 HTTPS. Terminate TLS in a reverse proxy.
@@ -255,7 +255,7 @@ What `[ssl] enabled = true` actually does, and all it does:
 
 So the section is, in practice, an HSTS switch with a cert-file sanity check in
 front of it. Use it when something in front of you *is* terminating TLS and you
-want lilmail to send HSTS itself; otherwise set the header in the proxy and
+want inbrix to send HSTS itself; otherwise set the header in the proxy and
 leave this section alone.
 
 | Key | Type | Default | Description |
@@ -277,7 +277,7 @@ ignored by the decoder, so the file keeps loading unchanged.
 ## `[oauth2]`
 
 OAuth2/OpenID Connect for authenticating to your IMAP and SMTP server (not a
-lilmail user-management system). When enabled, a **Sign in with OAuth2** button
+inbrix user-management system). When enabled, a **Sign in with OAuth2** button
 appears on the login page; password login keeps working alongside it.
 
 | Key | Type | Default | Description |
@@ -352,17 +352,17 @@ Real-time new-mail notifications. All keys are opt-in; setting
 AI mail assistant. All five AI routes return `404 {"error":"ai_disabled"}` when
 `enabled = false`.
 
-LilMail runs **no inference of its own**. `mode` picks where completions happen:
+Inbrix AI runs **no inference of its own**. `mode` picks where completions happen:
 
 - **`"remote"`** (the default) forwards mail content to a configurable
   **OpenAI-compatible SSE chat-completion endpoint** (just a base URL + Bearer
   token). That endpoint can be a provider directly, the Vulos OS *airouter*
   (`/api/ai/chat`), or the central **llmux** gateway (`/v1/chat/completions`).
   Nothing here is llmux-specific: it is simply a URL you point `endpoint` at.
-- **`"embedded"`** links **llmux** (`github.com/vul-os/llmux`) into LilMail as
+- **`"embedded"`** links **llmux** (`github.com/vul-os/llmux`) into Inbrix AI as
   an in-process Go library. There is no gateway to deploy and no completion
   hop — llmux does the routing, retries, failover, sovereignty enforcement and
-  BYOK inside LilMail's own process, from **llmux's own JSON config**.
+  BYOK inside Inbrix AI's own process, from **llmux's own JSON config**.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -377,7 +377,7 @@ LilMail runs **no inference of its own**. `mode` picks where completions happen:
 
 ### Routing through the central llmux gateway (Vulos suite)
 
-In a Vulos suite deployment, point LilMail at llmux so each account's AI usage is
+In a Vulos suite deployment, point Inbrix AI at llmux so each account's AI usage is
 powered per its own choice (BYOK or central) and metered/billed centrally:
 
 ```toml
@@ -388,9 +388,9 @@ account_header = "X-Vulos-Account-Token"   # header the host shell injects per r
 # api_key is used only as a fallback when the header is absent
 ```
 
-LilMail forwards the per-request account token from `account_header` as the
+Inbrix AI forwards the per-request account token from `account_header` as the
 `Authorization: Bearer <token>`. llmux resolves it to an account and decides
-**BYOK vs central** and metering on the account's behalf — **LilMail never
+**BYOK vs central** and metering on the account's behalf — **Inbrix AI never
 decides BYOK/central, it only forwards the token**. See llmux's
 `docs/LLM-ACCESS.md` ("Product consumption contract").
 
@@ -406,20 +406,20 @@ served.
 enabled      = true
 mode         = "embedded"
 model        = "llama3.1"                 # required; must be routable by llmux_config
-llmux_config = "/etc/lilmail/llmux.json"  # llmux's own config: providers, routes, keys
+llmux_config = "/etc/inbrix/llmux.json"  # llmux's own config: providers, routes, keys
 llmux_cache  = false
 ```
 
-LilMail builds the gateway and calls it directly; it never starts llmux's
+Inbrix AI builds the gateway and calls it directly; it never starts llmux's
 background work (`Run`/`Start`), so the embedded gateway makes **no outbound
-call that a mail action did not cause**. Whatever `llmux_config` says, LilMail
+call that a mail action did not cause**. Whatever `llmux_config` says, Inbrix AI
 overrides four things, because a mail client must not host them:
 
 | Overridden | Why |
 |-----------|-----|
 | No listener (`addr`, `socket_path`) | Nothing on this path serves HTTP |
 | No price-feed sync (`pricing.sources`, `azure_pricing`) | llmux's defaults are openrouter.ai and a GitHub raw URL. An embedded gateway quietly reaching a price feed from inside a mail client is exactly the surprise embedding is meant to remove. The built-in seed catalog still prices requests offline |
-| No `postgres`, no `redis` | Postgres is the one thing llmux connects **eagerly**, and it resolves its DSN from `DATABASE_URL` / `VULOS_DATABASE_URL` — so a shared DSN in the environment would otherwise have LilMail open a database pool for LLM key spend. Cross-replica key/spend state is a reason to run llmux as a service and use `mode = "remote"` |
+| No `postgres`, no `redis` | Postgres is the one thing llmux connects **eagerly**, and it resolves its DSN from `DATABASE_URL` / `VULOS_DATABASE_URL` — so a shared DSN in the environment would otherwise have Inbrix AI open a database pool for LLM key spend. Cross-replica key/spend state is a reason to run llmux as a service and use `mode = "remote"` |
 | No response cache unless `llmux_cache = true` | See below |
 
 Startup fails loudly — rather than 502-ing on the user's first summarize — when
@@ -438,13 +438,13 @@ deployment that needs each account's own keys, or central metering, wants
 
 #### Privacy and the embedded cache
 
-Mail content is never written to any persistent store by LilMail, in either
+Mail content is never written to any persistent store by Inbrix AI, in either
 mode. In remote mode it is forwarded to `endpoint` and discarded. In embedded
 mode it is handed to the in-process gateway, dispatched to the provider llmux's
 config selects, and discarded.
 
-Embedding llmux does bring its **response cache** into LilMail's process, so
-LilMail builds the gateway with that cache **disabled by default** — nothing
+Embedding llmux does bring its **response cache** into Inbrix AI's process, so
+Inbrix AI builds the gateway with that cache **disabled by default** — nothing
 derived from a message outlives the request, and the default holds even if
 `llmux_config` enables the cache itself.
 
@@ -470,7 +470,7 @@ cache and key stores are unreachable.
 ## `[accounts]`
 
 Legacy bbolt-backed multi-account support. With the default `[mail_sync]`
-`enabled = true`, use the local lilmail application-account flow instead: open
+`enabled = true`, use the local inbrix application-account flow instead: open
 `/register`, sign in at `/user-login`, and add mailboxes from Settings. The
 SQLite path is always owner-scoped and supports switching plus a local unified
 inbox. This section is only used when the SQLite mirror is disabled.
@@ -493,7 +493,7 @@ inbox. This section is only used when the SQLite mirror is disabled.
 
 | Route | Description |
 |-------|-------------|
-| `GET /register` / `POST /register` | Create a lilmail application account with a local password |
+| `GET /register` / `POST /register` | Create a inbrix application account with a local password |
 | `GET /user-login` / `POST /user-login` | Sign in to the application account and select its default mailbox |
 
 ---

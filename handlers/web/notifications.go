@@ -35,8 +35,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
 
-	"lilmail/config"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/models"
 )
 
 // MailEvent is the JSON payload sent over SSE.

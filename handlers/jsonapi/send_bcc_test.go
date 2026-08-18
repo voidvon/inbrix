@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	"github.com/gofiber/fiber/v2"
 )

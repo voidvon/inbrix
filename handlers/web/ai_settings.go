@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/config"
-	mailapi "lilmail/handlers/api"
-	"lilmail/mailstore"
+	"inbrix/config"
+	mailapi "inbrix/handlers/api"
+	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

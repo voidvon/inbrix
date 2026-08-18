@@ -36,7 +36,7 @@ export const ReplyQuote = Node.create({
   parseHTML() {
     return [
       {
-        tag: "div[data-lilmail-reply-quote]",
+        tag: "div[data-inbrix-reply-quote]",
         getAttrs: (element) => ({ attribution: element.dataset.attribution || "Quoted message", collapsed: true }),
       },
       {
@@ -48,7 +48,7 @@ export const ReplyQuote = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     const attribution = typeof HTMLAttributes.attribution === "string" ? HTMLAttributes.attribution : "Quoted message";
-    return ["div", mergeAttributes(HTMLAttributes, { "data-lilmail-reply-quote": "", "data-attribution": attribution }), 0];
+    return ["div", mergeAttributes(HTMLAttributes, { "data-inbrix-reply-quote": "", "data-attribution": attribution }), 0];
   },
 
   addNodeView() {

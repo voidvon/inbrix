@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/models"
-	"lilmail/storage"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/models"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -1,5 +1,5 @@
 // storage/sigv4_vectors_test.go — KNOWN-ANSWER vectors for the one HMAC request
-// signer lilmail actually ships (AWS SigV4 over the optional object-storage
+// signer inbrix actually ships (AWS SigV4 over the optional object-storage
 // seam). The published, implementable spec these pin is docs/SIGNING.md.
 //
 // WHY A GOLDEN TEST AND NOT A SHAPE TEST: TestSigV4Shape (object_test.go) proves
@@ -57,7 +57,7 @@ var sigV4Vectors = []sigV4Vector{
 		name:      "GET/empty-payload/no-session-token",
 		method:    http.MethodGet,
 		host:      "s3.example.com",
-		bucket:    "lilmail-test",
+		bucket:    "inbrix-test",
 		prefix:    "tenant-a/mail/",
 		key:       "attachments/INBOX/42/2.1",
 		region:    "eu-west-2",
@@ -66,10 +66,10 @@ var sigV4Vectors = []sigV4Vector{
 		payload:   nil,
 		when:      time.Date(2026, 7, 28, 12, 34, 56, 0, time.UTC),
 
-		canonicalURI:  "/lilmail-test/tenant-a/mail/attachments/INBOX/42/2.1",
+		canonicalURI:  "/inbrix-test/tenant-a/mail/attachments/INBOX/42/2.1",
 		payloadHash:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		signedHeaders: "host;x-amz-content-sha256;x-amz-date",
-		signature:     "0e137034e1b1508316b18b00848c830f67f2189b048546f193540c730e43d6bb",
+		signature:     "1a277eeb8fddd19cc0201046366b38cfbaae3f22a936e2bc77c2b72f7fad8463",
 	},
 	{
 		// Exercises the three things vector A cannot: a non-empty payload hash, the
@@ -78,20 +78,20 @@ var sigV4Vectors = []sigV4Vector{
 		name:      "PUT/body/session-token/percent-encoded-key",
 		method:    http.MethodPut,
 		host:      "s3.example.com",
-		bucket:    "lilmail-test",
+		bucket:    "inbrix-test",
 		prefix:    "tenant-a/mail/",
 		key:       "attachments/INBOX/42/invoice #1.pdf",
 		region:    "eu-west-2",
 		accessKey: "AKIAIOSFODNN7EXAMPLE",
 		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		sessToken: "FQoGZXIvYXdzEXAMPLETOKEN",
-		payload:   []byte("lilmail"),
+		payload:   []byte("inbrix"),
 		when:      time.Date(2026, 7, 28, 12, 34, 56, 0, time.UTC),
 
-		canonicalURI:  "/lilmail-test/tenant-a/mail/attachments/INBOX/42/invoice%20%231.pdf",
-		payloadHash:   "e96d1944bba44cfbe8325c189f4d02d2ae9706f62fe885de887cf0f5e129d527",
+		canonicalURI:  "/inbrix-test/tenant-a/mail/attachments/INBOX/42/invoice%20%231.pdf",
+		payloadHash:   "c54a21d1cfab8a341d973602e7160654c67a494cd0c17ed14062ee9fd042c19e",
 		signedHeaders: "host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
-		signature:     "5eccf848247e3802bf903aaec6bcec14c08bdf02862ca30e9598b5e534fb020a",
+		signature:     "49ce5859384d80d60e659ead8404d8b0f8ee424f028143e16031405aee42c308",
 	},
 }
 
@@ -245,17 +245,17 @@ func TestSigV4VectorCoverage(t *testing.T) {
 	}
 }
 
-// TestNoOutboundWebhookSigner is a standing assertion, not a formality. lilmail
+// TestNoOutboundWebhookSigner is a standing assertion, not a formality. inbrix
 // deliberately ships NO outbound webhook emitter and NO bespoke webhook HMAC — the
 // suite already carries several mutually incompatible ones, and docs/SIGNING.md
-// records lilmail's position that it has none. If someone adds one, this test
+// records inbrix's position that it has none. If someone adds one, this test
 // fails and forces the wire format to be specified + vectored in docs/SIGNING.md
 // before it can ship, rather than becoming one more undocumented dialect.
 //
-// No count of the suite's webhook dialects is asserted here on purpose. lilmail
+// No count of the suite's webhook dialects is asserted here on purpose. inbrix
 // has no webhook signing at all, so it is not a member of that set, and this
 // repo cannot verify the other repos' designs — a number stated here would only
-// feed a suite-wide tally that wrongly includes lilmail.
+// feed a suite-wide tally that wrongly includes inbrix.
 //
 // It works by construction: the ONLY hmac.New call site permitted in the repo is
 // hmacSHA256 in this package (AWS SigV4). The check is a compile-time-adjacent
@@ -264,7 +264,7 @@ func TestNoOutboundWebhookSigner(t *testing.T) {
 	hits, err := grepRepo(`hmac\.New\(`)
 	if err != nil {
 		t.Skipf("SKIPPING outbound-webhook-signer check: could not scan the repo (%v). "+
-			"NOT VERIFIED: that lilmail still ships exactly one HMAC signer (AWS SigV4) "+
+			"NOT VERIFIED: that inbrix still ships exactly one HMAC signer (AWS SigV4) "+
 			"and no bespoke webhook HMAC.", err)
 	}
 	if len(hits) == 0 {

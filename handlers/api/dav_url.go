@@ -3,10 +3,10 @@
 //
 // WHY THIS EXISTS: in the brokered deployment (handlers/jsonapi/broker.go)
 // the embedding host injects a per-account DAV base URL (X-Vulos-Mail-Caldav-Url
-// / X-Vulos-Mail-Carddav-Url) and lilmail then dials it with the user's XOAUTH2
+// / X-Vulos-Mail-Carddav-Url) and inbrix then dials it with the user's XOAUTH2
 // access token attached as an HTTP Bearer header. If a forged or attacker-chosen
 // URL reached the client we would (a) leak that bearer token to an arbitrary
-// host and (b) turn lilmail into an SSRF proxy. So — exactly like the object-
+// host and (b) turn inbrix into an SSRF proxy. So — exactly like the object-
 // storage seam (storage/object.go) — the URL must be validated BEFORE the client
 // is built or any token is attached: https is required unless the host is
 // loopback/private, and cloud metadata endpoints are rejected outright.
@@ -20,7 +20,7 @@ import (
 	"net/url"
 	"strings"
 
-	"lilmail/storage"
+	"inbrix/storage"
 )
 
 // validateDAVURL parses raw and rejects it unless it is a transport-safe DAV

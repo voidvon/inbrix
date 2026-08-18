@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -483,7 +483,7 @@ async function checkDocsOutline(browser, base, mutate) {
     // documentElement.scrollWidth at 390 while body.scrollWidth read 2400, so
     // an early return there would have skipped the scan entirely and printed a
     // clean pass over content genuinely cut off at the viewport edge. (clip on
-    // <html> alone does not do this — lilmail's own pages report 2400 — but the
+    // <html> alone does not do this — inbrix's own pages report 2400 — but the
     // check must not depend on which element happens to carry the property.)
     // The geometric scan below needs no such gate: it reads the boxes directly.
     const over = await page.evaluate(() => {

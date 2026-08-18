@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	mailapi "lilmail/handlers/api"
-	"lilmail/models"
+	mailapi "inbrix/handlers/api"
+	"inbrix/models"
 )
 
 const (

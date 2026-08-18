@@ -1,7 +1,7 @@
-# lilmail `/v1` API — the PIM contract
+# inbrix `/v1` API — the PIM contract
 
-`/v1` is lilmail's stable, machine-readable **contract**: JSON mail + calendar +
-contacts served over one HTTP surface. lilmail is a standalone PIM client — it
+`/v1` is inbrix's stable, machine-readable **contract**: JSON mail + calendar +
+contacts served over one HTTP surface. inbrix is a standalone PIM client — it
 connects to the **user's own** IMAP/SMTP/CalDAV/CardDAV account and exposes what
 it reads/writes there as `/v1`. It hosts no mail server and depends on no central
 server. When the local SQLite mirror is enabled, one application account may own
@@ -11,7 +11,7 @@ mail request.
 `/v1` is the shared source of truth other UIs build on:
 
 - the **Vulos OS** thin Calendar/Contacts widgets and mail surface consume it;
-- lilmail's own React browser client is a first-class consumer too;
+- inbrix's own React browser client is a first-class consumer too;
 - any third-party tool or script can drive it.
 
 The API returns `models.Email` / `MailboxInfo` / `models.Calendar*` /
@@ -25,7 +25,7 @@ same engine + authentication — using `/v1` never changes the standalone UI.
 
 ## Authentication
 
-lilmail can be used without an application account through direct mailbox login.
+inbrix can be used without an application account through direct mailbox login.
 With the local SQLite mirror enabled, it also provides a local application
 account (`/register` and `/user-login`) whose password is separate from mailbox
 passwords. A user can attach several own mailboxes and switch the active one;
@@ -38,14 +38,14 @@ There are exactly **two** ways a request can be authenticated:
 
 | Mode | How the caller proves itself | Who uses it |
 |------|------------------------------|-------------|
-| **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, lilmail's React client |
+| **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, inbrix's React client |
 | **Injected credentials** (opt-in, off by default) | `X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers | an embedding host that already holds the user's mailbox credentials |
 
 Both resolve to the same thing — one mailbox connection for the duration of one
 request. There is no API-key or bearer-token scheme, no refresh endpoint of
-lilmail's own, and no way to mint a long-lived credential from `/v1`.
+inbrix's own, and no way to mint a long-lived credential from `/v1`.
 
-The API reuses lilmail's session cookie — the **same** session established by
+The API reuses inbrix's session cookie — the **same** session established by
 `POST /login`, `POST /user-login`, or the OAuth2 flow. There is no separate API
 token scheme. The local SQLite mirror is used by the HTML inbox path; `/v1`
 continues to expose the live mail engine contract and is not a second database
@@ -62,25 +62,25 @@ Send requests with credentials included (e.g. `fetch(url, { credentials: 'includ
 
 ### Injected-credential mode (embedding hosts)
 
-Normally lilmail holds its own session and connects to the user's mailbox itself.
+Normally inbrix holds its own session and connects to the user's mailbox itself.
 As an **option**, an embedding host (or the test harness) may inject the
-per-request connection descriptor as HTTP headers, so lilmail builds the IMAP/
+per-request connection descriptor as HTTP headers, so inbrix builds the IMAP/
 SMTP/DAV client **directly from the headers** instead of from a session. These
 headers only ever describe the **user's own** account (endpoint + a short-lived
-OAuth token or password) that lilmail then talks to — lilmail hosts no mail and
+OAuth token or password) that inbrix then talks to — inbrix hosts no mail and
 depends on no central server.
 
 This path is **off by default** and gated by a shared secret:
 
-- Set `LILMAIL_BROKER_SECRET` (environment variable) on the lilmail process.
-- Every request must send `X-Vulos-Broker-Auth: <secret>`. lilmail compares it
-  against `LILMAIL_BROKER_SECRET` in **constant time**.
-- **If `LILMAIL_BROKER_SECRET` is unset, or the presented secret does not match,
+- Set `INBRIX_BROKER_SECRET` (environment variable) on the inbrix process.
+- Every request must send `X-Vulos-Broker-Auth: <secret>`. inbrix compares it
+  against `INBRIX_BROKER_SECRET` in **constant time**.
+- **If `INBRIX_BROKER_SECRET` is unset, or the presented secret does not match,
   the `X-Vulos-Mail-*` headers are ignored entirely** and the request falls back
-  to normal session auth. Standalone lilmail therefore never trusts arbitrary
+  to normal session auth. Standalone inbrix therefore never trusts arbitrary
   client-supplied connection headers.
 
-When the secret validates, lilmail reads the connection spec from these headers:
+When the secret validates, inbrix reads the connection spec from these headers:
 
 | Header | Meaning |
 |--------|---------|
@@ -112,7 +112,7 @@ return an empty result (`{ "events": [] }` / `{ "busy": [] }` /
 `{ "contacts": [] }`) and the write routes return `501 Not Implemented` — the
 session is never touched. These routes are registered whenever CalDAV/CardDAV is
 enabled in config **or** the injected-credential path is active
-(`LILMAIL_BROKER_SECRET` set).
+(`INBRIX_BROKER_SECRET` set).
 
 Note: Outlook/Microsoft 365 calendar & contacts (Microsoft Graph) are **not**
 covered by this CalDAV/CardDAV path; only accounts that expose CalDAV/CardDAV
@@ -127,9 +127,9 @@ timestamp window, no nonce, no replay protection) — is specified in
 [SIGNING.md § 1](SIGNING.md#1-mail-broker-seam-inbound). Read it before deploying
 the seam: it is only safe over a trusted transport.
 
-> **No webhooks.** lilmail never calls out to a URL you supply. There is no
+> **No webhooks.** inbrix never calls out to a URL you supply. There is no
 > webhook registration surface, no event delivery, and no outbound signature
-> scheme — see [SIGNING.md § 0](SIGNING.md#0-lilmail-emits-no-webhooks) for what
+> scheme — see [SIGNING.md § 0](SIGNING.md#0-inbrix-emits-no-webhooks) for what
 > to use instead (SSE, Web Push, or polling).
 
 ## Conventions
@@ -187,7 +187,7 @@ discovered Junk/Spam folder — there is no separate training-signal endpoint on
 this backend, so the move IS the report (pair it with an undo toast like archive).
 
 `POST /v1/messages/:uid/snooze` moves the message to the Snoozed folder and
-validates + echoes `until`. lilmail is a client and does not itself run a
+validates + echoes `until`. inbrix is a client and does not itself run a
 delivery-side scheduler, so it does **not** auto-return the message to the inbox:
 the response is `200 { snoozed:true, autoReturn:false, until, folder, note }` and
 the client is responsible for surfacing the due time / returning the message.
@@ -340,8 +340,8 @@ reads from `GET /v1/messages/:uid`.
 ### Contacts (only when `[carddav] enabled`)
 
 Everything here reads and writes the **user's own** CardDAV address book. There
-is no lilmail-side contact database: a card exists iff it exists on the user's
-CardDAV server, so two lilmail instances pointed at one account see one book.
+is no inbrix-side contact database: a card exists iff it exists on the user's
+CardDAV server, so two inbrix instances pointed at one account see one book.
 
 | Method | Path | Query | Body | Returns |
 |--------|------|-------|------|---------|
@@ -513,7 +513,7 @@ stored-XSS payload cannot ride the auto-reply). Loop/backscatter protection is
 built in: auto-replies are never sent to another auto-reply (`Auto-Submitted`),
 to list mail (`List-*` / `Precedence: bulk`), or to a null/bounce sender.
 
-**Enforcement note:** lilmail is a **client** — it connects to the user's provider
+**Enforcement note:** inbrix is a **client** — it connects to the user's provider
 over IMAP/SMTP and does **not** run the inbound delivery path, so storing
 `enabled:true` here does not by itself make the provider auto-reply. This endpoint
 is the authoritative **config** the client edits and stores; actual enforcement
@@ -574,13 +574,13 @@ aliases. Each identity may link a default signature by id.
 `PUT` **replaces the whole set of aliases**. The primary mailbox is implicit: it is
 never stored, never writable, and always re-added on read.
 
-**lilmail is a client, not the send-as authority.** These identities are the
+**inbrix is a client, not the send-as authority.** These identities are the
 **client's read model** — the list the compose window offers. The user's own
 provider SMTP server remains the authority for what From it will actually accept,
 and re-checks it at submission time. Each address is still validated locally for
 shape and header-injection (CR/LF/NUL in the address or name ⇒ `400`) before it is
 stored. Nothing here makes an address inbound-deliverable — inbound delivery is the
-provider's concern, not lilmail's.
+provider's concern, not inbrix's.
 
 Compose honours the choice: `POST /v1/messages` (and `/v1/drafts`) accept
 `"from": "<address>"`, which must be the primary mailbox or a **registered**
@@ -742,7 +742,7 @@ curl -b cookies.txt 'http://localhost:2342/v1/unified?folder=INBOX&limit=50'
 plus the recipient's own `MyPartStat` — and is what the client answers with
 `POST /v1/calendar/rsvp`.
 
-`unsubscribe` is the parsed `List-Unsubscribe` (RFC 2369) pair. **lilmail never
+`unsubscribe` is the parsed `List-Unsubscribe` (RFC 2369) pair. **inbrix never
 unsubscribes on your behalf** — it only surfaces the targets. Only `http`,
 `https` and `mailto` schemes are ever emitted; anything else is dropped so a
 hostile scheme cannot ride through to the client. `oneClick` is true only when
@@ -752,7 +752,7 @@ the sender also sent `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC
 
 `brand` is a **verified** sender brand logo (BIMI) and is **fail-closed**: it is
 populated only when the message carries a DMARC `pass` verdict *and* the From
-domain publishes a BIMI record whose logo lilmail fetched (SSRF-screened) and
+domain publishes a BIMI record whose logo inbrix fetched (SSRF-screened) and
 sanitized. An unauthenticated sender therefore never gets a logo, so its presence
 is only ever a positive trust signal, never a phishing aid. `logo` is a sanitized
 SVG `data:` URI safe to place in an `<img src>`. `vmc` reflects only that the
@@ -768,7 +768,7 @@ meant to render inline (e.g. embedded images) versus regular file attachments.
 
 `auth` (present on a single-message read, `GET /v1/messages/:uid`) surfaces the
 **receiving server's** SPF/DKIM/DMARC verdict, parsed read-only from the message's
-`Authentication-Results` header (RFC 8601). lilmail does not re-verify; it exposes
+`Authentication-Results` header (RFC 8601). inbrix does not re-verify; it exposes
 the trusted receiver's stamp so the client can render a "verified sender" / "why in
 spam" badge. `null`/absent when the message carries no such header.
 

@@ -32,19 +32,19 @@ plain capture run skips the calendar with a 404.
 Faking a CalDAV endpoint would have been the easy fix and the wrong one — the
 screenshot would then be a picture of the fake. `--with-calendar` runs
 [Radicale](https://radicale.org), an actual CalDAV server, seeds it with a
-week of events, and points lilmail at it over the wire. What you see in
+week of events, and points inbrix at it over the wire. What you see in
 `calendar.png` was fetched by the same code path that talks to Fastmail.
 
 ```bash
-# From the lilmail repo root — builds binary and captures all demo screenshots:
+# From the inbrix repo root — builds binary and captures all demo screenshots:
 make demo-screenshots
 ```
 
 This will:
-1. Build the frontend and lilmail binary (`make build`)
+1. Build the frontend and inbrix binary (`make build`)
 2. Install Playwright Chromium if not already present (first run only)
 3. Write a temporary `config.toml` with `[demo] enabled = true`
-4. Start lilmail, log in as the demo user, capture all screenshots
+4. Start inbrix, log in as the demo user, capture all screenshots
 5. Write PNGs to `docs/screenshots/` and stop the server
 
 The demo seed contains:
@@ -59,14 +59,14 @@ To capture screenshots against a real account, set environment variables and
 run `make screenshots`:
 
 ```bash
-export LILMAIL_IMAP_SERVER=imap.example.com
-export LILMAIL_IMAP_PORT=993
-export LILMAIL_SMTP_SERVER=smtp.example.com
-export LILMAIL_SMTP_PORT=587
-export LILMAIL_USERNAME=you@example.com
-export LILMAIL_PASSWORD=your-app-password
-export LILMAIL_JWT_SECRET=$(openssl rand -hex 32)
-export LILMAIL_ENC_KEY="a-32-character-encryption-key!!"
+export INBRIX_IMAP_SERVER=imap.example.com
+export INBRIX_IMAP_PORT=993
+export INBRIX_SMTP_SERVER=smtp.example.com
+export INBRIX_SMTP_PORT=587
+export INBRIX_USERNAME=you@example.com
+export INBRIX_PASSWORD=your-app-password
+export INBRIX_JWT_SECRET=$(openssl rand -hex 32)
+export INBRIX_ENC_KEY="a-32-character-encryption-key!!"
 
 make screenshots
 ```
@@ -76,7 +76,7 @@ make screenshots
 | Tool | Version | Notes |
 |------|---------|-------|
 | Node.js | 18+ | Required to run the Playwright scripts |
-| Go 1.25+ | — | To build the lilmail binary (`go.mod` requires `go 1.25.0`) |
+| Go 1.25+ | — | To build the inbrix binary (`go.mod` requires `go 1.25.0`) |
 
 Playwright Chromium is installed automatically on first run.
 
@@ -106,4 +106,4 @@ scripts/seed-demo.sh          # start; open browser at http://localhost:3099/dem
 
 ## docs/screenshots/README.md
 
-See [`docs/screenshots/README.md`](https://github.com/vul-os/lilmail/blob/main/docs/screenshots/README.md) for per-file status.
+See [`docs/screenshots/README.md`](https://github.com/vul-os/inbrix/blob/main/docs/screenshots/README.md) for per-file status.

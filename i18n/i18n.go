@@ -1,4 +1,4 @@
-// Package i18n contains LilMail's user-interface translations and locale-aware
+// Package i18n contains Inbrix AI's user-interface translations and locale-aware
 // formatting helpers. Mail content is never passed through this package.
 package i18n
 
@@ -29,7 +29,7 @@ var SupportedLocales = []LocaleOption{
 // missing translation cannot make a control disappear.
 var zhCN = map[string]string{
 	"Toggle sidebar":                   "展开/收起侧栏",
-	"lilmail — go to inbox":            "lilmail — 前往收件箱",
+	"Inbrix AI - go to inbox":            "Inbrix AI - 前往收件箱",
 	"Search mail":                      "搜索邮件",
 	"Settings":                         "设置",
 	"Sign out":                         "退出登录",
@@ -187,7 +187,7 @@ var zhCN = map[string]string{
 	"On":                 "于",
 	"wrote":              "写道",
 	"Push Notifications": "推送通知",
-	"Receive notifications even when LilMail is not open in a browser tab.":          "即使没有打开 LilMail 浏览器标签页，也能接收通知。",
+	"Receive notifications even when Inbrix AI is not open in a browser tab.":          "即使没有打开 Inbrix AI 浏览器标签页，也能接收通知。",
 	"Requires permission from your browser.":                                         "需要获得浏览器授权。",
 	"Enabling…":                                                                      "正在启用…",
 	"Enable push notifications":                                                      "启用推送通知",
@@ -216,7 +216,7 @@ var zhCN = map[string]string{
 	"Multi-account support is disabled. Set": "多账号功能已禁用。请在",
 	"to enable it.":                          "中设置后启用。",
 	"About":                                  "关于",
-	"lilmail is open source under the MIT licence. It includes third-party software whose licences require attribution:": "lilmail 使用 MIT 许可证开源，其中包含需要注明许可证的第三方软件：",
+	"inbrix is open source under the MIT licence. It includes third-party software whose licences require attribution:": "inbrix 使用 MIT 许可证开源，其中包含需要注明许可证的第三方软件：",
 	"New Event":                             "新建事件",
 	"Month view":                            "月视图",
 	"Week view":                             "周视图",
@@ -274,10 +274,10 @@ var zhCN = map[string]string{
 	"Adding…":                                               "正在添加…",
 	"Application login":                                     "应用账号",
 	"Application password":                                  "应用密码",
-	"Your lilmail account keeps multiple mailboxes together.": "你的 lilmail 账号可以集中管理多个邮箱。",
+	"Your inbrix account keeps multiple mailboxes together.": "你的 inbrix 账号可以集中管理多个邮箱。",
 	"Create an application account":                           "创建应用账号",
 	"Sign in with a mailbox directly":                         "直接使用邮箱登录",
-	"Sign in with a lilmail account":                          "使用 lilmail 账号登录",
+	"Sign in with a inbrix account":                          "使用 inbrix 账号登录",
 	"Login":                                                   "登录账号",
 	"Display name (optional)":                                 "显示名称（可选）",
 	"Confirm password":                                        "确认密码",

@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"lilmail/storage"
+	"inbrix/storage"
 )
 
 // connAccountsNS is the KV namespace holding connected-account records.

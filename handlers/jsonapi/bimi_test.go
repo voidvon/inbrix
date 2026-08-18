@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 )
 
 func TestDomainOfAddress(t *testing.T) {

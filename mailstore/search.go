@@ -3,7 +3,7 @@ package mailstore
 import (
 	"context"
 	"fmt"
-	"lilmail/models"
+	"inbrix/models"
 	"regexp"
 	"strconv"
 	"strings"

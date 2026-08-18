@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	vcard "github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav"
@@ -134,7 +134,7 @@ func putContact(serverURL string, auth davAuth, ct models.Contact) (models.Conta
 	defer cancel()
 
 	if ct.UID == "" {
-		ct.UID = fmt.Sprintf("lilmail-%d", time.Now().UnixNano())
+		ct.UID = fmt.Sprintf("inbrix-%d", time.Now().UnixNano())
 	}
 	objPath := ct.Path
 	if objPath == "" {

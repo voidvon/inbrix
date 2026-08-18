@@ -34,7 +34,7 @@ config.toml
 .DS_Store
 
 # Compiled binary
-/lilmail
+/inbrix
 
 # Release staging directory (built in CI; the SHA256SUMS manifest covers it)
 /release/

@@ -1,4 +1,4 @@
-# LilMail starter configuration.
+# Inbrix AI starter configuration.
 #
 # Mailbox servers, ports, credentials, labels, and colours are configured after
 # signing in under Settings > Mailboxes. OpenAI-compatible models and API keys
@@ -7,9 +7,9 @@
 
 [server]
 port = 2342
-# Keep false for local HTTP. Set true when LilMail is served through HTTPS.
+# Keep false for local HTTP. Set true when Inbrix AI is served through HTTPS.
 secure_cookies = false
-# Optional: origins allowed to embed LilMail in an iframe.
+# Optional: origins allowed to embed Inbrix AI in an iframe.
 # frame_ancestors = "'self' https://example.com"
 
 # Mailbox connection policy. Hosts and ports are entered in the UI.
@@ -23,7 +23,7 @@ tls = true
 # true for STARTTLS (normally port 587); false for implicit TLS (normally 465).
 use_starttls = true
 
-# Replace both values before using LilMail outside local development.
+# Replace both values before using Inbrix AI outside local development.
 [jwt]
 secret = "replace-with-a-long-random-secret"
 
@@ -31,10 +31,10 @@ secret = "replace-with-a-long-random-secret"
 # Exactly 16, 24, or 32 bytes. Changing it later makes stored credentials unreadable.
 key = "replace-this-32-byte-key-now!!!!"
 
-# Runtime data defaults to ./data beside the lilmail executable. Override only
+# Runtime data defaults to ./data beside the inbrix executable. Override only
 # when the deployment needs a different persistent location.
 # [cache]
-# folder = "/var/lib/lilmail"
+# folder = "/var/lib/inbrix"
 
 # Mail synchronization is enabled by default. These are optional tuning values.
 # [mail_sync]
@@ -47,12 +47,12 @@ key = "replace-this-32-byte-key-now!!!!"
 # under data/ is used when this section is omitted.
 # [storage]
 # backend = "postgres"
-# postgres_dsn = "postgres://user:password@localhost:5432/lilmail?sslmode=require"
+# postgres_dsn = "postgres://user:password@localhost:5432/inbrix?sslmode=require"
 
 # Optional OAuth2 / OpenID Connect login.
 # [oauth2]
 # enabled = true
-# client_id = "lilmail"
+# client_id = "inbrix"
 # client_secret = ""
 # auth_url = "https://auth.example.com/application/o/authorize/"
 # token_url = "https://auth.example.com/application/o/token/"

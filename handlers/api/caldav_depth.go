@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	"github.com/emersion/go-ical"
 )

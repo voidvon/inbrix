@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"lilmail/models"
+	"inbrix/models"
 	"log"
 	"net"
 	"strings"

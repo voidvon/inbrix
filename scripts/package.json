@@ -1,7 +1,7 @@
 {
-  "name": "lilmail-site-checks",
+  "name": "inbrix-site-checks",
   "version": "1.0.0",
-  "description": "Playwright screenshotter for lilmail",
+  "description": "Playwright screenshotter for inbrix",
   "type": "module",
   "private": true,
   "license": "MIT",

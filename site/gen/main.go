@@ -52,7 +52,7 @@ import (
 )
 
 // repoURL is where links that cannot resolve inside the site bundle are sent.
-const repoURL = "https://github.com/vul-os/lilmail/blob/main/"
+const repoURL = "https://github.com/vul-os/inbrix/blob/main/"
 
 // banner marks the output as generated. It is an HTML comment, so the markdown
 // viewer renders it as nothing.

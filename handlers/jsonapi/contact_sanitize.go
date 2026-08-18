@@ -10,8 +10,8 @@ package jsonapi
 import (
 	"strings"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 )
 
 const (

@@ -1,15 +1,15 @@
-// object.go — the OPTIONAL shared-object-storage seam for lilmail.
+// object.go — the OPTIONAL shared-object-storage seam for inbrix.
 //
-// WHY THIS EXISTS (and why it is small): lilmail's primary stores are IMAP (the
+// WHY THIS EXISTS (and why it is small): inbrix's primary stores are IMAP (the
 // mail itself — the durable source of truth) and the KV seam in this package
 // (threads, recipients, push state). Neither needs object storage. The Vulos OS
 // gateway can, however, hand a request a scratch S3 bucket via per-request
-// X-Vulos-Storage-* headers. lilmail's ONLY genuinely useful use of it is
+// X-Vulos-Storage-* headers. inbrix's ONLY genuinely useful use of it is
 // supplementary: caching large, immutable attachment blobs so repeated
 // downloads don't re-pull the full MIME part from IMAP every time. That cache
 // lives under the gateway's prefix in a "mail/" sub-space.
 //
-// SECURITY: honoring storage headers means lilmail will talk to whatever S3
+// SECURITY: honoring storage headers means inbrix will talk to whatever S3
 // endpoint the headers name — an SSRF/exfiltration risk if a client could forge
 // them. So, exactly like the mail broker (handlers/jsonapi/broker.go), the
 // seam is authenticated: the X-Vulos-Storage-* headers are honored ONLY when the
@@ -22,7 +22,7 @@
 // loopback or private-network host.
 //
 // No new dependency: this is a minimal, self-contained AWS SigV4 GET/PUT/DELETE client
-// (stdlib only), preserving lilmail's single-static-binary property.
+// (stdlib only), preserving inbrix's single-static-binary property.
 package storage
 
 import (
@@ -67,7 +67,7 @@ const (
 // X-Vulos-Storage-Broker-Auth matches it. Its being set IS the enable signal.
 const storageBrokerSecretEnv = "VULOS_STORAGE_BROKER_SECRET"
 
-// mailSubPrefix is lilmail's own sub-space inside the gateway-provided prefix.
+// mailSubPrefix is inbrix's own sub-space inside the gateway-provided prefix.
 const mailSubPrefix = "mail/"
 
 // Object is a fetched object: its bytes plus the metadata needed to serve it
@@ -91,7 +91,7 @@ type ObjectStore interface {
 // storageBrokerAuthorized reports whether the request is authenticated as having
 // come from the Vulos gateway: VULOS_STORAGE_BROKER_SECRET must be set AND the
 // request's X-Vulos-Storage-Broker-Auth header must match it (constant-time). It
-// is false by default (secret unset) so standalone lilmail never trusts injected
+// is false by default (secret unset) so standalone inbrix never trusts injected
 // storage headers. This mirrors the MAIL broker's gate in handlers/jsonapi.
 func storageBrokerAuthorized(get func(string) string) bool {
 	secret := strings.TrimSpace(os.Getenv(storageBrokerSecretEnv))
@@ -112,7 +112,7 @@ func storageBrokerAuthorized(get func(string) string) bool {
 // incomplete. get is the request's header accessor (e.g. fiber.Ctx.Get) so this
 // package needs no web dependency.
 //
-// All lilmail objects are namespaced under <gateway-prefix>/mail/ so they never
+// All inbrix objects are namespaced under <gateway-prefix>/mail/ so they never
 // collide with other Vulos apps sharing the same bucket.
 func ObjectStoreFromHeaders(get func(string) string) (ObjectStore, bool) {
 	if !storageBrokerAuthorized(get) {
@@ -340,7 +340,7 @@ func (s *s3Store) sign(req *http.Request, canonicalURI, payloadHash string, now 
 // endpoint must use https, EXCEPT when it names a loopback or private-network
 // host (e.g. a sidecar MinIO at http://minio:9000 or http://127.0.0.1), where
 // plaintext is acceptable and TLS is often absent. This stops a forged/leaked
-// header from making lilmail POST credentials or attachment bytes in the clear
+// header from making inbrix POST credentials or attachment bytes in the clear
 // to an arbitrary public endpoint.
 func endpointAllowed(u *url.URL) bool {
 	switch strings.ToLower(u.Scheme) {
@@ -383,7 +383,7 @@ func hostIsLocalOrPrivate(host string) bool {
 	return strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal")
 }
 
-// joinPrefix combines the gateway prefix and lilmail's sub-prefix into a single
+// joinPrefix combines the gateway prefix and inbrix's sub-prefix into a single
 // slash-normalised prefix ending in "/" (or "" when both are empty).
 func joinPrefix(base, sub string) string {
 	base = strings.Trim(base, "/")

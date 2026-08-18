@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // collect is a helper mirroring how processMessage invokes collectBodies on a

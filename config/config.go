@@ -12,13 +12,13 @@ import (
 type ServerConfig struct {
 	Port            int  `toml:"port"`
 	UsernameIsEmail bool `toml:"username_is_email"`
-	// FrameAncestors, when set, allows LilMail to be embedded as an iframe by the
+	// FrameAncestors, when set, allows Inbrix AI to be embedded as an iframe by the
 	// listed origins (space-separated, CSP frame-ancestors syntax). This is what
-	// lets a host shell such as Vulos OS embed LilMail as its built-in Mail app.
+	// lets a host shell such as Vulos OS embed Inbrix AI as its built-in Mail app.
 	// When empty, the default same-origin-only framing policy applies.
 	FrameAncestors string `toml:"frame_ancestors"`
 	// SecureCookies sets the Secure flag on the session cookie. Enable this when
-	// LilMail is served over HTTPS (either directly via [ssl] or behind a TLS
+	// Inbrix AI is served over HTTPS (either directly via [ssl] or behind a TLS
 	// reverse proxy). Defaults to false so plain-HTTP local dev works out of the
 	// box; set to true in any internet-facing deployment.
 	SecureCookies bool `toml:"secure_cookies"`
@@ -30,7 +30,7 @@ type ServerConfig struct {
 //	[auth]
 //	allow_full_email_username = true
 //
-// AllowFullEmailUsername controls what string LilMail passes as the SASL/LOGIN
+// AllowFullEmailUsername controls what string Inbrix AI passes as the SASL/LOGIN
 // username to the IMAP and SMTP servers:
 //
 //   - true  → the full email address (e.g. "alice@example.com") is sent verbatim.
@@ -115,7 +115,7 @@ type MailSyncConfig struct {
 //
 // The default — and the standalone single-binary path — is "bolt": an embedded
 // bbolt file under cache.folder, zero external services. Set backend =
-// "postgres" (with a DSN) when several lilmail/Vulos instances must share one
+// "postgres" (with a DSN) when several inbrix/Vulos instances must share one
 // store, or when another Vulos service wants to read the same data. Postgres is
 // strictly opt-in; it is never the default.
 type StorageConfig struct {
@@ -127,7 +127,7 @@ type EncryptionConfig struct {
 	Key string `toml:"key"` // 32-byte key for AES encryption
 }
 
-// SSLConfig does NOT make LilMail serve HTTPS. There is one listener and it is
+// SSLConfig does NOT make Inbrix AI serve HTTPS. There is one listener and it is
 // plain HTTP on [server] port (app.Listen in main.go). Enabling this section
 // does exactly two things: ValidateSSL checks that cert_file and key_file load
 // as an X.509 pair (fatal at startup if they do not), and — when Domain is also
@@ -184,11 +184,11 @@ const (
 
 // AIConfig configures the mail-AI assistant endpoints.
 //
-// LilMail performs no inference of its own. There are two ways to get
+// Inbrix AI performs no inference of its own. There are two ways to get
 // completions, selected by `mode`:
 //
 //   - mode = "remote" (default) — forward to a configurable OpenAI-compatible
-//     SSE chat endpoint (just a base URL + Bearer token), so LilMail has no
+//     SSE chat endpoint (just a base URL + Bearer token), so Inbrix AI has no
 //     hard dependency on any particular gateway:
 //
 //   - Standalone / BYO: point at any OpenAI-compatible SSE chat endpoint
@@ -197,7 +197,7 @@ const (
 //   - Vulos suite: point at the central llmux gateway's
 //     /v1/chat/completions endpoint. llmux resolves the forwarded Bearer
 //     token to an account and applies BYOK-vs-central key selection
-//     on the account's behalf — LilMail itself does not
+//     on the account's behalf — Inbrix AI itself does not
 //     decide BYOK vs central, it only forwards the account's token.
 //
 //     [ai]
@@ -211,13 +211,13 @@ const (
 //   - mode = "embedded" — run llmux (github.com/vul-os/llmux) as an in-process
 //     library. No gateway to deploy and no completion hop leaves the machine
 //     unless llmux's own provider config says so; llmux does the routing,
-//     failover, sovereignty enforcement and BYOK inside LilMail's process:
+//     failover, sovereignty enforcement and BYOK inside Inbrix AI's process:
 //
 //     [ai]
 //     enabled      = true
 //     mode         = "embedded"
 //     model        = "llama3.1"                # REQUIRED: embedded llmux has no default model
-//     llmux_config = "/etc/lilmail/llmux.json" # llmux's own JSON config (providers/routes/keys)
+//     llmux_config = "/etc/inbrix/llmux.json" # llmux's own JSON config (providers/routes/keys)
 //     llmux_cache  = false                     # opt in to llmux's in-memory response cache
 type AIConfig struct {
 	// Enabled is the master switch. When false, all /api/ai/* routes return
@@ -232,7 +232,7 @@ type AIConfig struct {
 
 	// Endpoint is the URL of the OpenAI-compatible SSE chat-completion API
 	// (mode = "remote" only; ignored in embedded mode). Defaults to the Vulos
-	// OS airouter URL so LilMail works out of the box when embedded in Vulos;
+	// OS airouter URL so Inbrix AI works out of the box when embedded in Vulos;
 	// set it to llmux's /v1/chat/completions to route through the central
 	// gateway, or to any OpenAI-compatible endpoint for standalone / BYO use.
 	Endpoint string `toml:"endpoint"`
@@ -244,12 +244,12 @@ type AIConfig struct {
 	APIKey string `toml:"api_key"`
 
 	// AccountHeader names an inbound HTTP request header that carries the
-	// caller's account token (e.g. one injected by the host shell when LilMail
+	// caller's account token (e.g. one injected by the host shell when Inbrix AI
 	// is embedded in the Vulos suite). When set and present on the incoming
 	// request, its value is forwarded as the "Authorization: Bearer <token>"
 	// to the completion endpoint, so a central gateway such as llmux can
 	// resolve it to an account and apply BYOK-vs-central + metering. When the
-	// header is empty or absent, LilMail falls back to the static APIKey.
+	// header is empty or absent, Inbrix AI falls back to the static APIKey.
 	// Leave empty for standalone deployments.
 	AccountHeader string `toml:"account_header"`
 
@@ -262,11 +262,11 @@ type AIConfig struct {
 	Model string `toml:"model"`
 
 	// LLMuxConfig is the path to llmux's own JSON configuration file
-	// (providers, routes, virtual keys, BYOK — llmux's schema, not LilMail's),
+	// (providers, routes, virtual keys, BYOK — llmux's schema, not Inbrix AI's),
 	// used only in embedded mode. Empty means llmux's built-in defaults plus
 	// its environment auto-detection (OLLAMA_HOST, OPENAI_API_KEY, ...).
 	//
-	// Whatever the file says, LilMail overrides four things when it builds the
+	// Whatever the file says, Inbrix AI overrides four things when it builds the
 	// embedded gateway, because a mail client must not host them:
 	// no listener, no price-feed sync (no outbound calls of its own), no
 	// Postgres/Redis (the two things that would open sockets at construction),
@@ -351,7 +351,7 @@ type RateLimitConfig struct {
 //
 //	[demo]
 //	enabled  = true
-//	email    = "demo@lilmail.dev"
+//	email    = "demo@inbrix.dev"
 //	password = "demo"
 type DemoConfig struct {
 	Enabled  bool   `toml:"enabled"`
@@ -441,7 +441,7 @@ func LoadConfig(filepath string) (*Config, error) {
 
 	// Default AI configuration.
 	// Enabled defaults to false (explicit opt-in required).
-	// The default endpoint is the Vulos OS airouter so LilMail works without
+	// The default endpoint is the Vulos OS airouter so Inbrix AI works without
 	// extra configuration when embedded in a Vulos installation.
 	config.AI.Enabled = false
 	config.AI.Mode = AIModeRemote
@@ -582,13 +582,13 @@ func (c *Config) ValidateSSL() error {
 //
 // The baseline hardening headers (content-type, XSS, referrer, and the framing
 // policy) are emitted unconditionally so they apply whether or not TLS is
-// terminated here — LilMail commonly runs plain HTTP behind a host shell or
+// terminated here — Inbrix AI commonly runs plain HTTP behind a host shell or
 // reverse proxy. HSTS is the only SSL-gated header (it is meaningless without
 // TLS).
 func (c *Config) GetSecurityHeaders() map[string]string {
 	headers := make(map[string]string)
 
-	// HSTS only makes sense when TLS is terminated by LilMail itself.
+	// HSTS only makes sense when TLS is terminated by Inbrix AI itself.
 	if c.SSL.Enabled && c.SSL.Domain != "" {
 		headers["Strict-Transport-Security"] = fmt.Sprintf("max-age=%d; includeSubDomains", c.SSL.HSTSMaxAge)
 	}
@@ -599,7 +599,7 @@ func (c *Config) GetSecurityHeaders() map[string]string {
 
 	// Content-Security-Policy — combines the framing policy with a strict
 	// script-src so that injected HTML (e.g. from a broken srcdoc attribute)
-	// cannot execute scripts in the LilMail origin.
+	// cannot execute scripts in the Inbrix AI origin.
 	//
 	// 'self'            — allow scripts/styles loaded from the same origin
 	// 'unsafe-inline'   — needed for the browser's inline style attributes and
@@ -614,7 +614,7 @@ func (c *Config) GetSecurityHeaders() map[string]string {
 	csp := "default-src 'self'; script-src " + scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src " + imgSrc + "; connect-src " + connectSrc + "; object-src 'none'; base-uri 'self';"
 
 	// Framing policy. When a host shell (e.g. Vulos OS) is allowed to embed
-	// LilMail, express it via CSP frame-ancestors and omit the legacy
+	// Inbrix AI, express it via CSP frame-ancestors and omit the legacy
 	// X-Frame-Options header (which has no allow-list form). Otherwise keep
 	// the strict same-origin default.
 	if c.Server.FrameAncestors != "" {

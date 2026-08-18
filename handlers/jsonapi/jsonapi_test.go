@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/web"
+	"inbrix/config"
+	"inbrix/handlers/web"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

@@ -3,33 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>lilmail — documentation</title>
-<meta name="description" content="lilmail documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
-  <link rel="canonical" href="https://vulos.org/projects/lilmail/docs.html">
+<title>Inbrix AI - documentation</title>
+<meta name="description" content="inbrix documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
+  <link rel="canonical" href="https://vulos.org/projects/inbrix/docs.html">
   <meta name="color-scheme" content="dark light">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="lilmail">
-  <meta property="og:title" content="lilmail — documentation">
-  <meta property="og:description" content="lilmail documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
-  <meta property="og:url" content="https://vulos.org/projects/lilmail/docs.html">
+  <meta property="og:site_name" content="inbrix">
+  <meta property="og:title" content="Inbrix AI - documentation">
+  <meta property="og:description" content="inbrix documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
+  <meta property="og:url" content="https://vulos.org/projects/inbrix/docs.html">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="lilmail — documentation">
-  <meta name="twitter:description" content="lilmail documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
-  <meta property="og:image" content="https://vulos.org/projects/lilmail/assets/og-card.png">
+  <meta name="twitter:title" content="Inbrix AI - documentation">
+  <meta name="twitter:description" content="inbrix documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
+  <meta property="og:image" content="https://vulos.org/projects/inbrix/assets/og-card.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="lilmail — lilmail documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
-  <meta name="twitter:image" content="https://vulos.org/projects/lilmail/assets/og-card.png">
+  <meta property="og:image:alt" content="Inbrix AI - inbrix documentation: getting started, architecture, the full config.toml reference, and the /v1 JSON API.">
+  <meta name="twitter:image" content="https://vulos.org/projects/inbrix/assets/og-card.png">
 <meta name="theme-color" content="#FBF7F4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="./assets/lilmail-favicon.svg">
+<link rel="icon" href="./assets/inbrix-favicon.svg">
 <link rel="preload" href="./assets/fonts/hanken-grotesk-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="./assets/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin>
-<script>try{var t=localStorage.getItem('lilmail-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>try{var t=localStorage.getItem('inbrix-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <style>
 /* =========================================================
-   lilmail — documentation
+   inbrix — documentation
    Shares the landing page's design language: warm paper,
    coral ink, teal accents. Vendored fonts + highlighter.
    ========================================================= */
@@ -288,7 +288,7 @@ html[data-theme="dark"] .md code{color:var(--coral-text)}
    page, #0F0D0A on the dark one); the old comment grey sat at 4.40 and was
    the only run of text on either page that missed.
 
-   The classes below are the ones lilmail's own snippets actually emit —
+   The classes below are the ones inbrix's own snippets actually emit —
    checked against hljs.highlight() for bash, ini/toml, json/jsonc, http and
    go rather than copied from a generic theme. punctuation (json, http) and
    function/params (go) were previously unstyled and fell back to body ink,
@@ -375,7 +375,7 @@ footer.site{border-top:1px solid var(--border);background:var(--surface)}
 
 <header class="site"><div class="wrap nav">
   <a class="brand" href="./index.html">
-    <img src="./assets/lilmail-favicon.svg" alt="">
+    <img src="./assets/inbrix-favicon.svg" alt="">
     <span><span class="lil">lil</span><span class="mail">mail</span></span>
     <span class="tag">docs</span>
   </a>
@@ -394,7 +394,7 @@ footer.site{border-top:1px solid var(--border);background:var(--surface)}
     <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.2A8.2 8.2 0 0 1 9.8 4 8.4 8.4 0 1 0 20 14.2z"/></svg>
   </button>
   <a class="vulos-home" href="https://vulos.org" target="_blank" rel="noopener" title="Vulos — open, self-hostable software" aria-label="Vulos — open, self-hostable software"><img src="./assets/vulos-logo.png" alt="" width="22" height="22"></a>
-  <a class="gh" href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
+  <a class="gh" href="https://github.com/vul-os/inbrix" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
     <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
   </a>
 </div></header>
@@ -416,15 +416,15 @@ footer.site{border-top:1px solid var(--border);background:var(--surface)}
     <nav id="nav-proj"></nav>
 
     <div class="edge">
-      lilmail v1.14.0<br>
+      inbrix v1.14.0<br>
       MIT or Apache-2.0<br>
-      <a href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener">Source &amp; issues →</a>
+      <a href="https://github.com/vul-os/inbrix" target="_blank" rel="noopener">Source &amp; issues →</a>
     </div>
   </aside>
 
   <main>
     <div class="doc-head">
-      <div class="crumb"><b>lilmail docs</b><span>/</span><span id="crumb-doc">…</span></div>
+      <div class="crumb"><b>inbrix docs</b><span>/</span><span id="crumb-doc">…</span></div>
       <h1 id="doc-title">Documentation</h1>
       <p id="doc-blurb"></p>
     </div>
@@ -663,7 +663,7 @@ async function load(slug, hash) {
   document.getElementById('crumb-doc').textContent = doc.title;
   document.getElementById('doc-title').textContent = doc.title;
   document.getElementById('doc-blurb').textContent = doc.blurb;
-  document.title = 'lilmail — ' + doc.title;
+  document.title = 'inbrix — ' + doc.title;
   buildPager(i);
 
   if (currentSlug === doc.slug) { jump(hash); return; }
@@ -801,7 +801,7 @@ document.addEventListener('keydown', e => {
 document.getElementById('theme').addEventListener('click', () => {
   const root = document.documentElement;
   root.dataset.theme = isDark() ? 'light' : 'dark';
-  try { localStorage.setItem('lilmail-theme', root.dataset.theme); } catch (e) {}
+  try { localStorage.setItem('inbrix-theme', root.dataset.theme); } catch (e) {}
   // re-render any diagrams so they match the new theme
   if (content.querySelector('.mermaid')) { const s = currentSlug; currentSlug = null; load(s, ''); }
 });

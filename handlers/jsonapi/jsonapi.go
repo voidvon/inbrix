@@ -1,4 +1,4 @@
-// Package jsonapi exposes lilmail's mail engine as a clean JSON/REST API used
+// Package jsonapi exposes inbrix's mail engine as a clean JSON/REST API used
 // by the React web client and other rich clients.
 //
 // It returns
@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/web"
-	"lilmail/storage"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/web"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
@@ -34,7 +34,7 @@ type Handler struct {
 	auth   *web.AuthHandler
 	// brokerSecret gates the brokered credential path (see broker.go). When
 	// empty, brokered headers are never trusted and the API behaves identically
-	// to standalone lilmail. Read once from LILMAIL_BROKER_SECRET at construction.
+	// to standalone inbrix. Read once from INBRIX_BROKER_SECRET at construction.
 	brokerSecret string
 	// schedule owns durable scheduled-send storage + the poll-based drain. nil when
 	// no KV store was wired (New without a store) — then the /v1/scheduled surface
@@ -56,7 +56,7 @@ type Handler struct {
 }
 
 // New builds a JSON API handler sharing the web authentication and client path.
-// The brokered credential mode is enabled when LILMAIL_BROKER_SECRET is set.
+// The brokered credential mode is enabled when INBRIX_BROKER_SECRET is set.
 //
 // Scheduled send is OFF in this constructor (no durable store). Use NewWithStore
 // to enable it; standalone/tests that don't need send-later keep the simpler form.

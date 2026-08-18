@@ -8,7 +8,7 @@ package web
 
 import (
 	"errors"
-	"lilmail/models"
+	"inbrix/models"
 	"sort"
 	"testing"
 	"time"

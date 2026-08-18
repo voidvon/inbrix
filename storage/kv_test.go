@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 )
 
 // Exercises the KV contract against the default bolt backend. The Postgres

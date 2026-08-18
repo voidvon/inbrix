@@ -10,7 +10,7 @@
 // The second header (RFC 8058) opts the sender into a one-click HTTPS POST flow:
 // the mail client may POST the body `List-Unsubscribe=One-Click` to the https URI
 // WITHOUT any user interaction beyond a single click, and WITHOUT following any
-// link. lilmail parses these read-only; it NEVER itself unsubscribes and never
+// link. inbrix parses these read-only; it NEVER itself unsubscribes and never
 // dereferences the URL. The client decides, confirms, and acts.
 //
 // SECURITY: only http/https and mailto: schemes are surfaced. Any other scheme
@@ -23,7 +23,7 @@ package api
 import (
 	"strings"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // ParseUnsubscribe distills the List-Unsubscribe / List-Unsubscribe-Post header

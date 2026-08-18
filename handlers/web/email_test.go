@@ -5,9 +5,9 @@
 package web
 
 import (
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/models"
 	"testing"
 	"time"
 )

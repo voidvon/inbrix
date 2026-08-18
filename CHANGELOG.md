@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to LilMail are documented here.
+All notable changes to Inbrix AI are documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versioning: [Semantic Versioning](https://semver.org/)
@@ -13,9 +13,9 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 - **The mail AI assistant can now run llmux in-process instead of calling a
   gateway.** `[ai] mode = "embedded"` links llmux
-  (`github.com/vul-os/llmux`) into LilMail as a Go library: no gateway to
+  (`github.com/vul-os/llmux`) into Inbrix AI as a Go library: no gateway to
   deploy, no completion hop, and llmux's routing, retries, failover,
-  sovereignty enforcement and BYOK all happen inside LilMail's own process from
+  sovereignty enforcement and BYOK all happen inside Inbrix AI's own process from
   llmux's own JSON config (`[ai] llmux_config`). `mode = "remote"` remains the
   default and is unchanged — pointing at a central llmux or the Vulos OS
   airouter is still a first-class deployment, and the `account_header` →
@@ -24,7 +24,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the single auth path llmux's own HTTP shell uses, so an in-process host can't
   get a laxer check than a network client.
 
-  Whatever `llmux_config` says, LilMail overrides four things when it builds the
+  Whatever `llmux_config` says, Inbrix AI overrides four things when it builds the
   embedded gateway: no listener, no price-feed sync (an embedded gateway quietly
   reaching openrouter.ai from inside a mail client is exactly the surprise this
   removes), no Postgres or Redis (Postgres is the one thing llmux connects
@@ -33,7 +33,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   **no response cache unless `[ai] llmux_cache = true`**.
 
   That last one keeps a standing promise honest: embedding llmux brings its
-  cache into LilMail's process, where it would retain model output derived from
+  cache into Inbrix AI's process, where it would retain model output derived from
   your mail after the request ended. It is off by default — the default holds
   even when `llmux_config` enables the cache itself — and the opt-in is
   documented for exactly what it retains (an in-memory, TTL- and size-bounded
@@ -53,7 +53,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Removed
 
 - **`[ssl] port`, `[ssl] http_port` and `[ssl] auto_redirect` are gone.** All
-  three were assigned defaults (443, 80, true) and then read by nothing: LilMail
+  three were assigned defaults (443, 80, true) and then read by nothing: Inbrix AI
   has one listener, plain HTTP on `[server] port`, so nothing ever listened on
   443, nothing listened on 80, and there was no HTTP → HTTPS redirect to enable.
   Documenting them as "not read" was a stopgap; a config key that names a port
@@ -119,13 +119,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   precisely how a sibling installer's unreachable guard shipped.
 
 - **`docs/SIGNING.md`** — the exact wire format of every non-session request
-  authentication lilmail performs: the mail-broker and storage-broker header
+  authentication inbrix performs: the mail-broker and storage-broker header
   seams (shared bearer secrets, constant-time compared — with an explicit list of
   the properties they do *not* have: no HMAC, no timestamp window, no nonce, no
   replay protection, no body binding) and the AWS SigV4 object-storage signer
   (canonical URI, signed-header set, canonical request, string-to-sign, key
   derivation, `Authorization` layout, timestamp/nonce/retry semantics). It states
-  lilmail's standing position that it emits **no outbound webhooks** and has no
+  inbrix's standing position that it emits **no outbound webhooks** and has no
   bespoke webhook HMAC, and points clients at SSE / Web Push / polling instead.
 - **Known-answer vectors for the SigV4 signer**
   (`storage/sigv4_vectors_test.go`). Two published vectors — GET with an empty
@@ -209,40 +209,40 @@ Versioning: [Semantic Versioning](https://semver.org/)
   specified, with the bounds, sanitisation rules and degradation behaviour a
   client needs.
 - **The auth model is stated up front.** `docs/API.md` now opens with the fact
-  that lilmail has no account system at all — no sign-up, no user table, no
+  that inbrix has no account system at all — no sign-up, no user table, no
   tenant, no credential of its own — and that the only two ways to authenticate
   a request both resolve to one connection to the user's own mailbox.
 
 ### Removed
 
 - **Five unreferenced embedded assets** — `apple-touch-icon.png`, `icon-48.png`,
-  `lilmail-logo.svg`, `lilmail.png`, `lilmail.svg`. `//go:embed all:assets`
+  `inbrix-logo.svg`, `inbrix.png`, `inbrix.svg`. `//go:embed all:assets`
   compiles everything under `assets/` into the binary, and none of these were
   reachable from any template, stylesheet, service worker, manifest or Go source
-  (the templates use `icon-16/32/180`, `icon.png`, `lilmail-favicon.svg` and
+  (the templates use `icon-16/32/180`, `icon.png`, `inbrix-favicon.svg` and
   `og-image.png`; the manifest uses `icon-192`/`icon-512`). `assets_embed_test.go`
   now fails on any asset that is embedded but referenced by nothing, so the
   duplicates cannot silently reaccumulate. The vendored `*.LICENSE` files are
   allow-listed with their reason — they must travel with the bundles.
-- **`docs/assets/lilmail-logo.png`** — a 2720×880 render of the current coral
+- **`docs/assets/inbrix-logo.png`** — a 2720×880 render of the current coral
   mark that a brand-verification sweep found had no reference anywhere in the
   tree (README, docs, `site/`, templates, or Go source); grepped for
-  `lilmail-logo.png` repo-wide with zero hits before removal. Unlike the two
+  `inbrix-logo.png` repo-wide with zero hits before removal. Unlike the two
   `.svg` files removed above, this one already carried the correct, current
   mark — it just wasn't linked from anywhere, so it sat as dead weight in
   `docs/assets/`. Not embedded in the binary (`docs/` is outside
   `//go:embed all:assets`), so `assets_embed_test.go` could not have caught
   it; this was a manual, independent-verification find.
-- **`docs/demo.png`** and **`site/assets/lilmail-wordmark.png`** — a repo-wide
+- **`docs/demo.png`** and **`site/assets/inbrix-wordmark.svg`** — a repo-wide
   orphan sweep found both had zero references anywhere in the tree (README,
   `docs/`, `site/`, templates, Go source, `site/gen`), confirmed by grepping
   each basename repo-wide (`grep -rn demo.png .` / `grep -rn wordmark .`) with
   no hits beyond the file's own path. `docs/demo.png` was a 1846×963 pre-rebrand
   screenshot (May 23) superseded by `docs/screenshots/hero.png`; the README's
   hero image and gallery both use the `docs/screenshots/*.png` set only.
-  `site/assets/lilmail-wordmark.png` was a byte-identical duplicate of
-  `docs/assets/lilmail-wordmark.png` — the site's own pages (`index.html`,
-  `docs.html`) use `lilmail-favicon.svg` plus a live-text `<i>lil</i>mail`
+  `site/assets/inbrix-wordmark.svg` was a byte-identical duplicate of
+  `docs/assets/inbrix-wordmark.svg` — the site's own pages (`index.html`,
+  `docs.html`) use `inbrix-favicon.svg` plus the live-text Inbrix AI wordmark
   wordmark, never the PNG. Neither is embedded in the binary or part of the
   `site/gen` published bundle, so no existing gate could have caught either;
   this was a manual, independent-verification find.
@@ -284,11 +284,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
   home-screen install or a system notification showed an unmarked orange
   tile indistinguishable from any other app. Re-rendered all six directly
   from `brand/logo.svg`, the approved mark, at their existing pixel sizes.
-  `assets/lilmail-favicon.svg` and `site/assets/lilmail-favicon.svg` also
+  `assets/inbrix-favicon.svg` and `site/assets/inbrix-favicon.svg` also
   carried a 2px drift in the flap's vertical position from a hand
   re-creation instead of a copy; both are now byte-identical to
-  `brand/logo.svg`. Also removed `docs/assets/lilmail-logo.svg` and
-  `docs/assets/lilmail-mark.svg`, two unreferenced leftover brand files
+  `brand/logo.svg`. Also removed `docs/assets/inbrix-logo.svg` and
+  `docs/assets/inbrix-mark.svg`, two unreferenced leftover brand files
   depicting an earlier, superseded indigo/parchment envelope design that
   contradicted the shipped coral mark.
 - Corrected a garbled sentence in the `/v1` snooze description.
@@ -314,7 +314,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **BIMI verified sender brand logo.** On the single-message read, when the
   message passed DMARC (implying SPF-or-DKIM alignment with the `From` domain,
   reused from the already-parsed `Authentication-Results` — no
-  re-authentication), lilmail looks up `default._bimi.<domain>`, fetches the
+  re-authentication), inbrix looks up `default._bimi.<domain>`, fetches the
   `l=` logo, sanitizes it, and attaches it as `models.Email.Brand` for the
   reading pane to render. Every gate fails closed: no DMARC pass → no lookup;
   no/invalid BIMI record → no logo; a non-`https` `l=` is never fetched; the
@@ -333,11 +333,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
   caller only ever edits their own list. Compose, draft-save, and scheduled
   send all gate `From` on the primary address or a registered identity (else
   `403`); a scheduled send's ownership key stays the authenticated mailbox
-  even when `From` is an alias. lilmail is **not** the send-as authority: the
+  even when `From` is an alias. inbrix is **not** the send-as authority: the
   user's own SMTP server re-checks the `From` at submission time and remains
   the thing that can refuse it. Send-as only — an alias does not become an
   inbound address. Documented in `docs/API.md`.
-- **Third-party licence notices.** lilmail redistributes other people's code
+- **Third-party licence notices.** inbrix redistributes other people's code
   (51 Go modules plus vendored htmx/Alpine.js) but shipped none of the
   required attribution — vendored bundles had their licence headers stripped
   by the minifier and nothing was surfaced to users. `THIRD-PARTY-NOTICES.txt`
@@ -350,7 +350,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Changed
 
-- **Reframed as an independent PIM client.** lilmail is a standalone mail +
+- **Reframed as an independent PIM client.** inbrix is a standalone mail +
   calendar + contacts client that talks to the user's **own**
   IMAP/SMTP/CalDAV/CardDAV account and exposes a stable `/v1` JSON API. It
   hosts no mail and depends on no central Vulos server; the Vulos OS
@@ -377,7 +377,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   out by a regression guard (~5,000 LOC removed).
 - **Dead central-engine remnants.** `vacationActive`/`shouldAutoReply` (an
   out-of-office responder is delivery-path logic owned by the account's own
-  mail server, not lilmail) and the orphaned `ThreadID`/`Category`/
+  mail server, not inbrix) and the orphaned `ThreadID`/`Category`/
   `SmartFolder`/`SmartFields` fields on `models.Email` — server-side
   classification written only by the deleted `/v1` augmentation, always
   absent (`omitempty`) from standalone output — were deleted along with a
@@ -385,7 +385,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   (unreferenced regexes/maps/fields flagged by `staticcheck U1000`). No
   exported symbol or behaviour change.
 - **HTML marketing landing site.** Product landing pages are now centralized
-  on vulos.org; lilmail no longer embeds or serves its own (`/site/*` mount
+  on vulos.org; inbrix no longer embeds or serves its own (`/site/*` mount
   and embedded `siteFS` removed). `/` now redirects a logged-out visitor
   straight to `/login` (a signed-in user still lands on `/inbox`).
 
@@ -416,7 +416,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   (non-sandboxed) app document, where `<img src=x onerror=...>` /
   `<svg onload=...>` execute under the CSP's `'unsafe-inline'`. Any
   attacker-controlled HTML mail filed into a folder whose name contains
-  "draft" therefore yielded stored XSS in lilmail's own origin on Edit Draft.
+  "draft" therefore yielded stored XSS in inbrix's own origin on Edit Draft.
   Fixed server-side: the HTML feeding the Edit-Draft slot is now defanged by
   a strict allowlist/denylist policy (strips `script`/`style`/`iframe`/`svg`/
   `object`/`embed`/`form`, all `on*` handlers, and `javascript:`/`vbscript:`/
@@ -472,7 +472,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   firing before the "not sent yet" assertions — scheduled 2s out instead, and
   widened the wall-clock-gated drain waits so `-race` + full-suite CPU contention
   can't beat the poll cadence.
-- README: documented lilmail's role in the Vulos **cell / edge model** — the
+- README: documented inbrix's role in the Vulos **cell / edge model** — the
   `/v1` JSON mail-API library each cell's mailbox serves, behind a minimal
   central forwarding relay, with `@vulos.to` as the central login.
 
@@ -539,7 +539,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   mode to `/v1/calendar/*` and `/v1/contacts`. When the embedding host sends
   the new
   `X-Vulos-Mail-Caldav-Url` / `X-Vulos-Mail-Carddav-Url` headers (only honored
-  behind the same valid-broker-secret gate), lilmail builds the CalDAV/CardDAV
+  behind the same valid-broker-secret gate), inbrix builds the CalDAV/CardDAV
   client **directly from those per-account URLs**, authenticating with the
   `X-Vulos-Mail-Secret` access token as an HTTP `Authorization: Bearer` header —
   reusing the existing oauth2/bearer mode in `handlers/api` (`NewCalDAVClient`,
@@ -549,22 +549,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
   account") **without touching the session**. The calendar/contacts routes are now
   registered when CalDAV/CardDAV is enabled **or** the broker path is active, so
   they exist in CP deployments. **Security:** same gate as the mail routes — if
-  `LILMAIL_BROKER_SECRET` is unset or the secret mismatches, the DAV URL headers
+  `INBRIX_BROKER_SECRET` is unset or the secret mismatches, the DAV URL headers
   are ignored entirely. Standalone/session behaviour is unchanged. Outlook/
   Microsoft Graph calendars are not covered (CalDAV/CardDAV only).
 - **Brokered credential mode for `/v1`** — lets an embedding host
-  reverse-proxy to lilmail and drive it against a per-request **external**
+  reverse-proxy to inbrix and drive it against a per-request **external**
   mailbox (Gmail / Outlook / IMAP) whose credentials that host custodies. When a
   `/v1` request presents a valid broker secret (`X-Vulos-Broker-Auth` matched
-  against the new `LILMAIL_BROKER_SECRET` env var via a constant-time compare),
-  lilmail builds the IMAP/SMTP client **directly** from the injected
+  against the new `INBRIX_BROKER_SECRET` env var via a constant-time compare),
+  inbrix builds the IMAP/SMTP client **directly** from the injected
   `X-Vulos-Mail-*` headers (`xoauth2` access token or `plain` password) instead
   of the session→`CreateIMAPClient` path. Wired through the mail routes
   (folders, messages, single message, search, flags, delete, compose, drafts);
   calendar/contacts remain session/CalDAV-gated. **Security:** if
-  `LILMAIL_BROKER_SECRET` is unset or the secret mismatches, the brokered headers
+  `INBRIX_BROKER_SECRET` is unset or the secret mismatches, the brokered headers
   are ignored entirely and the request falls back to normal session auth, so
-  standalone lilmail never trusts arbitrary client-supplied connection headers.
+  standalone inbrix never trusts arbitrary client-supplied connection headers.
   New `handlers/jsonapi/broker.go`; documented in [docs/API.md](docs/API.md).
 - **JSON API (`/v1`)** — a clean JSON/REST surface served alongside the HTMX UI,
   for rich clients and scripting. Endpoints:
@@ -585,7 +585,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   helpers. Documented in [docs/API.md](docs/API.md).
 - **Optional Postgres storage backend** — a new durable key-value seam
   (`storage/` `KV` interface) with two backends: the embedded **bbolt** store
-  (default — keeps lilmail a single binary with nothing to run) and an optional
+  (default — keeps inbrix a single binary with nothing to run) and an optional
   **Postgres** store for shared / multi-instance deploys, selected via the new
   `[storage]` config section (`backend`, `postgres_dsn`). Postgres is strictly
   opt-in; the schema auto-creates on first connect. Lets other Vulos services
@@ -598,7 +598,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Added
 
 - **Full email address as login username** — new `[auth] allow_full_email_username`
-  config key controls what LilMail sends as the IMAP/SMTP SASL/LOGIN username:
+  config key controls what Inbrix AI sends as the IMAP/SMTP SASL/LOGIN username:
   - `true` (default) — the full email address (`alice@example.com`) is sent
     verbatim, matching most hosted providers (Gmail, Fastmail, Migadu, Zoho…).
   - `false` — only the local part before `@` (`alice`) is sent, for self-hosted
@@ -744,9 +744,9 @@ Versioning: [Semantic Versioning](https://semver.org/)
     called from `NotificationHub.Broadcast` in a background goroutine.
   - Service worker **`/sw.js`** — served at root scope with `Cache-Control: no-cache`
     and `Service-Worker-Allowed: /`; handles `push` (shows notification),
-    `notificationclick` (focuses existing LilMail tab or opens new one), and
+    `notificationclick` (focuses existing Inbrix AI tab or opens new one), and
     `pushsubscriptionchange` (re-subscribes and POSTs new subscription).
-  - Client-side `window.lilmailPush` API — `enable()`, `disable()`, `isSupported()`,
+  - Client-side `window.inbrixPush` API — `enable()`, `disable()`, `isSupported()`,
     `isSubscribed()` — injected into every page when `webpush = true`.
   - **Settings page** (`GET /settings`, template `templates/settings.html`) — always
     registered; shows Web Push toggle when `webpush = true`; account management
@@ -838,7 +838,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
     is recorded (email, display name, send count, last-used time) in the shared
     per-user bbolt database. Count and recency drive sort order.
   - **CardDAV contacts** (optional) — when `[carddav] enabled = true` in
-    `config.toml`, LilMail queries the configured address book via a
+    `config.toml`, Inbrix AI queries the configured address book via a
     `carddav.AddressBookQuery` and merges matching vCard `FN`/`EMAIL` fields
     into the suggestions list. Requires no additional dependency — uses the
     transitive `go-webdav`/`go-vcard` already present.
@@ -924,7 +924,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   Prompt-injection guard applied to all user-supplied strings before substitution
   into prompt templates. Tests in `handlers/ai/ai_test.go`.
 - **`[server] frame_ancestors`** config key — space-separated CSP
-  `frame-ancestors` value. When set, LilMail can be embedded as an iframe by the
+  `frame-ancestors` value. When set, Inbrix AI can be embedded as an iframe by the
   listed origins (e.g. the Vulos OS shell). Defaults to `'self'` (same-origin
   only). Config test coverage added.
 
@@ -964,7 +964,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **CRITICAL: srcdoc XSS fixed** — `email.HTML` was interpolated as
   `template.HTML` directly into the `srcdoc="..."` attribute of the sandboxed
   iframe; a quote character in a malicious email body could break out of the
-  attribute and execute script in LilMail's origin. The value is now auto-escaped
+  attribute and execute script in Inbrix AI's origin. The value is now auto-escaped
   as a plain Go template string so HTML is passed verbatim without interpretation.
 - **Full Content-Security-Policy** — `script-src`, `style-src`, `img-src`,
   `connect-src`, `object-src`, `base-uri`, and `frame-ancestors` now emitted on
@@ -1011,15 +1011,15 @@ password-only login, server-rendered Go templates.
 
 ---
 
-[Unreleased]: https://github.com/vul-os/lilmail/compare/v1.14.0...HEAD
-[1.14.0]: https://github.com/vul-os/lilmail/compare/v1.13.0...v1.14.0
-[1.13.0]: https://github.com/vul-os/lilmail/compare/v1.12.1...v1.13.0
-[1.12.1]: https://github.com/vul-os/lilmail/compare/v1.12.0...v1.12.1
-[1.12.0]: https://github.com/vul-os/lilmail/compare/v1.11.0...v1.12.0
-[1.11.0]: https://github.com/vul-os/lilmail/compare/v1.10.0...v1.11.0
-[1.10.0]: https://github.com/vul-os/lilmail/compare/v1.4.0...v1.10.0
-[1.4.0]: https://github.com/vul-os/lilmail/releases/tag/v1.4.0
-[1.0.7]: https://github.com/vul-os/lilmail/releases/tag/v1.0.7
+[Unreleased]: https://github.com/vul-os/inbrix/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/vul-os/inbrix/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/vul-os/inbrix/compare/v1.12.1...v1.13.0
+[1.12.1]: https://github.com/vul-os/inbrix/compare/v1.12.0...v1.12.1
+[1.12.0]: https://github.com/vul-os/inbrix/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/vul-os/inbrix/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/vul-os/inbrix/compare/v1.4.0...v1.10.0
+[1.4.0]: https://github.com/vul-os/inbrix/releases/tag/v1.4.0
+[1.0.7]: https://github.com/vul-os/inbrix/releases/tag/v1.0.7
 
 Note: `v1.6.0`, `v1.7.0`, `v1.8.0`, and `v1.9.0` were documented as part of the
 work that shipped in the `v1.10.0` release, but were never cut as their own git

@@ -23,9 +23,9 @@ ev() {  # uid  day-offset  start  end  summary  location
     -H "Content-Type: text/calendar; charset=utf-8" \
     --data-binary "BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//lilmail//demo seed//EN
+PRODID:-//inbrix//demo seed//EN
 BEGIN:VEVENT
-UID:$uid@demo.lilmail.dev
+UID:$uid@demo.inbrix.dev
 DTSTAMP:${date}T090000Z
 DTSTART:${date}T${st}00Z
 DTEND:${date}T${en}00Z

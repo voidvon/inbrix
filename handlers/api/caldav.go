@@ -1,4 +1,4 @@
-// handlers/api/caldav.go — CalDAV client helpers for LilMail.
+// handlers/api/caldav.go — CalDAV client helpers for Inbrix AI.
 //
 // This file contains the CalDAV client logic: building an authenticated HTTP
 // client, discovering calendars, listing events in a time range, and creating
@@ -12,8 +12,8 @@ package api
 import (
 	"context"
 	"fmt"
-	"lilmail/config"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/models"
 	"net/http"
 	"path"
 	"sort"
@@ -55,7 +55,7 @@ func newHTTPClient(cfg config.CalDAVConfig, bearerToken string) webdav.HTTPClien
 	return webdav.HTTPClientWithBasicAuth(base, cfg.Username, cfg.Password)
 }
 
-// CalDAVClient wraps the go-webdav caldav.Client with LilMail-specific helpers.
+// CalDAVClient wraps the go-webdav caldav.Client with Inbrix AI-specific helpers.
 type CalDAVClient struct {
 	c    *caldav.Client
 	cfg  config.CalDAVConfig
@@ -285,7 +285,7 @@ func calEventFromICal(objPath string, ev ical.Event) (models.CalendarEvent, erro
 func (cc *CalDAVClient) CreateEvent(ctx context.Context, ev models.CalendarEvent) error {
 	if ev.UID == "" {
 		// Generate a simple UID based on the start time
-		ev.UID = fmt.Sprintf("lilmail-%d@lilmail", ev.Start.UnixNano())
+		ev.UID = fmt.Sprintf("inbrix-%d@inbrix", ev.Start.UnixNano())
 	}
 	return cc.putEvent(ctx, ev)
 }
@@ -328,7 +328,7 @@ func (cc *CalDAVClient) putEvent(ctx context.Context, ev models.CalendarEvent) e
 // iCal shape is defined.
 func buildEventCalendar(ev models.CalendarEvent) *ical.Calendar {
 	cal := ical.NewCalendar()
-	cal.Props.SetText(ical.PropProductID, "-//LilMail//LilMail//EN")
+	cal.Props.SetText(ical.PropProductID, "-//Inbrix AI//Inbrix AI//EN")
 	cal.Props.SetText(ical.PropVersion, "2.0")
 
 	event := ical.NewEvent()

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/handlers/api"
+	"inbrix/handlers/api"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -46,7 +46,7 @@ func (h *Handler) settingsStoreOr501(c *fiber.Ctx) (store *settingsStore, owner 
 
 // handleGetVacation returns the account's vacation responder config.
 //
-// ENFORCEMENT NOTE: lilmail is a CLIENT — it connects to the user's own provider
+// ENFORCEMENT NOTE: inbrix is a CLIENT — it connects to the user's own provider
 // over IMAP/SMTP and does NOT run the inbound delivery path, so storing "enabled"
 // here does not, by itself, make the provider auto-reply. This surface is the
 // authoritative CONFIG the client edits; actual enforcement must be set on the
@@ -109,7 +109,7 @@ func (h *Handler) handlePutVacation(c *fiber.Ctx) error {
 	return c.JSON(vacationPublic(in))
 }
 
-// NOTE: lilmail stores the vacation-responder config as the client's read model
+// NOTE: inbrix stores the vacation-responder config as the client's read model
 // (GET/PUT below) but never FIRES it — an out-of-office responder is delivery-path
 // logic that belongs to the account's own mail server, not to this client. The
 // former vacationActive/shouldAutoReply firing helpers were remnants of the removed
@@ -228,7 +228,7 @@ const maxIdentities = 20
 // the write half of the identities surface, mirroring handlePutSignatures /
 // handlePutVacation: same auth, same KV, same "PUT replaces the whole set" contract.
 //
-// AUTHORITY: lilmail is a CLIENT and is NOT the authority for what From an account
+// AUTHORITY: inbrix is a CLIENT and is NOT the authority for what From an account
 // may send as — the user's own provider SMTP server is. These identities are stored
 // as the client's read model (the compose From menu); the upstream provider remains
 // the authority and will reject a From it does not permit at submission time. The

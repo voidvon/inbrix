@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	mailapi "lilmail/handlers/api"
-	"lilmail/models"
+	mailapi "inbrix/handlers/api"
+	"inbrix/models"
 )
 
 type summaryTestClient struct {

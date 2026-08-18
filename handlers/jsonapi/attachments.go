@@ -7,7 +7,7 @@
 //   - session mode: the MailClient comes from the caller's session.
 //   - brokered mode: the MailClient is built from the validated X-Vulos-Mail-*
 //     headers, so a broker-proxied client can download attachments without
-//     ever holding a lilmail session.
+//     ever holding a inbrix session.
 //
 // As in the web path, the OPTIONAL object-storage cache (storage.ObjectStore-
 // FromHeaders) is wired in: when the Vulos gateway has provisioned a bucket for
@@ -25,9 +25,9 @@ import (
 	"regexp"
 	"strings"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
-	"lilmail/storage"
+	"inbrix/handlers/api"
+	"inbrix/models"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // itip_security_test.go — red-team regression tests for the UNTRUSTED inbound

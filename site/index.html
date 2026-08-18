@@ -3,33 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>lilmail — your mailbox, your machine, one binary</title>
+<title>Inbrix AI - your mailbox, your machine, one binary</title>
 <meta name="description" content="A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary. Self-hostable, connects to your own accounts, no external services by default.">
-  <link rel="canonical" href="https://vulos.org/projects/lilmail/">
+  <link rel="canonical" href="https://vulos.org/projects/inbrix/">
   <meta name="color-scheme" content="dark light">
-  <meta property="og:site_name" content="lilmail">
-  <meta property="og:url" content="https://vulos.org/projects/lilmail/">
+  <meta property="og:site_name" content="inbrix">
+  <meta property="og:url" content="https://vulos.org/projects/inbrix/">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="lilmail — your mailbox, your machine, one binary">
+  <meta name="twitter:title" content="Inbrix AI - your mailbox, your machine, one binary">
   <meta name="twitter:description" content="A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary. Self-hostable, connects to your own accounts, no external services by default.">
-  <meta property="og:image" content="https://vulos.org/projects/lilmail/assets/og-card.png">
+  <meta property="og:image" content="https://vulos.org/projects/inbrix/assets/og-card.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="lilmail — A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary. Self-hostable, connects to your own accounts, no external services">
-  <meta name="twitter:image" content="https://vulos.org/projects/lilmail/assets/og-card.png">
+  <meta property="og:image:alt" content="Inbrix AI - A lightweight, database-free PIM client — mail + calendar + contacts — in a single Go binary. Self-hostable, connects to your own accounts, no external services">
+  <meta name="twitter:image" content="https://vulos.org/projects/inbrix/assets/og-card.png">
 <meta name="theme-color" content="#FBF7F4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="./assets/lilmail-favicon.svg">
-<meta property="og:title" content="lilmail — your mailbox, your machine, one binary">
+<link rel="icon" href="./assets/inbrix-favicon.svg">
+<meta property="og:title" content="Inbrix AI - your mailbox, your machine, one binary">
 <meta property="og:description" content="Self-hostable PIM client. Mail, calendar and contacts in one Go binary — no database, no CDN, no service in the middle.">
 <meta property="og:type" content="website">
 <link rel="preload" href="./assets/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="./assets/fonts/hanken-grotesk-var.woff2" as="font" type="font/woff2" crossorigin>
-<script>try{var t=localStorage.getItem('lilmail-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>try{var t=localStorage.getItem('inbrix-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <style>
 /* ============================================================
-   lilmail — landing page
+   inbrix — landing page
    Art direction: printed matter. Warm paper, coral ink, teal
    accents, hairline rules, a par-avion border. Typeset in
    Fraunces (variable optical size) over Hanken Grotesk, with
@@ -125,7 +125,7 @@ p{text-wrap:pretty}
 .sheet{max-width:var(--sheet);margin:0 auto;padding:0 var(--gut)}
 .mono{font-family:var(--mono)}
 
-/* the par-avion border — lilmail's signature */
+/* the par-avion border — inbrix's signature */
 .airmail{height:7px;background:repeating-linear-gradient(-45deg,
   var(--coral) 0 12px, transparent 12px 24px, var(--teal) 24px 36px, transparent 36px 48px);
   background-color:var(--surface)}
@@ -310,7 +310,7 @@ h1.hero-title .em{font-style:italic;font-weight:500;color:var(--coral);
 
 /* ---- phone / desktop capture swap ----
    The 1280-wide three-pane capture is unreadable at ~350 CSS px: the app's
-   13px UI text lands near 4px. lilmail has a real single-column layout below
+   13px UI text lands near 4px. inbrix has a real single-column layout below
    1024px, so on a phone the page shows THAT capture at close to 1:1 instead of
    a shrunken desktop one.
 
@@ -519,7 +519,7 @@ html[data-theme="dark"] .term,html[data-theme="dark"] .aside-run{border:1px soli
    page, #0F0D0A on the dark one); the old comment grey sat at 4.40 and was
    the only run of text on either page that missed.
 
-   The classes below are the ones lilmail's own snippets actually emit —
+   The classes below are the ones inbrix's own snippets actually emit —
    checked against hljs.highlight() for bash, ini/toml, json/jsonc, http and
    go rather than copied from a generic theme. punctuation (json, http) and
    function/params (go) were previously unstyled and fell back to body ink,
@@ -659,7 +659,7 @@ footer.statusbar{display:flex;align-items:center;gap:9px;min-height:30px;
   }
 
 /* ══════════ THE APP SHELL ══════════════════════════════════════════════
-   The page is laid out as lilmail itself: a folder rail, a message list and
+   The page is laid out as inbrix itself: a folder rail, a message list and
    a reading pane. This is not decoration — it is the same three-pane shape
    the product opens on (frontend/src/App.tsx and styles.css), so the
    landing answers "what is this like to use?" by being it.
@@ -794,7 +794,7 @@ section[id]{scroll-margin-top:76px}
 <div class="airmail"></div>
 
 <header class="top"><div class="sheet topbar">
-  <a class="brand" href="./index.html"><img src="./assets/lilmail-favicon.svg" alt=""><span><i>lil</i>mail</span></a>
+  <a class="brand" href="./index.html"><img src="./assets/inbrix-favicon.svg" alt=""><span>Inbrix <i>AI</i></span></a>
   <div class="sp"></div>
   <!-- The app's own centred search box, and it really searches: it filters
        the message list beside the reader. A search-shaped decoration that did
@@ -809,7 +809,7 @@ section[id]{scroll-margin-top:76px}
     <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.2A8.2 8.2 0 0 1 9.8 4 8.4 8.4 0 1 0 20 14.2z"/></svg>
   </button>
   <a class="vulos-home" href="https://vulos.org" target="_blank" rel="noopener" title="Vulos — open, self-hostable software" aria-label="Vulos — open, self-hostable software"><img src="./assets/vulos-logo.png" alt="" width="22" height="22"></a>
-  <a class="ghbtn" href="https://github.com/vul-os/lilmail" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
+  <a class="ghbtn" href="https://github.com/vul-os/inbrix" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
     <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
   </a>
 </div></header>
@@ -821,11 +821,11 @@ section[id]{scroll-margin-top:76px}
   <nav class="rail" aria-label="Sections">
     <a class="compose" href="#start">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-      Get lilmail
+      Get inbrix
     </a>
     <div class="acct">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-      vul-os/lilmail
+      vul-os/inbrix
     </div>
 
     <a class="fold" href="#inside" data-fold="inside">
@@ -858,7 +858,7 @@ section[id]{scroll-margin-top:76px}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       Docs
     </a>
-    <a class="fold" href="https://github.com/vul-os/lilmail/releases" target="_blank" rel="noopener">
+    <a class="fold" href="https://github.com/vul-os/inbrix/releases" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
       Releases
     </a>
@@ -893,7 +893,7 @@ section[id]{scroll-margin-top:76px}
       <div>
         <div class="mtop"><span class="mfrom">How it works</span><span class="mdate">§02</span></div>
         <div class="msub">No one in the middle. Not even us.</div>
-        <p class="mprev">Your browser, your server, your mail account. There is no lilmail relay to sign up for and no key we hold.</p>
+        <p class="mprev">Your browser, your server, your mail account. There is no inbrix relay to sign up for and no key we hold.</p>
       </div>
     </a>
 
@@ -974,7 +974,7 @@ section[id]{scroll-margin-top:76px}
           <a href="./docs.html#getting-started">Getting started <span>5 min</span></a>
           <a href="./docs.html#configuration">config.toml reference <span>every key</span></a>
           <a href="./docs.html#api">/v1 API reference <span>JSON</span></a>
-          <a href="https://github.com/vul-os/lilmail/releases" target="_blank" rel="noopener">Releases <span>GitHub ↗</span></a>
+          <a href="https://github.com/vul-os/inbrix/releases" target="_blank" rel="noopener">Releases <span>GitHub ↗</span></a>
         </nav>
       </aside>
     </div>
@@ -995,11 +995,11 @@ section[id]{scroll-margin-top:76px}
           <svg class="regmark br" aria-hidden="true"><use href="#regmark"/></svg>
           <div class="shot only-light"><picture>
             <source media="(max-width:700px)" srcset="./screenshots/phone-inbox.png 1x, ./screenshots/phone-inbox@2x.png 2x" width="390" height="780">
-            <img src="./screenshots/hero.png" srcset="./screenshots/hero.png 1x, ./screenshots/hero@2x.png 2x" alt="lilmail with a message open in the three-pane reading view" width="1280" height="800" fetchpriority="high">
+            <img src="./screenshots/hero.png" srcset="./screenshots/hero.png 1x, ./screenshots/hero@2x.png 2x" alt="inbrix with a message open in the three-pane reading view" width="1280" height="800" fetchpriority="high">
           </picture></div>
           <div class="shot only-dark"><picture>
             <source media="(max-width:700px)" srcset="./screenshots/phone-inbox-dark.png 1x, ./screenshots/phone-inbox-dark@2x.png 2x" width="390" height="780">
-            <img src="./screenshots/hero-dark.png" srcset="./screenshots/hero-dark.png 1x, ./screenshots/hero-dark@2x.png 2x" alt="lilmail in dark mode with a message open in the three-pane reading view" width="1280" height="800" loading="lazy">
+            <img src="./screenshots/hero-dark.png" srcset="./screenshots/hero-dark.png 1x, ./screenshots/hero-dark@2x.png 2x" alt="inbrix in dark mode with a message open in the three-pane reading view" width="1280" height="800" loading="lazy">
           </picture></div>
         </div>
         <span class="tag a"><i></i> no database · no CDN · no build step</span>
@@ -1025,7 +1025,7 @@ section[id]{scroll-margin-top:76px}
     </div>
     <div class="index-grid">
       <div class="index-note rv">
-        <p>One process, one file on disk, one thing to back up. lilmail is deliberately small: it doesn't index your mail into a second database, it doesn't run a queue, and it doesn't need a build step to serve a page.</p>
+        <p>One process, one file on disk, one thing to back up. inbrix is deliberately small: it doesn't index your mail into a second database, it doesn't run a queue, and it doesn't need a build step to serve a page.</p>
 
         <!-- The headline promises two things and the rows beside this only
              evidence one of them. This is the other half, and it is also what
@@ -1035,7 +1035,7 @@ section[id]{scroll-margin-top:76px}
           <li><b>No database server.</b> Durable state is an embedded bbolt file. Postgres is optional, for shared or multi-instance deploys.</li>
           <li><b>One release artifact.</b> The built React bundle and browser assets are compiled in with <code>embed.FS</code>.</li>
           <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary — and the render gate fails the build if any page fetches off-origin.</li>
-          <li><b>No lilmail account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
+          <li><b>No inbrix account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
           <li><b>No calendar or contacts unless you ask.</b> The CalDAV routes are gated on <code>[caldav] enabled</code>; off by default, they cost nothing.</li>
           <li><b>No multi-account unless you ask.</b> Same shape — <code>[accounts] enabled</code>.</li>
         </ul>
@@ -1088,12 +1088,12 @@ section[id]{scroll-margin-top:76px}
       <span class="num">02</span>
       <div>
         <h2 class="title">No one in the middle. <span class="em">Not even us.</span></h2>
-        <p class="lede">lilmail is a client, not a service. It runs on your machine and speaks straight to the mail server you already have — no lilmail account, no relay, nothing phoning home.</p>
+        <p class="lede">inbrix is a client, not a service. It runs on your machine and speaks straight to the mail server you already have — no inbrix account, no relay, nothing phoning home.</p>
       </div>
     </div>
 
     <div class="route">
-      <svg viewBox="0 0 1120 250" role="img" aria-label="Your browser talks to lilmail on your own server, which talks to your IMAP, SMTP and DAV account. Nothing else is involved.">
+      <svg viewBox="0 0 1120 250" role="img" aria-label="Your browser talks to inbrix on your own server, which talks to your IMAP, SMTP and DAV account. Nothing else is involved.">
         <defs>
           <path id="wire" d="M244 132 H 430"/>
           <path id="wire2" d="M690 132 H 876"/>
@@ -1116,7 +1116,7 @@ section[id]{scroll-margin-top:76px}
         <g>
           <rect x="430" y="40" width="260" height="184" rx="20" fill="rgba(242,103,78,.13)" stroke="#F2674E" stroke-width="1.8"/>
           <text class="lbl" x="458" y="76" style="fill:#F2A88E">Your server</text>
-          <text class="nm" x="458" y="118" style="font-size:30px">lilmail</text>
+          <text class="nm" x="458" y="118" style="font-size:30px">Inbrix AI</text>
           <text class="sub" x="458" y="150">one Go binary +</text>
           <text class="sub" x="458" y="170">a config.toml</text>
           <text class="sub" x="458" y="196" style="opacity:.72">bbolt on disk · optional Postgres</text>
@@ -1140,7 +1140,7 @@ section[id]{scroll-margin-top:76px}
              direction, 1.5s apart — so they drifted in and out of phase and
              the diagram never showed the thing it is describing: a request
              going out and mail coming back. Now a coral envelope travels
-             browser → lilmail → your account, a teal one carries the reply
+             browser → inbrix → your account, a teal one carries the reply
              back, and the whole cycle is 6s with a beat of stillness at the
              end. Each leg holds off-stage (opacity 0) outside its slice
              rather than parking visibly on the wire, which is what keyTimes
@@ -1204,11 +1204,11 @@ section[id]{scroll-margin-top:76px}
 
     <div class="route-stack">
       <div><span>You</span><b>Your browser</b><p>React over JSON — or any client on <code>/v1</code>.</p></div>
-      <div><span>Your server</span><b>lilmail</b><p>One Go binary and a <code>config.toml</code>. bbolt on disk, or your own Postgres.</p></div>
+      <div><span>Your server</span><b>Inbrix AI</b><p>One Go binary and a <code>config.toml</code>. bbolt on disk, or your own Postgres.</p></div>
       <div><span>Your accounts</span><b>IMAP · SMTP · DAV</b><p>Gmail, Outlook, or any standards-compliant server, over OAuth or password.</p></div>
     </div>
 
-    <p class="strike rv"><s>a lilmail relay</s><span>— does not exist. There is no hosted lilmail to sign up for, and no key we hold.</span></p>
+    <p class="strike rv"><s>a inbrix relay</s><span>— does not exist. There is no hosted inbrix to sign up for, and no key we hold.</span></p>
   </div></section>
 
   <!-- ══════════ 03 · SCREENS ══════════ -->
@@ -1268,7 +1268,7 @@ section[id]{scroll-margin-top:76px}
       <span class="num">04</span>
       <div>
         <h2 class="title">Running in <span class="em">about a minute.</span></h2>
-        <p class="lede">Nothing to sign up for and nothing to provision. Point lilmail at the mailbox you already have, and open it.</p>
+        <p class="lede">Nothing to sign up for and nothing to provision. Point inbrix at the mailbox you already have, and open it.</p>
       </div>
     </div>
     <div class="start">
@@ -1281,30 +1281,30 @@ section[id]{scroll-margin-top:76px}
         <div class="panel" id="p-src" role="tabpanel" aria-labelledby="t-src" data-on>
           <div class="term">
             <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/ — build and run</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
-<pre><code class="language-bash">git clone https://github.com/vul-os/lilmail.git
-cd lilmail
+<pre><code class="language-bash">git clone https://github.com/vul-os/inbrix.git
+cd inbrix
 
 # copy the annotated example, then fill in your server
 cp config.toml.example config.toml
 
-go run main.go        # or: make build && ./lilmail
+go run main.go        # or: make build && ./inbrix
 # → http://localhost:3000</code></pre>
           </div>
         </div>
         <div class="panel" id="p-bin" role="tabpanel" aria-labelledby="t-bin" hidden>
           <div class="term">
-            <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/lilmail — run the release archive</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
+            <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/inbrix — run the release archive</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
 <pre><code class="language-bash"># grab the archive for your OS from the link below,
 # extract it, and put a config.toml beside the binary
 cp config.toml.example config.toml
 
-./lilmail             # → http://localhost:3000
-./lilmail -version    # print version and exit</code></pre>
+./inbrix             # → http://localhost:3000
+./inbrix -version    # print version and exit</code></pre>
           <!-- /releases/latest, not a versioned asset URL: the archive names
-               embed the version (lilmail_1.14.0_linux_amd64.zip), so any link
+               embed the version (inbrix_1.14.0_linux_amd64.zip), so any link
                specific enough to download a file directly is a link that goes
                stale on the very next tag. This one cannot. -->
-          <a class="dl" href="https://github.com/vul-os/lilmail/releases/latest" target="_blank" rel="noopener">
+          <a class="dl" href="https://github.com/vul-os/inbrix/releases/latest" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
             <span><b>Download the latest release</b>macOS and Linux · amd64 and arm64 · with SHA256SUMS</span>
             <svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg>
@@ -1313,12 +1313,12 @@ cp config.toml.example config.toml
         </div>
         <div class="panel" id="p-doc" role="tabpanel" aria-labelledby="t-doc" hidden>
           <div class="term">
-            <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/lilmail — container</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
-<pre><code class="language-bash">docker build -t vulos/lilmail .
+            <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/inbrix — container</span><span class="sp"></span><button class="copy" type="button">Copy</button></div>
+<pre><code class="language-bash">docker build -t vulos/inbrix .
 
 docker run -p 3000:3000 \
   -v $PWD/config.toml:/app/config.toml \
-  vulos/lilmail</code></pre>
+  vulos/inbrix</code></pre>
           </div>
         </div>
 
@@ -1407,8 +1407,8 @@ key = "a-32-character-encryption-key!!"</code></pre>
     <div class="pillars">
       <div class="pillar rv">
         <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.4" r="3.4"/><path d="M5 20c1-3.6 4-5.6 7-5.6s6 2 7 5.6"/></svg>Your own accounts</h3>
-        <p>lilmail connects to the mailbox you already own — Gmail, Outlook or any standards-compliant server — over OAuth or password.</p>
-        <ul><li>No lilmail account to create</li><li>No relay handling your mail</li><li>Multi-account with per-account error isolation</li></ul>
+        <p>inbrix connects to the mailbox you already own — Gmail, Outlook or any standards-compliant server — over OAuth or password.</p>
+        <ul><li>No inbrix account to create</li><li>No relay handling your mail</li><li>Multi-account with per-account error isolation</li></ul>
       </div>
       <div class="pillar rv">
         <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 17.4a4 4 0 0 1 .4-7.97 5.5 5.5 0 0 1 10.6.9A3.6 3.6 0 0 1 17.4 17.4H6.6z"/><path d="M3.5 3.5l17 17"/></svg>No external services</h3>
@@ -1464,7 +1464,7 @@ document.getElementById('theme').addEventListener('click', () => {
   const dark = root.dataset.theme ? root.dataset.theme === 'dark'
                                   : matchMedia('(prefers-color-scheme: dark)').matches;
   root.dataset.theme = dark ? 'light' : 'dark';
-  try { localStorage.setItem('lilmail-theme', root.dataset.theme); } catch (e) {}
+  try { localStorage.setItem('inbrix-theme', root.dataset.theme); } catch (e) {}
 });
 
 /* tabs -------------------------------------------------------------- */

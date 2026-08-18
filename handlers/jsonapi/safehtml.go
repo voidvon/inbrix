@@ -1,5 +1,5 @@
 // handlers/jsonapi/safehtml.go — conservative HTML sanitizer for user-authored
-// snippets that lilmail EMITS into outgoing mail: signatures and vacation-reply
+// snippets that inbrix EMITS into outgoing mail: signatures and vacation-reply
 // bodies.
 //
 // The sanitizer policy now lives in the shared, dependency-free
@@ -21,7 +21,7 @@
 // this file guards the BODY.
 package jsonapi
 
-import "lilmail/handlers/htmlsafe"
+import "inbrix/handlers/htmlsafe"
 
 // sanitizeSnippetHTML returns a defanged copy of user-authored signature/vacation
 // HTML. It delegates to htmlsafe.SanitizeSnippet (the shared policy). Kept as a

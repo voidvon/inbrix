@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/web"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/web"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
@@ -206,7 +206,7 @@ func TestBrokeredRequestWithWrongSecretIgnoresHeaders(t *testing.T) {
 	}
 }
 
-// With LILMAIL_BROKER_SECRET UNSET, the whole brokered path is disabled: headers
+// With INBRIX_BROKER_SECRET UNSET, the whole brokered path is disabled: headers
 // are ignored even if a (would-be) broker auth header is present.
 func TestBrokeredPathDisabledWhenSecretUnset(t *testing.T) {
 	t.Setenv(brokerEnvSecret, "")
@@ -239,7 +239,7 @@ func TestBrokeredPathDisabledWhenSecretUnset(t *testing.T) {
 		t.Fatalf("want 401 (brokered path disabled), got %d", resp.StatusCode)
 	}
 	if called {
-		t.Fatalf("dial seam invoked while LILMAIL_BROKER_SECRET unset")
+		t.Fatalf("dial seam invoked while INBRIX_BROKER_SECRET unset")
 	}
 }
 

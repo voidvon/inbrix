@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 )
 
 // TestValidateDAVURL asserts the SSRF / token-exfil guard: https is required for

@@ -1,7 +1,7 @@
 // handlers/jsonapi/api_docs_test.go — the /v1 surface must match docs/API.md.
 //
 // WHY THIS EXISTS: docs/API.md is the contract external clients build against;
-// lilmail's own README calls /v1 "a stable seam an external UI can build
+// inbrix's own README calls /v1 "a stable seam an external UI can build
 // against". The failure mode that document has in practice is not being WRONG —
 // it is being INCOMPLETE: a route lands, no one updates the reference, and a
 // consumer writing a client from the document alone cannot discover it. That gap
@@ -28,8 +28,8 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/web"
+	"inbrix/config"
+	"inbrix/handlers/web"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

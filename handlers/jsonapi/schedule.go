@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"lilmail/handlers/api"
-	"lilmail/handlers/htmlsafe"
+	"inbrix/handlers/api"
+	"inbrix/handlers/htmlsafe"
 
 	"github.com/gofiber/fiber/v2"
 )

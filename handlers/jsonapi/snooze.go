@@ -1,10 +1,10 @@
 // handlers/jsonapi/snooze.go — POST/DELETE /v1/messages/:uid/snooze.
 //
-// Snooze hides a message until a due time. lilmail is a CLIENT and does not run
+// Snooze hides a message until a due time. inbrix is a CLIENT and does not run
 // the inbound delivery path, so it owns only the reversible IMAP half: it moves
 // the message to the Snoozed folder (creating it if the account has none). The
 // automatic RETURN of the message to the inbox at the due instant requires a
-// delivery-side scheduler that lilmail does not host, so the response is honest:
+// delivery-side scheduler that inbrix does not host, so the response is honest:
 // the message is moved (snoozed), but auto-return is reported as unavailable and
 // the client is expected to surface / handle the due time itself.
 //
@@ -20,7 +20,7 @@ import (
 )
 
 // handleSnooze moves a message to the Snoozed folder. `until` is validated and
-// echoed so the client can track the due time, but lilmail does not itself return
+// echoed so the client can track the due time, but inbrix does not itself return
 // the message to the inbox (no delivery-side scheduler) — autoReturn is false.
 // POST /v1/messages/:uid/snooze  ?folder=  body {until}
 func (h *Handler) handleSnooze(c *fiber.Ctx) error {
@@ -56,7 +56,7 @@ func (h *Handler) handleSnooze(c *fiber.Ctx) error {
 	}
 
 	// 200 (not 204) with a body so the client can surface the caveat: the message
-	// IS snoozed (moved), but lilmail does not auto-return it to the inbox.
+	// IS snoozed (moved), but inbrix does not auto-return it to the inbox.
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"snoozed":    true,
 		"autoReturn": false,
@@ -66,7 +66,7 @@ func (h *Handler) handleSnooze(c *fiber.Ctx) error {
 	})
 }
 
-// handleUnsnooze is a no-op acknowledgement kept for API symmetry: lilmail holds
+// handleUnsnooze is a no-op acknowledgement kept for API symmetry: inbrix holds
 // no due-time schedule to clear (the caller moves the message back itself).
 // DELETE /v1/messages/:uid/snooze  ?folder=
 func (h *Handler) handleUnsnooze(c *fiber.Ctx) error {

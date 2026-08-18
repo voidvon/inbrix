@@ -1,4 +1,4 @@
-// eslint.config.js — flat config for lilmail's static client JS.
+// eslint.config.js — flat config for inbrix's static client JS.
 //
 // Scope: the service worker and any remaining standalone browser scripts.
 //

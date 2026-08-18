@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"lilmail/storage"
+	"inbrix/storage"
 )
 
 // settingsNS is the KV namespace holding per-account settings blobs.

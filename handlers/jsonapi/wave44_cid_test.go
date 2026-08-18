@@ -20,9 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/web"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/web"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

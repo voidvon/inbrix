@@ -1,7 +1,7 @@
 package ai
 
 // embedded.go — the in-process completion backend: llmux
-// (github.com/vul-os/llmux) linked into LilMail as a Go library rather than
+// (github.com/vul-os/llmux) linked into Inbrix AI as a Go library rather than
 // called over HTTP.
 //
 // The library contract this relies on (core/gateway's own doc):
@@ -10,7 +10,7 @@ package ai
 //     one qualification is that it connects EAGERLY when a Postgres DSN is set —
 //     which is exactly why newEmbeddedClient clears that DSN below.
 //   - Background work (the price-catalog syncer, the key-spend flusher, the
-//     Redis ping) only ever begins in Run/Start. LilMail calls NEITHER, so an
+//     Redis ping) only ever begins in Run/Start. Inbrix AI calls NEITHER, so an
 //     embedded gateway makes no outbound call that a mail action did not cause.
 //   - Chat/ChatStream/Embed work without any of that.
 
@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	llmuxconfig "github.com/vul-os/llmux/core/config"
 	"github.com/vul-os/llmux/core/gateway"
@@ -27,7 +27,7 @@ import (
 
 // embeddedClient completes through an in-process llmux gateway.
 //
-// It uses the non-streaming Chat path: every LilMail AI route buffers the whole
+// It uses the non-streaming Chat path: every Inbrix AI AI route buffers the whole
 // completion before answering (a summary, three reply suggestions, a phishing
 // verdict — none of them stream to the browser), so the streaming callback would
 // only reassemble what Chat already returns.
@@ -80,7 +80,7 @@ func newEmbeddedClient(cfg config.AIConfig) (*embeddedClient, error) {
 
 	// No shared remote state. Postgres is the one thing gateway.New connects
 	// eagerly, and llmux resolves its DSN from DATABASE_URL / VULOS_DATABASE_URL
-	// — so in a Vulos deployment, leaving this alone would have LilMail open a
+	// — so in a Vulos deployment, leaving this alone would have Inbrix AI open a
 	// database pool for LLM key spend merely because a shared DSN was exported.
 	// Redis is the same class of surprise. Cross-replica key/spend state is a
 	// reason to run llmux as a service and use mode = "remote".
@@ -154,5 +154,5 @@ func (c *embeddedClient) complete(ctx context.Context, bearer, systemPrompt, use
 }
 
 // Close implements completer, releasing the gateway's resources. There is no
-// background work to stop: LilMail never calls Run or Start.
+// background work to stop: Inbrix AI never calls Run or Start.
 func (c *embeddedClient) Close() error { return c.gw.Close() }

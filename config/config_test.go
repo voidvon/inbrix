@@ -244,14 +244,14 @@ func TestLoadConfig_CacheFolderDefault(t *testing.T) {
 	}
 
 	// Explicit [cache] folder overrides the default.
-	cfg2, err := LoadConfig(writeTempConfig(t, minimalIMAP+"\n[cache]\nfolder = \"/var/lib/lilmail/cache\"\n"))
+	cfg2, err := LoadConfig(writeTempConfig(t, minimalIMAP+"\n[cache]\nfolder = \"/var/lib/inbrix/cache\"\n"))
 	if err != nil {
 		t.Fatalf("LoadConfig (override): %v", err)
 	}
-	if cfg2.Cache.Folder != "/var/lib/lilmail/cache" {
+	if cfg2.Cache.Folder != "/var/lib/inbrix/cache" {
 		t.Fatalf("Cache.Folder override = %q, want the configured value", cfg2.Cache.Folder)
 	}
-	if cfg2.MailSync.Database != "/var/lib/lilmail/cache/mail.db" {
+	if cfg2.MailSync.Database != "/var/lib/inbrix/cache/mail.db" {
 		t.Fatalf("MailSync.Database did not follow cache override: %q", cfg2.MailSync.Database)
 	}
 }
@@ -360,7 +360,7 @@ func TestLoadConfig_AIEmbeddedKeys(t *testing.T) {
 enabled      = true
 mode         = "embedded"
 model        = "llama3.1"
-llmux_config = "/etc/lilmail/llmux.json"
+llmux_config = "/etc/inbrix/llmux.json"
 llmux_cache  = true
 `))
 	if err != nil {
@@ -369,7 +369,7 @@ llmux_cache  = true
 	if !cfg.AI.EmbeddedAI() || cfg.AI.Model != "llama3.1" {
 		t.Errorf("AI = %+v", cfg.AI)
 	}
-	if cfg.AI.LLMuxConfig != "/etc/lilmail/llmux.json" {
+	if cfg.AI.LLMuxConfig != "/etc/inbrix/llmux.json" {
 		t.Errorf("LLMuxConfig = %q", cfg.AI.LLMuxConfig)
 	}
 	if !cfg.AI.LLMuxCache {

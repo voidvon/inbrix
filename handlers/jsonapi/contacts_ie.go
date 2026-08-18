@@ -27,8 +27,8 @@ import (
 	"sort"
 	"strings"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 
 	vcard "github.com/emersion/go-vcard"
 	"github.com/gofiber/fiber/v2"

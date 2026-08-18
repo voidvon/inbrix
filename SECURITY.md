@@ -1,6 +1,6 @@
 # Security Policy
 
-lilmail is a lightweight, database-free PIM client — mail, calendar and contacts
+inbrix is a lightweight, database-free PIM client — mail, calendar and contacts
 — in a single Go binary. It handles account credentials and renders untrusted
 message content, so its security boundary matters. Reports are taken seriously
 and handled with priority.
@@ -9,8 +9,8 @@ and handled with priority.
 
 **Please do not open a public issue for security problems.**
 
-- Preferred: [GitHub private vulnerability reporting](https://github.com/vul-os/lilmail/security/advisories/new) on `vul-os/lilmail`.
-- Alternatively, email **vulosorg@gmail.com** with `[lilmail security]` in the subject.
+- Preferred: [GitHub private vulnerability reporting](https://github.com/vul-os/inbrix/security/advisories/new) on `vul-os/inbrix`.
+- Alternatively, email **vulosorg@gmail.com** with `[inbrix security]` in the subject.
 
 Include what you can: affected area (credential/token handling, message
 rendering, calendar/contacts sync), reproduction steps, and impact as you

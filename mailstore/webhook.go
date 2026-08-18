@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	mailapi "lilmail/handlers/api"
-	"lilmail/models"
+	mailapi "inbrix/handlers/api"
+	"inbrix/models"
 )
 
 const (
@@ -235,7 +235,7 @@ func openAIResponseText(raw []byte) (string, error) {
 // the saved webhook settings.
 func SendFeishuTestWebhook(ctx context.Context, webhookURL string) error {
 	client := &http.Client{Timeout: 10 * time.Second}
-	text := "✅ LilMail 飞书 Webhook 测试成功\n发送时间：" + time.Now().Format("2006-01-02 15:04:05")
+	text := "✅ Inbrix AI 飞书 Webhook 测试成功\n发送时间：" + time.Now().Format("2006-01-02 15:04:05")
 	return sendFeishuText(ctx, client, webhookURL, text)
 }
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"lilmail/mailstore"
+	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
 )

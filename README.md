@@ -1,22 +1,22 @@
 <div align="center">
 
-<img src="docs/assets/lilmail-wordmark.png" alt="lilmail" height="56">
+<img src="docs/assets/inbrix-wordmark.svg" alt="Inbrix AI" height="56">
 
 **A lightweight self-hostable PIM client — mail + calendar + contacts — in a single Go binary.**
 
-**[MIT OR Apache-2.0](LICENSE-MIT) · [Download](https://github.com/vul-os/lilmail/releases/latest) · [CI](https://github.com/vul-os/lilmail/actions/workflows/ci.yml)**
+**[MIT OR Apache-2.0](LICENSE-MIT) · [Download](https://github.com/vul-os/inbrix/releases/latest) · [CI](https://github.com/vul-os/inbrix/actions/workflows/ci.yml)**
 
 <br>
 
-<img src="docs/screenshots/hero.png" alt="lilmail — a message open in the three-pane reading view" width="900">
+<img src="docs/screenshots/hero.png" alt="Inbrix AI - a message open in the three-pane reading view" width="900">
 
 </div>
 
 ---
 
-## What is lilmail?
+## What is Inbrix AI?
 
-lilmail is a self-hostable **PIM client** — mail, calendar, and contacts — that
+inbrix is a self-hostable **PIM client** — mail, calendar, and contacts — that
 connects to the **user's own** IMAP/SMTP + CalDAV + CardDAV account and ships as
 **one self-contained Go binary**. The production React/Vite bundle and browser
 assets are embedded via `embed.FS` — no CDN or external services to
@@ -30,13 +30,13 @@ background worker polls IMAP, while inbox pages read synchronized metadata from
 SQLite. CalDAV calendar, CardDAV contacts, an AI mail assistant, real-time
 notifications, and Web Push remain opt-in via config keys.
 
-lilmail is a fully **independent project** — think Evolution + Evolution-Data-
+inbrix is a fully **independent project** — think Evolution + Evolution-Data-
 Server for the web. It talks to the **user's own** accounts (Gmail, Outlook, any
 IMAP/CalDAV/CardDAV) over OAuth/password and exposes a stable **`/v1`** JSON API
 (mail + `/v1/calendar` + `/v1/contacts`) that any rich client can build on.
 
-**Bring your own mailbox.** lilmail hosts no mail server. You can either sign in
-directly with a mailbox, or create a local lilmail application account and attach
+**Bring your own mailbox.** inbrix hosts no mail server. You can either sign in
+directly with a mailbox, or create a local inbrix application account and attach
 multiple IMAP/SMTP mailboxes to it. Application passwords and mailbox passwords
 are separate; mailbox credentials are encrypted with `[encryption].key`.
 
@@ -78,7 +78,7 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
 - **AI mail assistant** — smart compose, thread summaries, reply suggestions,
   action-item extraction, and phishing detection via any OpenAI-compatible
   endpoint — opt-in via `[ai]`
-- **Multiple accounts** — register one lilmail application account, attach and
+- **Multiple accounts** — register one inbrix application account, attach and
   switch several IMAP/SMTP mailboxes, and use a local unified inbox
 - **Security-first** — JWT sessions, AES-256-GCM encrypted credentials at rest,
   an origin-pinned Content-Security-Policy, `SameSite=Lax` cookies, an email iframe sandboxed without `allow-scripts`
@@ -87,7 +87,7 @@ are separate; mailbox credentials are encrypted with `[encryption].key`.
 
 ## How it works
 
-lilmail is a [Fiber](https://gofiber.io/) application. The browser is a React/Vite
+inbrix is a [Fiber](https://gofiber.io/) application. The browser is a React/Vite
 SPA and the Go process provides the JSON API, session/auth endpoints, and the
 embedded SPA shell. The release build embeds the Vite bundle and static assets
 into the Go binary.
@@ -121,15 +121,15 @@ the React browser client and the `/v1` JSON API. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the request lifecycle and
 [docs/API.md](docs/API.md) for the JSON API reference.
 
-**Injected-credential mode (optional, off by default).** Normally lilmail holds
+**Injected-credential mode (optional, off by default).** Normally inbrix holds
 its own session and connects to the user's mailbox itself. As an option, an
 embedding host (or the test harness) may inject the per-request connection spec as
-`X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers, so lilmail builds the IMAP/SMTP/
+`X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers, so inbrix builds the IMAP/SMTP/
 DAV client straight from the headers. Those headers only ever describe the **user's
-own** account. The path is gated by a shared secret (`LILMAIL_BROKER_SECRET`,
+own** account. The path is gated by a shared secret (`INBRIX_BROKER_SECRET`,
 matched in constant time): **if the secret is unset or mismatched, the headers are
 ignored entirely** and the request falls back to normal session auth, so standalone
-lilmail never trusts client-supplied connection headers. Each request's spec is
+inbrix never trusts client-supplied connection headers. Each request's spec is
 **copied out of the transport buffer** as it is parsed, so one request can never
 mutate another's retained spec — per-account routing stays isolated even under a
 pooled/concurrent server. See [docs/API.md](docs/API.md) → *Injected-credential
@@ -139,20 +139,20 @@ mode*.
 
 ```bash
 # Clone
-git clone https://github.com/vul-os/lilmail.git
-cd lilmail
+git clone https://github.com/vul-os/inbrix.git
+cd inbrix
 
 # Configure — copy the example and replace its security secrets
 cp config.toml.example config.toml   # then edit
 
 # Build and run the single-process production-style server
-make build && ./lilmail
+make build && ./inbrix
 ```
 
 Open **http://localhost:2342** and sign in.
 
 Prefer a pre-built binary? Grab the archive for your OS and CPU from the
-[latest release](https://github.com/vul-os/lilmail/releases/latest): macOS and
+[latest release](https://github.com/vul-os/inbrix/releases/latest): macOS and
 Linux, `amd64` and `arm64`, plus a source zip and a `SHA256SUMS` manifest
 covering every asset. Only `config.toml` needs to be present alongside it.
 
@@ -164,8 +164,8 @@ OIDC identity (there is no long-lived signing key, so there is none to leak or
 rotate). `scripts/verify.sh` is what you run before executing the bytes:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/vul-os/lilmail/v1.14.0/scripts/verify.sh
-bash verify.sh --tag v1.14.0 --attest lilmail_1.14.0_linux_amd64.zip
+curl -fsSLO https://raw.githubusercontent.com/vul-os/inbrix/v1.14.0/scripts/verify.sh
+bash verify.sh --tag v1.14.0 --attest inbrix_1.14.0_linux_amd64.zip
 ```
 
 It fetches the manifest, looks up the **exact** entry for that asset (names are
@@ -246,14 +246,14 @@ make test          # go test ./...
 make vet           # go vet ./...
 make check         # build + vet + test
 go run main.go     # single-process run (after npm run build for React UI)
-./lilmail -version # print version and exit
+./inbrix -version # print version and exit
 ```
 
 During frontend development, open **http://localhost:2342** after `make dev`.
 Vite serves the React source with HMR and proxies `/api`, `/v1`, authentication,
 and other backend routes to Go on `3001`; `go run main.go` by itself serves the
 embedded `frontend/dist` bundle and therefore does not provide HMR. To run the
-two processes manually, use `LILMAIL_RUNTIME_DIR="$PWD" go run main.go -port 3001`
+two processes manually, use `INBRIX_RUNTIME_DIR="$PWD" go run main.go -port 3001`
 in one terminal and
 `npm run dev` in another. Set `VITE_BACKEND_URL` if the Go server runs elsewhere.
 
@@ -261,15 +261,15 @@ Cross-compile for any supported platform:
 
 ```bash
 npm run build
-GOOS=linux   GOARCH=amd64 go build -o lilmail-linux-amd64
-GOOS=darwin  GOARCH=arm64 go build -o lilmail-darwin-arm64
-GOOS=windows GOARCH=amd64 go build -o lilmail-windows-amd64.exe
+GOOS=linux   GOARCH=amd64 go build -o inbrix-linux-amd64
+GOOS=darwin  GOARCH=arm64 go build -o inbrix-darwin-arm64
+GOOS=windows GOARCH=amd64 go build -o inbrix-windows-amd64.exe
 ```
 
 ### Regenerate screenshots
 
 ```bash
-make screenshots        # boots lilmail + runs the Playwright screenshotter
+make screenshots        # boots inbrix + runs the Playwright screenshotter
 make demo-screenshots   # uses the in-memory demo inbox — no IMAP/SMTP needed
 ```
 
@@ -298,20 +298,20 @@ something downstream.
 
 ## License
 
-[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE) — © VulOS. lilmail is a VulOS
-project; source and issues at [github.com/vul-os/lilmail](https://github.com/vul-os/lilmail).
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE) — © VulOS. inbrix is a VulOS
+project; source and issues at [github.com/vul-os/inbrix](https://github.com/vul-os/inbrix).
 
 ### Third-party notices
 
-lilmail redistributes third-party software: Go modules compiled into the binary
+inbrix redistributes third-party software: Go modules compiled into the binary
 and browser assets served to the browser. Their
 licences (MIT, BSD, ISC, Apache-2.0) require the copyright notice and licence
-text to accompany every copy, so lilmail ships them:
+text to accompany every copy, so inbrix ships them:
 
 - [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) — name, version, licence and
   full licence text for every component. Generated from the real dependency graph
   by `make notices` (`scripts/gen-notices.sh`); never hand-edited.
-- A running lilmail serves it at **`/licenses.txt`**.
+- A running inbrix serves it at **`/licenses.txt`**.
 
 ---
 

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/web"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/web"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

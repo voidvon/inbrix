@@ -4,8 +4,8 @@
 // WHY THIS EXISTS: the connected-accounts / unified-inbox feature
 // (handlers/jsonapi/accounts.go) lets an AUTHENTICATED end user register an
 // additional mailbox by IMAP host/port/username/password. In a brokered cloud
-// deployment lilmail runs inside Vulos's own network, so an unscreened dial to a
-// caller-chosen host turns lilmail into an SSRF probe of the internal network and
+// deployment inbrix runs inside Vulos's own network, so an unscreened dial to a
+// caller-chosen host turns inbrix into an SSRF probe of the internal network and
 // the cloud instance-metadata endpoint — exactly the risk the brokered-DAV client
 // already guards (see dav_url.go). The broker/session IMAP hosts are trusted
 // (validated secret / operator config) and keep the plain DialTLS path; only the
@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"lilmail/storage"
+	"inbrix/storage"
 
 	"github.com/emersion/go-imap/client"
 )

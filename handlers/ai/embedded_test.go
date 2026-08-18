@@ -2,7 +2,7 @@ package ai
 
 // embedded_test.go — tests for the in-process llmux backend ([ai] mode =
 // "embedded") and for the property that matters most in both modes: with
-// [ai] enabled = false, LilMail's AI feature emits nothing at all.
+// [ai] enabled = false, Inbrix AI's AI feature emits nothing at all.
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	"github.com/vul-os/llmux/core/gateway"
 )
@@ -43,7 +43,7 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // installRecorder swaps http.DefaultTransport for a recorder for the duration
-// of the test. Every HTTP client on both AI paths ends up here: LilMail's
+// of the test. Every HTTP client on both AI paths ends up here: Inbrix AI's
 // remote completionClient uses &http.Client{Timeout: ...} with no Transport of
 // its own, and llmux's provider adapters build their clients the same way
 // (provider.NewHTTPClient sets only Timeout and CheckRedirect). So a round trip
@@ -137,7 +137,7 @@ func writeLLMuxConfig(t *testing.T, p *fakeProvider, extra map[string]any) strin
 	return path
 }
 
-// embeddedCfg is the LilMail-side [ai] block for an embedded gateway pointed at
+// embeddedCfg is the Inbrix AI-side [ai] block for an embedded gateway pointed at
 // the fake provider.
 func embeddedCfg(t *testing.T, p *fakeProvider) config.AIConfig {
 	t.Helper()
@@ -446,15 +446,15 @@ func TestEmbedded_AccountTokenGoesThroughAuthorize(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestEmbedded_CacheOffByDefault is the test behind the package doc's privacy
-// paragraph. Embedding llmux brings its response cache into LilMail's process;
-// by default LilMail switches it off, so nothing derived from a message is
+// paragraph. Embedding llmux brings its response cache into Inbrix AI's process;
+// by default Inbrix AI switches it off, so nothing derived from a message is
 // retained after the request. Two identical summarize calls must therefore both
 // reach the provider.
 func TestEmbedded_CacheOffByDefault(t *testing.T) {
 	isolateLLMuxEnv(t)
 	provider := newFakeProvider(t, "same answer")
 	cfg := embeddedCfg(t, provider)
-	// Even with the llmux config file explicitly ENABLING the cache, LilMail's
+	// Even with the llmux config file explicitly ENABLING the cache, Inbrix AI's
 	// own [ai] llmux_cache = false wins: the privacy default is not overridable
 	// from the gateway's side of the config.
 	cfg.LLMuxConfig = writeLLMuxConfig(t, provider, map[string]any{
@@ -497,13 +497,13 @@ func TestEmbedded_CacheOptIn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// The embedded posture: what LilMail strips from llmux's config
+// The embedded posture: what Inbrix AI strips from llmux's config
 // ---------------------------------------------------------------------------
 
 // TestEmbedded_StripsRemoteStateAndPriceFeeds asserts the four overrides in
 // newEmbeddedClient actually took effect on the gateway that got built. The
 // Postgres DSN is the sharp one: gateway.New connects EAGERLY when it is set, so
-// a config carrying an unreachable DSN would fail construction if LilMail did
+// a config carrying an unreachable DSN would fail construction if Inbrix AI did
 // not clear it first.
 func TestEmbedded_StripsRemoteStateAndPriceFeeds(t *testing.T) {
 	isolateLLMuxEnv(t)

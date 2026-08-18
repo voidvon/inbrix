@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // Control characters (the vector for vCard line/property injection) must be

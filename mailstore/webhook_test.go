@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	mailapi "lilmail/handlers/api"
-	"lilmail/models"
+	mailapi "inbrix/handlers/api"
+	"inbrix/models"
 )
 
 func TestWebhookSettingsRoundTripAndOwnerIsolation(t *testing.T) {

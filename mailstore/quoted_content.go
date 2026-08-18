@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	xhtml "golang.org/x/net/html"
-	"lilmail/handlers/htmlsafe"
+	"inbrix/handlers/htmlsafe"
 )
 
 var (

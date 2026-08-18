@@ -2,7 +2,7 @@
 // into the distilled SPF/DKIM/DMARC verdict surfaced on models.Email.Auth.
 //
 // The header is stamped by the RECEIVING server (the boundary MTA that
-// authenticated the message on delivery); lilmail does not re-verify, it merely
+// authenticated the message on delivery); inbrix does not re-verify, it merely
 // surfaces the trusted receiver's verdict for a "verified sender" / "why in spam"
 // badge. Parsing is intentionally lenient: a mailbox may carry several
 // Authentication-Results headers (one per hop); we take the first that yields any
@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // authMethodRe matches "method=result", e.g. spf=pass / dkim=fail / dmarc=none.

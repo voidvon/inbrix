@@ -36,7 +36,7 @@ func hasFlag(flags []string, f string) bool {
 	return false
 }
 
-// encodeSearch renders the criteria to the exact bytes lilmail would put on the
+// encodeSearch renders the criteria to the exact bytes inbrix would put on the
 // IMAP wire for a SEARCH command, so tests can assert the serialised form.
 func encodeSearch(t *testing.T, c *imap.SearchCriteria) string {
 	t.Helper()

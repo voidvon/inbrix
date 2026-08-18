@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // itip_e2e_test.go — end-to-end RSVP happy path for the calendar-invite surface

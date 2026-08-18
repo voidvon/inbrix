@@ -1,7 +1,7 @@
 package main
 
 import (
-	"lilmail/config"
+	"inbrix/config"
 	"path/filepath"
 	"testing"
 )
@@ -53,7 +53,7 @@ func TestResolveRuntimePathsAtPreservesAbsolutePaths(t *testing.T) {
 
 func TestResolveRuntimePathsUsesRuntimeDirectoryOverride(t *testing.T) {
 	baseDir := t.TempDir()
-	t.Setenv("LILMAIL_RUNTIME_DIR", baseDir)
+	t.Setenv("INBRIX_RUNTIME_DIR", baseDir)
 	cfg := &config.Config{}
 	cfg.Cache.Folder = "./data"
 	cfg.MailSync.Database = "./data/mail.db"

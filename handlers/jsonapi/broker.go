@@ -1,20 +1,20 @@
 // handlers/jsonapi/broker.go — per-request credential-injection seam for /v1.
 //
-// WHY THIS EXISTS: lilmail is a standalone PIM client — normally it holds its own
+// WHY THIS EXISTS: inbrix is a standalone PIM client — normally it holds its own
 // session and connects to the user's OWN mailbox via session→CreateIMAPClient.
 // This file adds an OPTIONAL alternative: an embedding host (or the test harness)
 // may inject the per-request external-mailbox connection descriptor as HTTP
-// headers, so lilmail builds a MailClient directly from them instead of from a
-// session. lilmail hosts no mail of its own and depends on no central server;
+// headers, so inbrix builds a MailClient directly from them instead of from a
+// session. inbrix hosts no mail of its own and depends on no central server;
 // these headers only ever describe the USER'S account (IMAP/SMTP/CalDAV/CardDAV
-// endpoint + a short-lived OAuth token or password) that lilmail then talks to.
+// endpoint + a short-lived OAuth token or password) that inbrix then talks to.
 //
 // SECURITY: this is credential injection if done wrong. The X-Vulos-Mail-*
 // headers are honored ONLY when the request also presents a valid secret
-// (X-Vulos-Broker-Auth, constant-time compared against LILMAIL_BROKER_SECRET).
-// If LILMAIL_BROKER_SECRET is unset, or the presented secret does not match, the
+// (X-Vulos-Broker-Auth, constant-time compared against INBRIX_BROKER_SECRET).
+// If INBRIX_BROKER_SECRET is unset, or the presented secret does not match, the
 // injected headers are IGNORED ENTIRELY and the request falls back to normal
-// session auth. Standalone lilmail (no secret configured) therefore never trusts
+// session auth. Standalone inbrix (no secret configured) therefore never trusts
 // arbitrary client headers. The headers are only ever read inside the /v1 group
 // (after the middleware), never on unauthenticated paths.
 package jsonapi
@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -59,8 +59,8 @@ const (
 )
 
 // brokerEnvSecret is the env var that gates the whole brokered path. When empty,
-// brokered headers are never trusted (standalone lilmail behaviour).
-const brokerEnvSecret = "LILMAIL_BROKER_SECRET"
+// brokered headers are never trusted (standalone inbrix behaviour).
+const brokerEnvSecret = "INBRIX_BROKER_SECRET"
 
 // brokerLocalsKey is the Fiber Locals key under which a validated brokerSpec is
 // stashed for the duration of a request.

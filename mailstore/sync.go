@@ -3,9 +3,9 @@ package mailstore
 import (
 	"context"
 	"fmt"
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/models"
 	"log"
 	"strings"
 	"sync"

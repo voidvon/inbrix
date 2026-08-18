@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 )

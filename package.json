@@ -1,8 +1,8 @@
 {
-  "name": "lilmail-client-js",
+  "name": "inbrix-client-js",
   "version": "0.0.0",
   "private": true,
-  "description": "Lilmail's React/Vite frontend and static browser tooling.",
+  "description": "Inbrix AI's React/Vite frontend and static browser tooling.",
   "license": "MIT",
   "type": "module",
   "scripts": {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/config"
+	"inbrix/config"
 )
 
 // OAuthToken holds the credentials returned by an OAuth2 token endpoint.

@@ -1,7 +1,7 @@
-# lilmail — single-binary IMAP/SMTP webmail client (React UI + JSON API).
+# inbrix — single-binary IMAP/SMTP webmail client (React UI + JSON API).
 #
-# Build: docker build -t vulos/lilmail .
-# Run:   docker run -p 2342:2342 -v $PWD/config.toml:/app/config.toml vulos/lilmail
+# Build: docker build -t vulos/inbrix .
+# Run:   docker run -p 2342:2342 -v $PWD/config.toml:/app/config.toml vulos/inbrix
 #
 # A config.toml must be present at /app/config.toml (mount it, or bake your own
 # layer). Pure-Go build (CGO disabled) — bbolt and the optional pgx Postgres
@@ -22,14 +22,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend-build /src/frontend/dist ./frontend/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /lilmail .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /inbrix .
 
 # ── Stage 3: minimal runtime ──────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
-COPY --from=build /lilmail /app/lilmail
+COPY --from=build /inbrix /app/inbrix
 # Cache dir for the default embedded bbolt store (override with [storage] for Postgres).
 RUN mkdir -p /app/cache
 EXPOSE 2342
-ENTRYPOINT ["/app/lilmail"]
+ENTRYPOINT ["/app/inbrix"]

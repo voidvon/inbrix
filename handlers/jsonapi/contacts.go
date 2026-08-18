@@ -8,7 +8,7 @@
 //
 // Each request picks its auth path the same way the calendar handlers do: an
 // injected-credential request uses the per-account X-Vulos-Mail-Carddav-Url +
-// bearer token (never the session), while standalone lilmail uses the [carddav]
+// bearer token (never the session), while standalone inbrix uses the [carddav]
 // config. An injected account without a CardDAV URL degrades to an empty list /
 // 501 on write, without ever touching the session config.
 package jsonapi
@@ -16,8 +16,8 @@ package jsonapi
 import (
 	"strings"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -1,13 +1,13 @@
 package web
 
 import (
-	"lilmail/i18n"
+	"inbrix/i18n"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-const localeCookieName = "lilmail_locale"
+const localeCookieName = "inbrix_locale"
 
 // CurrentLocale resolves the locale for a request without coupling mail
 // handlers to the browser's Accept-Language parsing details.

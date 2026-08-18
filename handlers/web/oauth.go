@@ -3,7 +3,7 @@ package web
 
 import (
 	"fmt"
-	"lilmail/handlers/api"
+	"inbrix/handlers/api"
 	"log"
 	"path/filepath"
 	"time"

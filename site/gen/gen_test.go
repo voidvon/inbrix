@@ -357,7 +357,7 @@ func TestSlugifyMatchesViewer(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"Shared object storage (`VULOS_STORAGE_BROKER_SECRET`)", "shared-object-storage-vulosstoragebrokersecret"},
 		{"[1.10.0] - 2026-06-22", "1100-2026-06-22"},
-		{"0. lilmail emits no webhooks", "0-lilmail-emits-no-webhooks"},
+		{"0. inbrix emits no webhooks", "0-inbrix-emits-no-webhooks"},
 		{"`[storage]`", "storage"},
 		{"Injected-credential mode (embedding hosts)", "injected-credential-mode-embedding-hosts"},
 	} {

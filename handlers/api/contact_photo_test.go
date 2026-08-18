@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	vcard "github.com/emersion/go-vcard"
 )

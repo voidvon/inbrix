@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"lilmail/mailstore"
+	"inbrix/mailstore"
 )
 
 func TestValidateOpenAIBaseURL(t *testing.T) {

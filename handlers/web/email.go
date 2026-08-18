@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/htmlsafe"
-	"lilmail/mailstore"
-	"lilmail/models"
-	"lilmail/storage"
-	"lilmail/utils"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/htmlsafe"
+	"inbrix/mailstore"
+	"inbrix/models"
+	"inbrix/storage"
+	"inbrix/utils"
 	"log"
 	"net/url"
 	"os"
@@ -1020,7 +1020,7 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		rawMessage, err = api.BuildMIMEMessage(mimeOpts)
 		mimeSize = int64(len(rawMessage))
 	} else {
-		mimeFile, err = os.CreateTemp("", "lilmail-compose-*.eml")
+		mimeFile, err = os.CreateTemp("", "inbrix-compose-*.eml")
 		if err == nil {
 			defer func() {
 				mimeFile.Close()

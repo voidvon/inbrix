@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // The vCard round-trip must preserve the fields the contacts view depends on:

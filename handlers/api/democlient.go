@@ -12,7 +12,7 @@ package api
 
 import (
 	"fmt"
-	"lilmail/models"
+	"inbrix/models"
 	"strings"
 	"time"
 )
@@ -37,7 +37,7 @@ func NewDemoClient() *DemoClient {
 			ID:        "1001",
 			From:      "alice@example.com",
 			FromName:  "Alice Nakamura",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Subject:   "Re: Product roadmap Q3 — feedback welcome",
 			Preview:   "Thanks for sharing the draft. I left comments on sections 2 and 4. The timeline looks ambitious but achievable if we front-load the infra work.",
 			Body:      "Thanks for sharing the draft. I left comments on sections 2 and 4.\n\nThe timeline looks ambitious but achievable if we front-load the infra work. Let's sync Thursday — does 14:00 UTC work for you?\n\n– Alice",
@@ -45,19 +45,19 @@ func NewDemoClient() *DemoClient {
 			Date:      now.Add(-2 * time.Hour),
 			Flags:     []string{},
 			MessageID: "<roadmap-reply-001@example.com>",
-			InReplyTo: "<roadmap-001@lilmail.dev>",
+			InReplyTo: "<roadmap-001@inbrix.dev>",
 			References: []string{
-				"<roadmap-001@lilmail.dev>",
+				"<roadmap-001@inbrix.dev>",
 			},
 		},
 		{
 			ID:             "1002",
 			From:           "noreply@github.com",
 			FromName:       "GitHub",
-			To:             "demo@lilmail.dev",
-			Subject:        "[lilmail/lilmail] PR #42: Add dark mode calendar view",
+			To:             "demo@inbrix.dev",
+			Subject:        "[inbrix/inbrix] PR #42: Add dark mode calendar view",
 			Preview:        "imranparuk opened a pull request. Add a dark-mode-aware CSS layer for the calendar month view, fixing contrast issues on --color-scheme: dark.",
-			Body:           "imranparuk opened a pull request #42\n\nAdd dark mode calendar view\n\nAdd a dark-mode-aware CSS layer for the calendar month view, fixing contrast issues on --color-scheme: dark.\n\nChanges: +187 −23\n\nView it on GitHub: https://github.com/lilmail/lilmail/pull/42",
+			Body:           "imranparuk opened a pull request #42\n\nAdd dark mode calendar view\n\nAdd a dark-mode-aware CSS layer for the calendar month view, fixing contrast issues on --color-scheme: dark.\n\nChanges: +187 −23\n\nView it on GitHub: https://github.com/inbrix/inbrix/pull/42",
 			Date:           now.Add(-5 * time.Hour),
 			Flags:          []string{"\\Seen"},
 			MessageID:      "<github-pr-42@github.com>",
@@ -67,7 +67,7 @@ func NewDemoClient() *DemoClient {
 			ID:             "1003",
 			From:           "invoice@stripe.com",
 			FromName:       "Stripe",
-			To:             "demo@lilmail.dev",
+			To:             "demo@inbrix.dev",
 			Subject:        "Your invoice from Stripe — $49.00 due",
 			Preview:        "Invoice INV-2026-0614. Amount due: $49.00 USD. Due date: 30 June 2026. View and pay at dashboard.stripe.com.",
 			Body:           "Invoice INV-2026-0614\n\nAmount due: $49.00 USD\nDue date: 30 June 2026\n\nView and pay at dashboard.stripe.com",
@@ -89,7 +89,7 @@ func NewDemoClient() *DemoClient {
 			ID:             "1004",
 			From:           "bob@designco.io",
 			FromName:       "Bob Osei",
-			To:             "demo@lilmail.dev",
+			To:             "demo@inbrix.dev",
 			Subject:        "Moodboard for the new landing page",
 			Preview:        "Hey! Attached are three concept directions for the hero section. Let me know which resonates most — I'm leaning toward option B (the gradient mesh).",
 			Body:           "Hey!\n\nAttached are three concept directions for the hero section. Let me know which resonates most — I'm leaning toward option B (the gradient mesh).\n\nAll exported at 2× for retina. LMK your thoughts by EOD Friday.\n\nCheers,\nBob",
@@ -126,19 +126,19 @@ func NewDemoClient() *DemoClient {
 			ID:        "1005",
 			From:      "alice@example.com",
 			FromName:  "Alice Nakamura",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Subject:   "Product roadmap Q3 — feedback welcome",
 			Preview:   "Hi team, attaching the Q3 roadmap draft. Please review sections 2–4 and share feedback by Friday. Ping me with any blockers.",
 			Body:      "Hi team,\n\nAttaching the Q3 roadmap draft. Please review sections 2–4 and share feedback by Friday.\n\nPing me with any blockers.\n\n– Alice",
 			Date:      now.Add(-3 * day),
 			Flags:     []string{"\\Seen"},
-			MessageID: "<roadmap-001@lilmail.dev>",
+			MessageID: "<roadmap-001@inbrix.dev>",
 		},
 		{
 			ID:        "1006",
 			From:      "security@accounts.google.com",
 			FromName:  "Google",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Subject:   "Security alert: new sign-in on macOS",
 			Preview:   "Your Google Account demo@gmail.com was just signed in to from macOS. If this was you, you can ignore this message.",
 			Body:      "Your Google Account demo@gmail.com was just signed in to from macOS.\n\nIf this was you, you can ignore this message.\n\nIf not, visit myaccount.google.com/security to take action.",
@@ -150,7 +150,7 @@ func NewDemoClient() *DemoClient {
 			ID:        "1007",
 			From:      "team@linear.app",
 			FromName:  "Linear",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Subject:   "ENG-419 was closed: Investigate IMAP IDLE reconnect drops",
 			Preview:   "Issue ENG-419 — Investigate IMAP IDLE reconnect drops — was closed by imranparuk. View the issue on Linear.",
 			Body:      "Issue ENG-419 — Investigate IMAP IDLE reconnect drops — was closed by imranparuk.\n\nView the issue: https://linear.app/team/ENG-419",
@@ -162,7 +162,7 @@ func NewDemoClient() *DemoClient {
 			ID:        "1008",
 			From:      "maya@startup.co",
 			FromName:  "Maya Chen",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Cc:        "team@startup.co",
 			Subject:   "Onboarding call recap + next steps",
 			Preview:   "Great call today! Recapping the key decisions: (1) launch date moved to July 14, (2) pricing stays at $29/mo for beta, (3) docs sprint starts Monday.",
@@ -176,7 +176,7 @@ func NewDemoClient() *DemoClient {
 			ID:         "1009",
 			From:       "alice@example.com",
 			FromName:   "Alice Nakamura",
-			To:         "demo@lilmail.dev",
+			To:         "demo@inbrix.dev",
 			Subject:    "Re: Onboarding call recap + next steps",
 			Preview:    "+1 to all of the above. I'll also chase down the SSO integration — should have a status update by end of week.",
 			Body:       "+1 to all of the above. I'll also chase down the SSO integration — should have a status update by end of week.\n\n– Alice",
@@ -190,7 +190,7 @@ func NewDemoClient() *DemoClient {
 			ID:        "1010",
 			From:      "newsletter@techdigest.io",
 			FromName:  "Tech Digest",
-			To:        "demo@lilmail.dev",
+			To:        "demo@inbrix.dev",
 			Subject:   "This week in open source: Go 1.24, the SFU debate, and HTMX hits 30k stars",
 			Preview:   "Go 1.24 ships with range-over functions and improved PGO. The HTMX project crosses 30k GitHub stars. Plus: why SSE is back in fashion.",
 			Body:      "Go 1.24 ships with range-over functions and improved PGO.\n\nThe HTMX project crosses 30k GitHub stars.\n\nPlus: why SSE is back in fashion for real-time web apps, a deep-dive on SFU vs mesh WebRTC, and the best new crates for Rust CLI tooling.",
@@ -204,7 +204,7 @@ func NewDemoClient() *DemoClient {
 	sent := []models.Email{
 		{
 			ID:        "2001",
-			From:      "demo@lilmail.dev",
+			From:      "demo@inbrix.dev",
 			FromName:  "Demo User",
 			To:        "alice@example.com",
 			Subject:   "Product roadmap Q3 — feedback welcome",
@@ -212,11 +212,11 @@ func NewDemoClient() *DemoClient {
 			Body:      "Hi Alice,\n\nSharing the Q3 roadmap draft. Would love your thoughts on the timeline before we present to the board.\n\nThanks!",
 			Date:      now.Add(-3 * day),
 			Flags:     []string{"\\Seen"},
-			MessageID: "<roadmap-sent-001@lilmail.dev>",
+			MessageID: "<roadmap-sent-001@inbrix.dev>",
 		},
 		{
 			ID:        "2002",
-			From:      "demo@lilmail.dev",
+			From:      "demo@inbrix.dev",
 			FromName:  "Demo User",
 			To:        "bob@designco.io",
 			Subject:   "Re: Moodboard for the new landing page",
@@ -224,14 +224,14 @@ func NewDemoClient() *DemoClient {
 			Body:      "Hey Bob,\n\nOption B all the way — the gradient mesh feels modern without being too trendy.\n\nCould you try a version where the mesh is slightly more muted? Something that works in both light and dark mode would be ideal.\n\nThanks!",
 			Date:      now.Add(-2*day + time.Hour),
 			Flags:     []string{"\\Seen"},
-			MessageID: "<moodboard-reply-001@lilmail.dev>",
+			MessageID: "<moodboard-reply-001@inbrix.dev>",
 		},
 	}
 
 	drafts := []models.Email{
 		{
 			ID:        "3001",
-			From:      "demo@lilmail.dev",
+			From:      "demo@inbrix.dev",
 			FromName:  "Demo User",
 			To:        "team@startup.co",
 			Subject:   "Sprint planning notes — week of June 16",
@@ -239,7 +239,7 @@ func NewDemoClient() *DemoClient {
 			Body:      "Capturing the key points from today's planning. Still working through the acceptance criteria for ENG-42...",
 			Date:      now.Add(-30 * time.Minute),
 			Flags:     []string{"\\Draft", "\\Seen"},
-			MessageID: "<draft-sprint-001@lilmail.dev>",
+			MessageID: "<draft-sprint-001@inbrix.dev>",
 		},
 	}
 

@@ -25,7 +25,7 @@ func OpenPostgres(dsn string) (KV, error) {
 		db.Close()
 		return nil, fmt.Errorf("storage: ping postgres: %w", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS lilmail_kv (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS inbrix_kv (
 		ns  TEXT  NOT NULL,
 		key TEXT  NOT NULL,
 		val BYTEA NOT NULL,
@@ -39,7 +39,7 @@ func OpenPostgres(dsn string) (KV, error) {
 
 func (p *postgresKV) Get(ns, key string) ([]byte, error) {
 	var val []byte
-	err := p.db.QueryRow(`SELECT val FROM lilmail_kv WHERE ns=$1 AND key=$2`, ns, key).Scan(&val)
+	err := p.db.QueryRow(`SELECT val FROM inbrix_kv WHERE ns=$1 AND key=$2`, ns, key).Scan(&val)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -51,7 +51,7 @@ func (p *postgresKV) Get(ns, key string) ([]byte, error) {
 
 func (p *postgresKV) Set(ns, key string, val []byte) error {
 	_, err := p.db.Exec(
-		`INSERT INTO lilmail_kv (ns, key, val) VALUES ($1, $2, $3)
+		`INSERT INTO inbrix_kv (ns, key, val) VALUES ($1, $2, $3)
 		 ON CONFLICT (ns, key) DO UPDATE SET val = EXCLUDED.val`,
 		ns, key, val,
 	)
@@ -59,7 +59,7 @@ func (p *postgresKV) Set(ns, key string, val []byte) error {
 }
 
 func (p *postgresKV) Delete(ns, key string) error {
-	_, err := p.db.Exec(`DELETE FROM lilmail_kv WHERE ns=$1 AND key=$2`, ns, key)
+	_, err := p.db.Exec(`DELETE FROM inbrix_kv WHERE ns=$1 AND key=$2`, ns, key)
 	return err
 }
 
@@ -69,11 +69,11 @@ func (p *postgresKV) List(ns, prefix string) (map[string][]byte, error) {
 	var rows *sql.Rows
 	var err error
 	if prefix == "" {
-		rows, err = p.db.Query(`SELECT key, val FROM lilmail_kv WHERE ns=$1`, ns)
+		rows, err = p.db.Query(`SELECT key, val FROM inbrix_kv WHERE ns=$1`, ns)
 	} else {
 		// Escape LIKE wildcards so a literal prefix is matched verbatim.
 		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
-		rows, err = p.db.Query(`SELECT key, val FROM lilmail_kv WHERE ns=$1 AND key LIKE $2 ESCAPE '\'`, ns, esc+"%")
+		rows, err = p.db.Query(`SELECT key, val FROM inbrix_kv WHERE ns=$1 AND key LIKE $2 ESCAPE '\'`, ns, esc+"%")
 	}
 	if err != nil {
 		return nil, err

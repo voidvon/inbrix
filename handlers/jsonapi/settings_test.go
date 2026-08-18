@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/web"
-	"lilmail/storage"
+	"inbrix/config"
+	"inbrix/handlers/web"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

@@ -17,7 +17,7 @@ package jsonapi
 import (
 	"io"
 
-	"lilmail/handlers/api"
+	"inbrix/handlers/api"
 
 	"github.com/gofiber/fiber/v2"
 )

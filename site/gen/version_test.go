@@ -107,7 +107,7 @@ func TestLandingVersionMatchesVERSION(t *testing.T) {
 }
 
 // TestDocsFooterVersionMatchesVERSION checks the sidebar footer in
-// site/docs.html ("lilmail v1.14.0"). site/docs.html is hand-authored, not
+// site/docs.html ("inbrix v1.14.0"). site/docs.html is hand-authored, not
 // generated (site/gen only produces site/docs/*.md), so this reads the file
 // directly.
 func TestDocsFooterVersionMatchesVERSION(t *testing.T) {
@@ -120,7 +120,7 @@ func TestDocsFooterVersionMatchesVERSION(t *testing.T) {
 	}
 	html := string(raw)
 
-	footerRE := regexp.MustCompile(`lilmail v([0-9]+\.[0-9]+\.[0-9]+)<br>`)
+	footerRE := regexp.MustCompile(`inbrix v([0-9]+\.[0-9]+\.[0-9]+)<br>`)
 	matches := footerRE.FindAllStringSubmatch(html, -1)
 	if len(matches) != 1 {
 		t.Fatalf("found %d occurrence(s) of the sidebar footer version marker in site/docs.html, want "+
@@ -169,7 +169,7 @@ func TestReadmeVersionMatchesVERSION(t *testing.T) {
 		want string
 	}{
 		{"verify.sh --tag", regexp.MustCompile(`--tag v([0-9]+\.[0-9]+\.[0-9]+)`), version},
-		{"release archive", regexp.MustCompile(`lilmail_([0-9]+\.[0-9]+\.[0-9]+)_[a-z0-9]+_[a-z0-9]+\.zip`), version},
+		{"release archive", regexp.MustCompile(`inbrix_([0-9]+\.[0-9]+\.[0-9]+)_[a-z0-9]+_[a-z0-9]+\.zip`), version},
 	} {
 		m := c.re.FindAllStringSubmatch(readme, -1)
 		if len(m) != 1 {

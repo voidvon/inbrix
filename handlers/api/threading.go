@@ -13,7 +13,7 @@
 package api
 
 import (
-	"lilmail/models"
+	"inbrix/models"
 	"regexp"
 	"sort"
 	"strings"

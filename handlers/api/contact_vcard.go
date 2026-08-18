@@ -28,7 +28,7 @@ package api
 import (
 	"strings"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	vcard "github.com/emersion/go-vcard"
 )

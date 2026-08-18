@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 func TestCurrentMessageTextStripsPlainTextQuotes(t *testing.T) {

@@ -1,11 +1,11 @@
 // Package htmlsafe is a conservative, dependency-free HTML sanitizer for
-// attacker-influenced HTML that lilmail must render or emit outside the
+// attacker-influenced HTML that inbrix must render or emit outside the
 // sandboxed reading-pane iframe.
 //
 // Two callers share this policy:
 //
 //   - handlers/jsonapi — defangs user-authored signature/vacation HTML that
-//     lilmail EMITS into outgoing mail (defense-in-depth; the recipient's client
+//     inbrix EMITS into outgoing mail (defense-in-depth; the recipient's client
 //     also sanitizes).
 //   - handlers/web — defangs the HTML of a DRAFT being edited before it is placed
 //     into the compose contenteditable. That contenteditable is assigned via

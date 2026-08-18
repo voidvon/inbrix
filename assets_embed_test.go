@@ -6,7 +6,7 @@ package main
 // claim is "single binary, ~30 MB, no build step".
 //
 // Five such files had accumulated (apple-touch-icon.png, icon-48.png,
-// lilmail-logo.svg, lilmail.png, lilmail.svg) — none reachable from any UI,
+// inbrix-logo.svg, inbrix.png, inbrix.svg) — none reachable from any UI,
 // stylesheet, service worker, manifest or Go source. This test stops that
 // happening again, in the direction that actually matters: it fails on an asset
 // that is embedded but unreachable.

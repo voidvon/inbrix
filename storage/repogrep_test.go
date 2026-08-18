@@ -46,7 +46,7 @@ func repoRoot() (string, error) {
 
 // grepRepo returns every non-test .go line in the module matching pattern.
 // Vendored/third-party trees and test files are skipped: the invariants this
-// backs are about lilmail's own shipped code.
+// backs are about inbrix's own shipped code.
 func grepRepo(pattern string) ([]repoHit, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestGrepRepoFindsKnownContent(t *testing.T) {
 	}
 
 	// A pattern that must NOT match, so the regex is proven to be applied at all.
-	none, err := grepRepo(`zzz-this-string-does-not-exist-in-lilmail`)
+	none, err := grepRepo(`zzz-this-string-does-not-exist-in-inbrix`)
 	if err != nil {
 		t.Fatalf("grepRepo: %v", err)
 	}

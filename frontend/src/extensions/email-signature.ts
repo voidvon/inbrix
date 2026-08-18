@@ -16,9 +16,9 @@ export const EmailSignature = Node.create({
 
   parseHTML() {
     return [{
-      tag: "div[data-lilmail-signature]",
+      tag: "div[data-inbrix-signature]",
       getAttrs: (element) => ({
-        signatureId: element.getAttribute("data-lilmail-signature") || "",
+        signatureId: element.getAttribute("data-inbrix-signature") || "",
         signatureName: element.getAttribute("data-signature-name") || "",
       }),
     }];
@@ -29,7 +29,7 @@ export const EmailSignature = Node.create({
     const signatureId = typeof attributes.signatureId === "string" ? attributes.signatureId : "";
     const signatureName = typeof attributes.signatureName === "string" ? attributes.signatureName : "";
     return ["div", mergeAttributes(HTMLAttributes, {
-      "data-lilmail-signature": signatureId,
+      "data-inbrix-signature": signatureId,
       "data-signature-name": signatureName,
     }), 0];
   },

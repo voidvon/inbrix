@@ -1,6 +1,6 @@
 package ai
 
-// ai_test.go — unit tests for the LilMail AI package.
+// ai_test.go — unit tests for the Inbrix AI AI package.
 //
 // Tests:
 //  1. drainSSEText parses OpenAI-compatible SSE chunks correctly.
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	"github.com/gofiber/fiber/v2"
 )

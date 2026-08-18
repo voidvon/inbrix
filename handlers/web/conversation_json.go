@@ -2,10 +2,10 @@ package web
 
 import (
 	stdhtml "html"
-	"lilmail/handlers/api"
-	"lilmail/i18n"
-	"lilmail/mailstore"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/i18n"
+	"inbrix/mailstore"
+	"inbrix/models"
 	"net/url"
 	"regexp"
 	"strings"
@@ -218,7 +218,7 @@ func collapseQuotedNodes(node *html.Node, locale string) {
 }
 
 func wrapQuotedNodes(parent, first, last *html.Node, locale string) {
-	details := &html.Node{Type: html.ElementNode, Data: "details", Attr: []html.Attribute{{Key: "class", Val: "lilmail-quoted"}}}
+	details := &html.Node{Type: html.ElementNode, Data: "details", Attr: []html.Attribute{{Key: "class", Val: "inbrix-quoted"}}}
 	summary := &html.Node{Type: html.ElementNode, Data: "summary"}
 	summary.AppendChild(&html.Node{Type: html.TextNode, Data: i18n.Translate(locale, "Show quoted message")})
 	parent.InsertBefore(details, first)

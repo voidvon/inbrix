@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 func openTestStore(t *testing.T) *Store {

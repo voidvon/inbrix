@@ -11,7 +11,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"lilmail/handlers/htmlsafe"
+	"inbrix/handlers/htmlsafe"
 	"math/rand"
 	"mime"
 	"mime/multipart"

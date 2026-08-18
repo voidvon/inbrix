@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/handlers/api"
-	"lilmail/models"
+	"inbrix/handlers/api"
+	"inbrix/models"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -128,7 +128,7 @@ func TestReportSpamMovesToJunk(t *testing.T) {
 }
 
 // Snooze moves the message to the Snoozed folder and reports autoReturn:false
-// (lilmail is a client — it does not itself return the message to the inbox).
+// (inbrix is a client — it does not itself return the message to the inbox).
 func TestSnoozeMovesToSnoozed(t *testing.T) {
 	rec := &recordingFolders{fetchMsgID: "<abc@x>"}
 	app := newBrokeredApp(t, rec)

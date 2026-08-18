@@ -1,5 +1,5 @@
 /**
- * lilmail demo-mode Playwright screenshotter
+ * inbrix demo-mode Playwright screenshotter
  *
  * Captures screenshots using the in-memory demo account (no real IMAP needed).
  * Assumes the server is already running (started by scripts/seed-demo.sh or
@@ -22,9 +22,9 @@
  *   BASE_URL=http://localhost:3099 node scripts/demo-screenshots.mjs
  *
  * Environment variables:
- *   BASE_URL            Running lilmail instance. Default: http://localhost:3099
- *   LILMAIL_DEMO_EMAIL  Demo account email.    Default: demo@lilmail.dev
- *   LILMAIL_DEMO_PASS   Demo account password. Default: demo
+ *   BASE_URL            Running inbrix instance. Default: http://localhost:3099
+ *   INBRIX_DEMO_EMAIL  Demo account email.    Default: demo@inbrix.dev
+ *   INBRIX_DEMO_PASS   Demo account password. Default: demo
  */
 
 import { chromium } from 'playwright';
@@ -40,8 +40,8 @@ mkdirSync(SITE_DIR, { recursive: true });
 mkdirSync(DOCS_DIR, { recursive: true });
 
 const BASE_URL   = process.env.BASE_URL || 'http://localhost:3099';
-const DEMO_EMAIL = process.env.LILMAIL_DEMO_EMAIL || process.env.LILMAIL_USERNAME || 'demo@lilmail.dev';
-const DEMO_PASS  = process.env.LILMAIL_DEMO_PASS  || process.env.LILMAIL_PASSWORD || 'demo';
+const DEMO_EMAIL = process.env.INBRIX_DEMO_EMAIL || process.env.INBRIX_USERNAME || 'demo@inbrix.dev';
+const DEMO_PASS  = process.env.INBRIX_DEMO_PASS  || process.env.INBRIX_PASSWORD || 'demo';
 
 const WIDTH  = 1280;
 const HEIGHT = 800;
@@ -203,7 +203,7 @@ async function run(browser, scheme, scale) {
 /**
  * Phone pass. The landing page cannot use the 1280-wide desktop captures on a
  * phone: scaled to ~350 CSS px the app's 13 px UI text lands at ~4 px and the
- * shot reads as a grey smudge. lilmail has a real single-column layout below
+ * shot reads as a grey smudge. inbrix has a real single-column layout below
  * 1024 px, so capture that instead and show it at close to 1:1.
  */
 async function runPhone(browser, scheme, scale) {

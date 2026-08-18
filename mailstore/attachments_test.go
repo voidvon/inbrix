@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 func TestAttachmentIndexLifecycleAndFilters(t *testing.T) {

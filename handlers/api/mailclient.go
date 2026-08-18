@@ -2,7 +2,7 @@
 // IMAP *Client and the in-memory *DemoClient used in demo/screenshot mode.
 package api
 
-import "lilmail/models"
+import "inbrix/models"
 
 // MailClient is the abstract mail-backend interface consumed by all web
 // handlers. The real implementation (*Client) connects to a live IMAP server;

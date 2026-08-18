@@ -3,8 +3,8 @@ package web
 import (
 	"encoding/json"
 	"errors"
-	"lilmail/mailstore"
-	"lilmail/models"
+	"inbrix/mailstore"
+	"inbrix/models"
 	"strings"
 	"testing"
 	"time"

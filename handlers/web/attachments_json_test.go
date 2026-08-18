@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/handlers/api"
-	"lilmail/mailstore"
+	"inbrix/handlers/api"
+	"inbrix/mailstore"
 )
 
 func TestAttachmentJSONBuildsDownloadIDAndMessageContext(t *testing.T) {

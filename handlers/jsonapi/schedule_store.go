@@ -33,8 +33,8 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/handlers/api"
-	"lilmail/storage"
+	"inbrix/handlers/api"
+	"inbrix/storage"
 )
 
 // scheduleNS is the KV namespace holding scheduled-send records.

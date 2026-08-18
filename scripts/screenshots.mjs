@@ -1,28 +1,28 @@
 /**
- * lilmail Playwright screenshotter
+ * inbrix Playwright screenshotter
  *
- * Captures screenshots of all major lilmail pages and writes them to
+ * Captures screenshots of all major inbrix pages and writes them to
  * docs/screenshots/. Run via:
  *
  *   make screenshots          (from repo root — builds binary + installs deps)
- *   node scripts/screenshots.mjs  (if lilmail is already running)
+ *   node scripts/screenshots.mjs  (if inbrix is already running)
  *
  * Environment variables:
  *
- *   BASE_URL            Base URL of the running lilmail instance.
+ *   BASE_URL            Base URL of the running inbrix instance.
  *                       Default: http://localhost:3099
  *
- *   LILMAIL_EXTERNAL    Set to "1" to skip starting/stopping a lilmail server.
+ *   INBRIX_EXTERNAL    Set to "1" to skip starting/stopping a inbrix server.
  *                       The script will connect to BASE_URL directly.
  *
- *   LILMAIL_USERNAME    Email address for login (inbox/message/compose screenshots).
- *   LILMAIL_PASSWORD    Password for login.
- *   LILMAIL_IMAP_SERVER IMAP hostname  (used when writing a temp config).
- *   LILMAIL_IMAP_PORT   IMAP port      (default: 993).
- *   LILMAIL_SMTP_SERVER SMTP hostname  (used when writing a temp config).
- *   LILMAIL_SMTP_PORT   SMTP port      (default: 587).
- *   LILMAIL_JWT_SECRET  JWT secret     (generated if omitted).
- *   LILMAIL_ENC_KEY     32-byte AES key (generated if omitted).
+ *   INBRIX_USERNAME    Email address for login (inbox/message/compose screenshots).
+ *   INBRIX_PASSWORD    Password for login.
+ *   INBRIX_IMAP_SERVER IMAP hostname  (used when writing a temp config).
+ *   INBRIX_IMAP_PORT   IMAP port      (default: 993).
+ *   INBRIX_SMTP_SERVER SMTP hostname  (used when writing a temp config).
+ *   INBRIX_SMTP_PORT   SMTP port      (default: 587).
+ *   INBRIX_JWT_SECRET  JWT secret     (generated if omitted).
+ *   INBRIX_ENC_KEY     32-byte AES key (generated if omitted).
  */
 
 import { chromium } from 'playwright';
@@ -38,8 +38,8 @@ import { randomBytes } from 'crypto';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT      = resolve(__dirname, '..');
 const OUT_DIR   = resolve(ROOT, 'docs', 'screenshots');
-const BINARY    = resolve(ROOT, 'lilmail');
-// lilmail reads config.toml from its working directory; we run it from a
+const BINARY    = resolve(ROOT, 'inbrix');
+// inbrix reads config.toml from its working directory; we run it from a
 // temporary directory so we don't overwrite the real config.toml.
 const TMP_DIR   = resolve(ROOT, '.screenshots-tmp');
 const TMP_CFG   = resolve(TMP_DIR, 'config.toml');
@@ -52,25 +52,25 @@ mkdirSync(TMP_DIR, { recursive: true });
 // ---------------------------------------------------------------------------
 const BASE_URL  = process.env.BASE_URL || 'http://localhost:3099';
 const PORT      = new URL(BASE_URL).port || '3099';
-const EXTERNAL  = process.env.LILMAIL_EXTERNAL === '1';
+const EXTERNAL  = process.env.INBRIX_EXTERNAL === '1';
 
-const USERNAME  = process.env.LILMAIL_USERNAME || '';
-const PASSWORD  = process.env.LILMAIL_PASSWORD || '';
-const IMAP_HOST = process.env.LILMAIL_IMAP_SERVER || 'imap.example.com';
-const IMAP_PORT = process.env.LILMAIL_IMAP_PORT   || '993';
-const SMTP_HOST = process.env.LILMAIL_SMTP_SERVER || 'smtp.example.com';
-const SMTP_PORT = process.env.LILMAIL_SMTP_PORT   || '587';
-const JWT_SECRET  = process.env.LILMAIL_JWT_SECRET  || randomBytes(32).toString('hex');
+const USERNAME  = process.env.INBRIX_USERNAME || '';
+const PASSWORD  = process.env.INBRIX_PASSWORD || '';
+const IMAP_HOST = process.env.INBRIX_IMAP_SERVER || 'imap.example.com';
+const IMAP_PORT = process.env.INBRIX_IMAP_PORT   || '993';
+const SMTP_HOST = process.env.INBRIX_SMTP_SERVER || 'smtp.example.com';
+const SMTP_PORT = process.env.INBRIX_SMTP_PORT   || '587';
+const JWT_SECRET  = process.env.INBRIX_JWT_SECRET  || randomBytes(32).toString('hex');
 // AES key must be exactly 32 printable bytes (no control chars in TOML)
-const ENC_KEY     = process.env.LILMAIL_ENC_KEY     || randomBytes(16).toString('hex'); // 32 hex chars = 32 bytes
+const ENC_KEY     = process.env.INBRIX_ENC_KEY     || randomBytes(16).toString('hex'); // 32 hex chars = 32 bytes
 
-const HAS_CREDS = Boolean(USERNAME && PASSWORD && process.env.LILMAIL_IMAP_SERVER);
+const HAS_CREDS = Boolean(USERNAME && PASSWORD && process.env.INBRIX_IMAP_SERVER);
 
 // ---------------------------------------------------------------------------
 // Temp config
 // ---------------------------------------------------------------------------
 function writeTempConfig() {
-  // lilmail reads config.toml from its cwd; we write into TMP_DIR and run
+  // inbrix reads config.toml from its cwd; we write into TMP_DIR and run
   // the binary with cwd=TMP_DIR so the real config.toml is never touched.
   const toml = `
 [server]
@@ -110,7 +110,7 @@ function startServer() {
     process.exit(1);
   }
   writeTempConfig();
-  console.log(`Starting lilmail on port ${PORT}...`);
+  console.log(`Starting inbrix on port ${PORT}...`);
   serverProc = spawn(BINARY, [], {
     cwd: TMP_DIR,   // binary reads config.toml from its cwd
     env: process.env,
@@ -197,11 +197,11 @@ async function main() {
     // 2. Authenticated views — require a live IMAP account
     // ------------------------------------------------------------------
     if (!HAS_CREDS) {
-      console.warn('\nNo IMAP credentials set (LILMAIL_USERNAME / LILMAIL_PASSWORD / LILMAIL_IMAP_SERVER).');
+      console.warn('\nNo IMAP credentials set (INBRIX_USERNAME / INBRIX_PASSWORD / INBRIX_IMAP_SERVER).');
       console.warn('Skipping authenticated screenshots. See docs/SCREENSHOTS.md for instructions.\n');
 
       for (const name of ['inbox', 'message', 'compose', 'calendar', 'settings', 'search']) {
-        skip(name, 'requires live IMAP account — set LILMAIL_USERNAME, LILMAIL_PASSWORD, LILMAIL_IMAP_SERVER');
+        skip(name, 'requires live IMAP account — set INBRIX_USERNAME, INBRIX_PASSWORD, INBRIX_IMAP_SERVER');
       }
     } else {
       console.log('\nLogging in...');

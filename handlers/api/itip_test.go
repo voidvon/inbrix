@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 func sampleInvite() InviteParams {

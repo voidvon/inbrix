@@ -1,5 +1,5 @@
 // handlers/api/wave49_transport_security_test.go — wave-49 coverage-driven
-// SECURITY pass on lilmail's transport layer (IMAP/SMTP/DAV client + SSRF guards
+// SECURITY pass on inbrix's transport layer (IMAP/SMTP/DAV client + SSRF guards
 // + MIME builder). The wave-33 pass covered handlers/jsonapi; this file targets
 // the under-tested fail-closed behaviour of the transport primitives themselves:
 //
@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
+	"inbrix/config"
 )
 
 // ---------------------------------------------------------------------------

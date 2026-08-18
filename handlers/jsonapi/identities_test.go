@@ -8,7 +8,7 @@ package jsonapi
 //   - malformed / injecting addresses are refused locally (400)
 //   - compose sends AS the chosen identity, and an UNREGISTERED From is refused (403)
 //
-// lilmail is a CLIENT: it is not the authority for what From an account may send as
+// inbrix is a CLIENT: it is not the authority for what From an account may send as
 // (the user's provider SMTP server is). Identities are stored as the compose menu's
 // read model and validated locally for shape + header-injection.
 
@@ -19,10 +19,10 @@ import (
 	"strings"
 	"testing"
 
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/handlers/web"
-	"lilmail/storage"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/handlers/web"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"

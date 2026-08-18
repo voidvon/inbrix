@@ -1,7 +1,7 @@
 // handlers/api/itip.go — iTIP/iMIP calendar-invite engine (RFC 5545 / 5546 / 6047).
 //
 // This is the single source of truth for generating and parsing calendar
-// scheduling messages in LilMail:
+// scheduling messages in Inbrix AI:
 //
 //   - BuildRequestICS  → a METHOD:REQUEST VCALENDAR an organizer mails to invitees
 //   - BuildReplyICS    → a METHOD:REPLY VCALENDAR an attendee mails back on RSVP
@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/models"
+	"inbrix/models"
 
 	"github.com/emersion/go-ical"
 )
@@ -37,8 +37,8 @@ import (
 // send path into a fan-out/spam vector.
 const MaxAttendees = 100
 
-// iCalProdID identifies LilMail as the generating product in every VCALENDAR.
-const iCalProdID = "-//Vulos//LilMail iTIP//EN"
+// iCalProdID identifies Inbrix AI as the generating product in every VCALENDAR.
+const iCalProdID = "-//Vulos//Inbrix AI iTIP//EN"
 
 // escICalText escapes a text value for safe inclusion as an iCalendar property
 // value per RFC 5545 §3.3.11: backslash, semicolon and comma are escaped, and

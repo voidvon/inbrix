@@ -14,7 +14,7 @@ import (
 	"context"
 	"strings"
 
-	"lilmail/models"
+	"inbrix/models"
 )
 
 // bimiResolve is the resolver seam (package var so tests can stub it without DNS

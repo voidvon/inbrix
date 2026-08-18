@@ -1,4 +1,4 @@
-// Package ai provides mail-specific AI endpoints for LilMail.
+// Package ai provides mail-specific AI endpoints for Inbrix AI.
 //
 // It exposes five Fiber routes plus a capability probe:
 //
@@ -36,7 +36,7 @@
 // resolve it to an account and apply BYOK-vs-central key selection plus
 // metering; in embedded mode it is handed to the in-process gateway's Authorize,
 // which is the same auth path llmux's HTTP shell runs. When no per-request token
-// is present, the static [ai] api_key is used. LilMail does not decide BYOK vs
+// is present, the static [ai] api_key is used. Inbrix AI does not decide BYOK vs
 // central — it only forwards the account's token.
 //
 // # Privacy
@@ -48,12 +48,12 @@
 //
 // In embedded mode it is handed to the in-process llmux gateway, dispatched to
 // the provider llmux's config selects, and discarded. Embedding llmux brings its
-// response cache into LilMail's process, so LilMail builds the gateway with that
+// response cache into Inbrix AI's process, so Inbrix AI builds the gateway with that
 // cache DISABLED by default: nothing derived from a message outlives the request.
 // Setting [ai] llmux_cache = true opts in explicitly, and then model responses to
 // your mail are held in an in-memory, TTL-bounded, size-bounded LRU keyed by a
 // SHA-256 of the request until they expire or are evicted. Even then nothing is
-// written to disk: LilMail also strips llmux's Redis and Postgres settings on
+// written to disk: Inbrix AI also strips llmux's Redis and Postgres settings on
 // this path, so the disk/network-backed cache and key stores are unreachable.
 package ai
 
@@ -70,7 +70,7 @@ import (
 	"strings"
 	"time"
 
-	"lilmail/config"
+	"inbrix/config"
 
 	"github.com/gofiber/fiber/v2"
 )

@@ -1,4 +1,4 @@
-// handlers/web/calendar.go — CalDAV calendar route handlers for LilMail.
+// handlers/web/calendar.go — CalDAV calendar route handlers for Inbrix AI.
 //
 // All routes in this file are registered only when config.CalDAV.Enabled is
 // true.  They share the same session-authenticated protected group used by the
@@ -8,10 +8,10 @@ package web
 import (
 	"context"
 	"fmt"
-	"lilmail/config"
-	"lilmail/handlers/api"
-	"lilmail/i18n"
-	"lilmail/models"
+	"inbrix/config"
+	"inbrix/handlers/api"
+	"inbrix/i18n"
+	"inbrix/models"
 	"log"
 	"strconv"
 	"strings"
@@ -293,7 +293,7 @@ func (h *CalendarHandler) HandleRSVP(c *fiber.Ctx) error {
 	ics := strings.Join([]string{
 		"BEGIN:VCALENDAR",
 		"VERSION:2.0",
-		"PRODID:-//LilMail//LilMail//EN",
+		"PRODID:-//Inbrix AI//Inbrix AI//EN",
 		"METHOD:REPLY",
 		"BEGIN:VEVENT",
 		"UID:" + uid,

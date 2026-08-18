@@ -1,6 +1,6 @@
 {
-  "name": "lilmail",
-  "short_name": "lilmail",
+  "name": "Inbrix AI",
+  "short_name": "Inbrix",
   "description": "A lightweight, database-free webmail client in a single Go binary.",
   "start_url": "/inbox",
   "scope": "/",
