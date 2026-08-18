@@ -653,7 +653,9 @@ function App() {
   }, []);
   if (path === "/login" || path === "/user-login") return <LoginScreen copy={zh} />;
   if (path === "/register") return <RegisterScreen copy={zh} />;
-  if (path === "/settings") return <SettingsPage copy={zh} />;
+  // Keep the legacy URL as a compatibility/setup entry, but use the same
+  // inbox shell and settings dialog as the sidebar entry point.
+  if (path === "/settings") return <InboxPage />;
   if (path === "/attachments") return <AttachmentsPage />;
   if (path === "/calendar" || path === "/calendar/week") return <CalendarPage />;
   if (path.startsWith("/folder/")) return <FolderPage key={path} folder={decodeURIComponent(path.slice("/folder/".length))} />;
@@ -667,7 +669,7 @@ function InboxPage() {
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
   const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
@@ -2046,11 +2048,7 @@ function RegisterScreen({ copy }: { copy: Copy }) {
   const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
   const mutation = useMutation({ mutationFn: () => register(form.login, form.displayName, form.password, form.confirmation), onSuccess: (result) => window.location.assign(result.next), onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed) });
   const field = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm((value) => ({ ...value, [key]: event.target.value }));
-  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>Inbrix AI</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1>{publicSettings.isPending ? <Skeleton className="h-48 w-full" /> : publicSettings.data?.registrationOpen ? <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form> : <p className="py-6 text-sm text-muted-foreground">{copy.registrationClosed}</p>}<Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
-}
-
-function PageHeader({ title, action }: { title: string; action?: ReactNode }) {
-  return <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6"><a className="flex items-center gap-2 font-semibold" href="/inbox"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>Inbrix AI</a><h1 className="text-sm font-semibold">{title}</h1><div>{action}</div></header>;
+  return <main className="grid min-h-screen place-items-center bg-background p-6"><div className="grid w-full max-w-sm gap-4 rounded-lg border bg-card p-6"><div className="flex items-center gap-2 text-lg font-semibold"><span className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground"><Mail className="size-4" /></span>Inbrix AI</div><h1 className="text-xl font-semibold">{copy.createAccount}</h1>{publicSettings.isPending ? <Skeleton className="h-48 w-full" /> : publicSettings.data?.registrationOpen ? <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); setError(""); mutation.mutate(); }}><Label className="grid gap-1.5">{copy.appAccount}<Input value={form.login} onChange={field("login")} required /></Label><Label className="grid gap-1.5">{copy.displayName}<Input value={form.displayName} onChange={field("displayName")} /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.password} onChange={field("password")} required /></Label><Label className="grid gap-1.5">{copy.password}<Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required /></Label>{error && <p className="text-xs text-destructive">{error}</p>}<Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? copy.loading : copy.createAccount}</Button></form> : <p className="py-6 text-sm text-muted-foreground">{copy.registrationClosed}</p>}<Button nativeButton={false} render={<a href="/login" />} variant="link">{copy.login}</Button></div></main>;
 }
 
 type AttachmentKind = "all" | "images" | "pdf" | "documents" | "spreadsheets" | "archives";
@@ -2338,10 +2336,6 @@ function FolderPage({ folder }: { folder: string }) {
 function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl"><div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.fromName || message.from}</span><time>{formatTime(message.date)}</time></div><div className="min-w-0 max-w-[80%] overflow-x-auto rounded-xl border bg-background px-3 py-2 text-sm leading-relaxed">{message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={scrollRef} eager /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(message.body || message.preview || copy.noBody)}</div>}{message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((item) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={item.id || item.partId} href={`/api/attachment/${encodeURIComponent(item.id)}?account_email=${encodeURIComponent(message.accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate">{item.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small></a>)}</div></> : null}</div><MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} /></article>;
-}
-
-function SettingsPage({ copy }: { copy: Copy }) {
-  return <div className="min-h-screen bg-background"><PageHeader title={copy.settings} action={<Button nativeButton={false} render={<a href="/inbox" />} variant="ghost" size="sm">{copy.conversations}</Button>} /><main className="mx-auto max-w-4xl p-4 py-8 lg:p-8"><SettingsContent copy={copy} /></main></div>;
 }
 
 function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {

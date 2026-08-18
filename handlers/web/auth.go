@@ -175,6 +175,18 @@ func (h *AuthHandler) HandleRegister(c *fiber.Ctx) error {
 	} else {
 		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to load application account"})
 	}
+	// Bootstrap the local account system with one administrator. Subsequent
+	// self-registrations remain ordinary users and can be promoted by an admin.
+	users, err := h.mirror.ListUsers(c.UserContext())
+	if err != nil {
+		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to load application accounts"})
+	}
+	if len(users) == 1 && users[0].ID == user.ID && user.Role != mailstore.RoleSuperAdmin {
+		if err := h.mirror.SetUserRole(c.UserContext(), user.ID, mailstore.RoleSuperAdmin); err != nil {
+			return RenderStatus(c, 500, "register", fiber.Map{"Error": "Failed to assign administrator access"})
+		}
+		user.Role = mailstore.RoleSuperAdmin
+	}
 
 	sess, err := h.store.Get(c)
 	if err != nil {
