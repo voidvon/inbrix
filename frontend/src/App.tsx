@@ -1149,7 +1149,7 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
       <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8" viewportRef={scrollRef}>
         <div ref={contentRef}>
           {(summary || summarizeMutation.error) && <div className="mx-auto mb-6 max-w-3xl rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4" />{copy.summaryTitle}</h3><Button variant="ghost" size="icon" className="size-7" onClick={() => { setSummary(""); summarizeMutation.reset(); }} aria-label={copy.cancel}><X /></Button></div>{summary ? <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">{summary}</p> : <p className="mt-3 text-sm text-destructive">{summarizeMutation.error instanceof Error ? summarizeMutation.error.message : copy.loadFailed}</p>}</div>}
-          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onReplyAll={() => onReplyAll(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
+          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} senderFallback={detail.peerEmail || detail.title} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onReplyAll={() => onReplyAll(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
         </div>
       </ScrollArea>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
@@ -1169,8 +1169,8 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
   );
 }
 
-function MessageBubble({ copy, message, accountEmail, rootRef, eager, onReply, onReplyAll, onNewMail, onDelete }: { copy: Copy; message: ConversationMessage; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onReplyAll: () => void; onNewMail: () => void; onDelete: () => void }) {
-  const sender = message.outgoing ? copy.me : message.fromName || message.from;
+function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, eager, onReply, onReplyAll, onNewMail, onDelete }: { copy: Copy; message: ConversationMessage; senderFallback?: string; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onReplyAll: () => void; onNewMail: () => void; onDelete: () => void }) {
+  const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
   const outgoing = message.outgoing;
