@@ -4,8 +4,8 @@ package api
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"inbrix/models"
+	"io"
 	"log"
 	"net"
 	"strings"

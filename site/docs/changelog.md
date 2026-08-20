@@ -10,6 +10,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+No unreleased changes.
+
+---
+
+## [1.15.0] - 2026-08-20
+
 ### Added
 
 - **The mail AI assistant can now run llmux in-process instead of calling a
@@ -1012,7 +1018,8 @@ password-only login, server-rendered Go templates.
 
 ---
 
-[Unreleased]: https://github.com/vul-os/inbrix/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/voidvon/inbrix/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/voidvon/inbrix/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/vul-os/inbrix/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/vul-os/inbrix/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/vul-os/inbrix/compare/v1.12.0...v1.12.1

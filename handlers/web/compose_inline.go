@@ -3,8 +3,8 @@ package web
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"inbrix/handlers/api"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"strings"
