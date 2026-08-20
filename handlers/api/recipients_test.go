@@ -1,23 +1,31 @@
-// handlers/api/recipients_test.go — tests for the recent-recipients bbolt store.
+// handlers/api/recipients_test.go — tests for the recent-recipients store.
 package api
 
 import (
 	"fmt"
+	"inbrix/storage"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
+func openSQLiteRecipientsStore(path string) (*RecentRecipientsStore, error) {
+	kv, err := storage.OpenSQLite(path)
+	if err != nil {
+		return nil, err
+	}
+	return &RecentRecipientsStore{kv: kv, scope: "test", owned: true}, nil
+}
+
 func TestRecentRecipientsStore_RecordAndSearch(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatal(err)
 	}
-	defer rs.Close()
 
 	entries := []RecipientEntry{
 		{Email: "alice@example.com", Name: "Alice"},
@@ -60,11 +68,10 @@ func TestRecentRecipientsStore_CountIncrement(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatal(err)
 	}
-	defer rs.Close()
 
 	entry := RecipientEntry{Email: "repeat@example.com", Name: "Repeat"}
 	for i := 0; i < 5; i++ {
@@ -89,9 +96,9 @@ func TestRecentRecipientsStore_SortByCount(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatalf("OpenSQLiteRecipientsStore: %v", err)
 	}
 	defer rs.Close()
 
@@ -119,9 +126,9 @@ func TestRecentRecipientsStore_Limit(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatalf("OpenSQLiteRecipientsStore: %v", err)
 	}
 	defer rs.Close()
 
@@ -148,9 +155,9 @@ func TestRecentRecipientsStore_NameUpdate(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatalf("OpenSQLiteRecipientsStore: %v", err)
 	}
 	defer rs.Close()
 
@@ -176,9 +183,9 @@ func TestRecentRecipientsStore_Persistence(t *testing.T) {
 	dbPath := filepath.Join(dir, "threads.db")
 
 	// Write.
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatalf("OpenSQLiteRecipientsStore: %v", err)
 	}
 	_ = rs.Record([]RecipientEntry{{Email: "persist@example.com", Name: "Persist"}})
 	rs.Close()
@@ -189,7 +196,7 @@ func TestRecentRecipientsStore_Persistence(t *testing.T) {
 	}
 
 	// Re-open and read.
-	rs2, err := OpenRecipientsStore(dbPath)
+	rs2, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
 		t.Fatalf("re-open: %v", err)
 	}
@@ -208,9 +215,9 @@ func TestRecentRecipientsStore_LastUsedUpdated(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "threads.db")
 
-	rs, err := OpenRecipientsStore(dbPath)
+	rs, err := openSQLiteRecipientsStore(dbPath)
 	if err != nil {
-		t.Fatalf("OpenRecipientsStore: %v", err)
+		t.Fatalf("OpenSQLiteRecipientsStore: %v", err)
 	}
 	defer rs.Close()
 

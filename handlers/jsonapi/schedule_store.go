@@ -7,7 +7,7 @@
 // — so the wave-49 header-injection guard and wave-44 cid: handling both still
 // apply at actual-send time.
 //
-// STORAGE: one record per scheduled send in the storage.KV seam (bbolt by
+// STORAGE: one record per scheduled send in the storage.KV seam (SQLite by
 // default, Postgres when configured — identical to snooze/rules durability),
 // namespace "scheduled_sends". The key is "<account>|<id>" so:
 //   - every record is OWNED by exactly one account (the key prefix), giving

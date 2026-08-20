@@ -2,16 +2,10 @@
 //
 // The seam is one small interface (KV) with two implementations:
 //
-//   - bolt (DEFAULT): an embedded bbolt file, zero external services. This is
-//     the standalone single-binary path and what ships out of the box.
+//   - sqlite (DEFAULT): an embedded table in the local mail database.
 //   - postgres (OPTIONAL): a shared SQL store, opt-in via [storage] config.
 //     Use it when multiple instances must share state, or when an embedding host
 //     (e.g. a Vulos OS box) needs to read the same data.
-//
-// Existing direct-bbolt users (handlers/api.ThreadStore, push/recipient stores)
-// keep working unchanged; this seam is for new and migratable callers that want
-// a backend-agnostic store. Open() picks the backend from config so callers
-// never branch on it themselves.
 package storage
 
 import (
@@ -25,7 +19,7 @@ import (
 var ErrNotFound = errors.New("storage: not found")
 
 // KV is a namespaced byte-blob store. A namespace is an isolated keyspace
-// (a bbolt bucket / a logical partition of the SQL table). Implementations
+// (a logical partition of the SQL table). Implementations
 // must be safe for concurrent use.
 type KV interface {
 	// Get returns the value for key in ns, or ErrNotFound.
@@ -41,19 +35,18 @@ type KV interface {
 	Close() error
 }
 
-// Open constructs the KV backend selected by cfg.Storage. boltPath is used only
-// by the bolt backend (ignored for postgres). An empty/unknown backend defaults
-// to bolt so a missing [storage] section keeps the standalone behaviour.
-func Open(cfg *config.Config, boltPath string) (KV, error) {
+// Open constructs the KV backend selected by cfg.Storage. sqlitePath is ignored
+// by Postgres. An omitted backend selects SQLite.
+func Open(cfg *config.Config, sqlitePath string) (KV, error) {
 	switch cfg.Storage.Backend {
-	case "", "bolt":
-		return OpenBolt(boltPath)
+	case "", "sqlite":
+		return OpenSQLite(sqlitePath)
 	case "postgres":
 		if cfg.Storage.PostgresDSN == "" {
 			return nil, fmt.Errorf("storage: backend=postgres requires storage.postgres_dsn")
 		}
 		return OpenPostgres(cfg.Storage.PostgresDSN)
 	default:
-		return nil, fmt.Errorf("storage: unknown backend %q (want bolt|postgres)", cfg.Storage.Backend)
+		return nil, fmt.Errorf("storage: unknown backend %q (want sqlite|postgres)", cfg.Storage.Backend)
 	}
 }

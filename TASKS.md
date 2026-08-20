@@ -54,14 +54,13 @@ were removed during the React-only migration.
 
 ## Phase 3 — JWZ threading 🧵
 
-- [x] **3.1** Add `go.bbolt` (`go.etcd.io/bbolt`) dependency; open a per-user
-      bolt file under the cache folder.
+- [x] **3.1** Add durable SQLite storage for per-account thread metadata.
 - [x] **3.2** Fetch threading headers (`Message-ID`, `In-Reply-To`,
       `References`) in `FetchMessages`; add fields to `models.Email`.
 - [x] **3.3** Implement the **JWZ** algorithm in `handlers/api/threading.go`
       (id_table, link by references, prune empty containers, group by subject).
       Pure Go, efficient. Unit-tested with sample headers.
-- [x] **3.4** Persist/refresh a thread index in bolt; expose
+- [x] **3.4** Persist/refresh a thread index in SQLite; expose
       `BuildThreads(folder)` returning conversation groups.
 - [x] **3.5** Conversation UI in the list (collapse/expand, message count,
       latest snippet) + a thread view route/handler.

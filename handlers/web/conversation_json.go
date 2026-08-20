@@ -55,12 +55,19 @@ type ConversationMessageJSON struct {
 	References     []string            `json:"references,omitempty"`
 	Outgoing       bool                `json:"outgoing"`
 	MailSummary    *MailSummaryJSON    `json:"mailSummary,omitempty"`
+	SuggestedReply *SuggestedReplyJSON `json:"suggestedReply,omitempty"`
 }
 
 type MailSummaryJSON struct {
 	Text      string `json:"text"`
 	Status    string `json:"status"`
 	Stale     bool   `json:"stale"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type SuggestedReplyJSON struct {
+	Text      string `json:"text"`
+	Status    string `json:"status"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
@@ -411,15 +418,21 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 		if summaryErr != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail summaries"})
 		}
+		replySuggestions, suggestionErr := h.mailDB.ListMessageReplySuggestions(c.UserContext(), account.ID, keys)
+		if suggestionErr != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved reply suggestions"})
+		}
 		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account)
 		for index, message := range selected.Messages {
-			record, exists := summaries[mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)]
-			if !exists {
-				continue
+			lookupKey := mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)
+			if record, exists := summaries[lookupKey]; exists {
+				sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, message.Email)
+				stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
+				response.Messages[index].MailSummary = mailSummaryJSON(record, stale)
 			}
-			sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, message.Email)
-			stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
-			response.Messages[index].MailSummary = mailSummaryJSON(record, stale)
+			if record, exists := replySuggestions[lookupKey]; exists && record.Status == "ready" && strings.TrimSpace(record.Summary) != "" {
+				response.Messages[index].SuggestedReply = &SuggestedReplyJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
+			}
 		}
 	}
 	return c.JSON(fiber.Map{"conversation": response})

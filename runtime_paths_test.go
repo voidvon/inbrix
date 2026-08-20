@@ -12,7 +12,6 @@ func TestResolveRuntimePathsAt(t *testing.T) {
 	cfg.Cache.Folder = "./data"
 	cfg.MailSync.Database = "./data/mail.db"
 	cfg.Notifications.VAPIDKeyFile = "vapid.json"
-	cfg.Accounts.StoreFile = "accounts.db"
 
 	resolveRuntimePathsAt(cfg, baseDir)
 
@@ -24,7 +23,6 @@ func TestResolveRuntimePathsAt(t *testing.T) {
 		"data directory": {cfg.Cache.Folder, wantData},
 		"mail database":  {cfg.MailSync.Database, filepath.Join(wantData, "mail.db")},
 		"VAPID keys":     {cfg.Notifications.VAPIDKeyFile, filepath.Join(wantData, "vapid.json")},
-		"account store":  {cfg.Accounts.StoreFile, filepath.Join(wantData, "accounts.db")},
 	}
 	for name, check := range checks {
 		if check.got != check.want {

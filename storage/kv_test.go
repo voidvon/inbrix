@@ -8,12 +8,12 @@ import (
 	"inbrix/config"
 )
 
-// Exercises the KV contract against the default bolt backend. The Postgres
+// Exercises the KV contract against the default SQLite backend. The Postgres
 // backend satisfies the same interface and is covered by integration tests
 // where a database is available.
-func TestBoltKVRoundTrip(t *testing.T) {
+func TestSQLiteKVRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kv.db")
-	kv, err := OpenBolt(path)
+	kv, err := OpenSQLite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +56,9 @@ func TestBoltKVRoundTrip(t *testing.T) {
 	}
 }
 
-// Open() must default to bolt when no backend is configured, preserving the
+// Open() must default to SQLite when no backend is configured, preserving the
 // standalone single-binary behaviour.
-func TestOpenDefaultsToBolt(t *testing.T) {
+func TestOpenDefaultsToSQLite(t *testing.T) {
 	cfg := &config.Config{} // empty: Storage.Backend == ""
 	kv, err := Open(cfg, filepath.Join(t.TempDir(), "kv.db"))
 	if err != nil {

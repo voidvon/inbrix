@@ -5,7 +5,6 @@ import (
 	"embed"
 	"flag"
 	"fmt"
-	"io/fs"
 	"inbrix/config"
 	"inbrix/handlers/ai"
 	"inbrix/handlers/api"
@@ -13,6 +12,7 @@ import (
 	"inbrix/handlers/web"
 	"inbrix/mailstore"
 	"inbrix/storage"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -89,7 +89,6 @@ func resolveRuntimePathsAt(cfg *config.Config, baseDir string) {
 	cfg.Cache.Folder = resolveRuntimePath(baseDir, cfg.Cache.Folder)
 	cfg.MailSync.Database = resolveRuntimePath(baseDir, cfg.MailSync.Database)
 	cfg.Notifications.VAPIDKeyFile = resolveRuntimePath(cfg.Cache.Folder, cfg.Notifications.VAPIDKeyFile)
-	cfg.Accounts.StoreFile = resolveRuntimePath(cfg.Cache.Folder, cfg.Accounts.StoreFile)
 }
 
 func resolveRuntimePath(baseDir, path string) string {
@@ -237,6 +236,16 @@ func main() {
 	webAuthHandler.SetMailMirror(mailMirror, mailSync)
 	webEmailHandler := web.NewEmailHandler(store, config, webAuthHandler)
 	webEmailHandler.SetMailMirror(mailMirror)
+	// One durable store is shared by scheduled sends, thread metadata, recent
+	// recipients, Web Push, and legacy account compatibility. Standalone mode
+	// stores these namespaces in mail.db; Postgres remains opt-in.
+	durableKV, kvErr := storage.Open(config, config.MailSync.Database)
+	if kvErr != nil {
+		log.Printf("durable storage unavailable: %v", kvErr)
+	} else {
+		defer durableKV.Close()
+		webEmailHandler.SetDurableStore(durableKV)
+	}
 	var systemSettings *web.SystemSettingsHandler
 	if mailMirror != nil {
 		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
@@ -260,27 +269,18 @@ func main() {
 	// and other rich clients. It reuses the same engine and session auth, and
 	// returns 401 JSON instead of redirecting.
 	//
-	// A durable KV store (bbolt by default, Postgres when configured) backs
+	// The shared durable store backs
 	// scheduled send (send-later): the store persists pending scheduled sends and
 	// a poll-based drain delivers them at their sendAt with restart catch-up. If
 	// the store cannot be opened we log and fall back to the storeless handler, so
 	// the rest of the API keeps working (only send-later is unavailable).
-	// The cache folder is otherwise created on first login, which is too late:
-	// this store is opened once, here, so on a fresh install bbolt failed on the
-	// missing directory and send-later stayed unavailable for the life of the
-	// process — until an operator happened to restart after logging in once.
-	if err := os.MkdirAll(config.Cache.Folder, 0o700); err != nil {
-		log.Printf("cache folder %q could not be created: %v", config.Cache.Folder, err)
-	}
-	scheduleDBPath := filepath.Join(config.Cache.Folder, "scheduled.db")
-	if kv, kvErr := storage.Open(config, scheduleDBPath); kvErr != nil {
-		log.Printf("scheduled send unavailable (store open failed): %v", kvErr)
+	if durableKV == nil {
+		log.Printf("scheduled send unavailable (durable store unavailable)")
 		jsonapi.New(store, config, webAuthHandler).RegisterWithMiddleware(app, csrfMiddleware)
 	} else {
-		jsonAPI := jsonapi.NewWithStore(store, config, webAuthHandler, kv)
+		jsonAPI := jsonapi.NewWithStore(store, config, webAuthHandler, durableKV)
 		jsonAPI.RegisterWithMiddleware(app, csrfMiddleware)
 		defer jsonAPI.StopScheduler()
-		defer kv.Close()
 	}
 
 	// Rate limiters — applied to the three highest-risk surfaces.
@@ -501,7 +501,6 @@ func main() {
 	protected.Delete("/api/settings/ai/agents/:id", userAIHandler.HandleDeleteAgent)
 	protected.Get("/api/settings/ai/task-bindings", userAIHandler.HandleListTaskBindings)
 	protected.Put("/api/settings/ai/task-bindings", userAIHandler.HandleSaveTaskBinding)
-	apiRoutes.Post("/ai/summary", userAIHandler.HandleSummarize)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	// Build the completion backend before registering. With [ai] enabled = false
@@ -531,11 +530,9 @@ func main() {
 				log.Printf("webpush: VAPID key init failed (%v) — web push disabled", err)
 			} else {
 				log.Printf("webpush: VAPID public key loaded (%s)", config.Notifications.VAPIDKeyFile)
-				cacheRoot := config.Cache.Folder
-				if cacheRoot == "" {
-					cacheRoot = "."
+				if durableKV != nil {
+					pushStore = web.NewPushStore(durableKV)
 				}
-				pushStore = web.NewPushStore(cacheRoot)
 			}
 		}
 
@@ -545,7 +542,7 @@ func main() {
 
 		// VAPID public key endpoint — public (no session required) so the SW can
 		// fetch it before the user navigates to an authenticated page.
-		if vapidKeys != nil {
+		if vapidKeys != nil && pushStore != nil {
 			pushHandler := web.NewPushHandler(vapidKeys, pushStore)
 			app.Get("/api/push/vapid-public", pushHandler.HandleVAPIDPublicKey)
 			protected.Post("/api/push/subscribe", pushHandler.HandleSubscribe)
@@ -553,18 +550,14 @@ func main() {
 		}
 	}
 
-	// Multi-account routes — registered only when accounts.enabled = true.
 	var acctHandler *web.AccountsHandler
 	if config.Accounts.Enabled && mailMirror == nil {
-		acctStore, err := web.OpenAccountStore(config.Accounts.StoreFile)
-		if err != nil {
-			log.Fatalf("accounts: open store: %v", err)
+		if durableKV == nil {
+			log.Fatal("accounts: durable store unavailable")
 		}
-		// Wire the account store into the email handler so unified-inbox fetches work.
+		acctStore := web.NewAccountStore(durableKV)
 		webEmailHandler.SetAccountStore(acctStore)
-
 		acctHandler = web.NewAccountsHandler(store, config, webAuthHandler, acctStore)
-
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)

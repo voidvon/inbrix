@@ -4,7 +4,7 @@
 # Run:   docker run -p 2342:2342 -v $PWD/config.toml:/app/config.toml vulos/inbrix
 #
 # A config.toml must be present at /app/config.toml (mount it, or bake your own
-# layer). Pure-Go build (CGO disabled) — bbolt and the optional pgx Postgres
+# layer). Pure-Go build (CGO disabled) — SQLite and the optional pgx Postgres
 # driver are both pure Go, so the result is a static binary on a minimal image.
 
 # ── Stage 1: build the React/Vite frontend ────────────────────────────────────
@@ -29,7 +29,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=build /inbrix /app/inbrix
-# Cache dir for the default embedded bbolt store (override with [storage] for Postgres).
+# Data directory for the default embedded SQLite store.
 RUN mkdir -p /app/cache
 EXPOSE 2342
 ENTRYPOINT ["/app/inbrix"]

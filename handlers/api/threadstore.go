@@ -1,13 +1,12 @@
-// handlers/api/threadstore.go — bbolt-backed message-header cache for JWZ threading.
+// handlers/api/threadstore.go — durable message-header cache for JWZ threading.
 //
 // The store persists per-folder header metadata (UID → msgMeta JSON) in a
-// bbolt database so that threads can be rebuilt over a larger window than the
+// shared KV store so that threads can be rebuilt over a larger window than the
 // current 50-message IMAP page.
 //
 // Usage:
 //
-//	store, err := OpenThreadStore(boltPath)
-//	defer store.Close()
+//	store := NewThreadStore(kv, account)
 //	threads, err := store.BuildThreads(folder, emails)
 //
 // If the DB is missing, corrupt, or otherwise unusable BuildThreads falls back
@@ -16,16 +15,13 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"inbrix/models"
+	"inbrix/storage"
 	"log"
-	"sync"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
-// msgMeta is the slim record persisted per message in the bolt store.
+// msgMeta is the slim record persisted per message in the durable store.
 type msgMeta struct {
 	MessageID  string    `json:"mid,omitempty"`
 	InReplyTo  string    `json:"irt,omitempty"`
@@ -38,77 +34,65 @@ type msgMeta struct {
 	Flags      []string  `json:"flags,omitempty"`
 }
 
-// ThreadStore is a long-lived bbolt handle shared across requests for a single
-// user.  bbolt allows multiple concurrent readers but only one writer at a
-// time; the embedded mutex serialises the writes while reads use bbolt's own
-// concurrent-read support.
 type ThreadStore struct {
-	db   *bolt.DB
-	mu   sync.Mutex // guards writes (bolt.Update calls)
-	path string
+	kv    storage.KV
+	scope string
+	owned bool
 }
 
-// OpenThreadStore opens (or creates) the bbolt database at boltPath and
-// returns a ThreadStore that can be reused for many requests.  The caller must
-// call Close() when done (typically at server shutdown or user logout).
-func OpenThreadStore(boltPath string) (*ThreadStore, error) {
-	db, err := bolt.Open(boltPath, 0600, &bolt.Options{Timeout: 2 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("threadstore: open %s: %w", boltPath, err)
-	}
-	return &ThreadStore{db: db, path: boltPath}, nil
+func NewThreadStore(kv storage.KV, scope string) *ThreadStore {
+	return &ThreadStore{kv: kv, scope: scope}
 }
 
-// Close releases the bbolt file handle.
 func (s *ThreadStore) Close() error {
-	return s.db.Close()
+	if s.owned {
+		return s.kv.Close()
+	}
+	return nil
 }
 
-// BuildThreads upserts emails into the bolt store, loads all cached headers for
+func (s *ThreadStore) namespace(folder string) string {
+	return "threads:" + s.scope + ":" + folder
+}
+
+// BuildThreads upserts emails into the store, loads all cached headers for
 // the folder, runs ThreadMessages over the union, and returns threads.
 // folder is the IMAP folder name used as the bucket name.
 //
 // On any DB error the function logs the error and falls back to threading
 // only the supplied in-memory emails.
 func (s *ThreadStore) BuildThreads(folder string, emails []models.Email) ([]models.Thread, error) {
-	bucket := []byte(folder)
-
-	// ---- upsert current emails ------------------------------------------
-	s.mu.Lock()
-	upsertErr := s.db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(bucket)
+	ns := s.namespace(folder)
+	var upsertErr error
+	for i := range emails {
+		e := &emails[i]
+		uid := e.ID
+		if uid == "" {
+			continue
+		}
+		meta := msgMeta{
+			MessageID:  e.MessageID,
+			InReplyTo:  e.InReplyTo,
+			References: e.References,
+			Subject:    e.Subject,
+			From:       e.From,
+			FromName:   e.FromName,
+			Date:       e.Date,
+			Preview:    e.Preview,
+			Flags:      e.Flags,
+		}
+		raw, err := json.Marshal(meta)
 		if err != nil {
-			return fmt.Errorf("create bucket: %w", err)
+			continue
 		}
-		for i := range emails {
-			e := &emails[i]
-			uid := e.ID
-			if uid == "" {
-				continue
-			}
-			meta := msgMeta{
-				MessageID:  e.MessageID,
-				InReplyTo:  e.InReplyTo,
-				References: e.References,
-				Subject:    e.Subject,
-				From:       e.From,
-				FromName:   e.FromName,
-				Date:       e.Date,
-				Preview:    e.Preview,
-				Flags:      e.Flags,
-			}
-			raw, err := json.Marshal(meta)
-			if err != nil {
-				continue
-			}
-			_ = b.Put([]byte(uid), raw)
+		if err := s.kv.Set(ns, uid, raw); err != nil {
+			upsertErr = err
+			break
 		}
-		return nil
-	})
-	s.mu.Unlock()
+	}
 
 	if upsertErr != nil {
-		log.Printf("threadstore: upsert %s/%s: %v", s.path, folder, upsertErr)
+		log.Printf("threadstore: upsert %s/%s: %v", s.scope, folder, upsertErr)
 		// Still attempt to read whatever was previously stored.
 	}
 
@@ -124,19 +108,15 @@ func (s *ThreadStore) BuildThreads(folder string, emails []models.Email) ([]mode
 	// Seed with in-memory emails first (they have the most fields populated).
 	union = append(union, emails...)
 
-	readErr := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
-			uid := string(k)
+	stored, readErr := s.kv.List(ns, "")
+	if readErr == nil {
+		for uid, v := range stored {
 			if _, ok := inMem[uid]; ok {
-				return nil // already included from in-memory slice
+				continue
 			}
 			var meta msgMeta
 			if err := json.Unmarshal(v, &meta); err != nil {
-				return nil // skip corrupt records
+				continue
 			}
 			union = append(union, models.Email{
 				ID:         uid,
@@ -150,11 +130,10 @@ func (s *ThreadStore) BuildThreads(folder string, emails []models.Email) ([]mode
 				Preview:    meta.Preview,
 				Flags:      meta.Flags,
 			})
-			return nil
-		})
-	})
+		}
+	}
 	if readErr != nil {
-		log.Printf("threadstore: read %s/%s: %v — using in-memory only", s.path, folder, readErr)
+		log.Printf("threadstore: read %s/%s: %v — using in-memory only", s.scope, folder, readErr)
 		return ThreadMessages(emails), nil
 	}
 

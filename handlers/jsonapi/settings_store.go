@@ -1,7 +1,7 @@
 // handlers/jsonapi/settings_store.go — durable per-account settings for the
 // Gmail-parity surfaces: vacation responder, signatures, and send-as identities.
 //
-// STORAGE: one JSON blob per (owner, kind) in the storage.KV seam (bbolt by
+// STORAGE: one JSON blob per (owner, kind) in the storage.KV seam (SQLite by
 // default, Postgres when configured — the same seam scheduled-send/snooze use).
 // The key is "<owner>|<kind>" so every record is OWNED by exactly one account
 // (the key prefix): a read/write keyed on another owner's prefix simply cannot

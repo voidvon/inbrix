@@ -86,13 +86,13 @@ func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi
 	cfg, err := m.store.GetWebhookSettings(ctx, account.OwnerID)
 	if err != nil {
 		log.Printf("mail webhook: load settings for account %s: %v", account.ID, err)
-		return
-	}
-	if !cfg.Enabled || cfg.URL == "" {
-		return
+		cfg = WebhookSettings{}
 	}
 	webhookClient := &http.Client{Timeout: 10 * time.Second}
-	aiClient := &http.Client{Timeout: 60 * time.Second}
+	aiClient := m.aiClient
+	if aiClient == nil {
+		aiClient = &http.Client{Timeout: 60 * time.Second}
+	}
 	for _, message := range messages {
 		fullMessage, err := m.store.GetMessage(ctx, account.ID, "INBOX", message.ID)
 		if err != nil {
@@ -113,7 +113,13 @@ func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi
 		}
 		fullMessage.Folder = "INBOX"
 		if !fullMessage.BodyCached {
-			log.Printf("mail webhook: skip message %s/%s because full body is unavailable", account.ID, message.ID)
+			log.Printf("mail AI: skip message %s/%s because full body is unavailable", account.ID, message.ID)
+			continue
+		}
+		if _, err := GetOrCreateReplySuggestion(ctx, aiClient, m.store, m.key, account, fullMessage, false); err != nil && !errors.Is(err, ErrNotFound) {
+			log.Printf("mail AI: suggest reply for account %s message %s: %v", account.ID, message.ID, err)
+		}
+		if !cfg.Enabled || cfg.URL == "" {
 			continue
 		}
 		result, err := GetOrCreateMailSummary(ctx, aiClient, m.store, m.key, account, fullMessage, false)

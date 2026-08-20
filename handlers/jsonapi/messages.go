@@ -9,7 +9,6 @@ package jsonapi
 
 import (
 	"log"
-	"path/filepath"
 	"strings"
 
 	"inbrix/handlers/api"
@@ -159,16 +158,13 @@ func (h *Handler) handleSend(c *fiber.Ctx) error {
 	}
 
 	// Record recipients for autocomplete (best effort).
-	if username, _ := c.Locals("username").(string); username != "" {
-		dbPath := filepath.Join(h.config.Cache.Folder, api.SanitizeUsername(username), "threads.db")
-		if rs, err := api.OpenRecipientsStore(dbPath); err == nil {
-			defer rs.Close()
-			var entries []api.RecipientEntry
-			entries = append(entries, api.ParseAddressField(body.To)...)
-			entries = append(entries, api.ParseAddressField(body.Cc)...)
-			if err := rs.Record(entries); err != nil {
-				log.Printf("jsonapi: record recipients: %v", err)
-			}
+	if username, _ := c.Locals("username").(string); username != "" && h.kv != nil {
+		rs := api.NewRecipientsStore(h.kv, api.SanitizeUsername(username))
+		var entries []api.RecipientEntry
+		entries = append(entries, api.ParseAddressField(body.To)...)
+		entries = append(entries, api.ParseAddressField(body.Cc)...)
+		if err := rs.Record(entries); err != nil {
+			log.Printf("jsonapi: record recipients: %v", err)
 		}
 	}
 

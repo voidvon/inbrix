@@ -585,7 +585,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `AuthHandler.CalDAVClient`, and `CalDAVClient` gained `DeleteEvent` + `FreeBusy`
   helpers. Documented in [docs/API.md](api.md).
 - **Optional Postgres storage backend** — a new durable key-value seam
-  (`storage/` `KV` interface) with two backends: the embedded **bbolt** store
+  (`storage/` `KV` interface) with two backends: the embedded **SQLite** store
   (default — keeps inbrix a single binary with nothing to run) and an optional
   **Postgres** store for shared / multi-instance deploys, selected via the new
   `[storage]` config section (`backend`, `postgres_dsn`). Postgres is strictly
@@ -734,9 +734,9 @@ Versioning: [Semantic Versioning](https://semver.org/)
     - `GET /api/push/vapid-public` — public endpoint returning the base64url
       VAPID public key for use as `PushManager.subscribe({ applicationServerKey })`.
     - `POST /api/push/subscribe` — upserts a browser `PushSubscription` JSON blob
-      for the authenticated user (stored in per-user bbolt `push.db`).
+      for the authenticated user (stored in the shared SQLite database).
     - `DELETE /api/push/subscribe` — removes a subscription by endpoint URL.
-  - `PushStore` (`handlers/web/pushstore.go`) — bbolt-backed per-user subscription
+  - `PushStore` (`handlers/web/pushstore.go`) — SQLite-backed per-user subscription
     store; upsert, delete, list-all; isolates subscriptions by username.
   - `LoadOrGenerateVAPIDKeys` (`handlers/web/vapid.go`) — loads or generates the
     VAPID key pair; gracefully regenerates on corrupt file.
@@ -761,8 +761,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Multiple accounts / account switcher** — add and switch between IMAP/SMTP
   accounts without logging out.
   - New config section `[accounts]` with `enabled` (master switch, default `false`)
-    and `store_file` (bbolt path, default `accounts.db`).
-  - `AccountStore` (`handlers/web/accountstore.go`) — per-primary-user bbolt store
+    and `store_file` (SQLite namespace, default `accounts.db`).
+  - `AccountStore` (`handlers/web/accountstore.go`) — per-primary-user SQLite store
     for additional mail accounts; each entry stores email, label, colour badge,
     IMAP/SMTP host/port, and the AES-256-GCM–encrypted password (same key as
     session credentials). CRUD: `Save`, `Delete`, `List`.
@@ -837,7 +837,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   Two data sources:
   - **Recent recipients** — every address in the To/CC fields of a sent message
     is recorded (email, display name, send count, last-used time) in the shared
-    per-user bbolt database. Count and recency drive sort order.
+    per-user SQLite database. Count and recency drive sort order.
   - **CardDAV contacts** (optional) — when `[carddav] enabled = true` in
     `config.toml`, Inbrix AI queries the configured address book via a
     `carddav.AddressBookQuery` and merges matching vCard `FN`/`EMAIL` fields
@@ -906,7 +906,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`[server] secure_cookies`** config key — set to `true` in
   TLS-terminated deployments to add the `Secure` flag to session cookies.
   Defaults to `false` for plain-HTTP local dev.
-- **Shared bbolt handle** — `EmailHandler` now opens one bbolt thread-cache
+- **Shared thread store** — `EmailHandler` now uses one SQLite thread cache
   file per user and reuses it across requests; previously a new file handle was
   opened (and locked) on every inbox load.
 - Handler tests for `handlers/web/` covering threading, `MailOptions`, and
@@ -988,7 +988,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Gmail-inspired responsive UI** — sticky top bar, collapsible sidebar,
   docked compose modal, sandboxed HTML mail iframe, mobile drawer (Alpine.js).
 - **JWZ conversation threading** — `References` / `In-Reply-To` / `Message-ID`
-  grouping backed by an embedded bbolt store; collapse/expand UI.
+  grouping backed by an embedded SQLite store; collapse/expand UI.
 - **CalDAV calendar** — month/week views, event creation, iCalendar invite
   detection with basic RSVP affordance. Opt-in via `[caldav].enabled`.
 - **Real-time notifications** (Phase 6) — IMAP IDLE watcher, SSE stream →

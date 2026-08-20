@@ -45,7 +45,7 @@ service). This document tracks where we are and where we're going.
 - **Send-as identities** — `GET`/`PUT /v1/settings/identities`; compose,
   draft-save, and scheduled send all honour and enforce the chosen `From`.
 - **Optional Postgres storage backend** for shared / multi-instance deploys
-  (bbolt embedded store remains the zero-config default).
+  (SQLite remains the zero-config default).
 - **Injected-credential ("brokered") mode**, off by default — an embedding
   host may drive inbrix against a specific external mailbox via a
   shared-secret-gated header seam, with per-request credential isolation.

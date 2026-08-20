@@ -24,9 +24,9 @@ func newParityApp(t *testing.T) (*fiber.App, *Handler) {
 	t.Helper()
 	t.Setenv(brokerEnvSecret, "s3cr3t")
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/parity.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/parity.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 

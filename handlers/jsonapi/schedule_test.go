@@ -88,9 +88,9 @@ func newScheduledApp(t *testing.T, cl api.MailClient) (*fiber.App, *scheduleStor
 	}
 	t.Cleanup(func() { scheduleSMTPFactory = origFactory })
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 
@@ -383,9 +383,9 @@ func TestScheduleRestartCatchUp(t *testing.T) {
 	schedulePollInterval = time.Hour // ensure ONLY the boot catch-up can fire it
 	t.Cleanup(func() { schedulePollInterval = origPoll })
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 	store := newScheduleStore(kv, schedTestKey)
@@ -418,9 +418,9 @@ func TestScheduleRestartCatchUp(t *testing.T) {
 // Quota: a per-account cap bounds pending scheduled sends. Direct store test keeps
 // it fast (no need to POST maxPendingPerAccount times over HTTP).
 func TestSchedulePerAccountQuota(t *testing.T) {
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 	store := newScheduleStore(kv, schedTestKey)
@@ -454,9 +454,9 @@ func TestSchedulePerAccountQuota(t *testing.T) {
 // The at-rest secret is encrypted: the persisted bytes must not contain the
 // plaintext secret, and decryptSecret must recover it.
 func TestScheduleSecretEncryptedAtRest(t *testing.T) {
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 	store := newScheduleStore(kv, schedTestKey)
@@ -645,9 +645,9 @@ func TestScheduledPermanentBuildFailureIsDropped(t *testing.T) {
 	schedulePollInterval = 10 * time.Millisecond
 	t.Cleanup(func() { schedulePollInterval = origPoll })
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 	store := newScheduleStore(kv, schedTestKey)
@@ -798,9 +798,9 @@ func TestScheduledPermanentSendFailureAbandonedAfterBudget(t *testing.T) {
 	schedulePollInterval = 10 * time.Millisecond
 	t.Cleanup(func() { schedulePollInterval = origPoll })
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/sched.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/sched.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 	store := newScheduleStore(kv, schedTestKey)

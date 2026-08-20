@@ -323,12 +323,11 @@ func (h *AISettingsHandler) HandleSetDefaultModel(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
-type aiSummaryInput struct {
-	Thread string `json:"thread"`
-}
-
 type aiComposeInput struct {
 	AccountEmail string `json:"accountEmail"`
+	TaskType     string `json:"taskType"`
+	Folder       string `json:"folder"`
+	MessageID    string `json:"messageId"`
 	Instruction  string `json:"instruction"`
 	Subject      string `json:"subject"`
 	Recipients   string `json:"recipients"`
@@ -403,40 +402,6 @@ func (h *AISettingsHandler) HandleSummarizeMail(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AISettingsHandler) HandleSummarize(c *fiber.Ctx) error {
-	owner, err := h.ready(c)
-	if err != nil {
-		return err
-	}
-	var input aiSummaryInput
-	if err := c.BodyParser(&input); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
-	}
-	input.Thread = strings.TrimSpace(input.Thread)
-	if input.Thread == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "mail content is required")
-	}
-	if len(input.Thread) > maxSummaryInputBytes {
-		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "mail content is too large to summarize")
-	}
-	model, err := h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
-	if errors.Is(err, mailstore.ErrNotFound) {
-		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
-	}
-	if err != nil {
-		return fiber.ErrInternalServerError
-	}
-	var apiKey string
-	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
-		return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured")
-	}
-	summary, err := h.createOpenAIResponse(c.UserContext(), model, apiKey, input.Thread)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
-	}
-	return c.JSON(fiber.Map{"summary": summary})
-}
-
 func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	owner, err := h.ready(c)
 	if err != nil {
@@ -447,6 +412,9 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	input.AccountEmail = strings.TrimSpace(input.AccountEmail)
+	input.TaskType = strings.TrimSpace(input.TaskType)
+	input.Folder = strings.TrimSpace(input.Folder)
+	input.MessageID = strings.TrimSpace(input.MessageID)
 	input.Instruction = strings.TrimSpace(input.Instruction)
 	input.Subject = strings.TrimSpace(input.Subject)
 	input.Recipients = strings.TrimSpace(input.Recipients)
@@ -454,6 +422,13 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	input.Draft = strings.TrimSpace(input.Draft)
 	if input.AccountEmail == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "accountEmail is required")
+	}
+	taskType := mailstore.EmailDraftTask
+	if input.TaskType != "" {
+		if input.TaskType != mailstore.EmailDraftTask && input.TaskType != mailstore.ReplySuggestionTask {
+			return fiber.NewError(fiber.StatusBadRequest, "unsupported email generation task type")
+		}
+		taskType = input.TaskType
 	}
 	if input.Instruction == "" && input.Subject == "" && input.Context == "" && input.Draft == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email instructions, subject, or conversation context are required")
@@ -475,9 +450,26 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
+	if taskType == mailstore.ReplySuggestionTask {
+		if input.Folder == "" || input.MessageID == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "folder and messageId are required for reply suggestions")
+		}
+		message, messageErr := h.mailDB.GetMessage(c.UserContext(), account.ID, input.Folder, input.MessageID)
+		if errors.Is(messageErr, mailstore.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "mail message not found")
+		}
+		if messageErr != nil {
+			return fiber.ErrInternalServerError
+		}
+		result, suggestionErr := mailstore.GetOrCreateReplySuggestion(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, true)
+		if suggestionErr != nil {
+			return fiber.NewError(fiber.StatusBadGateway, suggestionErr.Error())
+		}
+		return c.JSON(fiber.Map{"body": result.Record.Summary, "persisted": true, "updatedAt": result.Record.UpdatedAt.UTC().Format(time.RFC3339)})
+	}
 	var model mailstore.AIModelRecord
 	var agentPrompt string
-	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
+	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, taskType)
 	if bindingErr == nil {
 		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
 		if err == nil {

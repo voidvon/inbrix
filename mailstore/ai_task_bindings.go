@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	MailSummaryTask = "mail_summary"
-	EmailDraftTask  = "email_draft"
+	MailSummaryTask     = "mail_summary"
+	EmailDraftTask      = "email_draft"
+	ReplySuggestionTask = "reply_suggestion"
 )
 
 func scanAITaskBinding(scanner interface{ Scan(...any) error }) (AITaskBindingRecord, error) {

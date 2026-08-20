@@ -18,7 +18,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/vul-os/llmux v0.1.2
-	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0
 	golang.org/x/text v0.37.0

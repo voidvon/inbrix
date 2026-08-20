@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +13,7 @@ import (
 	"inbrix/handlers/api"
 	"inbrix/handlers/web"
 	"inbrix/models"
+	"inbrix/storage"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
@@ -247,26 +246,22 @@ func TestFrequentContactsFromStore(t *testing.T) {
 	store := session.New()
 	cfg := &config.Config{}
 	cfg.Cache.Folder = t.TempDir()
-	h := New(store, cfg, web.NewAuthHandler(store, cfg))
-	app := fiber.New()
-	h.Register(app)
-
-	// Pre-populate the store at the exact path the endpoint reads (username =
-	// "user@gmail.com" from brokeredHeaders()).
-	dbPath := filepath.Join(cfg.Cache.Folder, api.SanitizeUsername("user@gmail.com"), "threads.db")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	rs, err := api.OpenRecipientsStore(dbPath)
+	kv, err := storage.OpenSQLite(cfg.Cache.Folder + "/mail.db")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer kv.Close()
+	h := NewWithStore(store, cfg, web.NewAuthHandler(store, cfg), kv)
+	defer h.StopScheduler()
+	app := fiber.New()
+	h.Register(app)
+
+	rs := api.NewRecipientsStore(kv, api.SanitizeUsername("user@gmail.com"))
 	// bob sent to 3x, alice 1x.
 	rs.Record([]api.RecipientEntry{{Email: "bob@x.com", Name: "Bob"}})
 	rs.Record([]api.RecipientEntry{{Email: "bob@x.com", Name: "Bob"}})
 	rs.Record([]api.RecipientEntry{{Email: "bob@x.com", Name: "Bob"}})
 	rs.Record([]api.RecipientEntry{{Email: "alice@x.com", Name: "Alice"}})
-	rs.Close()
 
 	body := do(t, app, bookReq("GET", "/v1/contacts/frequent", bookA, nil), fiber.StatusOK)
 	var out struct {

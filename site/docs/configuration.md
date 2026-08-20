@@ -155,7 +155,7 @@ the default embedded backend.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `backend` | string | `"bolt"` | `"bolt"` (embedded bbolt, single binary, nothing to run) or `"postgres"` (shared SQL store) |
+| `backend` | string | `"sqlite"` | `"sqlite"` (embedded in `mail.db`, single binary, nothing to run) or `"postgres"` (shared SQL store) |
 | `postgres_dsn` | string | `""` | Connection string, required when `backend = "postgres"`. e.g. `postgres://user:pw@host:5432/db?sslmode=require` |
 
 Use `postgres` only when several inbrix/Vulos instances must share one store, or
@@ -164,7 +164,7 @@ when another Vulos service needs to read the same data. The Postgres schema
 
 ```toml
 [storage]
-backend = "bolt"   # default; omit the section entirely for the same effect
+backend = "sqlite" # default; omit the section entirely for the same effect
 # backend = "postgres"
 # postgres_dsn = "postgres://inbrix:secret@localhost:5432/inbrix?sslmode=require"
 ```
@@ -177,9 +177,8 @@ you set them to something absolute.
 | Path | Default | Written when |
 |------|---------|--------------|
 | `./data` | `[cache] folder` | Always — cached message bodies, metadata, and other local state |
-| `./data/mail.db` | `[mail_sync] database` | When the local SQLite mirror is enabled — users, encrypted mailbox credentials, folders, message metadata, and cached bodies |
+| `./data/mail.db` | `[mail_sync] database` | Local SQLite storage — users, encrypted mailbox credentials, mail data, scheduled sends, settings, thread metadata, recipients, and Push subscriptions |
 | `./data/sessions` | not configurable | Always — server-side session records |
-| `./data/accounts.db` | `[accounts] store_file` | Only when the legacy bbolt multi-account path is enabled while `[mail_sync]` is disabled |
 | `./data/vapid.json` | `[notifications] vapid_key_file` | Only with `[notifications] webpush = true` — the generated VAPID key pair |
 
 Back up `data/` and `config.toml` together. `mail.db` contains encrypted mailbox credentials that are
@@ -470,7 +469,7 @@ cache and key stores are unreachable.
 
 ## `[accounts]`
 
-Legacy bbolt-backed multi-account support. With the default `[mail_sync]`
+Optional non-mirror multi-account mode. With the default `[mail_sync]`
 `enabled = true`, use the local inbrix application-account flow instead: open
 `/register`, sign in at `/user-login`, and add mailboxes from Settings. The
 SQLite path is always owner-scoped and supports switching plus a local unified
@@ -478,8 +477,7 @@ inbox. This section is only used when the SQLite mirror is disabled.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable the legacy bbolt path when SQLite mail sync is disabled |
-| `store_file` | string | `"accounts.db"` | bbolt database for encrypted additional-account credentials (auto-created) |
+| `enabled` | bool | `false` | Enable non-mirror multi-account mode when SQLite mail sync is disabled |
 
 ### Account routes
 

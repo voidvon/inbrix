@@ -113,13 +113,13 @@ type MailSyncConfig struct {
 // StorageConfig selects the durable key-value backend used for caches and
 // shared state (thread metadata, recipients, push subscriptions, …).
 //
-// The default — and the standalone single-binary path — is "bolt": an embedded
-// bbolt file under cache.folder, zero external services. Set backend =
+// The default standalone path is "sqlite", stored in the mail mirror database.
+// Set backend =
 // "postgres" (with a DSN) when several inbrix/Vulos instances must share one
 // store, or when another Vulos service wants to read the same data. Postgres is
 // strictly opt-in; it is never the default.
 type StorageConfig struct {
-	Backend     string `toml:"backend"`      // "bolt" (default) | "postgres"
+	Backend     string `toml:"backend"`      // "sqlite" (default) | "postgres"
 	PostgresDSN string `toml:"postgres_dsn"` // e.g. postgres://user:pw@host:5432/db?sslmode=require
 }
 
@@ -160,7 +160,7 @@ type CalDAVConfig struct {
 
 // CardDAVContactsConfig configures an optional CardDAV address book used for
 // recipient autocomplete in the compose modal. When Enabled is false (the
-// default), autocomplete uses only the recent-recipients bbolt store.
+// default), autocomplete uses only the recent-recipients SQLite store.
 //
 //	[carddav]
 //	enabled  = true
@@ -304,16 +304,10 @@ type NotificationsConfig struct {
 	VAPIDKeyFile string `toml:"vapid_key_file"` // path to JSON key file; auto-generated
 }
 
-// AccountsConfig configures multi-account support.
-// When enabled, users can add additional IMAP/SMTP accounts from the Settings
-// page; a unified inbox view shows mail from all accounts.
-//
-//	[accounts]
-//	enabled      = false          # master switch
-//	store_file   = "accounts.db"  # relative paths live under the runtime data directory
+// AccountsConfig enables the non-mirror multi-account compatibility flow.
+// Its durable state uses the configured SQLite/Postgres KV backend.
 type AccountsConfig struct {
-	Enabled   bool   `toml:"enabled"`    // master switch; default false
-	StoreFile string `toml:"store_file"` // bbolt path; default accounts.db
+	Enabled bool `toml:"enabled"`
 }
 
 // RateLimitConfig configures per-IP rate limits on high-risk endpoints to
@@ -385,11 +379,11 @@ func LoadConfig(filepath string) (*Config, error) {
 
 	config.Server.UsernameIsEmail = true
 	config.Server.Port = 2342
-	// Durable store defaults to the embedded bbolt backend (single-binary, no
+	// Durable state defaults to the embedded SQLite backend (single-binary, no
 	// external services). Postgres is opt-in via [storage].
-	config.Storage.Backend = "bolt"
+	config.Storage.Backend = "sqlite"
 	// Cache/staging directory. Defaults to ./data (matching config.toml.example)
-	// so the embedded bbolt store AND — crucially — outbound attachment staging
+	// so the embedded database AND — crucially — outbound attachment staging
 	// (POST /v1/attachments, see handlers/jsonapi/compose_attachments.go) work out
 	// of the box. When this is empty, attachment UPLOADS fail with 503 "staging
 	// unavailable" while downloads keep working, which reads to a user as
@@ -434,10 +428,7 @@ func LoadConfig(filepath string) (*Config, error) {
 	config.Notifications.Desktop = false
 	config.Notifications.WebPush = false
 	config.Notifications.VAPIDKeyFile = "vapid.json"
-
-	// Default Accounts configuration.
 	config.Accounts.Enabled = false
-	config.Accounts.StoreFile = "accounts.db"
 
 	// Default AI configuration.
 	// Enabled defaults to false (explicit opt-in required).

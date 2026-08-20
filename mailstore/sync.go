@@ -16,9 +16,10 @@ import (
 // Each loop uses a separate IMAP connection, so web requests remain free to
 // perform writes or on-demand body fetches without sharing a selected mailbox.
 type SyncManager struct {
-	store  *Store
-	key    string
-	config config.MailSyncConfig
+	store    *Store
+	key      string
+	config   config.MailSyncConfig
+	aiClient HTTPClient
 
 	ctx    context.Context
 	cancel context.CancelFunc

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"inbrix/storage"
 )
 
 // ── VAPID key tests ─────────────────────────────────────────────────────────
@@ -79,11 +81,12 @@ func TestLoadOrGenerateVAPIDKeys_CorruptFile(t *testing.T) {
 func makePushStore(t *testing.T) (*PushStore, string) {
 	t.Helper()
 	dir := t.TempDir()
-	// PushStore expects per-user subdirectories; create one for "alice".
-	if err := os.MkdirAll(filepath.Join(dir, "alice"), 0700); err != nil {
+	kv, err := storage.OpenSQLite(filepath.Join(dir, "mail.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	return NewPushStore(dir), dir
+	t.Cleanup(func() { _ = kv.Close() })
+	return NewPushStore(kv), dir
 }
 
 func TestPushStore_SaveAndAll(t *testing.T) {
@@ -169,10 +172,12 @@ func TestPushStore_Upsert(t *testing.T) {
 
 func TestPushStore_IsolatedByUser(t *testing.T) {
 	dir := t.TempDir()
-	// Create subdirs for both users.
-	_ = os.MkdirAll(filepath.Join(dir, "alice"), 0700)
-	_ = os.MkdirAll(filepath.Join(dir, "bob"), 0700)
-	store := NewPushStore(dir)
+	kv, err := storage.OpenSQLite(filepath.Join(dir, "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kv.Close()
+	store := NewPushStore(kv)
 
 	subA := PushSubscription{Endpoint: "https://push.example.com/alice"}
 	subA.Keys.P256DH = "ka"

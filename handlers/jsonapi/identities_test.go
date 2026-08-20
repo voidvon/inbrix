@@ -38,9 +38,9 @@ func newIdentitiesApp(t *testing.T) (*fiber.App, *Handler) {
 	brokerDialIMAP = func(brokerSpec) (api.MailClient, error) { return &fakeMailClient{}, nil }
 	t.Cleanup(func() { brokerDialIMAP = orig })
 
-	kv, err := storage.OpenBolt(t.TempDir() + "/identities.db")
+	kv, err := storage.OpenSQLite(t.TempDir() + "/identities.db")
 	if err != nil {
-		t.Fatalf("open bolt: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { kv.Close() })
 

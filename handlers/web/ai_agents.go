@@ -132,9 +132,9 @@ func (h *AISettingsHandler) HandleListTaskBindings(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	out := make([]aiTaskBindingPublic, 0, len(accounts)*2)
+	out := make([]aiTaskBindingPublic, 0, len(accounts)*3)
 	for _, account := range accounts {
-		for _, taskType := range []string{mailstore.MailSummaryTask, mailstore.EmailDraftTask} {
+		for _, taskType := range []string{mailstore.MailSummaryTask, mailstore.EmailDraftTask, mailstore.ReplySuggestionTask} {
 			item := aiTaskBindingPublic{AccountEmail: account.Email, TaskType: taskType}
 			binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, taskType)
 			if bindingErr == nil {
@@ -176,7 +176,7 @@ func (h *AISettingsHandler) HandleSaveTaskBinding(c *fiber.Ctx) error {
 	input.TaskType = strings.TrimSpace(input.TaskType)
 	input.AgentID = strings.TrimSpace(input.AgentID)
 	input.ModelID = strings.TrimSpace(input.ModelID)
-	if input.TaskType != mailstore.MailSummaryTask && input.TaskType != mailstore.EmailDraftTask {
+	if input.TaskType != mailstore.MailSummaryTask && input.TaskType != mailstore.EmailDraftTask && input.TaskType != mailstore.ReplySuggestionTask {
 		return fiber.NewError(fiber.StatusBadRequest, "unsupported AI task type")
 	}
 	if input.AccountEmail == "" || input.AgentID == "" || input.ModelID == "" {

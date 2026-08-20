@@ -29,7 +29,7 @@ inbrix/
 ├── storage/
 │   ├── session.go           # File-backed fiber session store (one JSON file per key)
 │   ├── kv.go                # Durable KV seam + backend selector (Open)
-│   ├── bolt.go              # Embedded bbolt backend (default)
+│   ├── sqlite.go            # Embedded SQLite backend (default)
 │   ├── postgres.go          # Optional shared Postgres backend (opt-in)
 │   └── object.go            # Optional shared-object (S3) seam — attachment cache only
 ├── data/                    # Runtime databases, cache, sessions, and local state
@@ -150,19 +150,18 @@ for demo mode and sessions created before the mirror was enabled.
 ### Conversation threading
 
 Thread graphs are built using the JWZ algorithm over `Message-ID`, `References`
-and `In-Reply-To` headers, and stored in bbolt by `handlers/api/threadstore.go`,
-which opens its own database file directly.
+and `In-Reply-To` headers, and stored through the shared `storage.KV` interface.
 
 (`storage/session.go` is unrelated to threading despite the neighbouring name:
 it is `FileStorage`, the fiber session store, and it writes one JSON file per
-session key under `data/sessions` beside the executable. No bbolt is involved.)
+session key under `data/sessions` beside the executable.)
 
 ### Durable storage seam
 
 `storage/` defines a small backend-agnostic `KV` interface (`kv.go`) with two
-implementations: `bolt.go` (embedded bbolt, the default — keeps inbrix a single
-binary with nothing to run) and `postgres.go` (an optional shared SQL store,
-opt-in via `[storage] backend = "postgres"`). `storage.Open(cfg, boltPath)`
+implementations: `sqlite.go` (embedded in `mail.db`, the default) and
+`postgres.go` (an optional shared SQL store, opt-in via
+`[storage] backend = "postgres"`). `storage.Open(cfg, sqlitePath)`
 selects the backend so callers never branch on it. Postgres is reusable by other
 Vulos services that need to read the same store; it is never the default. See
 [CONFIGURATION.md](configuration.md#storage).
@@ -170,10 +169,9 @@ Vulos services that need to read the same store; it is never the default. See
 ### Shared object storage (supplementary only)
 
 inbrix's primary stores are **IMAP** (the mail itself — the durable source of
-truth), the **KV seam** above (scheduled send, settings, connected accounts) and
-a handful of bbolt files opened directly rather than through the seam (thread
-graphs, recipient history, push subscriptions — so `backend = "postgres"` does
-**not** move those three). Neither needs object storage, so inbrix's
+truth) and the **KV seam** above (scheduled sends, settings, connected accounts,
+thread metadata, recipient history, and Push subscriptions). Neither needs
+object storage, so inbrix's
 participation in the Vulos unified object
 store is deliberately **light and supplementary**.
 

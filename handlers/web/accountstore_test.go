@@ -4,17 +4,20 @@ package web
 import (
 	"path/filepath"
 	"testing"
+
+	"inbrix/storage"
 )
 
 func openTestAccountStore(t *testing.T) (*AccountStore, string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "accounts.db")
-	s, err := OpenAccountStore(path)
+	kv, err := storage.OpenSQLite(path)
 	if err != nil {
-		t.Fatalf("OpenAccountStore: %v", err)
+		t.Fatalf("OpenSQLite: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	s := NewAccountStore(kv)
+	t.Cleanup(func() { _ = kv.Close() })
 	return s, path
 }
 
@@ -147,19 +150,21 @@ func TestAccountStore_Persistence(t *testing.T) {
 	path := filepath.Join(dir, "accounts.db")
 
 	// Write.
-	s1, err := OpenAccountStore(path)
+	kv1, err := storage.OpenSQLite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s1 := NewAccountStore(kv1)
 	_ = s1.Save("owner@x.com", AccountEntry{Email: "persist@x.com", Label: "Persist"})
-	s1.Close()
+	_ = kv1.Close()
 
 	// Re-open and verify.
-	s2, err := OpenAccountStore(path)
+	kv2, err := storage.OpenSQLite(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer kv2.Close()
+	s2 := NewAccountStore(kv2)
 
 	entries, _ := s2.List("owner@x.com")
 	if len(entries) != 1 || entries[0].Email != "persist@x.com" {

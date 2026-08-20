@@ -3,8 +3,8 @@
 //
 // Ported from handlers/web/accountstore.go (the legacy multi-account impl),
 // re-homed onto the storage.KV seam so it shares one backend with the rest of the
-// /v1 durable state (bbolt standalone, Postgres when configured) instead of a
-// separate accounts.db bbolt file. The credential-at-rest model is IDENTICAL:
+// /v1 durable state (SQLite standalone, Postgres when configured) instead of a
+// separate accounts database. The credential-at-rest model is IDENTICAL:
 // each account's IMAP/SMTP password is AES-GCM encrypted with config.Encryption.Key
 // (api.EncryptJSON) and NEVER returned to the client in cleartext.
 //

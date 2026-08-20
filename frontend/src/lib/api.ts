@@ -239,15 +239,11 @@ export function setDefaultAIModel(id: string) {
   return apiFetch<{ ok: boolean }>(`/api/settings/ai/models/${encodeURIComponent(id)}/default`, { method: "POST" });
 }
 
-export function summarizeMailThread(thread: string) {
-  return apiFetch<{ summary: string }>("/api/ai/summary", {
-    method: "POST",
-    body: JSON.stringify({ thread }),
-  });
-}
-
 export type GenerateEmailInput = {
   accountEmail: string;
+  taskType?: "email_draft" | "reply_suggestion";
+  folder?: string;
+  messageId?: string;
   instruction: string;
   subject: string;
   recipients: string;
@@ -256,7 +252,7 @@ export type GenerateEmailInput = {
 };
 
 export function generateEmail(input: GenerateEmailInput) {
-  return apiFetch<{ body: string }>("/api/ai/write-email", {
+  return apiFetch<{ body: string; persisted?: boolean; updatedAt?: string }>("/api/ai/write-email", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -315,7 +311,7 @@ export function updateAIAgent(id: string, agent: AIAgentInput) {
 
 export type AITaskBinding = {
   accountEmail: string;
-  taskType: "mail_summary" | "email_draft";
+  taskType: "mail_summary" | "email_draft" | "reply_suggestion";
   agentId: string;
   modelId: string;
   explicit: boolean;

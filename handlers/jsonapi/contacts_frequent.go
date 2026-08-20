@@ -2,7 +2,7 @@
 //
 //	GET /v1/contacts/frequent?limit=  → { contacts: [{email, name, count, lastUsed}] }
 //
-// This exposes the existing per-account RecentRecipientsStore (bbolt) that the
+// This exposes the existing per-account recent-recipient store that the
 // send path already populates after every send. It is READ-ONLY and PER-ACCOUNT
 // isolated by construction: the store file is keyed by the request's own
 // sanitized username under config.Cache.Folder — the exact same path the send
@@ -12,7 +12,6 @@
 package jsonapi
 
 import (
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,16 +39,11 @@ func (h *Handler) handleFrequentContacts(c *fiber.Ctx) error {
 		limit = maxFrequentContacts
 	}
 
-	path := h.recipientsStorePath(c)
-	if path == "" {
+	scope := h.recipientsStoreScope(c)
+	if scope == "" || h.kv == nil {
 		return c.JSON(fiber.Map{"contacts": []frequentContact{}})
 	}
-	rs, err := api.OpenRecipientsStore(path)
-	if err != nil {
-		// No store yet (nothing sent) → empty, not an error.
-		return c.JSON(fiber.Map{"contacts": []frequentContact{}})
-	}
-	defer rs.Close()
+	rs := api.NewRecipientsStore(h.kv, scope)
 
 	entries, err := rs.Search("", limit)
 	if err != nil {
@@ -70,13 +64,10 @@ func (h *Handler) handleFrequentContacts(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"contacts": out})
 }
 
-// recipientsStorePath returns the bbolt path the send path writes recent
-// recipients to, keyed by the request's own username. Empty when unavailable
-// (no username or no cache folder), which callers treat as "no data".
-func (h *Handler) recipientsStorePath(c *fiber.Ctx) string {
+func (h *Handler) recipientsStoreScope(c *fiber.Ctx) string {
 	username, _ := c.Locals("username").(string)
-	if strings.TrimSpace(username) == "" || strings.TrimSpace(h.config.Cache.Folder) == "" {
+	if strings.TrimSpace(username) == "" {
 		return ""
 	}
-	return filepath.Join(h.config.Cache.Folder, api.SanitizeUsername(username), "threads.db")
+	return api.SanitizeUsername(username)
 }

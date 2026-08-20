@@ -29,6 +29,12 @@ export type MailSummary = {
   updatedAt?: string;
 };
 
+export type SuggestedReply = {
+  text: string;
+  status: "ready";
+  updatedAt?: string;
+};
+
 export type ConversationSummary = {
   id: string;
   title: string;
@@ -65,6 +71,7 @@ export type ConversationMessage = {
   references?: string[];
   outgoing: boolean;
   mailSummary?: MailSummary;
+  suggestedReply?: SuggestedReply;
 };
 
 export type ConversationDetail = {

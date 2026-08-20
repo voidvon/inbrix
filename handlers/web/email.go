@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"inbrix/config"
 	"inbrix/handlers/api"
 	"inbrix/handlers/htmlsafe"
@@ -14,29 +13,18 @@ import (
 	"inbrix/models"
 	"inbrix/storage"
 	"inbrix/utils"
+	"io"
 	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
 )
-
-// recipientsStorePath returns the path to the per-user bbolt database that
-// stores both thread cache and recent recipients (shared file).
-func recipientsStorePath(cacheFolder, username string) string {
-	return filepath.Join(cacheFolder, api.SanitizeUsername(username), "threads.db")
-}
-
-// boltPath returns the path to the per-user bbolt thread-cache database.
-func boltPath(cacheFolder, username string) string {
-	return recipientsStorePath(cacheFolder, username)
-}
 
 type EmailHandler struct {
 	store     *session.Store
@@ -44,19 +32,14 @@ type EmailHandler struct {
 	auth      *AuthHandler
 	acctStore *AccountStore // nil when accounts.enabled = false
 	mailDB    *mailstore.Store
-
-	// threadStores caches one open bbolt handle per user so we don't open the
-	// single-writer file on every request (which would cause lock contention).
-	threadStoresMu sync.Mutex
-	threadStores   map[string]*api.ThreadStore
+	kv        storage.KV
 }
 
 func NewEmailHandler(store *session.Store, config *config.Config, auth *AuthHandler) *EmailHandler {
 	return &EmailHandler{
-		store:        store,
-		config:       config,
-		auth:         auth,
-		threadStores: make(map[string]*api.ThreadStore),
+		store:  store,
+		config: config,
+		auth:   auth,
 	}
 }
 
@@ -69,6 +52,8 @@ func (h *EmailHandler) SetAccountStore(s *AccountStore) {
 func (h *EmailHandler) SetMailMirror(s *mailstore.Store) {
 	h.mailDB = s
 }
+
+func (h *EmailHandler) SetDurableStore(kv storage.KV) { h.kv = kv }
 
 type mailAccountOption struct {
 	Email    string
@@ -299,7 +284,7 @@ func (h *EmailHandler) messageClientForAccount(c *fiber.Ctx, accountEmail string
 			return client, account, err
 		}
 
-		// Legacy bbolt multi-account mode has no mirror account ID, so resolve
+		// Legacy multi-account mode has no mirror account ID, so resolve
 		// the requested mailbox against the current user's stored entries.
 		sessionEmail := h.auth.GetSessionEmail(c)
 		if strings.EqualFold(accountEmail, sessionEmail) {
@@ -333,24 +318,14 @@ func (h *EmailHandler) messageClientForAccount(c *fiber.Ctx, accountEmail string
 // getThreadStore returns the shared ThreadStore for the given user, opening it
 // if necessary.  On failure it returns nil (callers fall back to in-memory).
 func (h *EmailHandler) getThreadStore(username string) *api.ThreadStore {
-	h.threadStoresMu.Lock()
-	defer h.threadStoresMu.Unlock()
-
-	if ts, ok := h.threadStores[username]; ok {
-		return ts
-	}
-	path := boltPath(h.config.Cache.Folder, username)
-	ts, err := api.OpenThreadStore(path)
-	if err != nil {
-		log.Printf("threadstore: open for %s: %v — will use in-memory threading", username, err)
+	if h.kv == nil {
 		return nil
 	}
-	h.threadStores[username] = ts
-	return ts
+	return api.NewThreadStore(h.kv, api.SanitizeUsername(username))
 }
 
-// buildThreads builds JWZ threads using the shared bbolt store when available,
-// falling back to in-memory-only threading (api.ThreadMessages, no bbolt
+// buildThreads builds JWZ threads using the shared durable store when available,
+// falling back to in-memory-only threading (api.ThreadMessages, no
 // persistence) when no store is open or the store errors.
 func (h *EmailHandler) buildThreads(username, folder string, emails []models.Email) []models.Thread {
 	ts := h.getThreadStore(username)
@@ -361,7 +336,7 @@ func (h *EmailHandler) buildThreads(username, folder string, emails []models.Ema
 		}
 		log.Printf("threadstore: BuildThreads for %s/%s: %v — falling back", username, folder, err)
 	}
-	// Fallback: in-memory only (no bbolt persistence).
+	// Fallback: in-memory only.
 	return api.ThreadMessages(emails)
 }
 
@@ -431,7 +406,7 @@ func (h *EmailHandler) HandleFolder(c *fiber.Ctx) error {
 		return c.Redirect("/login")
 	}
 
-	// Build JWZ threads using the shared bbolt store.
+	// Build JWZ threads using the shared durable store.
 	threads := h.buildThreads(userStr, folderName, emails)
 
 	return c.JSON(fiber.Map{
@@ -1064,7 +1039,7 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		} else if h.mailDB != nil {
 			err = fmt.Errorf("account %s not found", replyAccountEmail)
 		} else if h.acctStore != nil && h.config.Accounts.Enabled {
-			// Legacy bbolt account path.
+			// Legacy account path.
 			username, _ := c.Locals("username").(string)
 			entries, listErr := h.acctStore.List(username)
 			if listErr == nil {
@@ -1108,9 +1083,8 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 	// Record recipients for autocomplete.
 	username, _ := c.Locals("username").(string)
 	if username != "" {
-		dbPath := recipientsStorePath(h.config.Cache.Folder, username)
-		if rs, err := api.OpenRecipientsStore(dbPath); err == nil {
-			defer rs.Close()
+		if h.kv != nil {
+			rs := api.NewRecipientsStore(h.kv, api.SanitizeUsername(username))
 			var entries []api.RecipientEntry
 			entries = append(entries, api.ParseAddressField(to)...)
 			entries = append(entries, api.ParseAddressField(cc)...)
@@ -1324,12 +1298,11 @@ func (h *EmailHandler) HandleAutocomplete(c *fiber.Ctx) error {
 
 	const limit = 10
 
-	// Recent recipients from bbolt.
+	// Recent recipients from the shared durable store.
 	var results []api.RecipientEntry
 	if username != "" {
-		dbPath := recipientsStorePath(h.config.Cache.Folder, username)
-		if rs, err := api.OpenRecipientsStore(dbPath); err == nil {
-			defer rs.Close()
+		if h.kv != nil {
+			rs := api.NewRecipientsStore(h.kv, api.SanitizeUsername(username))
 			if res, err := rs.Search(query, limit); err == nil {
 				results = res
 			}

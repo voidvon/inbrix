@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -29,7 +29,6 @@ import {
   Bell,
   BellOff,
   Moon,
-  MoreHorizontal,
   Paperclip,
   Pencil,
   Plus,
@@ -60,7 +59,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, summarizeMailThread, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -201,7 +200,6 @@ const zh = {
   aiSettingsSaved: "模型已添加",
   summarize: "AI 总结",
   summarizing: "正在总结…",
-  summaryTitle: "AI 总结",
   mailSummaryTitle: "邮件总结",
   regenerateSummary: "重新总结",
   summaryStale: "配置已更新",
@@ -221,9 +219,12 @@ const zh = {
   agentUpdated: "智能体已更新",
   savingAgent: "正在保存…",
   mailboxAIConfiguration: "邮箱 AI 配置",
-  mailboxAIConfigurationDescription: "为每个已绑定邮箱分别配置邮件总结和邮件撰写使用的智能体与模型。",
+  mailboxAIConfigurationDescription: "为每个已绑定邮箱分别配置邮件总结、邮件撰写和建议回复使用的智能体与模型。",
   mailSummaryAgent: "邮件总结智能体",
   emailDraftAgent: "邮件撰写智能体",
+  replySuggestionAgent: "建议回复智能体",
+  editReplySuggestionPrompt: "编辑建议回复提示词",
+  replySuggestionPromptDescription: "编辑当前建议回复智能体的提示词。使用同一智能体的其他功能也会受到影响。",
   aiTask: "AI 功能",
   inheritedConfiguration: "兼容配置",
   explicitConfiguration: "已配置",
@@ -313,6 +314,12 @@ const zh = {
   regenerate: "再次生成",
   useGeneratedDraft: "采用",
   refineInstructionPlaceholder: "继续补充修改要求，例如：再简短一些，并明确回复截止时间",
+  suggestedReply: "建议回复",
+  generateSuggestedReply: "生成回复",
+  suggestedReplyGenerating: "正在生成建议回复…",
+  regenerateSuggestedReply: "重新生成建议回复",
+  useSuggestedReply: "采用并回复",
+  suggestedReplyFailed: "建议回复生成失败",
 };
 
 const en = {
@@ -435,7 +442,6 @@ const en = {
   aiSettingsSaved: "Model added",
   summarize: "AI summary",
   summarizing: "Summarizing…",
-  summaryTitle: "AI summary",
   mailSummaryTitle: "Mail summary",
   regenerateSummary: "Regenerate summary",
   summaryStale: "Configuration changed",
@@ -455,9 +461,12 @@ const en = {
   agentUpdated: "Agent updated",
   savingAgent: "Saving…",
   mailboxAIConfiguration: "Mailbox AI configuration",
-  mailboxAIConfigurationDescription: "Configure the agent and model used for mail summaries and email drafting in each connected mailbox.",
+  mailboxAIConfigurationDescription: "Configure the agent and model used for mail summaries, email drafting, and suggested replies in each connected mailbox.",
   mailSummaryAgent: "Mail summary agent",
   emailDraftAgent: "Email drafting agent",
+  replySuggestionAgent: "Suggested reply agent",
+  editReplySuggestionPrompt: "Edit suggested reply prompt",
+  replySuggestionPromptDescription: "Edit the prompt for the selected suggested reply agent. Other functions using the same agent will also be affected.",
   aiTask: "AI function",
   inheritedConfiguration: "Fallback",
   explicitConfiguration: "Configured",
@@ -547,6 +556,12 @@ const en = {
   regenerate: "Generate again",
   useGeneratedDraft: "Use draft",
   refineInstructionPlaceholder: "Add another change, for example: make it shorter and state the reply deadline",
+  suggestedReply: "Suggested reply",
+  generateSuggestedReply: "Generate reply",
+  suggestedReplyGenerating: "Generating a suggested reply…",
+  regenerateSuggestedReply: "Regenerate suggested reply",
+  useSuggestedReply: "Use and reply",
+  suggestedReplyFailed: "Could not generate a suggested reply",
 };
 
 type Copy = typeof zh;
@@ -705,10 +720,12 @@ function InboxPage() {
     const events = new EventSource("/events", { withCredentials: true });
     events.onmessage = (event) => {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      if (!("Notification" in window) || Notification.permission !== "granted" || document.visibilityState === "visible") return;
+      void queryClient.invalidateQueries({ queryKey: ["conversation"] });
       try {
         const payload = JSON.parse(String(event.data)) as { from?: string; subject?: string };
-        new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
+        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
+          new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
+        }
       } catch {
         // A malformed optional notification must not interrupt inbox refreshes.
       }
@@ -790,7 +807,7 @@ function InboxPage() {
     setSidebarOpen(false);
   };
 
-  const openReply = (conversation: ConversationDetail, message?: ConversationMessage) => {
+  const openReply = (conversation: ConversationDetail, message?: ConversationMessage, suggestedBody?: string) => {
     const source = message || conversation.messages.at(-1);
     const subject = source?.subject || conversation.subject;
     const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
@@ -805,14 +822,14 @@ function InboxPage() {
       accountEmail: conversation.accountEmail,
       to: recipient,
       subject: replySubject,
-      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
+      html: `${suggestedBody?.trim() ? generatedEmailHTML(suggestedBody) : "<p><br></p>"}<p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
       inReplyTo: source?.messageId,
       references,
       conversation: conversation.messages,
     });
   };
 
-  const openReplyAll = (conversation: ConversationDetail, message?: ConversationMessage) => {
+  const openReplyAll = (conversation: ConversationDetail, message?: ConversationMessage, suggestedBody?: string) => {
     const source = message || conversation.messages.at(-1);
     if (!source) return;
     const subject = source.subject || conversation.subject;
@@ -834,7 +851,7 @@ function InboxPage() {
       to: to.join(", "),
       cc: cc.join(", "),
       subject: replySubject,
-      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
+      html: `${suggestedBody?.trim() ? generatedEmailHTML(suggestedBody) : "<p><br></p>"}<p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
       inReplyTo: source.messageId,
       references,
       conversation: conversation.messages,
@@ -1099,38 +1116,33 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
   );
 }
 
-function ChatPanel({ copy, detail, loading, error, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty, className }: { copy: Copy; detail?: ConversationDetail; loading: boolean; error: Error | null; onBack: () => void; onReply: (conversation: ConversationDetail, message: ConversationMessage) => void; onReplyAll: (conversation: ConversationDetail, message: ConversationMessage) => void; onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void; onConversationEmpty: () => void; className?: string }) {
+function ChatPanel({ copy, detail, loading, error, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty, className }: { copy: Copy; detail?: ConversationDetail; loading: boolean; error: Error | null; onBack: () => void; onReply: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void; onReplyAll: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void; onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void; onConversationEmpty: () => void; className?: string }) {
   const panelClass = cn("min-w-0 flex-1 flex-col bg-surface", className);
   if (loading) return <section className={cn(panelClass, "items-center justify-center")}><div className="text-sm text-muted-foreground">{copy.loading}</div></section>;
   if (error) return <section className={panelClass}><ErrorState copy={copy} /></section>;
   if (!detail) return <section className={panelClass}><EmptyState icon={<MessageCircle />} text={copy.selectConversation} /></section>;
-  return <ChatView copy={copy} detail={detail} onBack={onBack} onReply={(message) => onReply(detail, message)} onReplyAll={(message) => onReplyAll(detail, message)} onNewMail={(message) => onNewMail(detail, message)} onConversationEmpty={onConversationEmpty} />;
+  return <ChatView copy={copy} detail={detail} onBack={onBack} onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)} onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)} onNewMail={(message) => onNewMail(detail, message)} onConversationEmpty={onConversationEmpty} />;
 }
 
-function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty }: { copy: Copy; detail: ConversationDetail; onBack: () => void; onReply: (message: ConversationMessage) => void; onReplyAll: (message: ConversationMessage) => void; onNewMail: (message: ConversationMessage) => void; onConversationEmpty: () => void }) {
+function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConversationEmpty }: { copy: Copy; detail: ConversationDetail; onBack: () => void; onReply: (message: ConversationMessage, suggestedBody?: string) => void; onReplyAll: (message: ConversationMessage, suggestedBody?: string) => void; onNewMail: (message: ConversationMessage) => void; onConversationEmpty: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
-  const [summary, setSummary] = useState("");
+  const latestConversationMessage = detail.messages.at(-1);
+  const persistedSuggestionMessage = latestConversationMessage && !latestConversationMessage.outgoing && latestConversationMessage.suggestedReply?.status === "ready" && latestConversationMessage.suggestedReply.text.trim() ? latestConversationMessage : undefined;
+  const persistedSuggestionKey = persistedSuggestionMessage ? `${persistedSuggestionMessage.folder || "INBOX"}\u0000${persistedSuggestionMessage.id}` : null;
+  const [suggestionTargetKey, setSuggestionTargetKey] = useState<string | null>(persistedSuggestionKey);
+  const [suggestionGeneration, setSuggestionGeneration] = useState(0);
   const aiSettings = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
-  const summarizeMutation = useMutation({
-    mutationFn: () => summarizeMailThread(detail.messages.map((message) => [
-      `From: ${message.fromName ? `${message.fromName} <${message.from}>` : message.from}`,
-      `To: ${message.to}`,
-      ...(message.cc ? [`Cc: ${message.cc}`] : []),
-      `Date: ${message.date}`,
-      `Subject: ${message.subject}`,
-      "",
-      message.body || message.preview,
-    ].join("\n")).join("\n\n---\n\n")),
-    onSuccess: (result) => setSummary(result.summary),
-  });
   useEffect(() => {
-    setSummary("");
-    summarizeMutation.reset();
+    setSuggestionTargetKey(persistedSuggestionKey);
+    setSuggestionGeneration(0);
   }, [detail.id]);
+  useEffect(() => {
+    if (!suggestionTargetKey && persistedSuggestionKey) setSuggestionTargetKey(persistedSuggestionKey);
+  }, [persistedSuggestionKey, suggestionTargetKey]);
   const deleteMutation = useMutation({
     mutationFn: (message: ConversationMessage) => deleteConversationMessage(detail.id, message.id, message.folder || "INBOX"),
     onSuccess: async () => {
@@ -1142,6 +1154,10 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
     },
     onError: (value) => setDeleteError(value instanceof Error ? value.message : copy.deleteEmailFailed),
   });
+  const generateSuggestedReply = (message: ConversationMessage) => {
+    setSuggestionTargetKey(`${message.folder || "INBOX"}\u0000${message.id}`);
+    setSuggestionGeneration((value) => value + 1);
+  };
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
     const content = contentRef.current;
@@ -1177,12 +1193,18 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
       <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
         <div className="flex min-w-0 items-center justify-start"><Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}><ArrowLeft /></Button></div>
         <div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2><p className="mt-1 truncate text-xs text-muted-foreground">{detail.subject || copy.noSubject}<span className="px-1.5">·</span>{detail.count} {copy.messages}</p></div>
-        <div className="flex min-w-0 items-center justify-end">{aiSettings.data?.models.length ? <Button variant="outline" size="sm" disabled={summarizeMutation.isPending} onClick={() => summarizeMutation.mutate()}><Sparkles />{summarizeMutation.isPending ? copy.summarizing : copy.summarize}</Button> : <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="More" title="More"><MoreHorizontal /></Button>}</div>
+        <div aria-hidden="true" />
       </header>
       <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8" viewportRef={scrollRef}>
         <div ref={contentRef}>
-          {(summary || summarizeMutation.error) && <div className="mx-auto mb-6 max-w-3xl rounded-xl border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4" />{copy.summaryTitle}</h3><Button variant="ghost" size="icon" className="size-7" onClick={() => { setSummary(""); summarizeMutation.reset(); }} aria-label={copy.cancel}><X /></Button></div>{summary ? <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">{summary}</p> : <p className="mt-3 text-sm text-destructive">{summarizeMutation.error instanceof Error ? summarizeMutation.error.message : copy.loadFailed}</p>}</div>}
-          {detail.messages.map((message, index) => <MessageBubble key={`${message.folder || "inbox"}-${message.id}`} copy={copy} message={message} senderFallback={detail.peerEmail || detail.title} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onReplyAll={() => onReplyAll(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} />)}
+          {detail.messages.map((message, index) => {
+            const messageKey = `${message.folder || "INBOX"}\u0000${message.id}`;
+            const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
+            return <Fragment key={messageKey}>
+              <MessageBubble copy={copy} message={message} senderFallback={detail.peerEmail || detail.title} accountEmail={detail.accountEmail} rootRef={scrollRef} eager={index >= detail.messages.length - 3} onReply={() => onReply(message)} onReplyAll={() => onReplyAll(message)} onNewMail={() => onNewMail(message)} onDelete={() => { setDeleteError(""); setDeleteTarget(message); }} onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined} />
+              {!message.outgoing && suggestionTargetKey === messageKey ? <SuggestedReplyBubble key={messageKey} copy={copy} detail={detail} message={message} generation={suggestionGeneration} onReply={(body) => onReply(message, body)} onReplyAll={(body) => onReplyAll(message, body)} /> : null}
+            </Fragment>;
+          })}
         </div>
       </ScrollArea>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
@@ -1202,7 +1224,62 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
   );
 }
 
-function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, eager, onReply, onReplyAll, onNewMail, onDelete }: { copy: Copy; message: ConversationMessage; senderFallback?: string; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onReplyAll: () => void; onNewMail: () => void; onDelete: () => void }) {
+function SuggestedReplyBubble({ copy, detail, message, generation, onReply, onReplyAll }: { copy: Copy; detail: ConversationDetail; message: ConversationMessage; generation: number; onReply: (body: string) => void; onReplyAll: (body: string) => void }) {
+  const queryClient = useQueryClient();
+  const [body, setBody] = useState(message.suggestedReply?.text.trim() || "");
+  const previousGenerationRef = useRef(generation > 0 ? generation - 1 : generation);
+  const suggestion = useMutation({
+    mutationFn: () => generateEmail({
+      accountEmail: detail.accountEmail || "",
+      taskType: "reply_suggestion",
+      folder: message.folder || "INBOX",
+      messageId: message.id,
+      instruction: "Generate a persisted reply suggestion for this received email.",
+      subject: message.subject || detail.subject,
+      recipients: message.from || detail.peerEmail || "",
+    }),
+    onSuccess: (result) => {
+      const text = result.body.trim();
+      setBody(text);
+      queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
+        if (!current || current.conversation.id !== detail.id) return current;
+        const messages = current.conversation.messages.map((item) => item.id === message.id && (item.folder || "INBOX") === (message.folder || "INBOX") ? { ...item, suggestedReply: { text, status: "ready" as const, updatedAt: result.updatedAt } } : item);
+        return { ...current, conversation: { ...current.conversation, messages } };
+      });
+    },
+  });
+  useEffect(() => {
+    if (previousGenerationRef.current === generation) return;
+    previousGenerationRef.current = generation;
+    suggestion.mutate();
+  }, [generation]);
+  return (
+    <article className="mb-5">
+      <div className="mb-1 flex justify-end text-right text-xs leading-tight text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><Sparkles className="size-3.5" />{copy.suggestedReply}</span></div>
+      <ContextMenu>
+        <ContextMenuTrigger className="block select-text">
+          <div className="flex justify-end">
+            <div className="min-w-0 max-w-[80%] rounded-xl border border-dashed bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">
+              {suggestion.isPending && !body && <p className="flex items-center gap-2 text-muted-foreground"><Sparkles className="size-4 animate-pulse" />{copy.suggestedReplyGenerating}</p>}
+              {body && <p className="whitespace-pre-wrap">{body}</p>}
+              {suggestion.error && <p className="text-destructive">{suggestion.error instanceof Error ? suggestion.error.message : copy.suggestedReplyFailed}</p>}
+            </div>
+          </div>
+        </ContextMenuTrigger>
+        {body && <ContextMenuContent className="w-40">
+          <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReply(body)}><Send className="size-4" />{copy.reply}</ContextMenuItem>
+          <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReplyAll(body)}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem>
+        </ContextMenuContent>}
+      </ContextMenu>
+      <div className="mt-1.5 flex min-h-7 justify-end gap-1">
+        <Button type="button" variant="ghost" size="icon" className="size-7" disabled={suggestion.isPending} onClick={() => suggestion.mutate()} aria-label={copy.regenerateSuggestedReply} title={copy.regenerateSuggestedReply}><RotateCcw className={cn("size-3.5", suggestion.isPending && "animate-spin")} /></Button>
+        {body && <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onReply(body)}><Send className="size-3.5" />{copy.useSuggestedReply}</Button>}
+      </div>
+    </article>
+  );
+}
+
+function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, eager, onReply, onReplyAll, onNewMail, onDelete, onGenerateReply }: { copy: Copy; message: ConversationMessage; senderFallback?: string; accountEmail?: string; rootRef: { current: HTMLDivElement | null }; eager: boolean; onReply: () => void; onReplyAll: () => void; onNewMail: () => void; onDelete: () => void; onGenerateReply?: () => void }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
@@ -1223,7 +1300,7 @@ function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, e
               {message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((attachment) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={attachment.id} href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="min-w-0 truncate">{attachment.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small></a>)}</div></> : null}
             </div>
           </div>
-          <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} />
+          <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} onGenerateReply={onGenerateReply} />
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">
@@ -1236,7 +1313,7 @@ function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, e
   );
 }
 
-function MailMessageSummary({ copy, accountEmail, folder, messageId, initialSummary, outgoing = false }: { copy: Copy; accountEmail?: string; folder: string; messageId: string; initialSummary?: ConversationMessage["mailSummary"]; outgoing?: boolean }) {
+function MailMessageSummary({ copy, accountEmail, folder, messageId, initialSummary, outgoing = false, onGenerateReply }: { copy: Copy; accountEmail?: string; folder: string; messageId: string; initialSummary?: ConversationMessage["mailSummary"]; outgoing?: boolean; onGenerateReply?: () => void }) {
   const queryClient = useQueryClient();
   const [savedSummary, setSavedSummary] = useState(initialSummary);
   const mutation = useMutation({
@@ -1263,11 +1340,12 @@ function MailMessageSummary({ copy, accountEmail, folder, messageId, initialSumm
   }, [accountEmail, folder, messageId, initialSummary]);
   return (
     <div className={cn("mt-1.5 max-w-[80%]", outgoing && "ml-auto")}>
-      {!savedSummary && <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(false)}><Sparkles className="size-3.5" />{mutation.isPending ? copy.summarizing : copy.summarize}</Button>}
+      {!savedSummary && <div className="flex min-h-7 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(false)}><Sparkles className="size-3.5" />{mutation.isPending ? copy.summarizing : copy.summarize}</Button>{onGenerateReply && <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onGenerateReply}><MessageCircle className="size-3.5" />{copy.generateSuggestedReply}</Button>}</div>}
       {savedSummary && <div className="mt-1 border-l-2 border-primary/40 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
         <div className="mb-1 flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><strong className="text-xs font-medium text-muted-foreground">{copy.mailSummaryTitle}</strong>{savedSummary.stale && <span className="truncate text-[10px] text-amber-700 dark:text-amber-400">{copy.summaryStale}</span>}</div><Button type="button" variant="ghost" size="icon" className="size-6 shrink-0" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(true)} aria-label={copy.regenerateSummary} title={copy.regenerateSummary}><RotateCcw className={cn("size-3.5", mutation.isPending && "animate-spin")} /></Button></div>
         <p className="whitespace-pre-wrap">{savedSummary.text}</p>
       </div>}
+      {savedSummary && onGenerateReply && <Button type="button" variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs text-muted-foreground" onClick={onGenerateReply}><MessageCircle className="size-3.5" />{copy.generateSuggestedReply}</Button>}
       {mutation.error && <p className="mt-1 px-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.loadFailed}</p>}
     </div>
   );
@@ -2702,6 +2780,8 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
   const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, retry: false });
   const [drafts, setDrafts] = useState<Record<string, { agentId: string; modelId: string }>>({});
   const [error, setError] = useState("");
+  const [promptAgent, setPromptAgent] = useState<AIAgent | null>(null);
+  const [promptDraft, setPromptDraft] = useState("");
 
   useEffect(() => {
     if (!bindings.data) return;
@@ -2715,6 +2795,7 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
       toast.success(copy.mailboxAIConfigurationSaved);
       void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["suggested-reply"] });
     },
     onError: (value) => {
       const message = value instanceof Error ? value.message : copy.loadFailed;
@@ -2722,6 +2803,18 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
       toast.error(message);
       void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
     },
+  });
+  const updatePrompt = useMutation({
+    mutationFn: () => updateAIAgent(promptAgent!.id, { name: promptAgent!.name, prompt: promptDraft.trim(), outputLabels: promptAgent!.outputLabels }),
+    onSuccess: () => {
+      setPromptAgent(null);
+      setPromptDraft("");
+      setError("");
+      toast.success(copy.agentUpdated);
+      void queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["suggested-reply"] });
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
   });
   const updateAndSave = (binding: AITaskBinding, field: "agentId" | "modelId", value: string) => {
     const key = `${binding.accountEmail}\u0000${binding.taskType}`;
@@ -2758,17 +2851,21 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
               const saving = saveBinding.isPending && saveBinding.variables?.accountEmail === binding.accountEmail && saveBinding.variables?.taskType === binding.taskType;
               const availableAgents = agents.data?.agents || [];
               const selectableAgents = binding.taskType === "mail_summary" ? availableAgents.filter((agent) => agent.outputLabels.length > 0) : availableAgents;
+              const selectedAgent = selectableAgents.find((agent) => agent.id === draft.agentId);
               return (
                 <TableRow key={`${binding.accountEmail}:${binding.taskType}`}>
                   <TableCell className="px-4 py-3">
                     <div className="min-w-0"><span className="block truncate font-medium" title={binding.accountEmail}>{binding.accountEmail}</span><span className="mt-1 block text-xs text-muted-foreground">{binding.explicit ? copy.explicitConfiguration : copy.inheritedConfiguration}</span></div>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-sm">{binding.taskType === "mail_summary" ? copy.mailSummaryAgent : copy.emailDraftAgent}</TableCell>
+                  <TableCell className="px-4 py-3 text-sm">{binding.taskType === "mail_summary" ? copy.mailSummaryAgent : binding.taskType === "reply_suggestion" ? copy.replySuggestionAgent : copy.emailDraftAgent}</TableCell>
                   <TableCell className="px-4 py-3">
-                    <Select value={draft.agentId} onValueChange={(value) => updateAndSave(binding, "agentId", value || "")} disabled={!selectableAgents.length || saving}>
-                      <SelectTrigger className="w-full"><SelectValue>{selectableAgents.find((agent) => agent.id === draft.agentId)?.name || copy.noAgents}</SelectValue></SelectTrigger>
-                      <SelectContent>{selectableAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}</SelectContent>
-                    </Select>
+                    <div className="flex items-center gap-1">
+                      <Select value={draft.agentId} onValueChange={(value) => updateAndSave(binding, "agentId", value || "")} disabled={!selectableAgents.length || saving}>
+                        <SelectTrigger className="min-w-0 flex-1"><SelectValue>{selectedAgent?.name || copy.noAgents}</SelectValue></SelectTrigger>
+                        <SelectContent>{selectableAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                      {binding.taskType === "reply_suggestion" && <Button type="button" variant="ghost" size="icon" className="shrink-0" disabled={!selectedAgent || saving} onClick={() => { if (selectedAgent) { setPromptAgent(selectedAgent); setPromptDraft(selectedAgent.prompt); setError(""); } }} aria-label={copy.editReplySuggestionPrompt} title={copy.editReplySuggestionPrompt}><Pencil /></Button>}
+                    </div>
                   </TableCell>
                   <TableCell className="px-4 py-3">
                     <Select value={draft.modelId} onValueChange={(value) => updateAndSave(binding, "modelId", value || "")} disabled={!models.data?.models.length || saving}>
@@ -2785,6 +2882,16 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
         </Table>
       </div>
       {(bindings.isError || models.isError || agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || loadError || copy.loadFailed}</p>}
+      <Dialog open={Boolean(promptAgent)} onOpenChange={(open) => { if (!open && !updatePrompt.isPending) { setPromptAgent(null); setPromptDraft(""); } }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader><DialogTitle>{copy.editReplySuggestionPrompt}</DialogTitle><DialogDescription>{copy.replySuggestionPromptDescription}</DialogDescription></DialogHeader>
+          <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (promptDraft.trim()) updatePrompt.mutate(); }}>
+            <div className="grid gap-2"><Label htmlFor="reply-suggestion-prompt">{copy.agentPrompt}</Label><Textarea id="reply-suggestion-prompt" className="min-h-64 resize-y" value={promptDraft} onChange={(event) => { setPromptDraft(event.target.value); setError(""); }} disabled={updatePrompt.isPending} required /></div>
+            {updatePrompt.isError && error && <p className="text-xs text-destructive">{error}</p>}
+            <DialogFooter><Button type="button" variant="ghost" disabled={updatePrompt.isPending} onClick={() => { setPromptAgent(null); setPromptDraft(""); }}>{copy.cancel}</Button><Button type="submit" disabled={updatePrompt.isPending || !promptDraft.trim()}>{updatePrompt.isPending ? copy.savingAgent : copy.save}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

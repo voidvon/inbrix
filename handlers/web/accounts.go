@@ -3,10 +3,10 @@
 // Multi-account HTTP handlers.
 //
 // The primary account is always the one stored in the session.  Additional
-// accounts are stored in AccountStore (bbolt) and rendered in a Settings panel.
+// accounts are stored in the shared durable store and rendered in a Settings panel.
 //
 // Routes are registered for the SQLite mirror by default, or for the legacy
-// bbolt path when [mail_sync] is disabled and [accounts] is enabled:
+// compatibility path when [mail_sync] is disabled and [accounts] is enabled:
 //
 //	GET  /api/accounts              → JSON list of additional accounts
 //	POST /api/accounts              → add an account (validate IMAP, store encrypted)

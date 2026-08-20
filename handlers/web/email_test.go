@@ -28,8 +28,7 @@ func TestEmailBodyCachedRecognizesEmptyCachedBody(t *testing.T) {
 // This exercises the nil-store path in (*EmailHandler).buildThreads.
 func TestBuildThreadsInMemory(t *testing.T) {
 	h := &EmailHandler{
-		config:       &config.Config{},
-		threadStores: make(map[string]*api.ThreadStore),
+		config: &config.Config{},
 	}
 
 	root := models.Email{
@@ -50,7 +49,7 @@ func TestBuildThreadsInMemory(t *testing.T) {
 	}
 
 	emails := []models.Email{root, reply}
-	// getThreadStore will fail (no real bbolt file) and return nil, forcing the
+	// With no durable store configured, this follows the in-memory path.
 	// in-memory path — exactly what we want to test.
 	threads := h.buildThreads("testuser", "INBOX", emails)
 
@@ -71,8 +70,7 @@ func TestBuildThreadsInMemory(t *testing.T) {
 // a thread of 1.
 func TestBuildThreadsSingleMessage(t *testing.T) {
 	h := &EmailHandler{
-		config:       &config.Config{},
-		threadStores: make(map[string]*api.ThreadStore),
+		config: &config.Config{},
 	}
 
 	emails := []models.Email{
@@ -132,26 +130,6 @@ func TestSetMessageFlagSignature(t *testing.T) {
 	defer func() { recover() }() //nolint:errcheck
 	var c *api.Client
 	_ = c.SetMessageFlag("INBOX", "1", `\Seen`, false) // will panic on nil recv
-}
-
-// ─── ThreadStore shared handle ────────────────────────────────────────────
-
-// TestGetThreadStoreReturnsNilOnBadPath verifies that getThreadStore returns
-// nil (rather than panicking) when the bolt path points to an unwriteable dir.
-func TestGetThreadStoreReturnsNilOnBadPath(t *testing.T) {
-	cfg := &config.Config{}
-	// Use /dev/null as the cache folder so bbolt cannot create a DB file there.
-	cfg.Cache.Folder = "/dev/null"
-	h := &EmailHandler{
-		config:       cfg,
-		threadStores: make(map[string]*api.ThreadStore),
-	}
-	// getThreadStore should log an error and return nil, not panic.
-	ts := h.getThreadStore("alice")
-	if ts != nil {
-		ts.Close()
-		t.Log("bbolt managed to open /dev/null — platform allows it; test is a no-op")
-	}
 }
 
 // ─── splitAddresses (package-internal via api) ────────────────────────────

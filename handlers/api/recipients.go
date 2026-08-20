@@ -1,19 +1,17 @@
 // handlers/api/recipients.go — recent-recipients store + CardDAV contacts.
 //
-// RecentRecipientsStore persists (in bbolt) the list of addresses the user
+// RecentRecipientsStore persists the list of addresses the user
 // has sent mail to. The autocomplete endpoint merges those with any CardDAV
 // contacts returned by the configured CardDAV server.
 package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"inbrix/storage"
 	"log"
 	"sort"
 	"strings"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -29,58 +27,52 @@ type RecipientEntry struct {
 	Count    int       `json:"count"` // number of times sent to
 }
 
-// RecentRecipientsStore is a bbolt-backed store of recently-sent-to addresses,
-// keyed by the user's bbolt path (same file as the thread store).
 type RecentRecipientsStore struct {
-	db *bolt.DB
+	kv    storage.KV
+	scope string
+	owned bool
 }
 
-// OpenRecipientsStore opens the bbolt database at the given path (shared with
-// the thread store) and returns a store.
-func OpenRecipientsStore(boltPath string) (*RecentRecipientsStore, error) {
-	db, err := bolt.Open(boltPath, 0600, &bolt.Options{Timeout: 2 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("recipients: open %s: %w", boltPath, err)
-	}
-	return &RecentRecipientsStore{db: db}, nil
+func NewRecipientsStore(kv storage.KV, scope string) *RecentRecipientsStore {
+	return &RecentRecipientsStore{kv: kv, scope: scope}
 }
 
-// Close releases the bbolt file handle.
 func (s *RecentRecipientsStore) Close() error {
-	return s.db.Close()
+	if s.owned {
+		return s.kv.Close()
+	}
+	return nil
 }
+
+func (s *RecentRecipientsStore) namespace() string { return recipientsBucket + ":" + s.scope }
 
 // Record upserts a list of recipient addresses as recently-used. name is
 // optional (the display name from the To/CC/BCC field).
 func (s *RecentRecipientsStore) Record(entries []RecipientEntry) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(recipientsBucket))
-		if err != nil {
+	for _, entry := range entries {
+		if entry.Email == "" {
+			continue
+		}
+		key := []byte(strings.ToLower(entry.Email))
+		// Load existing record to merge counts.
+		var existing RecipientEntry
+		if raw, err := s.kv.Get(s.namespace(), string(key)); err == nil {
+			_ = json.Unmarshal(raw, &existing)
+		}
+		if existing.Email == "" {
+			existing.Email = entry.Email
+		}
+		if entry.Name != "" {
+			existing.Name = entry.Name
+		}
+		existing.LastUsed = time.Now()
+		existing.Count++
+		raw, _ := json.Marshal(existing)
+		if err := s.kv.Set(s.namespace(), string(key), raw); err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.Email == "" {
-				continue
-			}
-			key := []byte(strings.ToLower(entry.Email))
-			// Load existing record to merge counts.
-			var existing RecipientEntry
-			if raw := b.Get(key); raw != nil {
-				_ = json.Unmarshal(raw, &existing)
-			}
-			if existing.Email == "" {
-				existing.Email = entry.Email
-			}
-			if entry.Name != "" {
-				existing.Name = entry.Name
-			}
-			existing.LastUsed = time.Now()
-			existing.Count++
-			raw, _ := json.Marshal(existing)
-			_ = b.Put(key, raw)
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // Search returns up to limit RecipientEntry values whose email or name contain
@@ -89,24 +81,20 @@ func (s *RecentRecipientsStore) Search(query string, limit int) ([]RecipientEntr
 	q := strings.ToLower(strings.TrimSpace(query))
 	var results []RecipientEntry
 
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(recipientsBucket))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
+	values, err := s.kv.List(s.namespace(), "")
+	if err == nil {
+		for _, v := range values {
 			var entry RecipientEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
-				return nil
+				continue
 			}
 			if q == "" ||
 				strings.Contains(strings.ToLower(entry.Email), q) ||
 				strings.Contains(strings.ToLower(entry.Name), q) {
 				results = append(results, entry)
 			}
-			return nil
-		})
-	})
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

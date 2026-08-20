@@ -961,7 +961,7 @@ section[id]{scroll-margin-top:76px}
         <dl>
           <dt>Binary</dt><dd>one file · ~24 MB</dd>
           <dt>Memory</dt><dd>comfortable at 64 MB</dd>
-          <dt>Database</dt><dd><em>none</em> — bbolt file</dd>
+          <dt>Database server</dt><dd><em>none</em> — embedded SQLite</dd>
           <dt>Network</dt><dd>no CDN · no telemetry</dd>
           <dt>API</dt><dd>/v1 JSON, stable</dd>
           <dt>Runs on</dt><dd>Linux · macOS · Windows</dd>
@@ -1010,8 +1010,8 @@ section[id]{scroll-margin-top:76px}
   <div class="tear" aria-hidden="true"></div>
   <!-- ══════════ TICKER ══════════ -->
   <div class="ticker" aria-hidden="true"><div class="track">
-    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>bbolt</span><span>Postgres (optional)</span>
-    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>bbolt</span><span>Postgres (optional)</span>
+    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>SQLite</span><span>Postgres (optional)</span>
+    <span>IMAP</span><span>SMTP</span><span>CalDAV</span><span>CardDAV</span><span>JWZ threading</span><span>OAuth2 + PKCE</span><span>XOAUTH2</span><span>IMAP IDLE</span><span>SSE</span><span>VAPID Web Push</span><span>iTIP / iMIP</span><span>AES-256-GCM</span><span>React</span><span>SQLite</span><span>Postgres (optional)</span>
   </div></div>
 
   <!-- ══════════ 01 · WHAT'S INSIDE ══════════ -->
@@ -1032,7 +1032,7 @@ section[id]{scroll-margin-top:76px}
              fills a column that was otherwise 84% empty next to eight rows. -->
         <p class="not-head">Nothing it doesn't</p>
         <ul class="not-list">
-          <li><b>No database server.</b> Durable state is an embedded bbolt file. Postgres is optional, for shared or multi-instance deploys.</li>
+          <li><b>No database server.</b> Durable state is stored in embedded SQLite. Postgres is optional for shared or multi-instance deploys.</li>
           <li><b>One release artifact.</b> The built React bundle and browser assets are compiled in with <code>embed.FS</code>.</li>
           <li><b>No CDN.</b> Every font, script and stylesheet is served from the same binary — and the render gate fails the build if any page fetches off-origin.</li>
           <li><b>No inbrix account, and no relay.</b> It is a client. Your credentials go to your mail server and nowhere else.</li>
@@ -1045,7 +1045,7 @@ section[id]{scroll-margin-top:76px}
       <div class="rows">
         <article class="row rv">
           <span class="idx">01</span>
-          <div><h3>One binary, no database</h3><p>The React bundle and browser assets are compiled in with <code>embed.FS</code>; durable state is an embedded bbolt file. An optional Postgres backend covers shared or multi-instance deploys. Runs air-gapped with only a <code>config.toml</code>.</p></div>
+          <div><h3>One binary, no database server</h3><p>The React bundle and browser assets are compiled in with <code>embed.FS</code>; durable state uses embedded SQLite. An optional Postgres backend covers shared or multi-instance deploys. Runs air-gapped with only a <code>config.toml</code>.</p></div>
         </article>
         <article class="row rv">
           <span class="idx">02</span>
@@ -1119,7 +1119,7 @@ section[id]{scroll-margin-top:76px}
           <text class="nm" x="458" y="118" style="font-size:30px">Inbrix AI</text>
           <text class="sub" x="458" y="150">one Go binary +</text>
           <text class="sub" x="458" y="170">a config.toml</text>
-          <text class="sub" x="458" y="196" style="opacity:.72">bbolt on disk · optional Postgres</text>
+          <text class="sub" x="458" y="196" style="opacity:.72">SQLite on disk · optional Postgres</text>
         </g>
         <g>
           <rect x="876" y="58" width="236" height="148" rx="18" fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.17)"/>
@@ -1204,7 +1204,7 @@ section[id]{scroll-margin-top:76px}
 
     <div class="route-stack">
       <div><span>You</span><b>Your browser</b><p>React over JSON — or any client on <code>/v1</code>.</p></div>
-      <div><span>Your server</span><b>Inbrix AI</b><p>One Go binary and a <code>config.toml</code>. bbolt on disk, or your own Postgres.</p></div>
+      <div><span>Your server</span><b>Inbrix AI</b><p>One Go binary and a <code>config.toml</code>. SQLite on disk, or your own Postgres.</p></div>
       <div><span>Your accounts</span><b>IMAP · SMTP · DAV</b><p>Gmail, Outlook, or any standards-compliant server, over OAuth or password.</p></div>
     </div>
 
@@ -1412,7 +1412,7 @@ key = "a-32-character-encryption-key!!"</code></pre>
       </div>
       <div class="pillar rv">
         <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 17.4a4 4 0 0 1 .4-7.97 5.5 5.5 0 0 1 10.6.9A3.6 3.6 0 0 1 17.4 17.4H6.6z"/><path d="M3.5 3.5l17 17"/></svg>No external services</h3>
-        <p>Frontend assets are embedded with <code>embed.FS</code> and durable state is a local bbolt file, so an offline box is a supported deployment.</p>
+        <p>Frontend assets are embedded with <code>embed.FS</code> and durable state is stored in local SQLite, so an offline box is a supported deployment.</p>
         <ul><li>No CDN, no asset pipeline</li><li>No database server to provision</li><li>Prebuilt for Linux and macOS, amd64 and arm64; Windows builds from source</li></ul>
       </div>
       <div class="pillar rv">
