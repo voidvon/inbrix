@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Code2,
+  Copy as CopyIcon,
   FilePenLine,
   FileArchive,
   FileImage,
@@ -305,11 +306,15 @@ const zh = {
   aiWriteDescription: "补充希望 AI 如何编写这封邮件。",
   aiInstruction: "补充说明",
   aiInstructionPlaceholder: "例如：语气专业简洁，确认周二下午三点可以参会",
-  includeConversation: "附带邮件聊天记录",
+  includeConversation: "附带历史邮件",
   noConversationContext: "当前没有可附带的邮件聊天记录",
   generate: "生成",
   generating: "正在生成…",
   aiGenerateFailed: "邮件生成失败",
+  aiGenerateRequest: "请根据当前邮件信息生成一封邮件",
+  copyAIContent: "复制内容",
+  copiedAIContent: "已复制",
+  copyAIContentFailed: "复制失败",
   generatedDraft: "生成结果",
   regenerate: "再次生成",
   useGeneratedDraft: "采用",
@@ -547,11 +552,15 @@ const en = {
   aiWriteDescription: "Add guidance for how AI should write this email.",
   aiInstruction: "Additional instructions",
   aiInstructionPlaceholder: "For example: keep it concise and confirm Tuesday at 3 PM",
-  includeConversation: "Include email conversation",
+  includeConversation: "Include email history",
   noConversationContext: "No email conversation is available",
   generate: "Generate",
   generating: "Generating…",
   aiGenerateFailed: "Could not generate the email",
+  aiGenerateRequest: "Write an email using the current details",
+  copyAIContent: "Copy content",
+  copiedAIContent: "Copied",
+  copyAIContentFailed: "Could not copy content",
   generatedDraft: "Generated draft",
   regenerate: "Generate again",
   useGeneratedDraft: "Use draft",
@@ -1729,21 +1738,24 @@ function AIAssistantButton({ copy, editor, disabled, composeOpen, accountEmail, 
   const [instruction, setInstruction] = useState("");
   const [includeConversation, setIncludeConversation] = useState(false);
   const [generatedBody, setGeneratedBody] = useState("");
+  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const chatRef = useRef<HTMLDivElement>(null);
   const messages = conversation || [];
   const hasConversation = messages.length > 0;
   const mutation = useMutation({
-    mutationFn: () => generateEmail({
+    mutationFn: ({ prompt, draft }: { prompt: string; draft?: string }) => generateEmail({
       accountEmail,
-      instruction,
+      instruction: prompt,
       subject,
       recipients,
       context: includeConversation ? aiConversationContext(messages) : undefined,
-      draft: generatedBody || undefined,
+      draft,
     }),
     onSuccess: ({ body }) => {
       setGeneratedBody(body);
-      setInstruction("");
+      setChatMessages((current) => [...current, { role: "assistant", content: body }]);
       setError("");
     },
     onError: (value) => setError(value instanceof Error ? value.message : copy.aiGenerateFailed),
@@ -1753,8 +1765,35 @@ function AIAssistantButton({ copy, editor, disabled, composeOpen, accountEmail, 
     setIncludeConversation(false);
     setInstruction("");
     setGeneratedBody("");
+    setChatMessages([]);
+    setCopiedMessage(null);
     setError("");
   }, [composeOpen, conversation]);
+
+  useEffect(() => {
+    if (!open) return;
+    const element = chatRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [chatMessages, mutation.isPending, open]);
+
+  const submitInstruction = () => {
+    const prompt = instruction.trim();
+    const displayedPrompt = prompt || copy.aiGenerateRequest;
+    setChatMessages((current) => [...current, { role: "user", content: displayedPrompt }]);
+    setInstruction("");
+    setError("");
+    mutation.mutate({ prompt, draft: generatedBody || undefined });
+  };
+
+  const copyMessage = async (content: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessage(index);
+      window.setTimeout(() => setCopiedMessage((current) => current === index ? null : current), 1600);
+    } catch {
+      toast.error(copy.copyAIContentFailed);
+    }
+  };
 
   const useGeneratedBody = () => {
     if (!editor || !generatedBody) return;
@@ -1768,19 +1807,38 @@ function AIAssistantButton({ copy, editor, disabled, composeOpen, accountEmail, 
   return (
     <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) setError(""); }}>
       <PopoverTrigger render={<Button type="button" variant={open ? "secondary" : "ghost"} size="icon" disabled={disabled || !editor} aria-label={copy.aiWriteEmail} title={copy.aiWriteEmail} />}><Sparkles /></PopoverTrigger>
-      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[min(26rem,calc(100vw-2rem))] gap-0 p-4">
+      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[min(30rem,calc(100vw-2rem))] gap-0 p-4">
         <PopoverTitle className="text-sm font-semibold">{copy.aiWriteEmail}</PopoverTitle>
         <PopoverDescription className="mt-1 text-xs">{copy.aiWriteDescription}</PopoverDescription>
-        {generatedBody && <div className="mt-4 grid gap-1.5"><strong className="text-xs font-medium">{copy.generatedDraft}</strong><div className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm leading-6">{generatedBody}</div></div>}
-        <Label className="mt-4 grid gap-1.5 text-xs" htmlFor="ai-compose-instruction">{copy.aiInstruction}<Textarea id="ai-compose-instruction" value={instruction} onChange={(event) => { setInstruction(event.target.value); setError(""); }} placeholder={generatedBody ? copy.refineInstructionPlaceholder : copy.aiInstructionPlaceholder} rows={4} disabled={mutation.isPending} /></Label>
-        <label className={cn("mt-3 flex items-start gap-2 text-sm", !hasConversation && "text-muted-foreground")} title={!hasConversation ? copy.noConversationContext : undefined}>
-          <input className="mt-0.5 size-4 shrink-0 accent-primary" type="checkbox" checked={includeConversation} disabled={!hasConversation || mutation.isPending} onChange={(event) => setIncludeConversation(event.target.checked)} />
-          <span>{copy.includeConversation}{!hasConversation && <span className="mt-0.5 block text-xs">{copy.noConversationContext}</span>}</span>
-        </label>
+        {chatMessages.length > 0 && <div ref={chatRef} className="mt-4 flex max-h-72 flex-col gap-3 overflow-y-auto pr-1" aria-live="polite">
+          {chatMessages.map((message, index) => message.role === "user" ? (
+            <div key={index} className="group ml-10 grid justify-items-end self-end">
+              <div className="whitespace-pre-wrap rounded-lg border bg-muted/40 px-3 py-2 text-sm leading-5">{message.content}</div>
+              <Button type="button" variant="ghost" size="icon" className="size-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={() => void copyMessage(message.content, index)} aria-label={copy.copyAIContent} title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}>
+                {copiedMessage === index ? <Check /> : <CopyIcon />}
+              </Button>
+            </div>
+          ) : (
+            <div key={index} className="group mr-5 grid self-start">
+              <div className="whitespace-pre-wrap px-1 text-sm leading-6">{message.content}</div>
+              <Button type="button" variant="ghost" size="icon" className="size-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={() => void copyMessage(message.content, index)} aria-label={copy.copyAIContent} title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}>
+                {copiedMessage === index ? <Check /> : <CopyIcon />}
+              </Button>
+            </div>
+          ))}
+          {mutation.isPending && <div className="mr-5 flex w-fit items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"><Sparkles className="size-4 animate-pulse" />{copy.generating}</div>}
+        </div>}
+        <Label className="mt-4 grid gap-1.5 text-xs" htmlFor="ai-compose-instruction">{copy.aiInstruction}<Textarea id="ai-compose-instruction" value={instruction} onChange={(event) => { setInstruction(event.target.value); setError(""); }} placeholder={generatedBody ? copy.refineInstructionPlaceholder : copy.aiInstructionPlaceholder} rows={3} disabled={mutation.isPending} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (!mutation.isPending) submitInstruction(); } }} /></Label>
         {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button type="button" variant={generatedBody ? "outline" : "default"} size="sm" disabled={mutation.isPending || (!instruction.trim() && !subject.trim() && !includeConversation && !generatedBody)} onClick={() => mutation.mutate()}><Sparkles />{mutation.isPending ? copy.generating : generatedBody ? copy.regenerate : copy.generate}</Button>
-          {generatedBody && <Button type="button" size="sm" disabled={mutation.isPending} onClick={useGeneratedBody}><Check />{copy.useGeneratedDraft}</Button>}
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <label className={cn("flex min-w-0 items-center gap-2 text-sm", !hasConversation && "text-muted-foreground")} title={!hasConversation ? copy.noConversationContext : undefined}>
+            <input className="size-4 shrink-0 accent-primary" type="checkbox" checked={includeConversation} disabled={!hasConversation || mutation.isPending} onChange={(event) => setIncludeConversation(event.target.checked)} />
+            <span className="truncate">{copy.includeConversation}</span>
+          </label>
+          <div className="flex shrink-0 gap-2">
+            {generatedBody && <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending} onClick={useGeneratedBody}><Check />{copy.useGeneratedDraft}</Button>}
+            <Button type="button" variant={generatedBody ? "outline" : "default"} size="sm" disabled={mutation.isPending || (!instruction.trim() && !subject.trim() && !includeConversation && !generatedBody)} onClick={submitInstruction}><Send />{mutation.isPending ? copy.generating : generatedBody ? copy.regenerate : copy.generate}</Button>
+          </div>
         </div>
       </PopoverContent>
     </Popover>
