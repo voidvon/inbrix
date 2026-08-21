@@ -63,7 +63,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -261,6 +261,14 @@ const zh = {
   nickname: "昵称",
   accountInfoSaved: "账号信息已更新",
   savingAccountInfo: "正在保存…",
+  changePassword: "修改密码",
+  currentPassword: "当前密码",
+  newPassword: "新密码",
+  confirmNewPassword: "确认新密码",
+  passwordRequirements: "新密码至少需要 8 个字符。",
+  passwordMismatch: "两次输入的新密码不一致",
+  passwordUpdated: "密码已更新",
+  updatingPassword: "正在更新…",
   systemSettings: "系统设置",
   systemSettingsDescription: "管理应用用户及其系统权限。",
   systemVersion: "系统版本",
@@ -528,6 +536,14 @@ const en = {
   nickname: "Nickname",
   accountInfoSaved: "Account information updated",
   savingAccountInfo: "Saving…",
+  changePassword: "Change password",
+  currentPassword: "Current password",
+  newPassword: "New password",
+  confirmNewPassword: "Confirm new password",
+  passwordRequirements: "The new password must be at least 8 characters.",
+  passwordMismatch: "The new passwords do not match",
+  passwordUpdated: "Password updated",
+  updatingPassword: "Updating…",
   systemSettings: "System settings",
   systemSettingsDescription: "Manage application users and system permissions.",
   systemVersion: "System version",
@@ -3149,6 +3165,8 @@ function AccountInfoSettings({ copy }: { copy: Copy }) {
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirmation: "" });
+  const [passwordError, setPasswordError] = useState("");
   useEffect(() => {
     if (capabilities.data?.currentUser) setDisplayName(capabilities.data.currentUser.displayName);
   }, [capabilities.data?.currentUser]);
@@ -3163,6 +3181,24 @@ function AccountInfoSettings({ copy }: { copy: Copy }) {
   });
   const currentUser = capabilities.data?.currentUser;
   const roleLabel = (currentUser?.role || capabilities.data?.role) === "super_admin" ? copy.superAdmin : copy.ordinaryUser;
+  const updatePassword = useMutation({
+    mutationFn: () => updateAccountPassword(passwords.current, passwords.next, passwords.confirmation),
+    onSuccess: () => {
+      setPasswords({ current: "", next: "", confirmation: "" });
+      setPasswordError("");
+      toast.success(copy.passwordUpdated);
+    },
+    onError: (value) => setPasswordError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const submitPassword = (event: FormEvent) => {
+    event.preventDefault();
+    setPasswordError("");
+    if (passwords.next !== passwords.confirmation) {
+      setPasswordError(copy.passwordMismatch);
+      return;
+    }
+    updatePassword.mutate();
+  };
   return (
     <section className="max-w-2xl">
       <div><h2 className="flex items-center gap-2 text-lg font-semibold"><UserRound className="size-5" />{copy.accountInfo}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.accountInfoDescription}</p></div>
@@ -3172,6 +3208,14 @@ function AccountInfoSettings({ copy }: { copy: Copy }) {
         <div className="grid gap-1"><p className="text-xs text-muted-foreground">{copy.role}</p><p className="text-sm font-medium">{capabilities.isPending ? copy.loading : roleLabel}</p></div>
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
+      <form className="mt-8 grid max-w-xs gap-4 border-t pt-6" onSubmit={submitPassword}>
+        <div><h3 className="text-sm font-semibold">{copy.changePassword}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.passwordRequirements}</p></div>
+        <div className="grid gap-2"><Label htmlFor="current-password">{copy.currentPassword}</Label><Input id="current-password" className="w-64 max-w-full" type="password" autoComplete="current-password" value={passwords.current} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, current: event.target.value })); setPasswordError(""); }} required /></div>
+        <div className="grid gap-2"><Label htmlFor="new-password">{copy.newPassword}</Label><Input id="new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.next} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, next: event.target.value })); setPasswordError(""); }} required /></div>
+        <div className="grid gap-2"><Label htmlFor="confirm-new-password">{copy.confirmNewPassword}</Label><Input id="confirm-new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.confirmation} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, confirmation: event.target.value })); setPasswordError(""); }} required /></div>
+        {passwordError && <p className="text-xs text-destructive">{passwordError}</p>}
+        <div><Button type="submit" disabled={updatePassword.isPending || !passwords.current || passwords.next.length < 8 || passwords.confirmation.length < 8}>{updatePassword.isPending ? copy.updatingPassword : copy.changePassword}</Button></div>
+      </form>
     </section>
   );
 }

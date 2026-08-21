@@ -83,6 +83,13 @@ export function updateAccountProfile(displayName: string) {
   });
 }
 
+export function updateAccountPassword(currentPassword: string, newPassword: string, confirmation: string) {
+  return apiFetch<{ ok: boolean }>("/api/account/password", {
+    method: "PATCH",
+    body: JSON.stringify({ currentPassword, newPassword, confirmation }),
+  });
+}
+
 export type SystemUser = {
   id: string;
   login: string;

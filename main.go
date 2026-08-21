@@ -503,6 +503,7 @@ func main() {
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
 		if systemSettings != nil {
 			apiRoutes.Patch("/account/profile", systemSettings.HandleUpdateProfile)
+			apiRoutes.Patch("/account/password", systemSettings.HandleUpdatePassword)
 			systemRoutes := apiRoutes.Group("/system", systemSettings.RequireSuperAdmin)
 			systemRoutes.Get("/settings", systemSettings.HandleGet)
 			systemRoutes.Patch("/settings/registration", systemSettings.HandleUpdateRegistration)

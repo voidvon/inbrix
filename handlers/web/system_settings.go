@@ -8,6 +8,7 @@ import (
 	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type SystemSettingsHandler struct {
@@ -157,6 +158,41 @@ func (h *SystemSettingsHandler) HandleUpdateProfile(c *fiber.Ctx) error {
 	}
 	user.DisplayName = input.DisplayName
 	return c.JSON(publicSystemUser(user))
+}
+
+func (h *SystemSettingsHandler) HandleUpdatePassword(c *fiber.Ctx) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+		Confirmation    string `json:"confirmation"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid password update request"})
+	}
+	if user.PasswordHash == "" || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.CurrentPassword)) != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "current password is incorrect"})
+	}
+	if len(input.NewPassword) < 8 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "new password must be at least 8 characters"})
+	}
+	if input.NewPassword != input.Confirmation {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "new passwords do not match"})
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if err := h.mailDB.SetUserPassword(c.UserContext(), user.ID, string(hash)); err != nil {
+		if errors.Is(err, mailstore.ErrNotFound) {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 func publicSystemUser(user mailstore.User) systemUserJSON {

@@ -11,6 +11,7 @@ import (
 	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestSystemSettingsRequireSuperAdminAndManageRoles(t *testing.T) {
@@ -130,5 +131,68 @@ func TestSystemSettingsRequireSuperAdminAndManageRoles(t *testing.T) {
 	unchanged, err := db.GetUser(ctx, admin.ID)
 	if err != nil || unchanged.Role != mailstore.RoleSuperAdmin {
 		t.Fatalf("self-demotion changed role: user=%+v err=%v", unchanged, err)
+	}
+}
+
+func TestUpdateCurrentUserPassword(t *testing.T) {
+	db, err := mailstore.Open(filepath.Join(t.TempDir(), "mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	oldHash, err := bcrypt.GenerateFromPassword([]byte("old-password"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := db.CreateUser(context.Background(), "member", "Member", string(oldHash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewSystemSettingsHandler(db, "test-version")
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("user_id", user.ID)
+		return c.Next()
+	})
+	app.Patch("/api/account/password", handler.HandleUpdatePassword)
+
+	request := httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"wrong-password","newPassword":"new-password","confirmation":"new-password"}`))
+	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("wrong current password status = %d, want 401", response.StatusCode)
+	}
+
+	request = httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"old-password","newPassword":"new-password","confirmation":"different-password"}`))
+	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("mismatched password status = %d, want 400", response.StatusCode)
+	}
+
+	request = httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"old-password","newPassword":"new-password","confirmation":"new-password"}`))
+	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != fiber.StatusOK {
+		t.Fatalf("password update status = %d, want 200", response.StatusCode)
+	}
+	updated, err := db.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(updated.PasswordHash), []byte("new-password")) != nil {
+		t.Fatal("new password was not persisted")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(updated.PasswordHash), []byte("old-password")) == nil {
+		t.Fatal("old password still matches after update")
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"inbrix/mailstore"
 	"inbrix/storage"
 	"log"
+	"net/url"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -479,7 +480,10 @@ func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email := strings.TrimSpace(c.Params("email"))
+	email, err := accountEmailParam(c)
+	if err != nil {
+		return err
+	}
 	if email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email param required")
 	}
@@ -539,7 +543,11 @@ func (h *AccountsHandler) handleUpdateMirrorAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	existing, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	email, err := accountEmailParam(c)
+	if err != nil {
+		return err
+	}
+	existing, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
 	}
@@ -620,6 +628,14 @@ func normalizeAccountUpdate(req *accountUpdateInput, imapServer string, imapPort
 	}
 }
 
+func accountEmailParam(c *fiber.Ctx) (string, error) {
+	email, err := url.PathUnescape(strings.TrimSpace(c.Params("email")))
+	if err != nil {
+		return "", fiber.NewError(fiber.StatusBadRequest, "invalid email param")
+	}
+	return strings.TrimSpace(email), nil
+}
+
 // HandleDeleteAccount removes an additional account.
 func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 	if h.mailDB != nil {
@@ -627,7 +643,11 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 		if owner == "" {
 			return fiber.ErrUnauthorized
 		}
-		account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+		email, err := accountEmailParam(c)
+		if err != nil {
+			return err
+		}
+		account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
 		if err != nil {
 			return fiber.ErrNotFound
 		}
@@ -678,7 +698,10 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email := c.Params("email")
+	email, err := accountEmailParam(c)
+	if err != nil {
+		return err
+	}
 	if email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email param required")
 	}
@@ -701,7 +724,10 @@ func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	targetEmail := c.Params("email")
+	targetEmail, err := accountEmailParam(c)
+	if err != nil {
+		return err
+	}
 	if targetEmail == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email param required")
 	}
@@ -811,7 +837,11 @@ func (h *AccountsHandler) handleSwitchMirrorAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	email, err := accountEmailParam(c)
+	if err != nil {
+		return err
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
 	if err != nil {
 		return fiber.ErrNotFound
 	}
