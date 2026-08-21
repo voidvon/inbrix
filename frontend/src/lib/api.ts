@@ -67,7 +67,20 @@ export function getConversations(query = "") {
 export type UserRole = "user" | "super_admin";
 
 export function getCapabilities() {
-  return apiFetch<{ notifications: boolean; webPush: boolean; calendar: boolean; role: UserRole }>("/api/capabilities");
+  return apiFetch<{
+    notifications: boolean;
+    webPush: boolean;
+    calendar: boolean;
+    role: UserRole;
+    currentUser?: { login: string; displayName: string; role: UserRole };
+  }>("/api/capabilities");
+}
+
+export function updateAccountProfile(displayName: string) {
+  return apiFetch<SystemUser>("/api/account/profile", {
+    method: "PATCH",
+    body: JSON.stringify({ displayName }),
+  });
 }
 
 export type SystemUser = {
@@ -95,6 +108,27 @@ export function getPublicSettings() {
 
 export function getSystemSettings() {
   return apiFetch<SystemSettings>("/api/system/settings");
+}
+
+export type UpdateStatus = {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  repositoryUrl: string;
+  releaseUrl?: string;
+  canAutoUpdate: boolean;
+};
+
+export function getUpdateInfo() {
+  return apiFetch<UpdateStatus>("/api/update");
+}
+
+export function checkForUpdates() {
+  return apiFetch<UpdateStatus>("/api/update/check", { method: "POST" });
+}
+
+export function installUpdate() {
+  return apiFetch<{ ok: boolean; version: string; restarting: boolean }>("/api/system/update/install", { method: "POST" });
 }
 
 export function updateSystemUserRole(id: string, role: UserRole) {
@@ -431,6 +465,10 @@ export type AddAccountInput = {
 
 export function addAccount(account: AddAccountInput) {
   return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>("/api/accounts", { method: "POST", body: JSON.stringify(account) });
+}
+
+export function updateAccount(email: string, account: AddAccountInput) {
+  return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>(`/api/accounts/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(account) });
 }
 
 export function deleteAccount(email: string) {

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -250,6 +251,30 @@ func main() {
 	if mailMirror != nil {
 		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
 	}
+	updateHandler := web.NewUpdateHandler(Version, func() error {
+		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+			return fmt.Errorf("automatic restart is unsupported on %s", runtime.GOOS)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		args := append([]string{"sh", "-c", `sleep 1; exec "$@"`, "sh", executable}, os.Args[1:]...)
+		process, err := os.StartProcess("/bin/sh", args, &os.ProcAttr{Dir: workingDir, Env: os.Environ(), Files: []*os.File{os.Stdin, os.Stdout, os.Stderr}})
+		if err != nil {
+			return err
+		}
+		_ = process.Release()
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return nil
+	})
 
 	// Browser mutations use the double-submit cookie pattern. The same handler
 	// is composed into /v1 below; its Next hook skips requests that the JSON API's
@@ -387,7 +412,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -425,10 +450,21 @@ func main() {
 	{
 		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
 			role := mailstore.RoleUser
+			username, _ := c.Locals("username").(string)
+			currentUser := fiber.Map{
+				"login":       username,
+				"displayName": "",
+				"role":        role,
+			}
 			if mailMirror != nil {
 				userID, _ := c.Locals("user_id").(string)
 				if user, userErr := mailMirror.GetUser(c.UserContext(), userID); userErr == nil {
 					role = user.Role
+					currentUser = fiber.Map{
+						"login":       user.Login,
+						"displayName": user.DisplayName,
+						"role":        user.Role,
+					}
 				}
 			}
 			return c.JSON(fiber.Map{
@@ -436,12 +472,15 @@ func main() {
 				"webPush":       config.Notifications.Enabled && config.Notifications.WebPush,
 				"calendar":      config.CalDAV.Enabled,
 				"role":          role,
+				"currentUser":   currentUser,
 			})
 		})
 		apiRoutes.Get("/csrf", func(c *fiber.Ctx) error {
 			token, _ := c.Locals("csrfToken").(string)
 			return c.JSON(fiber.Map{"token": token})
 		})
+		apiRoutes.Get("/update", updateHandler.HandleInfo)
+		apiRoutes.Post("/update/check", updateHandler.HandleCheck)
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
@@ -463,10 +502,12 @@ func main() {
 
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
 		if systemSettings != nil {
+			apiRoutes.Patch("/account/profile", systemSettings.HandleUpdateProfile)
 			systemRoutes := apiRoutes.Group("/system", systemSettings.RequireSuperAdmin)
 			systemRoutes.Get("/settings", systemSettings.HandleGet)
 			systemRoutes.Patch("/settings/registration", systemSettings.HandleUpdateRegistration)
 			systemRoutes.Patch("/users/:id/role", systemSettings.HandleUpdateUserRole)
+			systemRoutes.Post("/update/install", updateHandler.HandleInstall)
 		}
 	}
 
@@ -560,6 +601,7 @@ func main() {
 		acctHandler = web.NewAccountsHandler(store, config, webAuthHandler, acctStore)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
+		protected.Put("/api/accounts/:email", acctHandler.HandleUpdateAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
@@ -574,6 +616,7 @@ func main() {
 		acctHandler.SetMailMirror(mailMirror, mailSync)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
+		protected.Put("/api/accounts/:email", acctHandler.HandleUpdateAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)

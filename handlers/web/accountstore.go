@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -35,6 +36,21 @@ func (s *AccountStore) Save(owner string, entry AccountEntry) error {
 		return fmt.Errorf("accountstore: marshal: %w", err)
 	}
 	return s.kv.Set(s.namespace(owner), entry.Email, raw)
+}
+
+func (s *AccountStore) Get(owner, email string) (AccountEntry, error) {
+	raw, err := s.kv.Get(s.namespace(owner), email)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return AccountEntry{}, storage.ErrNotFound
+		}
+		return AccountEntry{}, err
+	}
+	var entry AccountEntry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return AccountEntry{}, fmt.Errorf("accountstore: unmarshal: %w", err)
+	}
+	return entry, nil
 }
 
 func (s *AccountStore) Delete(owner, email string) error {

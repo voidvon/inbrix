@@ -16,10 +16,12 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"inbrix/config"
 	"inbrix/handlers/api"
 	"inbrix/mailstore"
+	"inbrix/storage"
 	"log"
 	"strings"
 
@@ -34,6 +36,16 @@ type webhookSettingsInput struct {
 
 type webhookTestInput struct {
 	URL string `json:"url"`
+}
+
+type accountUpdateInput struct {
+	Password   string `json:"password"`
+	Label      string `json:"label"`
+	Color      string `json:"color"`
+	IMAPServer string `json:"imap_server"`
+	IMAPPort   int    `json:"imap_port"`
+	SMTPServer string `json:"smtp_server"`
+	SMTPPort   int    `json:"smtp_port"`
 }
 
 // AccountsHandler manages multi-account operations.
@@ -454,6 +466,158 @@ func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
 		h.syncer.Trigger(account.ID)
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "id": account.ID, "email": account.Email, "label": account.Label})
+}
+
+// HandleUpdateAccount updates connection settings while keeping the email
+// address as the stable account identifier. An empty password preserves the
+// existing encrypted credential.
+func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
+	if h.mailDB != nil {
+		return h.handleUpdateMirrorAccount(c)
+	}
+	owner, _ := c.Locals("username").(string)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	email := strings.TrimSpace(c.Params("email"))
+	if email == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "email param required")
+	}
+	existing, err := h.acctStore.Get(owner, email)
+	if errors.Is(err, storage.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	var req accountUpdateInput
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	normalizeAccountUpdate(&req, existing.IMAPServer, existing.IMAPPort, existing.SMTPServer, existing.SMTPPort)
+	password := strings.TrimSpace(req.Password)
+	connectionChanged := password != "" || req.IMAPServer != existing.IMAPServer || req.IMAPPort != existing.IMAPPort
+	if connectionChanged {
+		if password == "" {
+			if err := api.DecryptJSON(existing.EncryptedPassword, &password, h.config.Encryption.Key); err != nil {
+				return fiber.ErrInternalServerError
+			}
+		}
+		username := email
+		if !h.config.Server.UsernameIsEmail {
+			username = api.GetUsernameFromEmail(email)
+		}
+		client, err := api.NewClientTLS(req.IMAPServer, req.IMAPPort, username, password, h.config.IMAP.TLS)
+		if err != nil {
+			return fiber.NewError(fiber.StatusUnauthorized, fmt.Sprintf("IMAP login failed: %v", err))
+		}
+		_ = client.Close()
+	}
+	if strings.TrimSpace(req.Password) != "" {
+		existing.EncryptedPassword, err = api.EncryptJSON(password, h.config.Encryption.Key)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+	}
+	existing.Label = strings.TrimSpace(req.Label)
+	if existing.Label == "" {
+		existing.Label = existing.Email
+	}
+	existing.Color = strings.TrimSpace(req.Color)
+	existing.IMAPServer = req.IMAPServer
+	existing.IMAPPort = req.IMAPPort
+	existing.SMTPServer = req.SMTPServer
+	existing.SMTPPort = req.SMTPPort
+	if err := h.acctStore.Save(owner, existing); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(fiber.Map{"ok": true, "email": existing.Email, "label": existing.Label})
+}
+
+func (h *AccountsHandler) handleUpdateMirrorAccount(c *fiber.Ctx) error {
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	existing, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	var req accountUpdateInput
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	normalizeAccountUpdate(&req, existing.IMAPServer, existing.IMAPPort, existing.SMTPServer, existing.SMTPPort)
+	password := strings.TrimSpace(req.Password)
+	connectionChanged := password != "" || req.IMAPServer != existing.IMAPServer || req.IMAPPort != existing.IMAPPort
+	if connectionChanged {
+		if password == "" {
+			if err := api.DecryptJSON(existing.EncryptedPassword, &password, h.config.Encryption.Key); err != nil {
+				return fiber.ErrInternalServerError
+			}
+		}
+		client, err := api.NewClientTLS(req.IMAPServer, req.IMAPPort, existing.Username, password, existing.IMAPTLS)
+		if err != nil {
+			return fiber.NewError(fiber.StatusUnauthorized, fmt.Sprintf("IMAP login failed: %v", err))
+		}
+		_ = client.Close()
+	}
+	if strings.TrimSpace(req.Password) != "" {
+		existing.EncryptedPassword, err = api.EncryptJSON(password, h.config.Encryption.Key)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+	}
+	existing.Label = strings.TrimSpace(req.Label)
+	if existing.Label == "" {
+		existing.Label = existing.Email
+	}
+	existing.Color = strings.TrimSpace(req.Color)
+	existing.IMAPServer = req.IMAPServer
+	existing.IMAPPort = req.IMAPPort
+	existing.SMTPServer = req.SMTPServer
+	existing.SMTPPort = req.SMTPPort
+	existing.SMTPStartTLS = smtpUseSTARTTLS(req.SMTPPort, h.config.SMTP.UseSTARTTLS)
+	updated, err := h.mailDB.UpsertAccount(c.UserContext(), existing)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if activeID, _ := sess.Get("account_id").(string); activeID == updated.ID {
+		if err := h.setMirrorSession(c, sess, owner, updated); err != nil {
+			return fiber.ErrInternalServerError
+		}
+		if err := sess.Save(); err != nil {
+			return fiber.ErrInternalServerError
+		}
+	}
+	if h.syncer != nil {
+		h.syncer.Trigger(updated.ID)
+	}
+	return c.JSON(fiber.Map{"ok": true, "id": updated.ID, "email": updated.Email, "label": updated.Label})
+}
+
+func normalizeAccountUpdate(req *accountUpdateInput, imapServer string, imapPort int, smtpServer string, smtpPort int) {
+	req.IMAPServer = strings.TrimSpace(req.IMAPServer)
+	if req.IMAPServer == "" {
+		req.IMAPServer = imapServer
+	}
+	if req.IMAPPort == 0 {
+		req.IMAPPort = imapPort
+	}
+	req.SMTPServer = strings.TrimSpace(req.SMTPServer)
+	if req.SMTPServer == "" {
+		req.SMTPServer = smtpServer
+	}
+	if req.SMTPPort == 0 {
+		req.SMTPPort = smtpPort
+	}
 }
 
 // HandleDeleteAccount removes an additional account.

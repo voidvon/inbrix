@@ -733,6 +733,17 @@ func (s *Store) SetUserPassword(ctx context.Context, userID, passwordHash string
 	return nil
 }
 
+func (s *Store) SetUserDisplayName(ctx context.Context, userID, displayName string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?`, displayName, time.Now().Unix(), userID)
+	if err != nil {
+		return fmt.Errorf("mailstore: set user display name: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func ValidUserRole(role string) bool {
 	return role == RoleUser || role == RoleSuperAdmin
 }

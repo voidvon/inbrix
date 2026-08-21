@@ -20,6 +20,7 @@ import {
   Eye,
   Italic,
   ImagePlus,
+  Info,
   Link,
   Languages,
   List,
@@ -35,6 +36,7 @@ import {
   Plus,
   Search,
   RotateCcw,
+  RefreshCw,
   ReplyAll,
   Send,
   Signature as SignatureIcon,
@@ -45,6 +47,7 @@ import {
   Trash2,
   TriangleAlert,
   Underline,
+  UserRound,
   X,
   Bold,
   Bot,
@@ -60,7 +63,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -153,6 +156,10 @@ const zh = {
   resyncAttachments: "重新同步附件",
   resyncQueued: "附件重新同步已加入队列",
   addAccount: "添加账户",
+  editAccount: "编辑账户",
+  accountUpdated: "账户已更新",
+  savingAccount: "正在保存…",
+  passwordKeep: "留空则保留当前密码",
   remove: "移除",
   email: "邮箱地址",
   displayName: "显示名称",
@@ -221,11 +228,9 @@ const zh = {
   savingAgent: "正在保存…",
   mailboxAIConfiguration: "邮箱 AI 配置",
   mailboxAIConfigurationDescription: "为每个已绑定邮箱分别配置邮件总结、邮件撰写和建议回复使用的智能体与模型。",
-  mailSummaryAgent: "邮件总结智能体",
-  emailDraftAgent: "邮件撰写智能体",
-  replySuggestionAgent: "建议回复智能体",
-  editReplySuggestionPrompt: "编辑建议回复提示词",
-  replySuggestionPromptDescription: "编辑当前建议回复智能体的提示词。使用同一智能体的其他功能也会受到影响。",
+  mailSummaryAgent: "邮件总结",
+  emailDraftAgent: "邮件撰写",
+  replySuggestionAgent: "建议回复",
   aiTask: "AI 功能",
   inheritedConfiguration: "兼容配置",
   explicitConfiguration: "已配置",
@@ -250,9 +255,28 @@ const zh = {
   color: "颜色",
   language: "语言",
   generalSettings: "通用设置",
+  accountInfo: "账号信息",
+  accountLogin: "登录账号",
+  accountInfoDescription: "查看并更新你的账号昵称。",
+  nickname: "昵称",
+  accountInfoSaved: "账号信息已更新",
+  savingAccountInfo: "正在保存…",
   systemSettings: "系统设置",
   systemSettingsDescription: "管理应用用户及其系统权限。",
   systemVersion: "系统版本",
+  about: "关于",
+  aboutDescription: "Inbrix AI 版本与更新",
+  currentVersion: "当前版本",
+  checkForUpdates: "检查更新",
+  checkingForUpdates: "正在检查…",
+  updateNow: "立即更新",
+  updatingApplication: "正在更新…",
+  alreadyUpToDate: "当前已是最新版本",
+  updateAvailable: "发现新版本",
+  updateRestarting: "更新已安装，服务正在重启…",
+  autoUpdateUnavailable: "此构建不支持自动更新",
+  adminRequiredToUpdate: "请联系超级管理员完成更新",
+  githubRepository: "GitHub 仓库",
   openRegistration: "开放注册",
   openRegistrationDescription: "允许访客创建新的应用账号。",
   registrationSettingUpdated: "注册设置已更新",
@@ -399,6 +423,10 @@ const en = {
   resyncAttachments: "Resync attachments",
   resyncQueued: "Attachment resync queued",
   addAccount: "Add account",
+  editAccount: "Edit account",
+  accountUpdated: "Account updated",
+  savingAccount: "Saving…",
+  passwordKeep: "Leave blank to keep the current password",
   remove: "Remove",
   email: "Email address",
   displayName: "Display name",
@@ -467,11 +495,9 @@ const en = {
   savingAgent: "Saving…",
   mailboxAIConfiguration: "Mailbox AI configuration",
   mailboxAIConfigurationDescription: "Configure the agent and model used for mail summaries, email drafting, and suggested replies in each connected mailbox.",
-  mailSummaryAgent: "Mail summary agent",
-  emailDraftAgent: "Email drafting agent",
-  replySuggestionAgent: "Suggested reply agent",
-  editReplySuggestionPrompt: "Edit suggested reply prompt",
-  replySuggestionPromptDescription: "Edit the prompt for the selected suggested reply agent. Other functions using the same agent will also be affected.",
+  mailSummaryAgent: "Mail summary",
+  emailDraftAgent: "Email drafting",
+  replySuggestionAgent: "Suggested reply",
   aiTask: "AI function",
   inheritedConfiguration: "Fallback",
   explicitConfiguration: "Configured",
@@ -496,9 +522,28 @@ const en = {
   color: "Color",
   language: "Language",
   generalSettings: "General",
+  accountInfo: "Account information",
+  accountLogin: "Login account",
+  accountInfoDescription: "View and update your account nickname.",
+  nickname: "Nickname",
+  accountInfoSaved: "Account information updated",
+  savingAccountInfo: "Saving…",
   systemSettings: "System settings",
   systemSettingsDescription: "Manage application users and system permissions.",
   systemVersion: "System version",
+  about: "About",
+  aboutDescription: "Inbrix AI version and updates",
+  currentVersion: "Current version",
+  checkForUpdates: "Check for updates",
+  checkingForUpdates: "Checking…",
+  updateNow: "Update now",
+  updatingApplication: "Updating…",
+  alreadyUpToDate: "You're up to date",
+  updateAvailable: "New version available",
+  updateRestarting: "Update installed. The service is restarting…",
+  autoUpdateUnavailable: "Automatic updates are unavailable for this build",
+  adminRequiredToUpdate: "Ask a super administrator to install this update",
+  githubRepository: "GitHub repository",
   openRegistration: "Open registration",
   openRegistrationDescription: "Allow visitors to create new application accounts.",
   registrationSettingUpdated: "Registration setting updated",
@@ -2474,40 +2519,105 @@ function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
   return <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl"><div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.fromName || message.from}</span><time>{formatTime(message.date)}</time></div><div className="min-w-0 max-w-[80%] overflow-x-auto rounded-xl border bg-background px-3 py-2 text-sm leading-relaxed">{message.html ? <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={scrollRef} eager /> : <div className="whitespace-pre-wrap">{renderLinkifiedText(message.body || message.preview || copy.noBody)}</div>}{message.attachments?.length ? <><Separator className="my-2 opacity-50" /><div className="grid gap-1.5">{message.attachments.map((item) => <a className="flex min-w-0 items-center gap-1.5 text-xs text-primary" key={item.id || item.partId} href={`/api/attachment/${encodeURIComponent(item.id)}?account_email=${encodeURIComponent(message.accountEmail || "")}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate">{item.filename}</span><small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small></a>)}</div></> : null}</div><MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} /></article>;
 }
 
+type SettingsSection = "account" | "general" | "signatures" | "ai" | "agents" | "mailboxes" | "system" | "about";
+
 function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [accountEditor, setAccountEditor] = useState<ConnectedAccount | null | undefined>(undefined);
+  const [section, setSection] = useState<SettingsSection>("general");
+  const manageAccount = (account: ConnectedAccount | null) => {
+    onOpenChange(false);
+    setAccountEditor(account);
+  };
+  const closeAccountEditor = () => {
+    setAccountEditor(undefined);
+    onOpenChange(true);
+  };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="settings-dialog" className="flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-3rem)] sm:max-w-5xl">
-        <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12 text-left">
-          <DialogTitle>{copy.settings}</DialogTitle>
-          <DialogDescription className="sr-only">{copy.settings}</DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1" contentClassName="p-5 sm:p-6">
-          <SettingsContent copy={copy} />
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent data-testid="settings-dialog" className="flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-3rem)] sm:max-w-5xl">
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12 text-left">
+            <DialogTitle>{copy.settings}</DialogTitle>
+            <DialogDescription className="sr-only">{copy.settings}</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="min-h-0 flex-1" contentClassName="p-5 sm:p-6">
+            <SettingsContent copy={copy} section={section} onSectionChange={setSection} onManageAccount={manageAccount} />
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+      <AccountDialog copy={copy} open={accountEditor !== undefined} account={accountEditor || null} onOpenChange={(value) => { if (!value) closeAccountEditor(); }} />
+    </>
   );
 }
 
-function SettingsContent({ copy }: { copy: Copy }) {
+function SettingsContent({ copy, section, onSectionChange, onManageAccount }: { copy: Copy; section: SettingsSection; onSectionChange: (section: SettingsSection) => void; onManageAccount: (account: ConnectedAccount | null) => void }) {
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
   const isSuperAdmin = capabilities.data?.role === "super_admin";
-  const [section, setSection] = useState<"general" | "signatures" | "ai" | "agents" | "mailboxes" | "system">("general");
   return (
     <div className="grid min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
       <nav className="flex gap-1 overflow-x-auto border-b pb-4 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
-        <Button className="shrink-0 justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => setSection("general")}><Settings />{copy.generalSettings}</Button>
-        <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => setSection("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
-        <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => setSection("ai")}><Sparkles />{copy.aiSettings}</Button>
-        <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => setSection("agents")}><Bot />{copy.agentSettings}</Button>
-        <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => setSection("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
-        {isSuperAdmin && <Button className="shrink-0 justify-start" variant={section === "system" ? "secondary" : "ghost"} onClick={() => setSection("system")}><ShieldCheck />{copy.systemSettings}</Button>}
+        <Button className="shrink-0 justify-start" variant={section === "account" ? "secondary" : "ghost"} onClick={() => onSectionChange("account")}><UserRound />{copy.accountInfo}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => onSectionChange("general")}><Settings />{copy.generalSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => onSectionChange("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => onSectionChange("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => onSectionChange("ai")}><Sparkles />{copy.aiSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => onSectionChange("agents")}><Bot />{copy.agentSettings}</Button>
+        {isSuperAdmin && <Button className="shrink-0 justify-start" variant={section === "system" ? "secondary" : "ghost"} onClick={() => onSectionChange("system")}><ShieldCheck />{copy.systemSettings}</Button>}
+        <Button className="shrink-0 justify-start" variant={section === "about" ? "secondary" : "ghost"} onClick={() => onSectionChange("about")}><Info />{copy.about}</Button>
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : <MailboxSettings copy={copy} />}
+        {section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
       </div>
     </div>
+  );
+}
+
+function AboutSettings({ copy, isSuperAdmin }: { copy: Copy; isSuperAdmin: boolean }) {
+  const queryClient = useQueryClient();
+  const info = useQuery({ queryKey: ["update-info"], queryFn: getUpdateInfo, retry: false });
+  const check = useMutation({
+    mutationFn: checkForUpdates,
+    onSuccess: (status) => {
+      queryClient.setQueryData<UpdateStatus>(["update-info"], status);
+      if (!status.updateAvailable) toast.success(copy.alreadyUpToDate);
+    },
+    onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const install = useMutation({
+    mutationFn: installUpdate,
+    onSuccess: () => {
+      toast.success(copy.updateRestarting);
+      window.setTimeout(() => {
+        const waitForRestart = window.setInterval(() => {
+          void fetch("/health", { cache: "no-store" }).then((response) => {
+            if (!response.ok) return;
+            window.clearInterval(waitForRestart);
+            window.location.reload();
+          }).catch(() => undefined);
+        }, 1000);
+      }, 1500);
+    },
+    onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const status = info.data;
+  const version = status?.currentVersion || "—";
+  const buttonLabel = install.isPending ? copy.updatingApplication : check.isPending ? copy.checkingForUpdates : status?.updateAvailable ? copy.updateNow : copy.checkForUpdates;
+  const buttonDisabled = info.isPending || check.isPending || install.isPending || (Boolean(status?.updateAvailable) && (!isSuperAdmin || !status?.canAutoUpdate));
+  const statusMessage = status?.updateAvailable
+    ? `${copy.updateAvailable}: v${status.latestVersion}`
+    : status && !status.canAutoUpdate ? copy.autoUpdateUnavailable : "";
+  return (
+    <section className="flex min-h-full flex-col">
+      <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Info className="size-5" />{copy.about}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.aboutDescription}</p></div>
+      <div className="mt-8 border-y">
+        <div className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0"><p className="text-sm text-muted-foreground">{copy.currentVersion}</p><div className="mt-1 flex flex-wrap items-center gap-2"><strong className="font-mono text-base font-semibold">v{version}</strong>{status?.updateAvailable && <Badge variant="secondary">v{status.latestVersion}</Badge>}</div>{statusMessage && <p className="mt-2 text-xs text-muted-foreground">{statusMessage}</p>}{status?.updateAvailable && !isSuperAdmin && <p className="mt-1 text-xs text-muted-foreground">{copy.adminRequiredToUpdate}</p>}</div>
+          <Button className="shrink-0" disabled={buttonDisabled} onClick={() => status?.updateAvailable ? install.mutate() : check.mutate()}><RefreshCw className={cn((check.isPending || install.isPending) && "animate-spin")} />{buttonLabel}</Button>
+        </div>
+      </div>
+      {info.error && <p className="mt-3 text-sm text-destructive">{info.error.message}</p>}
+      <div className="mt-auto pt-10"><p className="text-xs font-medium text-muted-foreground">{copy.githubRepository}</p><a className="mt-2 inline-flex min-w-0 items-center gap-2 text-sm font-medium hover:underline" href={status?.repositoryUrl || "https://github.com/voidvon/inbrix"} target="_blank" rel="noreferrer"><span className="truncate">github.com/voidvon/inbrix</span><ExternalLink className="size-3.5 shrink-0" /></a></div>
+    </section>
   );
 }
 
@@ -2838,8 +2948,6 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
   const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, retry: false });
   const [drafts, setDrafts] = useState<Record<string, { agentId: string; modelId: string }>>({});
   const [error, setError] = useState("");
-  const [promptAgent, setPromptAgent] = useState<AIAgent | null>(null);
-  const [promptDraft, setPromptDraft] = useState("");
 
   useEffect(() => {
     if (!bindings.data) return;
@@ -2862,18 +2970,6 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
       void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
     },
   });
-  const updatePrompt = useMutation({
-    mutationFn: () => updateAIAgent(promptAgent!.id, { name: promptAgent!.name, prompt: promptDraft.trim(), outputLabels: promptAgent!.outputLabels }),
-    onSuccess: () => {
-      setPromptAgent(null);
-      setPromptDraft("");
-      setError("");
-      toast.success(copy.agentUpdated);
-      void queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
-      void queryClient.invalidateQueries({ queryKey: ["suggested-reply"] });
-    },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
-  });
   const updateAndSave = (binding: AITaskBinding, field: "agentId" | "modelId", value: string) => {
     const key = `${binding.accountEmail}\u0000${binding.taskType}`;
     const current = drafts[key] || { agentId: binding.agentId, modelId: binding.modelId };
@@ -2892,13 +2988,13 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
         <p className="mt-1 text-sm text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p>
       </div>
       <div className="mt-4 overflow-hidden rounded-lg border">
-        <Table className="min-w-[48rem] table-fixed">
+        <Table className="min-w-[40rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-[26%] px-4">{copy.email}</TableHead>
-              <TableHead className="w-[20%] px-4">{copy.aiTask}</TableHead>
-              <TableHead className="w-[27%] px-4">{copy.agentSettings}</TableHead>
-              <TableHead className="w-[27%] px-4">{copy.aiModel}</TableHead>
+              <TableHead className="w-[28%] px-4">{copy.email}</TableHead>
+              <TableHead className="w-[14%] px-4">{copy.aiTask}</TableHead>
+              <TableHead className="w-[29%] px-4">{copy.agentSettings}</TableHead>
+              <TableHead className="w-[29%] px-4">{copy.aiModel}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -2922,7 +3018,6 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
                         <SelectTrigger className="min-w-0 flex-1"><SelectValue>{selectedAgent?.name || copy.noAgents}</SelectValue></SelectTrigger>
                         <SelectContent>{selectableAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}</SelectContent>
                       </Select>
-                      {binding.taskType === "reply_suggestion" && <Button type="button" variant="ghost" size="icon" className="shrink-0" disabled={!selectedAgent || saving} onClick={() => { if (selectedAgent) { setPromptAgent(selectedAgent); setPromptDraft(selectedAgent.prompt); setError(""); } }} aria-label={copy.editReplySuggestionPrompt} title={copy.editReplySuggestionPrompt}><Pencil /></Button>}
                     </div>
                   </TableCell>
                   <TableCell className="px-4 py-3">
@@ -2940,16 +3035,6 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
         </Table>
       </div>
       {(bindings.isError || models.isError || agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || loadError || copy.loadFailed}</p>}
-      <Dialog open={Boolean(promptAgent)} onOpenChange={(open) => { if (!open && !updatePrompt.isPending) { setPromptAgent(null); setPromptDraft(""); } }}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader><DialogTitle>{copy.editReplySuggestionPrompt}</DialogTitle><DialogDescription>{copy.replySuggestionPromptDescription}</DialogDescription></DialogHeader>
-          <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (promptDraft.trim()) updatePrompt.mutate(); }}>
-            <div className="grid gap-2"><Label htmlFor="reply-suggestion-prompt">{copy.agentPrompt}</Label><Textarea id="reply-suggestion-prompt" className="min-h-64 resize-y" value={promptDraft} onChange={(event) => { setPromptDraft(event.target.value); setError(""); }} disabled={updatePrompt.isPending} required /></div>
-            {updatePrompt.isError && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter><Button type="button" variant="ghost" disabled={updatePrompt.isPending} onClick={() => { setPromptAgent(null); setPromptDraft(""); }}>{copy.cancel}</Button><Button type="submit" disabled={updatePrompt.isPending || !promptDraft.trim()}>{updatePrompt.isPending ? copy.savingAgent : copy.save}</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </section>
   );
 }
@@ -3059,6 +3144,38 @@ function AISettings({ copy }: { copy: Copy }) {
   );
 }
 
+function AccountInfoSettings({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
+  const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (capabilities.data?.currentUser) setDisplayName(capabilities.data.currentUser.displayName);
+  }, [capabilities.data?.currentUser]);
+  const update = useMutation({
+    mutationFn: (value: string) => updateAccountProfile(value),
+    onSuccess: (user) => {
+      queryClient.setQueryData(["capabilities"], (current: { notifications: boolean; webPush: boolean; calendar: boolean; role: UserRole; currentUser?: { login: string; displayName: string; role: UserRole } } | undefined) => current ? { ...current, role: user.role, currentUser: { login: user.login, displayName: user.displayName, role: user.role } } : current);
+      setError("");
+      toast.success(copy.accountInfoSaved);
+    },
+    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+  });
+  const currentUser = capabilities.data?.currentUser;
+  const roleLabel = (currentUser?.role || capabilities.data?.role) === "super_admin" ? copy.superAdmin : copy.ordinaryUser;
+  return (
+    <section className="max-w-2xl">
+      <div><h2 className="flex items-center gap-2 text-lg font-semibold"><UserRound className="size-5" />{copy.accountInfo}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.accountInfoDescription}</p></div>
+      <div className="mt-6 grid max-w-md gap-5">
+        <div className="grid gap-1"><p className="text-xs text-muted-foreground">{copy.accountLogin}</p><p className="truncate text-sm font-medium">{capabilities.isPending ? copy.loading : currentUser?.login || "-"}</p></div>
+        <div className="grid max-w-xs gap-2"><Label htmlFor="account-nickname">{copy.nickname}</Label><Input id="account-nickname" className="w-64 max-w-full" value={displayName} maxLength={80} disabled={capabilities.isPending || update.isPending} onChange={(event) => { setDisplayName(event.target.value); setError(""); }} onBlur={() => { const next = displayName.trim(); if (next !== (currentUser?.displayName || "").trim()) update.mutate(next); }} /></div>
+        <div className="grid gap-1"><p className="text-xs text-muted-foreground">{copy.role}</p><p className="text-sm font-medium">{capabilities.isPending ? copy.loading : roleLabel}</p></div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
+    </section>
+  );
+}
+
 function GeneralSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
@@ -3154,10 +3271,9 @@ function GeneralSettings({ copy }: { copy: Copy }) {
 
 const emptyAccountForm = { email: "", password: "", label: "", color: "#4f46e5", imap_server: "", imap_port: 993, smtp_server: "", smtp_port: 587 };
 
-function MailboxSettings({ copy }: { copy: Copy }) {
+function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccount: (account: ConnectedAccount | null) => void }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts, retry: false });
-  const [addOpen, setAddOpen] = useState(false);
   const [error, setError] = useState("");
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
@@ -3169,7 +3285,7 @@ function MailboxSettings({ copy }: { copy: Copy }) {
     <section className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="text-lg font-semibold">{copy.mailboxManagement}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.mailboxDescription}</p></div>
-        <Button onClick={() => setAddOpen(true)}><Plus />{copy.addAccount}</Button>
+        <Button onClick={() => onManageAccount(null)}><Plus />{copy.addAccount}</Button>
       </div>
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[44rem] table-fixed">
@@ -3181,7 +3297,7 @@ function MailboxSettings({ copy }: { copy: Copy }) {
                 <TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0"><strong className="block truncate font-medium">{account.label || account.email}</strong><span className="block truncate text-xs text-muted-foreground">{account.email}</span></div></div></TableCell>
                 <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.imapServer}${account.imapPort ? `:${account.imapPort}` : ""}`}>{account.imapServer}{account.imapPort ? `:${account.imapPort}` : ""}</span></TableCell>
                 <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.smtpServer || "-"}${account.smtpPort ? `:${account.smtpPort}` : ""}`}>{account.smtpServer || "-"}{account.smtpPort ? `:${account.smtpPort}` : ""}</span></TableCell>
-                <TableCell className="px-4 py-3 text-right"><Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(account.email)}>{copy.remove}</Button></TableCell>
+                <TableCell className="px-4 py-3"><div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon" className="size-8" disabled={remove.isPending} onClick={() => onManageAccount(account)} aria-label={copy.editAccount} title={copy.editAccount}><Pencil /></Button><Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(account.email)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell>
               </TableRow>
             ))}
             {!accounts.isPending && !accounts.data?.accounts.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>}
@@ -3191,19 +3307,33 @@ function MailboxSettings({ copy }: { copy: Copy }) {
       {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
       {error && <p className="py-2 text-xs text-destructive">{error}</p>}
       <MailboxAITaskSettings copy={copy} />
-      <AddAccountDialog copy={copy} open={addOpen} onOpenChange={setAddOpen} onAdded={refreshAccountData} />
     </section>
   );
 }
 
-function AddAccountDialog({ copy, open, onOpenChange, onAdded }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void; onAdded: () => void }) {
+function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open: boolean; account: ConnectedAccount | null; onOpenChange: (open: boolean) => void }) {
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({ ...emptyAccountForm });
   const [error, setError] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    setForm(account ? {
+      email: account.email,
+      password: "",
+      label: account.label || "",
+      color: account.color || "#4f46e5",
+      imap_server: account.imapServer || "",
+      imap_port: account.imapPort || 993,
+      smtp_server: account.smtpServer || "",
+      smtp_port: account.smtpPort || 587,
+    } : { ...emptyAccountForm });
+    setError("");
+  }, [account, open]);
   const changeOpen = (value: boolean) => {
     if (!value) setError("");
     onOpenChange(value);
   };
-  const add = useMutation({ mutationFn: () => addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); onAdded(); onOpenChange(false); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.email, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   const field = (name: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.type === "number" ? Number(event.target.value) : event.target.value;
     setForm((current) => ({ ...current, [name]: value }));
@@ -3211,12 +3341,12 @@ function AddAccountDialog({ copy, open, onOpenChange, onAdded }: { copy: Copy; o
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
-        <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{copy.addAccount}</DialogTitle><DialogDescription>{copy.mailboxDescription}</DialogDescription></DialogHeader>
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); setError(""); add.mutate(); }}>
+        <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{account ? copy.editAccount : copy.addAccount}</DialogTitle><DialogDescription>{copy.mailboxDescription}</DialogDescription></DialogHeader>
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); setError(""); persist.mutate(); }}>
           <ScrollArea className="min-h-0 flex-1" contentClassName="grid gap-5 p-5">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={field("email")} autoComplete="email" required /></Label>
-              <Label className="grid gap-1.5">{copy.password}<Input type="password" value={form.password} onChange={field("password")} autoComplete="new-password" required /></Label>
+              <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={field("email")} autoComplete="email" disabled={Boolean(account)} required /></Label>
+              <Label className="grid gap-1.5">{copy.password}{account && <span className="text-xs font-normal text-muted-foreground">{copy.passwordKeep}</span>}<Input type="password" value={form.password} onChange={field("password")} autoComplete="new-password" required={!account} /></Label>
               <Label className="grid gap-1.5">{copy.displayName} ({copy.optional})<Input value={form.label} onChange={field("label")} /></Label>
               <Label className="grid gap-1.5">{copy.color}<Input className="p-1" type="color" value={form.color} onChange={field("color")} /></Label>
             </div>
@@ -3228,7 +3358,7 @@ function AddAccountDialog({ copy, open, onOpenChange, onAdded }: { copy: Copy; o
             </div>
             {error && <p className="text-xs text-destructive">{error}</p>}
           </ScrollArea>
-          <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={add.isPending}><Plus />{add.isPending ? copy.adding : copy.addAccount}</Button></DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

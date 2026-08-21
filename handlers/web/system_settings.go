@@ -134,6 +134,31 @@ func (h *SystemSettingsHandler) HandleUpdateUserRole(c *fiber.Ctx) error {
 	return c.JSON(publicSystemUser(target))
 }
 
+func (h *SystemSettingsHandler) HandleUpdateProfile(c *fiber.Ctx) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "displayName must be a string"})
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if len([]rune(input.DisplayName)) > 80 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "displayName must be at most 80 characters"})
+	}
+	if err := h.mailDB.SetUserDisplayName(c.UserContext(), user.ID, input.DisplayName); err != nil {
+		if errors.Is(err, mailstore.ErrNotFound) {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+	user.DisplayName = input.DisplayName
+	return c.JSON(publicSystemUser(user))
+}
+
 func publicSystemUser(user mailstore.User) systemUserJSON {
 	createdAt := ""
 	if !user.CreatedAt.IsZero() {
