@@ -334,6 +334,10 @@ export function sendMessage(form: FormData) {
   return apiFetch<{ success: boolean; message: string }>("/api/compose", {
     method: "POST",
     body: form,
+    // Sending requires the authenticated session and the CSRF cookie. Keep
+    // this explicit at the compose boundary so a future request-wrapper
+    // change cannot silently turn this into an unauthenticated request.
+    credentials: "include",
   });
 }
 

@@ -428,7 +428,7 @@ func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
 		IMAPTLS:           h.config.IMAP.TLS,
 		SMTPServer:        req.SMTPServer,
 		SMTPPort:          req.SMTPPort,
-		SMTPStartTLS:      h.config.SMTP.UseSTARTTLS,
+		SMTPStartTLS:      smtpUseSTARTTLS(req.SMTPPort, h.config.SMTP.UseSTARTTLS),
 		EncryptedPassword: encPwd,
 		AuthType:          "password",
 		IsDefault:         false,

@@ -29,6 +29,18 @@ type AuthHandler struct {
 	syncer *mailstore.SyncManager
 }
 
+// smtpUseSTARTTLS keeps the standard implicit-TLS submission port from being
+// accidentally used as a plaintext STARTTLS endpoint. The mailbox form stores
+// a host and port but does not have a separate TLS-mode field, so port 465 is
+// authoritative. Other ports retain the configured policy for custom SMTP
+// deployments.
+func smtpUseSTARTTLS(port int, configured bool) bool {
+	if port == 465 {
+		return false
+	}
+	return configured
+}
+
 // NewAuthHandler creates a new instance of AuthHandler
 func NewAuthHandler(store *session.Store, config *config.Config) *AuthHandler {
 	return &AuthHandler{
@@ -304,7 +316,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 					IMAPTLS:           h.config.IMAP.TLS,
 					SMTPServer:        h.config.SMTP.Server,
 					SMTPPort:          h.config.SMTP.GetPort(),
-					SMTPStartTLS:      h.config.SMTP.UseSTARTTLS,
+					SMTPStartTLS:      smtpUseSTARTTLS(h.config.SMTP.GetPort(), h.config.SMTP.UseSTARTTLS),
 					EncryptedPassword: mirrorPassword,
 					AuthType:          "password",
 					IsDefault:         true,
@@ -578,7 +590,7 @@ func (h *AuthHandler) HandleDemoLogin(c *fiber.Ctx) error {
 			IMAPTLS:      h.config.IMAP.TLS,
 			SMTPServer:   h.config.SMTP.Server,
 			SMTPPort:     h.config.SMTP.Port,
-			SMTPStartTLS: h.config.SMTP.UseSTARTTLS,
+			SMTPStartTLS: smtpUseSTARTTLS(h.config.SMTP.Port, h.config.SMTP.UseSTARTTLS),
 			AuthType:     demoAuthType,
 			IsDefault:    true,
 		})
@@ -670,7 +682,7 @@ func (h *AuthHandler) CreateSMTPClientForAccount(entry AccountEntry) (*api.SMTPC
 	client := api.NewSMTPClient(
 		entry.SMTPServer, entry.SMTPPort,
 		entry.Email, password,
-		h.config.SMTP.UseSTARTTLS,
+		smtpUseSTARTTLS(entry.SMTPPort, h.config.SMTP.UseSTARTTLS),
 	)
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client for %s", entry.Email)
@@ -753,7 +765,7 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 			return nil, err
 		}
 		email, _ := sess.Get("email").(string)
-		client := api.NewSMTPClientOAuth(smtpServer, smtpPort, email, token, h.config.OAuth2.Mechanism, h.config.SMTP.UseSTARTTLS)
+		client := api.NewSMTPClientOAuth(smtpServer, smtpPort, email, token, h.config.OAuth2.Mechanism, smtpUseSTARTTLS(smtpPort, h.config.SMTP.UseSTARTTLS))
 		if client == nil {
 			return nil, fmt.Errorf("failed to create SMTP client")
 		}
@@ -777,7 +789,7 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 		return nil, fmt.Errorf("failed to decrypt credentials: %v", err)
 	}
 
-	client := api.NewSMTPClient(smtpServer, smtpPort, creds.Email, creds.Password, h.config.SMTP.UseSTARTTLS)
+	client := api.NewSMTPClient(smtpServer, smtpPort, creds.Email, creds.Password, smtpUseSTARTTLS(smtpPort, h.config.SMTP.UseSTARTTLS))
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client")
 	}
@@ -806,7 +818,7 @@ func (h *AuthHandler) CreateSMTPClientForMirrorAccount(account mailstore.Account
 	if smtpPort == 0 {
 		smtpPort = h.config.SMTP.GetPort()
 	}
-	client := api.NewSMTPClient(smtpServer, smtpPort, account.Email, password, account.SMTPStartTLS)
+	client := api.NewSMTPClient(smtpServer, smtpPort, account.Email, password, smtpUseSTARTTLS(smtpPort, account.SMTPStartTLS))
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client")
 	}

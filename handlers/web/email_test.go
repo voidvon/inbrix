@@ -21,6 +21,18 @@ func TestEmailBodyCachedRecognizesEmptyCachedBody(t *testing.T) {
 	}
 }
 
+func TestSMTPUseSTARTTLSUsesImplicitTLSForPort465(t *testing.T) {
+	if smtpUseSTARTTLS(465, true) {
+		t.Fatal("SMTP port 465 must use implicit TLS even when the global policy enables STARTTLS")
+	}
+	if !smtpUseSTARTTLS(587, true) {
+		t.Fatal("SMTP port 587 should retain the configured STARTTLS policy")
+	}
+	if smtpUseSTARTTLS(2525, false) {
+		t.Fatal("custom SMTP ports should retain the configured TLS policy")
+	}
+}
+
 // ─── Thread store / buildThreads ─────────────────────────────────────────────
 
 // TestBuildThreadsInMemory verifies that buildThreads falls back to

@@ -38,7 +38,9 @@ export default defineConfig(({ command, mode }) => {
       sourcemap: true,
     },
     server: {
-      host: "127.0.0.1",
+      // Allow the development UI to be reached from other machines when the
+      // host firewall/network permits port 2342.
+      host: "0.0.0.0",
       port: 2342,
       strictPort: true,
       proxy: {
