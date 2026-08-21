@@ -13,6 +13,25 @@ No unreleased changes.
 
 ---
 
+## [1.16.0] - 2026-08-21
+
+### Added
+
+- Added a multi-turn AI email assistant experience that keeps generation and
+  refinement requests in one conversation, supports copying individual
+  messages, and submits instructions with Ctrl/Cmd+Enter.
+- Made the Vite development server reachable from other machines on the local
+  network when allowed by the host firewall.
+
+### Fixed
+
+- SMTP port 465 now consistently uses implicit TLS instead of attempting
+  STARTTLS, including password, OAuth, demo, and mirrored accounts.
+- Compose requests now explicitly include the authenticated session and CSRF
+  cookie.
+
+---
+
 ## [1.15.0] - 2026-08-20
 
 ### Added
@@ -1017,7 +1036,8 @@ password-only login, server-rendered Go templates.
 
 ---
 
-[Unreleased]: https://github.com/voidvon/inbrix/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/voidvon/inbrix/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/voidvon/inbrix/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/voidvon/inbrix/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/vul-os/inbrix/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/vul-os/inbrix/compare/v1.12.1...v1.13.0
