@@ -326,8 +326,10 @@ func (m *SyncManager) syncFolder(ctx context.Context, client *api.Client, accoun
 	state, stateErr := m.store.GetSyncState(ctx, accountID, folderName)
 	// A capped initial scan is intentionally marked incomplete, but it still
 	// establishes a valid high-water mark. Only a missing state or a recorded
-	// fetch error needs another full header scan.
-	full := stateErr != nil || state.LastError != ""
+	// fetch error needs another full header scan. UpsertFolder creates the state
+	// before this method runs, so a zero sync timestamp is the reliable marker
+	// that the initial mailbox baseline has not been established yet.
+	full := needsInitialFolderSync(state, stateErr)
 	if !full {
 		return m.syncFolderIncremental(ctx, client, accountID, folderName)
 	}
@@ -379,6 +381,10 @@ func (m *SyncManager) syncFolder(ctx context.Context, client *api.Client, accoun
 		return err
 	}
 	return m.store.MarkFolderSync(ctx, accountID, folderName, complete, nil)
+}
+
+func needsInitialFolderSync(state SyncState, stateErr error) bool {
+	return stateErr != nil || state.LastError != "" || state.LastSyncAt.IsZero()
 }
 
 // syncFolderIncremental refreshes the newest metadata window (so read/unread
