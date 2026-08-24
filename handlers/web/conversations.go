@@ -20,20 +20,22 @@ const conversationViewFolder = "INBOX"
 // Conversation is the UI model for one mail conversation. It deliberately
 // contains both received and sent messages so the chat transcript is complete.
 type Conversation struct {
-	ID             string
-	Title          string
-	PeerEmail      string
-	Subject        string
-	Preview        string
-	Latest         models.Email
-	Messages       []ConversationMessage
-	Count          int
-	UnreadCount    int
-	HasAttachments bool
-	AccountEmail   string
-	AccountLabel   string
-	AccountColor   string
-	Note           string
+	ID               string
+	Title            string
+	PeerEmail        string
+	Subject          string
+	Preview          string
+	Latest           models.Email
+	Messages         []ConversationMessage
+	Count            int
+	UnreadCount      int
+	HasAttachments   bool
+	AccountEmail     string
+	AccountLabel     string
+	AccountColor     string
+	Note             string
+	Status           string
+	StatusMessageKey string
 }
 
 type ConversationMessage struct {
@@ -318,6 +320,12 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 				conversation.HasAttachments = true
 			}
 		}
+		conversation.StatusMessageKey = latest.Folder + "/" + latest.ID
+		if conversation.Messages[len(conversation.Messages)-1].Outgoing {
+			conversation.Status = "answered"
+		} else {
+			conversation.Status = "unanswered"
+		}
 		conversations = append(conversations, conversation)
 	}
 	sort.SliceStable(conversations, func(i, j int) bool {
@@ -355,8 +363,17 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			results = append(results, result)
 			continue
 		}
+		statuses, err := h.mailDB.ListConversationStatuses(c.UserContext(), account.ID)
+		if err != nil {
+			result.Err = err
+			results = append(results, result)
+			continue
+		}
 		for i := range accountConversations {
 			accountConversations[i].Note = notes[accountConversations[i].ID]
+			if saved, ok := statuses[accountConversations[i].ID]; ok && saved.MessageKey == accountConversations[i].StatusMessageKey {
+				accountConversations[i].Status = saved.Status
+			}
 		}
 		conversations = append(conversations, accountConversations...)
 		results = append(results, result)

@@ -49,6 +49,7 @@ export type ConversationSummary = {
   accountLabel?: string;
   accountColor?: string;
   note?: string;
+	status: "answered" | "unanswered" | "no_action";
 };
 
 export type ConversationMessage = {

@@ -386,6 +386,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS conversation_statuses (
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status IN ('answered', 'unanswered', 'no_action')),
+			message_key TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, conversation_id),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -486,6 +496,51 @@ func (s *Store) SetConversationNote(ctx context.Context, accountID, conversation
 		accountID, conversationID, note, now, now)
 	if err != nil {
 		return fmt.Errorf("mailstore: set conversation note: %w", err)
+	}
+	return nil
+}
+
+type ConversationStatusRecord struct {
+	Status     string
+	MessageKey string
+}
+
+func (s *Store) ListConversationStatuses(ctx context.Context, accountID string) (map[string]ConversationStatusRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT conversation_id, status, message_key FROM conversation_statuses WHERE account_id = ?`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list conversation statuses: %w", err)
+	}
+	defer rows.Close()
+	statuses := make(map[string]ConversationStatusRecord)
+	for rows.Next() {
+		var conversationID string
+		var record ConversationStatusRecord
+		if err := rows.Scan(&conversationID, &record.Status, &record.MessageKey); err != nil {
+			return nil, fmt.Errorf("mailstore: scan conversation status: %w", err)
+		}
+		statuses[conversationID] = record
+	}
+	return statuses, rows.Err()
+}
+
+func (s *Store) SetConversationStatus(ctx context.Context, accountID, conversationID, status, messageKey string) error {
+	accountID = strings.TrimSpace(accountID)
+	conversationID = strings.TrimSpace(conversationID)
+	status = strings.TrimSpace(status)
+	if accountID == "" || conversationID == "" || messageKey == "" {
+		return fmt.Errorf("mailstore: conversation status account, conversation, and message key are required")
+	}
+	if status != "answered" && status != "unanswered" && status != "no_action" {
+		return fmt.Errorf("mailstore: invalid conversation status %q", status)
+	}
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO conversation_statuses(account_id, conversation_id, status, message_key, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(account_id, conversation_id) DO UPDATE SET status=excluded.status, message_key=excluded.message_key, updated_at=excluded.updated_at`,
+		accountID, conversationID, status, messageKey, now, now)
+	if err != nil {
+		return fmt.Errorf("mailstore: set conversation status: %w", err)
 	}
 	return nil
 }

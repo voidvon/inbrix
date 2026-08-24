@@ -82,6 +82,18 @@ func TestBuildConversationsMergesInboxAndSent(t *testing.T) {
 	if conversation.Latest.ID != "22" || conversation.Preview != "Thanks, sent." {
 		t.Fatalf("latest message = %+v", conversation.Latest)
 	}
+	if conversation.Status != "answered" || conversation.StatusMessageKey != "Sent Messages/22" {
+		t.Fatalf("status = %q at %q, want answered at Sent Messages/22", conversation.Status, conversation.StatusMessageKey)
+	}
+
+	emails = append(emails, models.Email{
+		ID: "11", Folder: "INBOX", MessageID: "<follow-up@example.com>", From: "alice@example.com", To: "me@example.com",
+		Subject: "Re: Project update", Body: "One more question.", Date: when.Add(2 * time.Hour),
+	})
+	conversation = buildConversations(account, emails)[0]
+	if conversation.Status != "unanswered" || conversation.StatusMessageKey != "INBOX/11" {
+		t.Fatalf("status after incoming mail = %q at %q, want unanswered at INBOX/11", conversation.Status, conversation.StatusMessageKey)
+	}
 }
 
 func TestConversationIdentityUsesParticipantsNotMessagesOrSubject(t *testing.T) {

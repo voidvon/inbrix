@@ -63,7 +63,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -82,6 +82,7 @@ import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, Pagi
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./components/ui/table";
 import { Textarea } from "./components/ui/textarea";
+import { ConversationStatusTag, type ConversationStatus } from "./components/app/conversation-status-tag";
 import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailAttachment, MailMessage, Mailbox, MailSummary } from "./types";
 
 const zh = {
@@ -310,6 +311,10 @@ const zh = {
   adding: "正在添加…",
   addNote: "添加备注",
   noteSaveFailed: "备注保存失败",
+  answered: "已回复",
+  unanswered: "未回复",
+  noAction: "无需处理",
+  statusSaveFailed: "状态保存失败",
   markUnread: "标为未读",
   markUnreadFailed: "标记未读失败",
   deleteConversation: "删除对话",
@@ -585,6 +590,10 @@ const en = {
   adding: "Adding…",
   addNote: "Add note",
   noteSaveFailed: "Could not save note",
+  answered: "Answered",
+  unanswered: "Unanswered",
+  noAction: "No action",
+  statusSaveFailed: "Could not save status",
   markUnread: "Mark as unread",
   markUnreadFailed: "Could not mark conversation as unread",
   deleteConversation: "Delete conversation",
@@ -674,6 +683,7 @@ type ComposeDefaults = {
   inReplyTo?: string;
   references?: string[];
   conversation?: ConversationMessage[];
+  conversationId?: string;
 };
 
 function useDebouncedValue(value: string, delay: number) {
@@ -896,6 +906,7 @@ function InboxPage() {
       inReplyTo: source?.messageId,
       references,
       conversation: conversation.messages,
+      conversationId: conversation.id,
     });
   };
 
@@ -925,6 +936,7 @@ function InboxPage() {
       inReplyTo: source.messageId,
       references,
       conversation: conversation.messages,
+      conversationId: conversation.id,
     });
   };
 
@@ -1116,6 +1128,7 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(conversation.note || "");
   const [error, setError] = useState("");
+  const [statusSaving, setStatusSaving] = useState(false);
   const cancelRef = useRef(false);
   useEffect(() => {
     if (!editing) setDraft(conversation.note || "");
@@ -1154,6 +1167,22 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
     setEditing(false);
     inputRef.current?.blur();
   };
+  const changeStatus = async (status: ConversationStatus) => {
+    if (status === conversation.status) return;
+    setStatusSaving(true);
+    try {
+      await saveConversationStatus(conversation.id, status);
+      setError("");
+      queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) => current ? {
+        ...current,
+        conversations: current.conversations.map((item) => item.id === conversation.id ? { ...item, status } : item),
+      } : current);
+    } catch {
+      setError(copy.statusSaveFailed);
+    } finally {
+      setStatusSaving(false);
+    }
+  };
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block">
@@ -1165,11 +1194,12 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
         </span>
         {conversation.unreadCount > 0 && <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="mt-0.5 min-w-5 justify-center px-1.5 text-[10px] leading-4">{conversation.unreadCount}</Badge>}
       </button>
-      <div className="mt-1.5 h-4 w-full overflow-hidden">
+      <div className="mt-1.5 flex h-5 w-full items-center gap-1.5 overflow-visible">
+        <ConversationStatusTag value={conversation.status} labels={{ answered: copy.answered, unanswered: copy.unanswered, no_action: copy.noAction }} disabled={statusSaving} onChange={(status) => void changeStatus(status)} />
         {editing ? (
-          <Input ref={inputRef} className="block h-full rounded-none border-0 bg-transparent px-0 py-0 text-xs leading-4 shadow-none focus-visible:border-transparent focus-visible:ring-0" value={draft} maxLength={200} onChange={(event) => setDraft(event.target.value)} onBlur={() => void saveNote()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") cancelEditing(); }} aria-label={copy.addNote} />
+          <Input ref={inputRef} className="block h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 py-0 text-xs leading-4 shadow-none focus-visible:border-transparent focus-visible:ring-0" value={draft} maxLength={200} onChange={(event) => setDraft(event.target.value)} onBlur={() => void saveNote()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") cancelEditing(); }} aria-label={copy.addNote} />
         ) : (
-          <div className="group/note relative h-full w-full">
+          <div className="group/note relative h-full min-w-0 flex-1">
             <button type="button" className={cn("block h-full w-full truncate pr-6 text-left text-xs leading-4", conversation.note ? "text-primary" : "text-muted-foreground/60")} onClick={onClick}>{conversation.note || copy.addNote}</button>
             <button type="button" className="absolute top-0 right-0 grid size-4 place-items-center text-muted-foreground opacity-0 transition-opacity group-hover/note:opacity-100 hover:text-foreground focus-visible:opacity-100" onClick={beginEditing} aria-label={copy.addNote} title={copy.addNote}><Pencil className="size-3" /></button>
           </div>
@@ -2170,6 +2200,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     form.set("html_body", htmlBody);
     if (defaults.inReplyTo) form.set("in_reply_to", defaults.inReplyTo);
     if (defaults.references?.length) form.set("references", defaults.references.join(" "));
+    if (defaults.conversationId) form.set("conversation_id", defaults.conversationId);
     if (accountEmail) form.set("account_email", accountEmail);
     attachments.forEach((file) => form.append("attachments", file, file.name));
     const inlineManifest = submittedInlineImages.map((image, index) => {

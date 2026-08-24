@@ -30,6 +30,7 @@ type ConversationSummaryJSON struct {
 	AccountLabel   string `json:"accountLabel,omitempty"`
 	AccountColor   string `json:"accountColor,omitempty"`
 	Note           string `json:"note,omitempty"`
+	Status         string `json:"status"`
 }
 
 // ConversationMessageJSON is the detail model for one chat bubble. HTML is
@@ -128,6 +129,7 @@ func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON 
 		AccountLabel:   conversation.AccountLabel,
 		AccountColor:   conversation.AccountColor,
 		Note:           conversation.Note,
+		Status:         conversation.Status,
 	}
 }
 
@@ -474,6 +476,43 @@ func (h *EmailHandler) HandleConversationNoteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation note"})
 	}
 	return c.JSON(fiber.Map{"ok": true, "note": body.Note})
+}
+
+func (h *EmailHandler) HandleConversationStatusJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	conversationID := strings.TrimSpace(c.Params("id"))
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	if body.Status != "answered" && body.Status != "unanswered" && body.Status != "no_action" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid conversation status"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation status"})
+	}
+	ownerID, _ := sess.Get("user_id").(string)
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), ownerID, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	if err := h.mailDB.SetConversationStatus(c.UserContext(), account.ID, conversationID, body.Status, selected.StatusMessageKey); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation status"})
+	}
+	return c.JSON(fiber.Map{"ok": true, "status": body.Status})
 }
 
 func flagsWithSeen(flags []string, seen bool) ([]string, bool) {

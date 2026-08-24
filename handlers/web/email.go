@@ -961,6 +961,7 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 	bcc := c.FormValue("bcc")
 	inReplyTo := c.FormValue("in_reply_to")
 	references := c.FormValue("references")
+	conversationID := strings.TrimSpace(c.FormValue("conversation_id"))
 	draftUID := c.FormValue("draft_uid") // UID of draft to delete after send
 
 	// account_email: when set (unified-view reply), send from that account's SMTP
@@ -1078,6 +1079,21 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{
 			"error": fmt.Sprintf("Failed to send email: %v", err),
 		})
+	}
+
+	// A successful reply should be reflected immediately, even before the Sent
+	// folder finishes syncing. The saved marker also lets a later incoming mail
+	// automatically return the conversation to "unanswered".
+	if conversationID != "" && h.mailDB != nil {
+		if data, statusErr := h.conversationPageData(c); statusErr == nil {
+			if selected := findConversation(data["Conversations"].([]Conversation), conversationID); selected != nil {
+				if account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail); ok {
+					if statusErr = h.mailDB.SetConversationStatus(c.UserContext(), account.ID, conversationID, "answered", selected.StatusMessageKey); statusErr != nil {
+						log.Printf("compose: mark conversation answered: %v", statusErr)
+					}
+				}
+			}
+		}
 	}
 
 	// Record recipients for autocomplete.

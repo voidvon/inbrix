@@ -163,6 +163,13 @@ export function saveConversationNote(id: string, note: string) {
   });
 }
 
+export function saveConversationStatus(id: string, status: "answered" | "unanswered" | "no_action") {
+	return apiFetch<{ ok: boolean; status: string }>(`/api/conversations/${encodeURIComponent(id)}/status`, {
+		method: "PUT",
+		body: JSON.stringify({ status }),
+	});
+}
+
 export function markConversationRead(id: string) {
   return apiFetch<{ ok: boolean; updated: number }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "PATCH" });
 }

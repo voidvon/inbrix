@@ -492,6 +492,7 @@ func main() {
 		apiRoutes.Post("/mail/messages/:uid/not-spam", webEmailHandler.HandleLocalJunkMessageRestoreJSON)
 		apiRoutes.Delete("/mail/messages/:uid", webEmailHandler.HandleLocalJunkMessageDeleteJSON)
 		apiRoutes.Put("/conversations/:id/note", webEmailHandler.HandleConversationNoteJSON)
+		apiRoutes.Put("/conversations/:id/status", webEmailHandler.HandleConversationStatusJSON)
 		apiRoutes.Patch("/conversations/:id/read", webEmailHandler.HandleConversationReadJSON)
 		apiRoutes.Patch("/conversations/:id/unread", webEmailHandler.HandleConversationUnreadJSON)
 		apiRoutes.Delete("/conversations/:id", webEmailHandler.HandleConversationDeleteJSON)

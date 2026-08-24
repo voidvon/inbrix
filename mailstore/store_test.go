@@ -474,6 +474,39 @@ func TestConversationNotesPersistClearAndStayAccountScoped(t *testing.T) {
 	}
 }
 
+func TestConversationStatusesPersistUpdateAndStayAccountScoped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "statuses@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testAccount(t, s, owner.ID, "first-status@example.com", true)
+	second := testAccount(t, s, owner.ID, "second-status@example.com", false)
+
+	if err := s.SetConversationStatus(ctx, first.ID, "conversation-1", "no_action", "INBOX/4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetConversationStatus(ctx, second.ID, "conversation-1", "unanswered", "INBOX/9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetConversationStatus(ctx, first.ID, "conversation-1", "answered", "Sent/5"); err != nil {
+		t.Fatal(err)
+	}
+
+	firstStatuses, err := s.ListConversationStatuses(ctx, first.ID)
+	if err != nil || firstStatuses["conversation-1"] != (ConversationStatusRecord{Status: "answered", MessageKey: "Sent/5"}) {
+		t.Fatalf("first account statuses = %v, err=%v", firstStatuses, err)
+	}
+	secondStatuses, err := s.ListConversationStatuses(ctx, second.ID)
+	if err != nil || secondStatuses["conversation-1"] != (ConversationStatusRecord{Status: "unanswered", MessageKey: "INBOX/9"}) {
+		t.Fatalf("second account statuses = %v, err=%v", secondStatuses, err)
+	}
+	if err := s.SetConversationStatus(ctx, first.ID, "conversation-1", "invalid", "INBOX/6"); err == nil {
+		t.Fatal("invalid status was accepted")
+	}
+}
+
 func TestRegistrationSettingDefaultsOpenAndPersists(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
