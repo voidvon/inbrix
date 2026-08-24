@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	stdhtml "html"
@@ -8,6 +9,7 @@ import (
 	"inbrix/mailstore"
 	"inbrix/models"
 	"inbrix/storage"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -401,6 +403,19 @@ func (h *EmailHandler) localJunkMessageMutation(c *fiber.Ctx, permanent bool) er
 	}
 	if err := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, folder); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "The email was changed, but the local folder count could not be updated"})
+	}
+	// MOVE assigns the message a new UID in INBOX. Refresh that mailbox before
+	// returning so the conversation list can show the restored message
+	// immediately instead of waiting for the periodic sync loop. If an
+	// immediate refresh is unavailable (for example OAuth2), the background
+	// worker is still nudged to reconcile it shortly.
+	if !permanent && h.auth != nil && h.auth.syncer != nil {
+		syncCtx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
+		if syncErr := h.auth.syncer.SyncNewMessagesNow(syncCtx, account.ID, "INBOX"); syncErr != nil {
+			log.Printf("mail mirror: refresh INBOX after restoring junk message: %v", syncErr)
+			h.auth.syncer.Trigger(account.ID)
+		}
+		cancel()
 	}
 	response := fiber.Map{"ok": true}
 	if !permanent {

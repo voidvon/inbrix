@@ -3296,7 +3296,7 @@ function GeneralSettings({ copy }: { copy: Copy }) {
         <div className="mt-4 grid max-w-xl gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-sm">
-              <input className="size-4 accent-primary" type="checkbox" checked={webhookEnabled} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { setWebhookEnabled(event.target.checked); setWebhookMessage(""); }} onBlur={() => persistWebhook()} />
+              <input className="size-4 accent-primary" type="checkbox" checked={webhookEnabled} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { const enabled = event.target.checked; setWebhookEnabled(enabled); persistWebhook(enabled, webhookURL); }} />
               {copy.feishuWebhookEnabled}
             </label>
             <Button type="button" variant="outline" size="sm" disabled={webhook.isPending || testWebhook.isPending || !webhookURL.trim()} onClick={() => { setWebhookMessage(""); testWebhook.mutate(webhookURL.trim()); }}><Send />{testWebhook.isPending ? copy.feishuWebhookTesting : copy.feishuWebhookTest}</Button>
