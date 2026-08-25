@@ -273,6 +273,9 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	defer client.Close()
+	if err := m.flushPendingFlags(ctx, client, accountID); err != nil {
+		log.Printf("mail sync: account %s pending flags: %v", accountID, err)
+	}
 
 	folders, err := client.FetchFolders()
 	if err != nil {
@@ -311,6 +314,63 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	return m.store.MarkAccountSyncedAt(ctx, accountID, time.Now())
+}
+
+type pendingFlagWriter interface {
+	SetMessageFlags(folderName string, uids []string, flag string, add bool) error
+}
+
+type pendingFlagGroup struct {
+	folder string
+	flag   string
+	add    bool
+}
+
+func pendingFlagRetryDelay(attempts int) time.Duration {
+	delay := 5 * time.Second
+	for i := 0; i < attempts && delay < 5*time.Minute; i++ {
+		delay *= 2
+	}
+	if delay > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return delay
+}
+
+// flushPendingFlags delivers the durable local flag intent before pulling
+// remote metadata. IMAP STORE is idempotent, so retrying after an ambiguous
+// connection failure is safe.
+func (m *SyncManager) flushPendingFlags(ctx context.Context, client pendingFlagWriter, accountID string) error {
+	updates, err := m.store.ListPendingFlagUpdates(ctx, accountID, time.Now(), 500)
+	if err != nil {
+		return err
+	}
+	groups := make(map[pendingFlagGroup][]PendingFlagUpdate)
+	for _, update := range updates {
+		key := pendingFlagGroup{folder: update.FolderName, flag: update.Flag, add: update.Add}
+		groups[key] = append(groups[key], update)
+	}
+	for group, pending := range groups {
+		uids := make([]string, 0, len(pending))
+		for _, update := range pending {
+			uids = append(uids, update.UID)
+		}
+		if err := client.SetMessageFlags(group.folder, uids, group.flag, group.add); err != nil {
+			for _, update := range pending {
+				next := time.Now().Add(pendingFlagRetryDelay(update.Attempts))
+				if storeErr := m.store.FailPendingFlagUpdate(ctx, update, next, err); storeErr != nil {
+					return storeErr
+				}
+			}
+			continue
+		}
+		for _, update := range pending {
+			if err := m.store.CompletePendingFlagUpdate(ctx, update); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func isNoSelect(attributes []string) bool {

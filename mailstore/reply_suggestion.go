@@ -36,6 +36,9 @@ func resolveReplySuggestionConfig(ctx context.Context, store *Store, encryptionK
 	var model AIModelRecord
 	binding, err := store.GetAITaskBinding(ctx, account.OwnerID, account.ID, ReplySuggestionTask)
 	if err == nil {
+		if !binding.Enabled {
+			return replySuggestionConfig{}, ErrNotFound
+		}
 		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
 		if err == nil {
 			model, err = store.GetAIModel(ctx, account.OwnerID, binding.ModelID)

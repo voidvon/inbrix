@@ -597,10 +597,14 @@ func (c *Config) GetSecurityHeaders() map[string]string {
 	//                     the small inline style blocks used by the client shell.
 	// blob:             — allows browser APIs to use blob: object URLs when needed.
 	//
-	// Email HTML bodies are sandboxed inside <iframe sandbox> (no allow-scripts)
-	// so they never reach this CSP; this policy is the outer-page defence.
+	// Email HTML bodies are sandboxed inside <iframe sandbox> (no allow-scripts),
+	// but their initial about:blank document still inherits this policy.
 	scriptSrc := "'self'"
-	imgSrc := "'self' data: blob:"
+	// HTML mail is written into an initial about:blank iframe document, which
+	// inherits this policy from the parent page. Allow remote image schemes so
+	// ordinary mail <img> elements can load as intended; active content remains
+	// constrained by the script/object directives and the iframe sandbox.
+	imgSrc := "'self' data: blob: https: http:"
 	connectSrc := "'self'"
 	csp := "default-src 'self'; script-src " + scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src " + imgSrc + "; connect-src " + connectSrc + "; object-src 'none'; base-uri 'self';"
 

@@ -471,6 +471,9 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	var agentPrompt string
 	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, taskType)
 	if bindingErr == nil {
+		if !binding.Enabled {
+			return fiber.NewError(fiber.StatusPreconditionRequired, "this AI function is disabled for the mailbox")
+		}
 		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
 		if err == nil {
 			var agent mailstore.AIAgentRecord

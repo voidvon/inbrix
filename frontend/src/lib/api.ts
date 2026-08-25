@@ -171,11 +171,11 @@ export function saveConversationStatus(id: string, status: "answered" | "unanswe
 }
 
 export function markConversationRead(id: string) {
-  return apiFetch<{ ok: boolean; updated: number }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "PATCH" });
+  return apiFetch<{ ok: boolean; updated: number; sync: "pending" | "idle" }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: "PATCH" });
 }
 
 export function markConversationUnread(id: string) {
-  return apiFetch<{ ok: boolean; updated: number }>(`/api/conversations/${encodeURIComponent(id)}/unread`, { method: "PATCH" });
+  return apiFetch<{ ok: boolean; updated: number; sync: "pending" | "idle" }>(`/api/conversations/${encodeURIComponent(id)}/unread`, { method: "PATCH" });
 }
 
 export function deleteConversation(id: string) {
@@ -204,6 +204,14 @@ export function saveFeishuWebhookSettings(settings: FeishuWebhookSettings) {
     method: "PUT",
     body: JSON.stringify(settings),
   });
+}
+
+export function getAccountFeishuWebhookSettings(email: string) {
+  return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(email)}/feishu-webhook`);
+}
+
+export function saveAccountFeishuWebhookSettings(email: string, settings: FeishuWebhookSettings) {
+  return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(email)}/feishu-webhook`, { method: "PUT", body: JSON.stringify(settings) });
 }
 
 export function testFeishuWebhook(url: string) {
@@ -363,9 +371,10 @@ export type AITaskBinding = {
   agentId: string;
   modelId: string;
   explicit: boolean;
+  enabled: boolean;
 };
 
-export type AITaskBindingInput = Pick<AITaskBinding, "accountEmail" | "taskType" | "agentId" | "modelId">;
+export type AITaskBindingInput = Pick<AITaskBinding, "accountEmail" | "taskType" | "agentId" | "modelId"> & { enabled?: boolean };
 
 export function getAITaskBindings() {
   return apiFetch<{ bindings: AITaskBinding[] }>("/api/settings/ai/task-bindings");

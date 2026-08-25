@@ -18,14 +18,16 @@ const (
 func scanAITaskBinding(scanner interface{ Scan(...any) error }) (AITaskBindingRecord, error) {
 	var binding AITaskBindingRecord
 	var updatedAt int64
-	err := scanner.Scan(&binding.AccountID, &binding.TaskType, &binding.AgentID, &binding.ModelID, &updatedAt)
+	var enabled int
+	err := scanner.Scan(&binding.AccountID, &binding.TaskType, &binding.AgentID, &binding.ModelID, &enabled, &updatedAt)
+	binding.Enabled = intBool(enabled)
 	binding.UpdatedAt = time.Unix(updatedAt, 0)
 	return binding, err
 }
 
 func (s *Store) GetAITaskBinding(ctx context.Context, ownerID, accountID, taskType string) (AITaskBindingRecord, error) {
 	binding, err := scanAITaskBinding(s.db.QueryRowContext(ctx, `
-		SELECT b.account_id, b.task_type, b.agent_id, b.model_id, b.updated_at
+		SELECT b.account_id, b.task_type, b.agent_id, b.model_id, b.enabled, b.updated_at
 		FROM ai_task_bindings b
 		JOIN mail_accounts a ON a.id = b.account_id
 		JOIN ai_agents g ON g.id = b.agent_id AND g.owner_id = a.owner_id
@@ -42,6 +44,9 @@ func (s *Store) GetAITaskBinding(ctx context.Context, ownerID, accountID, taskTy
 }
 
 func (s *Store) SaveAITaskBinding(ctx context.Context, ownerID string, binding AITaskBindingRecord) (AITaskBindingRecord, error) {
+	if !binding.EnabledSet && !binding.Enabled {
+		binding.Enabled = true
+	}
 	ownerID = strings.TrimSpace(ownerID)
 	binding.AccountID = strings.TrimSpace(binding.AccountID)
 	binding.TaskType = strings.TrimSpace(binding.TaskType)
@@ -76,11 +81,11 @@ func (s *Store) SaveAITaskBinding(ctx context.Context, ownerID string, binding A
 	}
 	now := time.Now().Unix()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ai_task_bindings(account_id, task_type, agent_id, model_id, updated_at)
-		VALUES(?, ?, ?, ?, ?)
+		INSERT INTO ai_task_bindings(account_id, task_type, agent_id, model_id, enabled, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?)
 		ON CONFLICT(account_id, task_type) DO UPDATE SET
-			agent_id = excluded.agent_id, model_id = excluded.model_id, updated_at = excluded.updated_at`,
-		binding.AccountID, binding.TaskType, binding.AgentID, binding.ModelID, now); err != nil {
+			agent_id = excluded.agent_id, model_id = excluded.model_id, enabled = excluded.enabled, updated_at = excluded.updated_at`,
+		binding.AccountID, binding.TaskType, binding.AgentID, binding.ModelID, boolInt(binding.Enabled), now); err != nil {
 		return AITaskBindingRecord{}, fmt.Errorf("mailstore: save AI task binding: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

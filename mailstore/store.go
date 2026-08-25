@@ -120,11 +120,13 @@ type AIAgentRecord struct {
 }
 
 type AITaskBindingRecord struct {
-	AccountID string
-	TaskType  string
-	AgentID   string
-	ModelID   string
-	UpdatedAt time.Time
+	AccountID  string
+	TaskType   string
+	AgentID    string
+	ModelID    string
+	Enabled    bool
+	EnabledSet bool
+	UpdatedAt  time.Time
 }
 
 type MessageSummaryKey struct {
@@ -235,6 +237,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			url TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS account_webhook_settings (
+			account_id TEXT PRIMARY KEY,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			url TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS ai_model_settings (
 			owner_id TEXT PRIMARY KEY,
 			enabled INTEGER NOT NULL DEFAULT 0,
@@ -331,6 +340,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_list ON messages(account_id, folder_name, date_unix DESC, uid DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, folder_name, subject)`,
+		`CREATE TABLE IF NOT EXISTS pending_flag_updates (
+			account_id TEXT NOT NULL,
+			folder_name TEXT NOT NULL,
+			uid INTEGER NOT NULL,
+			flag TEXT NOT NULL,
+			add_flag INTEGER NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, folder_name, uid, flag),
+			FOREIGN KEY(account_id, folder_name, uid) REFERENCES messages(account_id, folder_name, uid) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pending_flag_updates_due ON pending_flag_updates(account_id, next_attempt_at, updated_at)`,
 		`CREATE TABLE IF NOT EXISTS message_attachments (
 			account_id TEXT NOT NULL,
 			folder_name TEXT NOT NULL,
@@ -419,6 +444,38 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	if err := s.ensureUserRoleColumn(ctx); err != nil {
 		return err
+	}
+	if err := s.ensureAITaskBindingEnabledColumn(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureAITaskBindingEnabledColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_task_bindings)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI bindings schema: %w", err)
+	}
+	defer rows.Close()
+	has := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &def, &pk); err != nil {
+			return err
+		}
+		if name == "enabled" {
+			has = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !has {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_task_bindings ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("mailstore: add AI binding enabled: %w", err)
+		}
 	}
 	return nil
 }

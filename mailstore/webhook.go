@@ -79,11 +79,51 @@ func (s *Store) SaveWebhookSettings(ctx context.Context, ownerID string, cfg Web
 	return nil
 }
 
+func (s *Store) GetAccountWebhookSettings(ctx context.Context, ownerID, accountID string) (WebhookSettings, error) {
+	var cfg WebhookSettings
+	var enabled int
+	err := s.db.QueryRowContext(ctx, `SELECT enabled, url FROM account_webhook_settings w JOIN mail_accounts a ON a.id=w.account_id WHERE a.owner_id=? AND w.account_id=?`, ownerID, accountID).Scan(&enabled, &cfg.URL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cfg, nil
+	}
+	if err != nil {
+		return cfg, fmt.Errorf("mailstore: get account webhook settings: %w", err)
+	}
+	cfg.Enabled = intBool(enabled)
+	return cfg, nil
+}
+
+func (s *Store) SaveAccountWebhookSettings(ctx context.Context, ownerID, accountID string, cfg WebhookSettings) error {
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(accountID) == "" {
+		return errors.New("mailstore: account webhook owner and account are required")
+	}
+	var accountOwner string
+	if err := s.db.QueryRowContext(ctx, `SELECT owner_id FROM mail_accounts WHERE id=?`, accountID).Scan(&accountOwner); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if accountOwner != ownerID {
+		return ErrNotFound
+	}
+	cfg.URL = strings.TrimSpace(cfg.URL)
+	if cfg.URL != "" {
+		if err := ValidateFeishuWebhookURL(cfg.URL); err != nil {
+			return err
+		}
+	}
+	if cfg.Enabled && cfg.URL == "" {
+		return errors.New("an enabled webhook needs a URL")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO account_webhook_settings(account_id,enabled,url,updated_at) VALUES(?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET enabled=excluded.enabled,url=excluded.url,updated_at=excluded.updated_at`, accountID, boolInt(cfg.Enabled), cfg.URL, time.Now().Unix())
+	return err
+}
+
 func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi.Client, account Account, messages []models.Email) {
 	if len(messages) == 0 {
 		return
 	}
-	cfg, err := m.store.GetWebhookSettings(ctx, account.OwnerID)
+	cfg, err := m.store.GetAccountWebhookSettings(ctx, account.OwnerID, account.ID)
 	if err != nil {
 		log.Printf("mail webhook: load settings for account %s: %v", account.ID, err)
 		cfg = WebhookSettings{}

@@ -487,18 +487,29 @@ func (c *Client) MoveMessage(srcFolder, uid, destFolder string) error {
 // SetMessageFlag sets or removes the given IMAP flag on a message identified
 // by its UID in folderName.  add=true adds the flag; add=false removes it.
 func (c *Client) SetMessageFlag(folderName, uid string, flag string, add bool) error {
-	uidNum, err := parseUID(uid)
-	if err != nil {
-		return fmt.Errorf("invalid UID: %v", err)
+	return c.SetMessageFlags(folderName, []string{uid}, flag, add)
+}
+
+// SetMessageFlags applies one flag state to multiple UIDs with a single
+// SELECT + UID STORE round trip.
+func (c *Client) SetMessageFlags(folderName string, uids []string, flag string, add bool) error {
+	if len(uids) == 0 {
+		return nil
 	}
 
-	_, err = c.client.Select(folderName, false)
+	_, err := c.client.Select(folderName, false)
 	if err != nil {
 		return fmt.Errorf("error selecting folder %s: %v", folderName, err)
 	}
 
 	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(uidNum)
+	for _, uid := range uids {
+		uidNum, parseErr := parseUID(uid)
+		if parseErr != nil {
+			return fmt.Errorf("invalid UID %q: %v", uid, parseErr)
+		}
+		seqSet.AddNum(uidNum)
+	}
 
 	var operation imap.FlagsOp
 	if add {

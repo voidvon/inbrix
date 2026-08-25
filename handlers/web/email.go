@@ -1411,6 +1411,30 @@ func (h *EmailHandler) HandleMarkUnread(c *fiber.Ctx) error {
 			folderName = "INBOX"
 		}
 	}
+	if h.mailDB != nil {
+		var account mailstore.Account
+		var ok bool
+		if accountEmail := requestAccountEmail(c); accountEmail != "" {
+			account, ok = h.mirrorAccountForEmail(c, accountEmail)
+		} else {
+			account, ok = h.currentMirrorAccount(c)
+		}
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+		}
+		updated, err := h.mailDB.QueueSeenUpdates(c.UserContext(), account.ID, []mailstore.MessageFlagKey{{FolderName: folderName, UID: emailID}}, false)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not update the local email read status"})
+		}
+		if updated > 0 && h.auth != nil && h.auth.syncer != nil {
+			h.auth.syncer.Trigger(account.ID)
+		}
+		syncState := "idle"
+		if updated > 0 {
+			syncState = "pending"
+		}
+		return c.JSON(fiber.Map{"success": true, "message": "Marked as unread", "sync": syncState})
+	}
 
 	client, account, err := h.messageClientForAccount(c, requestAccountEmail(c))
 	if err != nil {

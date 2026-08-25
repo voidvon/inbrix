@@ -55,12 +55,23 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		return fmt.Errorf("mailstore: prepare message upsert: %w", err)
 	}
 	defer stmt.Close()
+	pendingSeenStmt, err := tx.PrepareContext(ctx, `SELECT add_flag FROM pending_flag_updates WHERE account_id = ? AND folder_name = ? AND uid = ? AND flag = ?`)
+	if err != nil {
+		return fmt.Errorf("mailstore: prepare pending flag lookup: %w", err)
+	}
+	defer pendingSeenStmt.Close()
 
 	now := time.Now().Unix()
 	for _, email := range emails {
 		uid, err := parseUIDString(email.ID)
 		if err != nil {
 			continue
+		}
+		var pendingSeen int
+		if lookupErr := pendingSeenStmt.QueryRowContext(ctx, accountID, folderName, uid, seenFlag).Scan(&pendingSeen); lookupErr == nil {
+			email.Flags, _ = flagsWithState(email.Flags, seenFlag, intBool(pendingSeen))
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return fmt.Errorf("mailstore: read pending flag override for %s/%s/%s: %w", accountID, folderName, email.ID, lookupErr)
 		}
 		email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
 		bodyCached := email.BodyCached || email.Body != "" || email.HTML != ""

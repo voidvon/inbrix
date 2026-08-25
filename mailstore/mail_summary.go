@@ -83,6 +83,9 @@ func resolveMailSummaryMetadata(ctx context.Context, store *Store, account Accou
 	var model AIModelRecord
 	binding, err := store.GetAITaskBinding(ctx, account.OwnerID, account.ID, MailSummaryTask)
 	if err == nil {
+		if !binding.Enabled {
+			return AIAgentRecord{}, AIModelRecord{}, "", ErrNotFound
+		}
 		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
 		if err == nil {
 			model, err = store.GetAIModel(ctx, account.OwnerID, binding.ModelID)

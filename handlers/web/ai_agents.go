@@ -27,6 +27,7 @@ type aiTaskBindingInput struct {
 	TaskType     string `json:"taskType"`
 	AgentID      string `json:"agentId"`
 	ModelID      string `json:"modelId"`
+	Enabled      *bool  `json:"enabled"`
 }
 
 type aiTaskBindingPublic struct {
@@ -35,6 +36,7 @@ type aiTaskBindingPublic struct {
 	AgentID      string `json:"agentId"`
 	ModelID      string `json:"modelId"`
 	Explicit     bool   `json:"explicit"`
+	Enabled      bool   `json:"enabled"`
 }
 
 func publicAIAgent(agent mailstore.AIAgentRecord) aiAgentPublic {
@@ -135,10 +137,10 @@ func (h *AISettingsHandler) HandleListTaskBindings(c *fiber.Ctx) error {
 	out := make([]aiTaskBindingPublic, 0, len(accounts)*3)
 	for _, account := range accounts {
 		for _, taskType := range []string{mailstore.MailSummaryTask, mailstore.EmailDraftTask, mailstore.ReplySuggestionTask} {
-			item := aiTaskBindingPublic{AccountEmail: account.Email, TaskType: taskType}
+			item := aiTaskBindingPublic{AccountEmail: account.Email, TaskType: taskType, Enabled: true}
 			binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, taskType)
 			if bindingErr == nil {
-				item.AgentID, item.ModelID, item.Explicit = binding.AgentID, binding.ModelID, true
+				item.AgentID, item.ModelID, item.Explicit, item.Enabled = binding.AgentID, binding.ModelID, true, binding.Enabled
 			} else if errors.Is(bindingErr, mailstore.ErrNotFound) {
 				model, modelErr := h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
 				if modelErr == nil {
@@ -176,6 +178,10 @@ func (h *AISettingsHandler) HandleSaveTaskBinding(c *fiber.Ctx) error {
 	input.TaskType = strings.TrimSpace(input.TaskType)
 	input.AgentID = strings.TrimSpace(input.AgentID)
 	input.ModelID = strings.TrimSpace(input.ModelID)
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
 	if input.TaskType != mailstore.MailSummaryTask && input.TaskType != mailstore.EmailDraftTask && input.TaskType != mailstore.ReplySuggestionTask {
 		return fiber.NewError(fiber.StatusBadRequest, "unsupported AI task type")
 	}
@@ -202,10 +208,12 @@ func (h *AISettingsHandler) HandleSaveTaskBinding(c *fiber.Ctx) error {
 		}
 	}
 	binding, err := h.mailDB.SaveAITaskBinding(c.UserContext(), owner, mailstore.AITaskBindingRecord{
-		AccountID: account.ID,
-		TaskType:  input.TaskType,
-		AgentID:   input.AgentID,
-		ModelID:   input.ModelID,
+		AccountID:  account.ID,
+		TaskType:   input.TaskType,
+		AgentID:    input.AgentID,
+		ModelID:    input.ModelID,
+		Enabled:    enabled,
+		EnabledSet: true,
 	})
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.NewError(fiber.StatusBadRequest, "mailbox, agent, or model does not belong to this user")
@@ -219,5 +227,6 @@ func (h *AISettingsHandler) HandleSaveTaskBinding(c *fiber.Ctx) error {
 		AgentID:      binding.AgentID,
 		ModelID:      binding.ModelID,
 		Explicit:     true,
+		Enabled:      binding.Enabled,
 	})
 }

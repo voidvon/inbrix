@@ -136,6 +136,7 @@ func TestGetSecurityHeaders_FrameAncestorsSet(t *testing.T) {
 	for _, want := range []string{
 		"default-src 'self'",
 		"script-src 'self'",
+		"img-src 'self' data: blob: https: http:",
 		"object-src 'none'",
 		"base-uri 'self'",
 		"frame-ancestors " + ancestors,
@@ -169,6 +170,7 @@ func TestGetSecurityHeaders_FrameAncestorsEmpty(t *testing.T) {
 	}
 	for _, want := range []string{
 		"default-src 'self'",
+		"img-src 'self' data: blob: https: http:",
 		"object-src 'none'",
 		"frame-ancestors 'self'",
 	} {

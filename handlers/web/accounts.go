@@ -236,6 +236,57 @@ func (h *AccountsHandler) HandleTestWebhook(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
+func (h *AccountsHandler) HandleGetAccountWebhookSettings(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.ErrNotImplemented
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	cfg, err := h.mailDB.GetAccountWebhookSettings(c.UserContext(), owner, account.ID)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(cfg)
+}
+
+func (h *AccountsHandler) HandlePutAccountWebhookSettings(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.ErrNotImplemented
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	var input webhookSettingsInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.ErrBadRequest
+	}
+	cfg := mailstore.WebhookSettings{Enabled: input.Enabled, URL: strings.TrimSpace(input.URL)}
+	if err := h.mailDB.SaveAccountWebhookSettings(c.UserContext(), owner, account.ID, cfg); err != nil {
+		if errors.Is(err, mailstore.ErrNotFound) {
+			return fiber.ErrNotFound
+		}
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return c.JSON(cfg)
+}
+
 type mirrorSafeAccount struct {
 	ID         string `json:"id"`
 	Email      string `json:"email"`

@@ -63,7 +63,7 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -233,6 +233,7 @@ const zh = {
   emailDraftAgent: "邮件撰写",
   replySuggestionAgent: "建议回复",
   aiTask: "AI 功能",
+  enabled: "启用",
   inheritedConfiguration: "兼容配置",
   explicitConfiguration: "已配置",
   mailboxAIConfigurationSaved: "邮箱 AI 配置已保存",
@@ -512,6 +513,7 @@ const en = {
   emailDraftAgent: "Email drafting",
   replySuggestionAgent: "Suggested reply",
   aiTask: "AI function",
+  enabled: "Enabled",
   inheritedConfiguration: "Fallback",
   explicitConfiguration: "Configured",
   mailboxAIConfigurationSaved: "Mailbox AI configuration saved",
@@ -818,6 +820,9 @@ function InboxPage() {
     queryFn: () => getConversation(selectedId!),
     enabled: Boolean(selectedId),
   });
+  useEffect(() => {
+    autoReadRef.current.clear();
+  }, [selectedId]);
   const deleteMutation = useMutation({
     mutationFn: (conversation: ConversationSummary) => deleteConversation(conversation.id),
     onSuccess: async (_, conversation) => {
@@ -842,18 +847,41 @@ function InboxPage() {
     const fingerprint = `${conversation.id}:${unread.map((message) => `${message.folder || "INBOX"}/${message.id}`).join(",")}`;
     if (autoReadRef.current.has(fingerprint)) return;
     autoReadRef.current.add(fingerprint);
+    const previousDetail = queryClient.getQueryData<ConversationDetailResponse>(["conversation", conversation.id]);
+    const previousLists = queryClient.getQueriesData<ConversationListResponse>({ queryKey: ["conversations"] });
+    queryClient.setQueryData<ConversationDetailResponse>(["conversation", conversation.id], (current) => current ? {
+      ...current,
+      conversation: { ...current.conversation, messages: current.conversation.messages.map((message) => message.outgoing ? message : { ...message, flags: flagsMarkedSeen(message.flags) }) },
+    } : current);
+    queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) => current ? {
+      ...current,
+      conversations: current.conversations.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item),
+    } : current);
     void markConversationRead(conversation.id).then(async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
       ]);
     }).catch(() => {
+      queryClient.setQueryData(["conversation", conversation.id], previousDetail);
+      for (const [key, value] of previousLists) queryClient.setQueryData(key, value);
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     });
   }, [detail.data?.conversation, queryClient]);
 
   const markUnread = async (conversation: ConversationSummary) => {
     manuallyUnreadRef.current.add(conversation.id);
+    const previousDetail = queryClient.getQueryData<ConversationDetailResponse>(["conversation", conversation.id]);
+    const previousLists = queryClient.getQueriesData<ConversationListResponse>({ queryKey: ["conversations"] });
+    const incomingCount = previousDetail?.conversation.messages.filter((message) => !message.outgoing).length;
+    queryClient.setQueryData<ConversationDetailResponse>(["conversation", conversation.id], (current) => current ? {
+      ...current,
+      conversation: { ...current.conversation, messages: current.conversation.messages.map((message) => message.outgoing ? message : { ...message, flags: flagsMarkedUnread(message.flags) }) },
+    } : current);
+    queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) => current ? {
+      ...current,
+      conversations: current.conversations.map((item) => item.id === conversation.id ? { ...item, unreadCount: incomingCount ?? Math.max(1, item.unreadCount) } : item),
+    } : current);
     try {
       await markConversationUnread(conversation.id);
       await Promise.all([
@@ -862,6 +890,8 @@ function InboxPage() {
       ]);
     } catch (value) {
       manuallyUnreadRef.current.delete(conversation.id);
+      queryClient.setQueryData(["conversation", conversation.id], previousDetail);
+      for (const [key, data] of previousLists) queryClient.setQueryData(key, data);
       toast.error(value instanceof Error ? value.message : locale.markUnreadFailed);
     }
   };
@@ -2416,6 +2446,10 @@ function flagsMarkedSeen(flags: string[] = []) {
   return flags.some((flag) => flag.toLowerCase() === "\\seen") ? flags : [...flags, "\\Seen"];
 }
 
+function flagsMarkedUnread(flags: string[] = []) {
+  return flags.filter((flag) => flag.toLowerCase() !== "\\seen");
+}
+
 function FolderMessageRow({ copy, message, address, selected, junkActions, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; junkActions: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
   const unread = messageIsUnread(message);
   const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-muted-foreground")}>{address}</strong><span className="flex shrink-0 items-center gap-2">{unread && <span className="size-1.5 rounded-full bg-primary" aria-label={copy.unread} title={copy.unread} />}<time className="text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span></span><span className={cn("mt-1 block truncate text-xs", unread ? "text-foreground/80" : "text-muted-foreground/70")}>{message.subject || copy.noSubject}</span></button>;
@@ -2503,6 +2537,9 @@ function FolderPage({ folder }: { folder: string }) {
     return () => window.removeEventListener("popstate", restoreMessageFromURL);
   }, []);
   useEffect(() => {
+    markingReadRef.current.clear();
+  }, [selected]);
+  useEffect(() => {
     if (!selected) return;
     const message = list.data?.messages.find((item) => item.id === selected);
     if (!message || !messageIsUnread(message)) return;
@@ -2510,15 +2547,18 @@ function FolderPage({ folder }: { folder: string }) {
     const key = `${accountEmail}/${folder}/${message.id}`;
     if (markingReadRef.current.has(key)) return;
     markingReadRef.current.add(key);
+    const previousList = queryClient.getQueryData<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(["folder", folder]);
+    const previousDetail = queryClient.getQueryData<MailMessage>(["message", folder, message.id]);
+    queryClient.setQueryData<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(["folder", folder], (current) => current ? {
+      ...current,
+      messages: current.messages.map((item) => item.id === message.id ? { ...item, flags: flagsMarkedSeen(item.flags) } : item),
+    } : current);
+    queryClient.setQueryData<MailMessage>(["message", folder, message.id], (current) => current ? { ...current, flags: flagsMarkedSeen(current.flags) } : current);
     void markMailMessageRead(folder, message.id, accountEmail).then(() => {
-      queryClient.setQueryData<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(["folder", folder], (current) => current ? {
-        ...current,
-        messages: current.messages.map((item) => item.id === message.id ? { ...item, flags: flagsMarkedSeen(item.flags) } : item),
-      } : current);
-      queryClient.setQueryData<MailMessage>(["message", folder, message.id], (current) => current ? { ...current, flags: flagsMarkedSeen(current.flags) } : current);
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     }).catch((value) => {
-      markingReadRef.current.delete(key);
+      queryClient.setQueryData(["folder", folder], previousList);
+      queryClient.setQueryData(["message", folder, message.id], previousDetail);
       toast.error(value instanceof Error ? value.message : locale.loadFailed);
     });
   }, [folder, list.data?.messages, locale.loadFailed, metadata.data?.accountEmail, queryClient, selected]);
@@ -2998,7 +3038,7 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
 
   useEffect(() => {
     if (!bindings.data) return;
-    setDrafts(Object.fromEntries(bindings.data.bindings.map((binding) => [`${binding.accountEmail}\u0000${binding.taskType}`, { agentId: binding.agentId, modelId: binding.modelId }])));
+    setDrafts(Object.fromEntries(bindings.data.bindings.map((binding) => [`${binding.accountEmail}\u0000${binding.taskType}`, { agentId: binding.agentId || "", modelId: binding.modelId }])));
   }, [bindings.data]);
 
   const saveBinding = useMutation({
@@ -3019,7 +3059,7 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
   });
   const updateAndSave = (binding: AITaskBinding, field: "agentId" | "modelId", value: string) => {
     const key = `${binding.accountEmail}\u0000${binding.taskType}`;
-    const current = drafts[key] || { agentId: binding.agentId, modelId: binding.modelId };
+    const current = drafts[key] || { agentId: binding.agentId || "", modelId: binding.modelId };
     const next = { ...current, [field]: value };
     setDrafts((items) => ({ ...items, [key]: next }));
     if (!next.agentId || !next.modelId) return;
@@ -3048,7 +3088,7 @@ function MailboxAITaskSettings({ copy }: { copy: Copy }) {
             {(bindings.isPending || models.isPending || agents.isPending) ? (
               <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.loading}</TableCell></TableRow>
             ) : bindings.data?.bindings.length ? bindings.data.bindings.map((binding) => {
-              const draft = drafts[`${binding.accountEmail}\u0000${binding.taskType}`] || { agentId: binding.agentId, modelId: binding.modelId };
+              const draft = drafts[`${binding.accountEmail}\u0000${binding.taskType}`] || { agentId: binding.agentId || "", modelId: binding.modelId };
               const saving = saveBinding.isPending && saveBinding.variables?.accountEmail === binding.accountEmail && saveBinding.variables?.taskType === binding.taskType;
               const availableAgents = agents.data?.agents || [];
               const selectableAgents = binding.taskType === "mail_summary" ? availableAgents.filter((agent) => agent.outputLabels.length > 0) : availableAgents;
@@ -3321,25 +3361,6 @@ function GeneralSettings({ copy }: { copy: Copy }) {
         {pushMessage && <p className="mt-2 text-xs text-destructive">{pushMessage}</p>}
         {!pushAvailable && !capabilities.isPending && <p className="mt-2 text-xs text-muted-foreground">{copy.pushUnavailable}</p>}
       </section>
-      <section className="mt-7 border-t pt-6">
-        <h3 className="flex items-center gap-2 text-sm font-semibold"><MessageCircle className="size-4" />{copy.feishuWebhook}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">{copy.feishuWebhookDescription}</p>
-        <div className="mt-4 grid max-w-xl gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-sm">
-              <input className="size-4 accent-primary" type="checkbox" checked={webhookEnabled} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { const enabled = event.target.checked; setWebhookEnabled(enabled); persistWebhook(enabled, webhookURL); }} />
-              {copy.feishuWebhookEnabled}
-            </label>
-            <Button type="button" variant="outline" size="sm" disabled={webhook.isPending || testWebhook.isPending || !webhookURL.trim()} onClick={() => { setWebhookMessage(""); testWebhook.mutate(webhookURL.trim()); }}><Send />{testWebhook.isPending ? copy.feishuWebhookTesting : copy.feishuWebhookTest}</Button>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="feishu-webhook-url">{copy.feishuWebhookURL}</Label>
-            <Input id="feishu-webhook-url" type="url" inputMode="url" autoComplete="off" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhookURL} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { setWebhookURL(event.target.value); setWebhookMessage(""); }} onBlur={() => persistWebhook()} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-          </div>
-          {webhook.isError && <p className="text-xs text-destructive">{webhook.error instanceof Error ? webhook.error.message : copy.feishuWebhookUnavailable}</p>}
-          {webhookMessage && <p className={cn("text-xs", saveWebhook.isError || testWebhook.isError ? "text-destructive" : "text-muted-foreground")}>{webhookMessage}</p>}
-        </div>
-      </section>
     </div>
   );
 }
@@ -3381,7 +3402,6 @@ function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccoun
       </div>
       {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
       {error && <p className="py-2 text-xs text-destructive">{error}</p>}
-      <MailboxAITaskSettings copy={copy} />
     </section>
   );
 }
@@ -3390,6 +3410,12 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ ...emptyAccountForm });
   const [error, setError] = useState("");
+  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, enabled: open && Boolean(account), retry: false });
+  const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, enabled: open && Boolean(account), retry: false });
+  const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, enabled: open && Boolean(account), retry: false });
+  const webhook = useQuery({ queryKey: ["account-feishu-webhook", account?.email], queryFn: () => getAccountFeishuWebhookSettings(account!.email), enabled: open && Boolean(account), retry: false });
+  const saveBinding = useMutation({ mutationFn: saveAITaskBinding, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const saveWebhook = useMutation({ mutationFn: (value: { enabled: boolean; url: string }) => saveAccountFeishuWebhookSettings(account!.email, value), onSuccess: (value) => queryClient.setQueryData(["account-feishu-webhook", account?.email], value), onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   useEffect(() => {
     if (!open) return;
     setForm(account ? {
@@ -3431,6 +3457,36 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
               <Label className="grid gap-1.5">{copy.smtpServer}<Input value={form.smtp_server} onChange={field("smtp_server")} placeholder="smtp.example.com" /></Label>
               <Label className="grid gap-1.5">{copy.smtpPort}<Input type="number" min={1} max={65535} value={form.smtp_port} onChange={field("smtp_port")} required /></Label>
             </div>
+            {account && <div className="grid gap-4 border-t pt-5">
+              <div><h3 className="text-sm font-semibold">{copy.mailboxAIConfiguration}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p></div>
+              <div className="overflow-x-auto rounded-lg border">
+                <Table className="min-w-[38rem] table-fixed">
+                  <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-[17%] px-3">{copy.aiTask}</TableHead>
+                      <TableHead className="w-[35%] px-3">{copy.agentSettings}</TableHead>
+                      <TableHead className="w-[35%] px-3">{copy.aiModel}</TableHead>
+                      <TableHead className="w-[13%] px-3 text-center">{copy.enabled}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(["mail_summary", "email_draft", "reply_suggestion"] as const).map((taskType) => {
+                      const binding = bindings.data?.bindings.find((item) => item.accountEmail === account.email && item.taskType === taskType);
+                      const enabled = binding?.enabled !== false;
+                      const label = taskType === "mail_summary" ? copy.mailSummaryAgent : taskType === "email_draft" ? copy.emailDraftAgent : copy.replySuggestionAgent;
+                      const availableAgents = (agents.data?.agents || []).filter((item) => taskType !== "mail_summary" || item.outputLabels.length > 0);
+                      return <TableRow key={taskType}>
+                        <TableCell className="px-3 py-3 font-medium">{label}</TableCell>
+                        <TableCell className="px-3 py-3"><Select value={binding?.agentId || ""} disabled={!enabled || !availableAgents.length || saveBinding.isPending} onValueChange={(value) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: value || "", modelId: binding.modelId || "", enabled })}><SelectTrigger className="w-full"><SelectValue>{availableAgents.find((item) => item.id === binding?.agentId)?.name || copy.noAgents}</SelectValue></SelectTrigger><SelectContent>{availableAgents.map((item) => <SelectItem value={item.id} key={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></TableCell>
+                        <TableCell className="px-3 py-3"><Select value={binding?.modelId || ""} disabled={!enabled || !models.data?.models.length || saveBinding.isPending} onValueChange={(value) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: binding.agentId || "", modelId: value || "", enabled })}><SelectTrigger className="w-full"><SelectValue>{models.data?.models.find((item) => item.id === binding?.modelId)?.model || copy.noAIModels}</SelectValue></SelectTrigger><SelectContent>{models.data?.models.map((item) => <SelectItem value={item.id} key={item.id}>{item.model}</SelectItem>)}</SelectContent></Select></TableCell>
+                        <TableCell className="px-3 py-3 text-center"><Switch aria-label={label} checked={enabled} disabled={!binding || saveBinding.isPending} onCheckedChange={(checked) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: binding.agentId || "", modelId: binding.modelId || "", enabled: checked })} /></TableCell>
+                      </TableRow>;
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={(enabled) => { const url = webhook.data?.url || ""; if (enabled && !url) { setError(copy.feishuWebhookURLRequired); return; } saveWebhook.mutate({ enabled, url }); }} /></div><Input type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhook.data?.url || ""} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => queryClient.setQueryData(["account-feishu-webhook", account.email], { enabled: webhook.data?.enabled || false, url: event.target.value })} onBlur={() => webhook.data && saveWebhook.mutate(webhook.data)} /></div>
+            </div>}
             {error && <p className="text-xs text-destructive">{error}</p>}
           </ScrollArea>
           <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>

@@ -547,47 +547,33 @@ func (h *EmailHandler) handleConversationSeenJSON(c *fiber.Ctx, seen bool) error
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
 
-	type flagUpdate struct {
-		message ConversationMessage
-		flags   []string
-	}
-	updates := make([]flagUpdate, 0, len(selected.Messages))
+	keys := make([]mailstore.MessageFlagKey, 0, len(selected.Messages))
 	for _, message := range selected.Messages {
 		if message.Outgoing {
 			continue
 		}
-		flags, changed := flagsWithSeen(message.Email.Flags, seen)
-		if changed {
-			updates = append(updates, flagUpdate{message: message, flags: flags})
-		}
+		keys = append(keys, mailstore.MessageFlagKey{FolderName: message.Email.Folder, UID: message.Email.ID})
 	}
-	if len(updates) == 0 {
-		return c.JSON(fiber.Map{"ok": true, "updated": 0})
+	if len(keys) == 0 {
+		return c.JSON(fiber.Map{"ok": true, "updated": 0, "sync": "idle"})
 	}
 
-	client, account, err := h.messageClientForAccount(c, selected.AccountEmail)
+	account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail)
+	if !ok {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	updated, err := h.mailDB.QueueSeenUpdates(c.UserContext(), account.ID, keys, seen)
 	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not connect to the mail server"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not update the local email read status"})
 	}
-	defer client.Close()
-
-	folders := make(map[string]struct{})
-	for _, update := range updates {
-		email := update.message.Email
-		if err := client.SetMessageFlag(email.Folder, email.ID, `\Seen`, seen); err != nil {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not update the email read status"})
-		}
-		if err := h.mailDB.UpdateFlags(c.UserContext(), account.ID, email.Folder, email.ID, update.flags); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email status changed on the mail server, but the local mailbox could not be updated"})
-		}
-		folders[email.Folder] = struct{}{}
+	if updated > 0 && h.auth != nil && h.auth.syncer != nil {
+		h.auth.syncer.Trigger(account.ID)
 	}
-	for folder := range folders {
-		if err := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, folder); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email status changed, but the local unread count could not be updated"})
-		}
+	syncState := "idle"
+	if updated > 0 {
+		syncState = "pending"
 	}
-	return c.JSON(fiber.Map{"ok": true, "updated": len(updates)})
+	return c.JSON(fiber.Map{"ok": true, "updated": updated, "sync": syncState})
 }
 
 func (h *EmailHandler) HandleConversationReadJSON(c *fiber.Ctx) error {

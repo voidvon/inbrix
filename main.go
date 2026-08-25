@@ -608,6 +608,8 @@ func main() {
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
+		protected.Get("/api/accounts/:email/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
+		protected.Put("/api/accounts/:email/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}
@@ -623,6 +625,8 @@ func main() {
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
+		protected.Get("/api/accounts/:email/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
+		protected.Put("/api/accounts/:email/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
 		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
 		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
 	}
