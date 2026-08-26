@@ -56,6 +56,7 @@ func (h *EmailHandler) SetMailMirror(s *mailstore.Store) {
 func (h *EmailHandler) SetDurableStore(kv storage.KV) { h.kv = kv }
 
 type mailAccountOption struct {
+	ID       string
 	Email    string
 	Label    string
 	Color    string
@@ -64,9 +65,10 @@ type mailAccountOption struct {
 
 func (h *EmailHandler) mailAccountOptions(c *fiber.Ctx) []mailAccountOption {
 	activeEmail := strings.TrimSpace(h.auth.GetSessionEmail(c))
+	username, _ := c.Locals("username").(string)
 	options := make([]mailAccountOption, 0)
 	seen := make(map[string]struct{})
-	appendOption := func(email, label, color string) {
+	appendOption := func(id, email, label, color string) {
 		email = strings.TrimSpace(email)
 		if email == "" {
 			return
@@ -80,6 +82,7 @@ func (h *EmailHandler) mailAccountOptions(c *fiber.Ctx) []mailAccountOption {
 		}
 		seen[key] = struct{}{}
 		options = append(options, mailAccountOption{
+			ID:       id,
 			Email:    email,
 			Label:    label,
 			Color:    color,
@@ -94,23 +97,22 @@ func (h *EmailHandler) mailAccountOptions(c *fiber.Ctx) []mailAccountOption {
 			if owner != "" {
 				if accounts, listErr := h.mailDB.ListAccounts(c.UserContext(), owner); listErr == nil {
 					for _, account := range accounts {
-						appendOption(account.Email, account.Label, account.Color)
+						appendOption(account.ID, account.Email, account.Label, account.Color)
 					}
 				}
 			}
 		}
 		if len(options) == 0 {
-			appendOption(activeEmail, activeEmail, "")
+			appendOption(stableAccountID(username, activeEmail), activeEmail, activeEmail, "")
 		}
 		return options
 	}
 
-	appendOption(activeEmail, activeEmail, "")
+	appendOption(stableAccountID(username, activeEmail), activeEmail, activeEmail, "")
 	if h.acctStore != nil && h.config.Accounts.Enabled {
-		username, _ := c.Locals("username").(string)
 		if entries, err := h.acctStore.List(username); err == nil {
 			for _, entry := range entries {
-				appendOption(entry.Email, entry.Label, entry.Color)
+				appendOption(entry.ID, entry.Email, entry.Label, entry.Color)
 			}
 		}
 	}

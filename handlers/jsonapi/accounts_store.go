@@ -17,8 +17,10 @@
 package jsonapi
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -53,6 +55,11 @@ type accountsStore struct {
 }
 
 func newAccountsStore(kv storage.KV) *accountsStore { return &accountsStore{kv: kv} }
+
+func connectedAccountID(owner, email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(owner)) + "\x00" + strings.ToLower(strings.TrimSpace(email))))
+	return fmt.Sprintf("acct_%x", sum[:12])
+}
 
 func connAccountKey(owner, email string) string { return owner + "|" + email }
 

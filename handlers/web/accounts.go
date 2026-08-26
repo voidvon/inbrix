@@ -10,8 +10,8 @@
 //
 //	GET  /api/accounts              → JSON list of additional accounts
 //	POST /api/accounts              → add an account (validate IMAP, store encrypted)
-//	DELETE /api/accounts/:email     → remove an account
-//	POST /api/accounts/:email/switch → switch active session to this account
+//	DELETE /api/accounts/:id     → remove an account
+//	POST /api/accounts/:id/switch → switch active session to this account
 //	GET  /settings                  → settings page (accounts panel + push enable)
 package web
 
@@ -23,7 +23,6 @@ import (
 	"inbrix/mailstore"
 	"inbrix/storage"
 	"log"
-	"net/url"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -107,6 +106,7 @@ func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
 	}
 	// Strip encrypted password from API response.
 	type safe struct {
+		ID         string `json:"id"`
 		Email      string `json:"email"`
 		Label      string `json:"label"`
 		Color      string `json:"color,omitempty"`
@@ -118,6 +118,7 @@ func (h *AccountsHandler) HandleListAccounts(c *fiber.Ctx) error {
 	out := make([]safe, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, safe{
+			ID:         e.ID,
 			Email:      e.Email,
 			Label:      e.Label,
 			Color:      e.Color,
@@ -244,7 +245,7 @@ func (h *AccountsHandler) HandleGetAccountWebhookSettings(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	account, err := h.accountByID(c, owner)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
 	}
@@ -266,7 +267,7 @@ func (h *AccountsHandler) HandlePutAccountWebhookSettings(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, c.Params("email"))
+	account, err := h.accountByID(c, owner)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
 	}
@@ -285,6 +286,18 @@ func (h *AccountsHandler) HandlePutAccountWebhookSettings(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	return c.JSON(cfg)
+}
+
+func (h *AccountsHandler) accountByID(c *fiber.Ctx, owner string) (mailstore.Account, error) {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return mailstore.Account{}, fiber.NewError(fiber.StatusBadRequest, "account id required")
+	}
+	account, err := h.mailDB.GetAccount(c.UserContext(), id)
+	if err != nil || account.OwnerID != owner {
+		return mailstore.Account{}, mailstore.ErrNotFound
+	}
+	return account, nil
 }
 
 type mirrorSafeAccount struct {
@@ -402,6 +415,7 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 	}
 
 	entry := AccountEntry{
+		ID:                stableAccountID(owner, req.Email),
 		Email:             req.Email,
 		Label:             req.Label,
 		Color:             req.Color,
@@ -418,6 +432,7 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"ok":    true,
+		"id":    entry.ID,
 		"email": entry.Email,
 		"label": entry.Label,
 	})
@@ -520,9 +535,8 @@ func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"ok": true, "id": account.ID, "email": account.Email, "label": account.Label})
 }
 
-// HandleUpdateAccount updates connection settings while keeping the email
-// address as the stable account identifier. An empty password preserves the
-// existing encrypted credential.
+// HandleUpdateAccount updates an account selected by its stable ID. An empty
+// password preserves the existing encrypted credential.
 func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
 	if h.mailDB != nil {
 		return h.handleUpdateMirrorAccount(c)
@@ -531,14 +545,8 @@ func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email, err := accountEmailParam(c)
-	if err != nil {
-		return err
-	}
-	if email == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "email param required")
-	}
-	existing, err := h.acctStore.Get(owner, email)
+	id := strings.TrimSpace(c.Params("id"))
+	existing, err := h.acctStore.GetByID(owner, id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return fiber.ErrNotFound
 	}
@@ -558,9 +566,9 @@ func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
 				return fiber.ErrInternalServerError
 			}
 		}
-		username := email
+		username := existing.Email
 		if !h.config.Server.UsernameIsEmail {
-			username = api.GetUsernameFromEmail(email)
+			username = api.GetUsernameFromEmail(existing.Email)
 		}
 		client, err := api.NewClientTLS(req.IMAPServer, req.IMAPPort, username, password, h.config.IMAP.TLS)
 		if err != nil {
@@ -586,7 +594,7 @@ func (h *AccountsHandler) HandleUpdateAccount(c *fiber.Ctx) error {
 	if err := h.acctStore.Save(owner, existing); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(fiber.Map{"ok": true, "email": existing.Email, "label": existing.Label})
+	return c.JSON(fiber.Map{"ok": true, "id": existing.ID, "email": existing.Email, "label": existing.Label})
 }
 
 func (h *AccountsHandler) handleUpdateMirrorAccount(c *fiber.Ctx) error {
@@ -594,11 +602,7 @@ func (h *AccountsHandler) handleUpdateMirrorAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email, err := accountEmailParam(c)
-	if err != nil {
-		return err
-	}
-	existing, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
+	existing, err := h.accountByID(c, owner)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
 	}
@@ -679,14 +683,6 @@ func normalizeAccountUpdate(req *accountUpdateInput, imapServer string, imapPort
 	}
 }
 
-func accountEmailParam(c *fiber.Ctx) (string, error) {
-	email, err := url.PathUnescape(strings.TrimSpace(c.Params("email")))
-	if err != nil {
-		return "", fiber.NewError(fiber.StatusBadRequest, "invalid email param")
-	}
-	return strings.TrimSpace(email), nil
-}
-
 // HandleDeleteAccount removes an additional account.
 func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 	if h.mailDB != nil {
@@ -694,11 +690,7 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 		if owner == "" {
 			return fiber.ErrUnauthorized
 		}
-		email, err := accountEmailParam(c)
-		if err != nil {
-			return err
-		}
-		account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
+		account, err := h.accountByID(c, owner)
 		if err != nil {
 			return fiber.ErrNotFound
 		}
@@ -749,15 +741,12 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email, err := accountEmailParam(c)
-	if err != nil {
-		return err
-	}
-	if email == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "email param required")
-	}
-	if err := h.acctStore.Delete(owner, email); err != nil {
-		log.Printf("accounts: delete %s for %s: %v", email, owner, err)
+	id := strings.TrimSpace(c.Params("id"))
+	if err := h.acctStore.DeleteByID(owner, id); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return fiber.ErrNotFound
+		}
+		log.Printf("accounts: delete %s for %s: %v", id, owner, err)
 		return fiber.ErrInternalServerError
 	}
 	return c.JSON(fiber.Map{"ok": true})
@@ -775,29 +764,15 @@ func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	targetEmail, err := accountEmailParam(c)
-	if err != nil {
-		return err
+	targetEntry, err := h.acctStore.GetByID(owner, strings.TrimSpace(c.Params("id")))
+	if errors.Is(err, storage.ErrNotFound) {
+		return fiber.NewError(fiber.StatusNotFound, "account not found")
 	}
-	if targetEmail == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "email param required")
-	}
-
-	// Load the target account.
-	entries, err := h.acctStore.List(owner)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	var target *AccountEntry
-	for i := range entries {
-		if entries[i].Email == targetEmail {
-			target = &entries[i]
-			break
-		}
-	}
-	if target == nil {
-		return fiber.NewError(fiber.StatusNotFound, "account not found")
-	}
+	target := &targetEntry
+	targetEmail := target.Email
 
 	// Decrypt the target password.
 	var password string
@@ -888,11 +863,7 @@ func (h *AccountsHandler) handleSwitchMirrorAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	email, err := accountEmailParam(c)
-	if err != nil {
-		return err
-	}
-	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, email)
+	account, err := h.accountByID(c, owner)
 	if err != nil {
 		return fiber.ErrNotFound
 	}

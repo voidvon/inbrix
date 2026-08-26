@@ -484,8 +484,11 @@ inbox. This section is only used when the SQLite mirror is disabled.
 |-------|-------------|
 | `GET /api/accounts` | List additional accounts (passwords not returned) |
 | `POST /api/accounts` | Add an account (validates IMAP credentials; JSON body) |
-| `DELETE /api/accounts/:email` | Remove an account |
-| `POST /api/accounts/:email/switch` | Switch the active session to this account |
+| `PUT /api/accounts/:id` | Update an account |
+| `DELETE /api/accounts/:id` | Remove an account |
+| `POST /api/accounts/:id/switch` | Switch the active session to this account |
+| `GET /api/accounts/:id/feishu-webhook` | Get account-specific Feishu Webhook settings |
+| `PUT /api/accounts/:id/feishu-webhook` | Update account-specific Feishu Webhook settings |
 
 ### Application-account routes
 

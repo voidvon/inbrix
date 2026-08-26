@@ -606,7 +606,7 @@ another user's account is `404` (no-leak).
 |--------|------|------|---------|
 | `GET`    | `/v1/accounts`         | — | `{ accounts: ConnectedAccount[] }` (no secrets) |
 | `POST`   | `/v1/accounts`         | `AddAccount` | `201 ConnectedAccount` |
-| `DELETE` | `/v1/accounts/:email`  | — | `204` (own) / `404` (foreign or missing) |
+| `DELETE` | `/v1/accounts/:id`     | — | `204` (own) / `404` (foreign or missing) |
 | `GET`    | `/v1/unified`          | `?folder=&limit=` | `{ folder, messages: Email[], errors: [] }` |
 | `GET`    | `/v1/messages?account=all` | `?folder=&limit=` | same as `/v1/unified` (alias) |
 
@@ -616,7 +616,7 @@ another user's account is `404` (no-leak).
   "imapServer":"imap.corp.com", "imapPort":993, "smtpServer":"smtp.corp.com", "smtpPort":587 }
 
 // ConnectedAccount (response) — password fields OMITTED, never serialized
-{ "email":"work@corp.com", "label":"Work", "color":"#0a0",
+{ "id":"acct_…", "email":"work@corp.com", "label":"Work", "color":"#0a0",
   "imapServer":"imap.corp.com", "imapPort":993, "smtpServer":"smtp.corp.com", "smtpPort":587 }
 ```
 

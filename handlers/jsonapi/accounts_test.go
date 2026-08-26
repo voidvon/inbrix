@@ -137,7 +137,7 @@ func TestDeleteConnectedAccountIsolation(t *testing.T) {
 
 	// Deleting alice's account as user@gmail.com is 404 (no-leak) and must NOT
 	// remove alice's record.
-	code, _ = doAs(t, app, "user@gmail.com", "DELETE", "/v1/accounts/alice-work@corp.com", "")
+	code, _ = doAs(t, app, "user@gmail.com", "DELETE", "/v1/accounts/"+connectedAccountID("user@gmail.com", "alice-work@corp.com"), "")
 	if code != fiber.StatusNotFound {
 		t.Fatalf("foreign delete: want 404, got %d", code)
 	}
@@ -151,7 +151,7 @@ func TestDeleteOwnAccount(t *testing.T) {
 	st := newAccountsStore(h.kv)
 	st.save("user@gmail.com", connectedAccount{Email: "work@corp.com", IMAPServer: "x"})
 
-	code, _ := doAs(t, app, "user@gmail.com", "DELETE", "/v1/accounts/work@corp.com", "")
+	code, _ := doAs(t, app, "user@gmail.com", "DELETE", "/v1/accounts/"+connectedAccountID("user@gmail.com", "work@corp.com"), "")
 	if code != fiber.StatusNoContent {
 		t.Fatalf("delete own: want 204, got %d", code)
 	}

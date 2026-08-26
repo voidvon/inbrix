@@ -1070,9 +1070,9 @@ function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, curre
 
 function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; accounts: ConversationListResponse["accounts"]; accountEmail: string }) {
   const active = accounts.find((account) => account.isActive || account.email === accountEmail);
-  const selectAccount = async (email: string) => {
-    if (email === accountEmail) return;
-    await switchAccount(email);
+  const selectAccount = async (account: ConversationListResponse["accounts"][number]) => {
+	if (account.email === accountEmail) return;
+	await switchAccount(account.id);
     window.location.assign("/inbox");
   };
   return (
@@ -1084,7 +1084,7 @@ function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; accounts: C
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" sideOffset={6} className="w-60">
         {accounts.map((account) => (
-              <DropdownMenuItem key={account.email} className="gap-2 px-2 py-2" onClick={() => void selectAccount(account.email)}>
+			  <DropdownMenuItem key={account.id} className="gap-2 px-2 py-2" onClick={() => void selectAccount(account)}>
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} />
                 <span className="min-w-0 flex-1"><strong className="block truncate font-medium">{account.label || account.email}</strong><small className="block truncate text-muted-foreground">{account.email}</small></span>
                 {(account.isActive || account.email === accountEmail) && <Check className="size-4 shrink-0" />}
@@ -3389,11 +3389,11 @@ function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccoun
           <TableBody>
             {accounts.isPending && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.loading}</TableCell></TableRow>}
             {accounts.data?.accounts.map((account: ConnectedAccount) => (
-              <TableRow key={account.email}>
+			  <TableRow key={account.id}>
                 <TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: account.color || "#777" }} /><div className="min-w-0"><strong className="block truncate font-medium">{account.label || account.email}</strong><span className="block truncate text-xs text-muted-foreground">{account.email}</span></div></div></TableCell>
                 <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.imapServer}${account.imapPort ? `:${account.imapPort}` : ""}`}>{account.imapServer}{account.imapPort ? `:${account.imapPort}` : ""}</span></TableCell>
                 <TableCell className="px-4 py-3"><span className="block truncate" title={`${account.smtpServer || "-"}${account.smtpPort ? `:${account.smtpPort}` : ""}`}>{account.smtpServer || "-"}{account.smtpPort ? `:${account.smtpPort}` : ""}</span></TableCell>
-                <TableCell className="px-4 py-3"><div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon" className="size-8" disabled={remove.isPending} onClick={() => onManageAccount(account)} aria-label={copy.editAccount} title={copy.editAccount}><Pencil /></Button><Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(account.email)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell>
+				<TableCell className="px-4 py-3"><div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon" className="size-8" disabled={remove.isPending} onClick={() => onManageAccount(account)} aria-label={copy.editAccount} title={copy.editAccount}><Pencil /></Button><Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(account.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell>
               </TableRow>
             ))}
             {!accounts.isPending && !accounts.data?.accounts.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>}
@@ -3413,9 +3413,10 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
   const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, enabled: open && Boolean(account), retry: false });
   const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, enabled: open && Boolean(account), retry: false });
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, enabled: open && Boolean(account), retry: false });
-  const webhook = useQuery({ queryKey: ["account-feishu-webhook", account?.email], queryFn: () => getAccountFeishuWebhookSettings(account!.email), enabled: open && Boolean(account), retry: false });
+  const accountIdentifier = account?.id;
+  const webhook = useQuery({ queryKey: ["account-feishu-webhook", accountIdentifier], queryFn: () => getAccountFeishuWebhookSettings(accountIdentifier!), enabled: open && Boolean(accountIdentifier), retry: false });
   const saveBinding = useMutation({ mutationFn: saveAITaskBinding, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
-  const saveWebhook = useMutation({ mutationFn: (value: { enabled: boolean; url: string }) => saveAccountFeishuWebhookSettings(account!.email, value), onSuccess: (value) => queryClient.setQueryData(["account-feishu-webhook", account?.email], value), onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const saveWebhook = useMutation({ mutationFn: (value: { enabled: boolean; url: string }) => saveAccountFeishuWebhookSettings(accountIdentifier!, value), onSuccess: (value) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], value), onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   useEffect(() => {
     if (!open) return;
     setForm(account ? {
@@ -3434,7 +3435,7 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
     if (!value) setError("");
     onOpenChange(value);
   };
-  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.email, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   const field = (name: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.type === "number" ? Number(event.target.value) : event.target.value;
     setForm((current) => ({ ...current, [name]: value }));
@@ -3485,7 +3486,7 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
                   </TableBody>
                 </Table>
               </div>
-              <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={(enabled) => { const url = webhook.data?.url || ""; if (enabled && !url) { setError(copy.feishuWebhookURLRequired); return; } saveWebhook.mutate({ enabled, url }); }} /></div><Input type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhook.data?.url || ""} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => queryClient.setQueryData(["account-feishu-webhook", account.email], { enabled: webhook.data?.enabled || false, url: event.target.value })} onBlur={() => webhook.data && saveWebhook.mutate(webhook.data)} /></div>
+              <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={(enabled) => { const url = webhook.data?.url || ""; if (enabled && !url) { setError(copy.feishuWebhookURLRequired); return; } saveWebhook.mutate({ enabled, url }); }} /></div><Input type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhook.data?.url || ""} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value })} onBlur={() => webhook.data && saveWebhook.mutate(webhook.data)} /></div>
             </div>}
             {error && <p className="text-xs text-destructive">{error}</p>}
           </ScrollArea>

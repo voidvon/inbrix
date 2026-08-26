@@ -97,6 +97,7 @@ type ConversationAccountErrorJSON struct {
 }
 
 type ConversationAccountJSON struct {
+	ID       string `json:"id"`
 	Email    string `json:"email"`
 	Label    string `json:"label"`
 	Color    string `json:"color,omitempty"`
@@ -373,6 +374,7 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (Convers
 	}
 	for _, account := range data["MailAccounts"].([]mailAccountOption) {
 		response.Accounts = append(response.Accounts, ConversationAccountJSON{
+			ID:       account.ID,
 			Email:    account.Email,
 			Label:    account.Label,
 			Color:    account.Color,

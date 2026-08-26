@@ -80,7 +80,7 @@ const unifiedHardCap = 200
 func (h *Handler) registerAccounts(g fiber.Router) {
 	g.Get("/accounts", h.handleListConnectedAccounts)
 	g.Post("/accounts", h.handleAddConnectedAccount)
-	g.Delete("/accounts/:email", h.handleDeleteConnectedAccount)
+	g.Delete("/accounts/:id", h.handleDeleteConnectedAccount)
 	// Unified inbox: merge the primary + every connected account. Also reachable as
 	// GET /v1/messages?account=all (handled in messages.go) so the client can use a
 	// single listing endpoint; this explicit path is the canonical form.
@@ -103,8 +103,9 @@ func (h *Handler) accountsStoreOr501(c *fiber.Ctx) (store *accountsStore, owner 
 
 // connectedAccountPublic is the client-safe view — NEVER includes the encrypted
 // (let alone plaintext) password.
-func connectedAccountPublic(a connectedAccount) fiber.Map {
+func connectedAccountPublic(owner string, a connectedAccount) fiber.Map {
 	return fiber.Map{
+		"id":         connectedAccountID(owner, a.Email),
 		"email":      a.Email,
 		"label":      a.Label,
 		"color":      a.Color,
@@ -127,7 +128,7 @@ func (h *Handler) handleListConnectedAccounts(c *fiber.Ctx) error {
 	}
 	out := make([]fiber.Map, 0, len(accts))
 	for _, a := range accts {
-		out = append(out, connectedAccountPublic(a))
+		out = append(out, connectedAccountPublic(owner, a))
 	}
 	return c.JSON(fiber.Map{"accounts": out})
 }
@@ -221,23 +222,34 @@ func (h *Handler) handleAddConnectedAccount(c *fiber.Ctx) error {
 		}
 		return fail(c, fiber.StatusInternalServerError, "could not save account")
 	}
-	return c.Status(fiber.StatusCreated).JSON(connectedAccountPublic(acct))
+	return c.Status(fiber.StatusCreated).JSON(connectedAccountPublic(owner, acct))
 }
 
 // handleDeleteConnectedAccount removes one of the caller's connected accounts. A
 // missing account — or one belonging to another user — is 404 (no cross-user
 // leak): the ownership check is a Get keyed by (owner, email).
-// DELETE /v1/accounts/:email
+// DELETE /v1/accounts/:id
 func (h *Handler) handleDeleteConnectedAccount(c *fiber.Ctx) error {
 	store, owner, handled, herr := h.accountsStoreOr501(c)
 	if handled {
 		return herr
 	}
-	email := strings.TrimSpace(c.Params("email"))
-	if email == "" {
-		return fail(c, fiber.StatusBadRequest, "email param required")
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return fail(c, fiber.StatusBadRequest, "account id required")
 	}
-	if _, err := store.get(owner, email); err != nil {
+	accounts, err := store.list(owner)
+	if err != nil {
+		return fail(c, fiber.StatusInternalServerError, "could not load accounts")
+	}
+	var email string
+	for _, account := range accounts {
+		if connectedAccountID(owner, account.Email) == id {
+			email = account.Email
+			break
+		}
+	}
+	if email == "" {
 		return fail(c, fiber.StatusNotFound, "account not found")
 	}
 	if err := store.delete(owner, email); err != nil {

@@ -6,6 +6,7 @@ export type Mailbox = {
 };
 
 export type MailAccount = {
+  id: string;
   email: string;
   label: string;
   color?: string;
@@ -130,6 +131,7 @@ export type MailAttachmentListResponse = {
 };
 
 export type ConnectedAccount = {
+  id: string;
   email: string;
   label: string;
   color?: string;

@@ -1,16 +1,19 @@
 package web
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 
 	"inbrix/storage"
 )
 
 type AccountEntry struct {
+	ID                string `json:"id"`
 	Email             string `json:"email"`
 	Label             string `json:"label"`
 	Color             string `json:"color,omitempty"`
@@ -31,11 +34,40 @@ func (s *AccountStore) Close() error                  { return nil }
 func (s *AccountStore) namespace(owner string) string { return "accounts:" + owner }
 
 func (s *AccountStore) Save(owner string, entry AccountEntry) error {
+	if entry.ID == "" {
+		entry.ID = stableAccountID(owner, entry.Email)
+	}
 	raw, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("accountstore: marshal: %w", err)
 	}
 	return s.kv.Set(s.namespace(owner), entry.Email, raw)
+}
+
+func stableAccountID(owner, email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(owner)) + "\x00" + strings.ToLower(strings.TrimSpace(email))))
+	return fmt.Sprintf("acct_%x", sum[:12])
+}
+
+func (s *AccountStore) GetByID(owner, id string) (AccountEntry, error) {
+	entries, err := s.List(owner)
+	if err != nil {
+		return AccountEntry{}, err
+	}
+	for _, entry := range entries {
+		if entry.ID == id {
+			return entry, nil
+		}
+	}
+	return AccountEntry{}, storage.ErrNotFound
+}
+
+func (s *AccountStore) DeleteByID(owner, id string) error {
+	entry, err := s.GetByID(owner, id)
+	if err != nil {
+		return err
+	}
+	return s.Delete(owner, entry.Email)
 }
 
 func (s *AccountStore) Get(owner, email string) (AccountEntry, error) {
@@ -68,6 +100,9 @@ func (s *AccountStore) List(owner string) ([]AccountEntry, error) {
 		if err := json.Unmarshal(value, &entry); err != nil {
 			log.Printf("accountstore: unmarshal entry: %v", err)
 			continue
+		}
+		if entry.ID == "" {
+			entry.ID = stableAccountID(owner, entry.Email)
 		}
 		entries = append(entries, entry)
 	}

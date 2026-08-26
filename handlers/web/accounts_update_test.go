@@ -16,6 +16,7 @@ func TestHandleUpdateAccountPreservesPasswordForMetadataEdit(t *testing.T) {
 	const owner = "owner@example.com"
 	const email = "mailbox@example.com"
 	original := AccountEntry{
+		ID:                stableAccountID(owner, email),
 		Email:             email,
 		Label:             "Old label",
 		Color:             "#111111",
@@ -34,9 +35,9 @@ func TestHandleUpdateAccountPreservesPasswordForMetadataEdit(t *testing.T) {
 		c.Locals("username", owner)
 		return c.Next()
 	})
-	app.Put("/api/accounts/:email", handler.HandleUpdateAccount)
+	app.Put("/api/accounts/:id", handler.HandleUpdateAccount)
 	body := `{"password":"","label":"New label","color":"#abcdef","imap_server":"imap.example.com","imap_port":993,"smtp_server":"smtp.example.com","smtp_port":587}`
-	request := httptest.NewRequest(http.MethodPut, "/api/accounts/mailbox%40example.com", strings.NewReader(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+original.ID, strings.NewReader(body))
 	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
 	response, err := app.Test(request)
 	if err != nil {

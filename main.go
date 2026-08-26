@@ -603,15 +603,15 @@ func main() {
 		acctHandler = web.NewAccountsHandler(store, config, webAuthHandler, acctStore)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
-		protected.Put("/api/accounts/:email", acctHandler.HandleUpdateAccount)
+		protected.Put("/api/accounts/:id", acctHandler.HandleUpdateAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
-		protected.Get("/api/accounts/:email/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
-		protected.Put("/api/accounts/:email/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
-		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
-		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
+		protected.Get("/api/accounts/:id/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
+		protected.Put("/api/accounts/:id/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
+		protected.Delete("/api/accounts/:id", acctHandler.HandleDeleteAccount)
+		protected.Post("/api/accounts/:id/switch", acctHandler.HandleSwitchAccount)
 	}
 	if mailMirror != nil {
 		if acctHandler == nil {
@@ -620,15 +620,15 @@ func main() {
 		acctHandler.SetMailMirror(mailMirror, mailSync)
 		protected.Get("/api/accounts", acctHandler.HandleListAccounts)
 		protected.Post("/api/accounts", acctHandler.HandleAddAccount)
-		protected.Put("/api/accounts/:email", acctHandler.HandleUpdateAccount)
+		protected.Put("/api/accounts/:id", acctHandler.HandleUpdateAccount)
 		protected.Post("/api/accounts/resync-attachments", acctHandler.HandleResyncAttachments)
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
-		protected.Get("/api/accounts/:email/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
-		protected.Put("/api/accounts/:email/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
-		protected.Delete("/api/accounts/:email", acctHandler.HandleDeleteAccount)
-		protected.Post("/api/accounts/:email/switch", acctHandler.HandleSwitchAccount)
+		protected.Get("/api/accounts/:id/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
+		protected.Put("/api/accounts/:id/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
+		protected.Delete("/api/accounts/:id", acctHandler.HandleDeleteAccount)
+		protected.Post("/api/accounts/:id/switch", acctHandler.HandleSwitchAccount)
 	}
 	// 404 Handler for undefined routes
 	app.Use(func(c *fiber.Ctx) error {

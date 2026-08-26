@@ -206,12 +206,12 @@ export function saveFeishuWebhookSettings(settings: FeishuWebhookSettings) {
   });
 }
 
-export function getAccountFeishuWebhookSettings(email: string) {
-  return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(email)}/feishu-webhook`);
+export function getAccountFeishuWebhookSettings(accountIdentifier: string) {
+	return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(accountIdentifier)}/feishu-webhook`);
 }
 
-export function saveAccountFeishuWebhookSettings(email: string, settings: FeishuWebhookSettings) {
-  return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(email)}/feishu-webhook`, { method: "PUT", body: JSON.stringify(settings) });
+export function saveAccountFeishuWebhookSettings(accountIdentifier: string, settings: FeishuWebhookSettings) {
+	return apiFetch<FeishuWebhookSettings>(`/api/accounts/${encodeURIComponent(accountIdentifier)}/feishu-webhook`, { method: "PUT", body: JSON.stringify(settings) });
 }
 
 export function testFeishuWebhook(url: string) {
@@ -490,16 +490,16 @@ export function addAccount(account: AddAccountInput) {
   return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>("/api/accounts", { method: "POST", body: JSON.stringify(account) });
 }
 
-export function updateAccount(email: string, account: AddAccountInput) {
-  return apiFetch<{ ok?: boolean; id?: string; email: string; label: string }>(`/api/accounts/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(account) });
+export function updateAccount(id: string, account: AddAccountInput) {
+	return apiFetch<{ ok?: boolean; id: string; email: string; label: string }>(`/api/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(account) });
 }
 
-export function deleteAccount(email: string) {
-  return apiFetch<{ ok?: boolean }>(`/api/accounts/${encodeURIComponent(email)}`, { method: "DELETE" });
+export function deleteAccount(id: string) {
+	return apiFetch<{ ok?: boolean }>(`/api/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function switchAccount(email: string) {
-  return apiFetch<{ ok?: boolean; next?: string }>(`/api/accounts/${encodeURIComponent(email)}/switch`, { method: "POST" });
+export function switchAccount(id: string) {
+	return apiFetch<{ ok?: boolean; next?: string }>(`/api/accounts/${encodeURIComponent(id)}/switch`, { method: "POST" });
 }
 
 export function getCalendarEvents(start: string, end: string) {
