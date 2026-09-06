@@ -679,10 +679,14 @@ func (h *AuthHandler) CreateSMTPClientForAccount(entry AccountEntry) (*api.SMTPC
 		return nil, fmt.Errorf("decrypt password for %s: %w", entry.Email, err)
 	}
 
+	useStartTLS := smtpUseSTARTTLS(entry.SMTPPort, h.config.SMTP.UseSTARTTLS)
+	if entry.SMTPStartTLS != nil {
+		useStartTLS = *entry.SMTPStartTLS
+	}
 	client := api.NewSMTPClient(
 		entry.SMTPServer, entry.SMTPPort,
 		entry.Email, password,
-		smtpUseSTARTTLS(entry.SMTPPort, h.config.SMTP.UseSTARTTLS),
+		useStartTLS,
 	)
 	if client == nil {
 		return nil, fmt.Errorf("failed to create SMTP client for %s", entry.Email)

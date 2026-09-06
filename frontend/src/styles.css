@@ -309,3 +309,19 @@
 .reply-quote[data-collapsed="true"] > .reply-quote-content {
   display: none;
 }
+
+.canvas-document-scroll {
+  overscroll-behavior: contain;
+}
+
+.canvas-document-editor {
+  width: 794px;
+  min-height: 1123px;
+  margin-inline: auto;
+  background: white;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 14%);
+}
+
+.canvas-document-editor [editor-component="main"] {
+  min-height: 1123px;
+}

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -34,9 +34,11 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Printer,
   Search,
   RotateCcw,
   RefreshCw,
+  Redo2,
   ReplyAll,
   Send,
   Signature as SignatureIcon,
@@ -45,9 +47,11 @@ import {
   ShieldCheck,
   Sun,
   Trash2,
+  Table2,
   TriangleAlert,
   Underline,
   UserRound,
+  Undo2,
   X,
   Bold,
   Bot,
@@ -63,7 +67,8 @@ import { EmailParagraph } from "./extensions/email-paragraph";
 import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import type { CanvasDocumentEditorHandle } from "./components/app/canvas-document-editor";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -84,6 +89,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Textarea } from "./components/ui/textarea";
 import { ConversationStatusTag, type ConversationStatus } from "./components/app/conversation-status-tag";
 import type { CalendarEvent, ConnectedAccount, ConversationDetail, ConversationDetailResponse, ConversationMessage, ConversationSummary, ConversationListResponse, MailAttachment, MailMessage, Mailbox, MailSummary } from "./types";
+
+const CanvasDocumentEditor = lazy(() => import("./components/app/canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
 
 const zh = {
   conversations: "对话",
@@ -139,6 +146,45 @@ const zh = {
   sending: "正在发送…",
   attach: "添加附件",
   insertImage: "插入图片",
+  insertTable: "插入表格",
+  insertDocumentAttachment: "插入附件",
+  documentAttachmentInserted: "附件已插入文档",
+  documentAttachmentTooLarge: "单个文档附件不能超过 3 MB",
+  undo: "撤销",
+  redo: "重做",
+  documents: "报价单与合同",
+  newDocument: "新建文档",
+  quotation: "报价单",
+  contract: "合同",
+  printDocument: "打印",
+  downloadHTML: "下载 HTML",
+  documentName: "文档名称",
+  documentEditor: "文档编辑器",
+  loadingEditor: "正在加载编辑器…",
+  documentType: "类型",
+  documentUpdatedAt: "更新时间",
+  noDocuments: "暂无报价单或合同",
+  saveDocument: "保存",
+  documentSaved: "文档已保存",
+  backToDocuments: "返回文档列表",
+  templateManagement: "模板管理",
+  newTemplate: "新建模板",
+  editDocument: "编辑文档",
+  editTemplate: "编辑模板",
+  templateName: "模板名称",
+  useTemplate: "使用模板",
+  templateSaved: "模板已保存",
+  quotationTemplate: "标准报价单模板",
+  contractTemplate: "标准合同模板",
+  aiDocument: "AI 文档助手",
+  aiGenerateDocument: "生成内容",
+  aiRewriteDocument: "改写当前文档",
+  aiDocumentInstruction: "告诉 AI 你需要什么",
+  aiApplyDocument: "应用到文档",
+  aiApplyHint: "生成完成。点击“应用到文档”后才会替换编辑器内容。",
+  aiStructureMismatch: "AI 返回的结构与当前文档不一致，未应用，以保护原模板。请换一种更具体的改写要求。",
+  aiGeneratingDocument: "AI 正在生成…",
+  aiDocumentFailed: "AI 文档生成失败",
   unsupportedImage: "仅支持 JPEG、PNG 和 GIF 图片",
   inlineImageMissing: "正文中有找不到原始文件的内嵌图片，请删除后重新插入",
   login: "登录",
@@ -305,6 +351,7 @@ const zh = {
   imapPort: "IMAP 端口",
   smtpServer: "SMTP 服务器",
   smtpPort: "SMTP 端口",
+  passwordUnchanged: "留空则保持现有密码",
   server: "服务器",
   actions: "操作",
   noAccounts: "暂无已连接的邮箱账户",
@@ -419,6 +466,45 @@ const en = {
   sending: "Sending…",
   attach: "Attach file",
   insertImage: "Insert image",
+  insertTable: "Insert table",
+  insertDocumentAttachment: "Insert attachment",
+  documentAttachmentInserted: "Attachment inserted into document",
+  documentAttachmentTooLarge: "Document attachments cannot exceed 3 MB each",
+  undo: "Undo",
+  redo: "Redo",
+  documents: "Quotes & contracts",
+  newDocument: "New document",
+  quotation: "Quotation",
+  contract: "Contract",
+  printDocument: "Print",
+  downloadHTML: "Download HTML",
+  documentName: "Document name",
+  documentEditor: "Document editor",
+  loadingEditor: "Loading editor…",
+  documentType: "Type",
+  documentUpdatedAt: "Updated",
+  noDocuments: "No quotations or contracts yet",
+  saveDocument: "Save",
+  documentSaved: "Document saved",
+  backToDocuments: "Back to documents",
+  templateManagement: "Manage templates",
+  newTemplate: "New template",
+  editDocument: "Edit document",
+  editTemplate: "Edit template",
+  templateName: "Template name",
+  useTemplate: "Use template",
+  templateSaved: "Template saved",
+  quotationTemplate: "Standard quotation",
+  contractTemplate: "Standard contract",
+  aiDocument: "AI document assistant",
+  aiGenerateDocument: "Generate",
+  aiRewriteDocument: "Rewrite current",
+  aiDocumentInstruction: "Tell AI what you need",
+  aiApplyDocument: "Apply to document",
+  aiApplyHint: "Generation complete. Click “Apply to document” to replace the editor content.",
+  aiStructureMismatch: "The AI result has a different structure, so it was not applied to protect the template. Try a more specific instruction.",
+  aiGeneratingDocument: "AI is generating…",
+  aiDocumentFailed: "AI document generation failed",
   unsupportedImage: "Only JPEG, PNG, and GIF images are supported",
   inlineImageMissing: "An inline image is missing its original file. Remove it and insert it again",
   login: "Sign in",
@@ -585,6 +671,7 @@ const en = {
   imapPort: "IMAP port",
   smtpServer: "SMTP server",
   smtpPort: "SMTP port",
+  passwordUnchanged: "Leave blank to keep the current password",
   server: "Server",
   actions: "Actions",
   noAccounts: "No connected mail accounts",
@@ -733,6 +820,8 @@ function App() {
       const url = new URL(anchor.href, window.location.href);
       const isMailRoute = url.pathname === "/inbox" ||
         url.pathname === "/attachments" ||
+        url.pathname === "/documents" ||
+        url.pathname.startsWith("/documents/") ||
         url.pathname === "/calendar" ||
         url.pathname === "/calendar/week" ||
         url.pathname.startsWith("/folder/");
@@ -754,6 +843,9 @@ function App() {
   // inbox shell and settings dialog as the sidebar entry point.
   if (path === "/settings") return <InboxPage />;
   if (path === "/attachments") return <AttachmentsPage />;
+  if (path === "/documents") return <DocumentListPage />;
+  if (path === "/documents/new") return <DocumentListPage key={path} createDocument />;
+  if (path.startsWith("/documents/")) return <DocumentListPage key={path} documentId={decodeURIComponent(path.slice("/documents/".length))} />;
   if (path === "/calendar" || path === "/calendar/week") return <CalendarPage />;
   if (path.startsWith("/folder/")) return <FolderPage key={path} folder={decodeURIComponent(path.slice("/folder/".length))} />;
   return <InboxPage />;
@@ -1043,7 +1135,7 @@ function InboxPage() {
   );
 }
 
-function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar" | "attachments"; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
+function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar" | "attachments" | "documents"; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
@@ -1051,7 +1143,8 @@ function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, curre
     <aside className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-[14.375rem] lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
       <Button data-testid="compose-button" className="mb-4 w-full" onClick={onCompose}><Pencil />{copy.compose}</Button>
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
-        <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView !== "calendar" && currentView !== "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView !== "calendar" && currentView !== "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
+        <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView !== "calendar" && currentView !== "attachments" && currentView !== "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView !== "calendar" && currentView !== "attachments" && currentView !== "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
+        <Button nativeButton={false} render={<a href="/documents" onClick={onClose} />} variant={currentView === "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><FilePenLine /><span>{copy.documents}</span></Button>
         <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
         {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
         <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
@@ -2286,6 +2379,338 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
       </DialogContent>
     </Dialog>
   );
+}
+
+type DocumentTemplate = "quotation" | "contract";
+
+function spiraxQuotationTemplate(date: string) {
+  return `<div data-spirax-quotation="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
+}
+function documentTemplateHTML(type: DocumentTemplate, copy: Copy) {
+  const date = new Date().toLocaleDateString(copy === en ? "en-US" : "zh-CN");
+  if (type === "contract") {
+    return copy === en
+      ? `<h1 style="text-align:center">CONTRACT</h1><p><strong>Contract No.:</strong> [Contract number]</p><p><strong>Effective date:</strong> ${date}</p><p><strong>Party A:</strong> [Company / individual]</p><p><strong>Party B:</strong> [Company / individual]</p><h2>1. Scope</h2><p>[Describe the products, services, or cooperation covered by this contract.]</p><h2>2. Price and payment</h2><p>[Specify the contract value, payment method, and payment schedule.]</p><h2>3. Delivery and acceptance</h2><p>[Specify delivery milestones and acceptance criteria.]</p><h2>4. Rights and obligations</h2><p>[Specify the rights and obligations of each party.]</p><h2>5. Confidentiality and breach</h2><p>[Specify confidentiality obligations and liability for breach.]</p><h2>6. Term and termination</h2><p>[Specify the contract term and termination conditions.]</p><p><br></p><table><tbody><tr><td><strong>Party A (signature)</strong><p><br></p><p>Date:</p></td><td><strong>Party B (signature)</strong><p><br></p><p>Date:</p></td></tr></tbody></table>`
+      : `<h1 style="text-align:center">合同</h1><p><strong>合同编号：</strong>[合同编号]</p><p><strong>生效日期：</strong>${date}</p><p><strong>甲方：</strong>[公司或个人名称]</p><p><strong>乙方：</strong>[公司或个人名称]</p><h2>一、合同范围</h2><p>[填写本合同涉及的产品、服务或合作内容。]</p><h2>二、价款与支付</h2><p>[填写合同金额、支付方式和付款节点。]</p><h2>三、交付与验收</h2><p>[填写交付时间、阶段目标和验收标准。]</p><h2>四、双方权利与义务</h2><p>[填写甲乙双方的权利与义务。]</p><h2>五、保密与违约责任</h2><p>[填写保密义务与违约责任。]</p><h2>六、期限与终止</h2><p>[填写合同期限和终止条件。]</p><p><br></p><table><tbody><tr><td><strong>甲方（签章）</strong><p><br></p><p>日期：</p></td><td><strong>乙方（签章）</strong><p><br></p><p>日期：</p></td></tr></tbody></table>`;
+  }
+  return spiraxQuotationTemplate(date);
+}
+
+function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; disabled: boolean }) {
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const insertAttachments = async (files: File[]) => {
+    try {
+      for (const file of files) await editor?.insertAttachment(file);
+      if (files.length) toast.success(copy.documentAttachmentInserted);
+    } catch (error) {
+      toast.error(error instanceof Error && error.message.includes("3 MB") ? copy.documentAttachmentTooLarge : error instanceof Error ? error.message : copy.loadFailed);
+    }
+  };
+  return <>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.undo()} aria-label={copy.undo} title={copy.undo}><Undo2 /></Button>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.redo()} aria-label={copy.redo} title={copy.redo}><Redo2 /></Button>
+    <Separator orientation="vertical" className="mx-1 h-5" />
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.bold()} aria-label="Bold" title="Bold"><Bold /></Button>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.italic()} aria-label="Italic" title="Italic"><Italic /></Button>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.underline()} aria-label="Underline" title="Underline"><Underline /></Button>
+    <Separator orientation="vertical" className="mx-1 h-5" />
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.bulletList()} aria-label="Bullet list" title="Bullet list"><List /></Button>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => editor?.orderedList()} aria-label="Numbered list" title="Numbered list"><ListOrdered /></Button>
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => {
+      const url = window.prompt("URL");
+      if (!url) return;
+      const label = window.prompt("Link text", url) || url;
+      editor?.insertLink(label, url);
+    }} aria-label="Link" title="Link"><Link /></Button>
+    <input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const files = Array.from(event.target.files || []); event.target.value = ""; void insertAttachments(files); }} />
+    <Button type="button" variant="ghost" size="icon" disabled={disabled} onClick={() => { editor?.focus(); attachmentInputRef.current?.click(); }} aria-label={copy.insertDocumentAttachment} title={copy.insertDocumentAttachment}><Paperclip /></Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" disabled={disabled} aria-label={copy.insertTable} title={copy.insertTable} />}><Table2 /></DropdownMenuTrigger>
+      <DropdownMenuContent align="start">{[2, 3, 4, 5].map((size) => <DropdownMenuItem key={size} onClick={() => editor?.insertTable(size, size)}>{size} x {size}</DropdownMenuItem>)}</DropdownMenuContent>
+    </DropdownMenu>
+  </>;
+}
+
+type StoredDocument = {
+  id: string;
+  type: DocumentTemplate;
+  name: string;
+  html: string;
+  updatedAt: string;
+};
+
+type StoredTemplate = StoredDocument;
+
+type DocumentEditorTarget = {
+  kind: "document" | "template";
+  record?: StoredDocument;
+  initialTemplate?: StoredTemplate;
+};
+
+const DOCUMENT_STORAGE_KEY = "inbrix-documents";
+const TEMPLATE_STORAGE_KEY = "inbrix-document-templates";
+
+function readStoredDocuments(): StoredDocument[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(DOCUMENT_STORAGE_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is StoredDocument => {
+      if (!item || typeof item !== "object") return false;
+      const document = item as Partial<StoredDocument>;
+      return typeof document.id === "string" &&
+        (document.type === "quotation" || document.type === "contract") &&
+        typeof document.name === "string" &&
+        typeof document.html === "string" &&
+        typeof document.updatedAt === "string";
+    });
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredDocuments(documents: StoredDocument[]) {
+  window.localStorage.setItem(DOCUMENT_STORAGE_KEY, JSON.stringify(documents));
+}
+
+function defaultDocumentTemplates(copy: Copy): StoredTemplate[] {
+  return [
+    { id: "default-quotation", type: "quotation", name: copy.quotationTemplate, html: documentTemplateHTML("quotation", copy), updatedAt: "" },
+    { id: "default-contract", type: "contract", name: copy.contractTemplate, html: documentTemplateHTML("contract", copy), updatedAt: "" },
+  ];
+}
+
+function readStoredTemplates(copy: Copy): StoredTemplate[] {
+  let stored: StoredTemplate[] = [];
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(TEMPLATE_STORAGE_KEY) || "[]");
+    if (Array.isArray(value)) stored = value.filter((item): item is StoredTemplate => {
+      if (!item || typeof item !== "object") return false;
+      const template = item as Partial<StoredTemplate>;
+      return typeof template.id === "string" &&
+        (template.type === "quotation" || template.type === "contract") &&
+        typeof template.name === "string" &&
+        typeof template.html === "string" &&
+        typeof template.updatedAt === "string";
+    });
+  } catch {
+    stored = [];
+  }
+  const storedById = new Map(stored.map((template) => [template.id, template]));
+  const defaults = defaultDocumentTemplates(copy).map((template) => {
+    const storedTemplate = storedById.get(template.id);
+    if (template.id === "default-quotation" && !storedTemplate?.html.includes('data-spirax-quotation="reference-v1"')) return template;
+    return storedTemplate || template;
+  });
+  return [...defaults, ...stored.filter((template) => !template.id.startsWith("default-"))];
+}
+
+function writeStoredTemplates(templates: StoredTemplate[]) {
+  window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+}
+
+function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void }) {
+  const initialTemplate = target?.initialTemplate || templates.find((template) => template.type === target?.record?.type) || templates[0];
+  const initialType = target?.record?.type || initialTemplate?.type || "quotation";
+  const editorRef = useRef<CanvasDocumentEditorHandle>(null);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
+  const [name, setName] = useState(target?.record?.name || (target?.kind === "template" ? copy.newTemplate : initialType === "quotation" ? copy.quotation : copy.contract));
+  const [type, setType] = useState<DocumentTemplate>(initialType);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(initialTemplate?.id || "");
+  const [editorReady, setEditorReady] = useState(false);
+  const initialHTML = target?.record?.html || initialTemplate?.html || documentTemplateHTML(initialType, copy);
+
+  if (!target) return null;
+
+  const selectTemplate = (templateId: string) => {
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) return;
+    setSelectedTemplateId(template.id);
+    setType(template.type);
+    if (!target.record) setName(template.type === "quotation" ? copy.quotation : copy.contract);
+    editorRef.current?.setHTML(template.html);
+    window.requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, left: 0 }));
+  };
+  const selectType = (next: DocumentTemplate) => {
+    setType(next);
+    if (!target.record) setName(next === "quotation" ? copy.quotationTemplate : copy.contractTemplate);
+    editorRef.current?.setHTML(documentTemplateHTML(next, copy));
+    window.requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, left: 0 }));
+  };
+  const downloadDocument = () => {
+    const body = editorRef.current?.getHTML() || "";
+    const title = escapeHTML(name || copy.newDocument);
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${(name || copy.newDocument).replace(/[\\/:*?"<>|]/g, "-")}.html`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+  const save = () => {
+    const html = editorRef.current?.getDocument();
+    if (!html) return;
+    onSave(target.kind, {
+      id: target.record?.id || crypto.randomUUID(),
+      type,
+      name: name.trim() || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
+      html,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  return <Dialog open onOpenChange={onOpenChange}>
+    <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} className="flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
+      <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 text-left"><DialogTitle className="text-base">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle><DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription></DialogHeader>
+      <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
+        {target.kind === "document" ? <Select value={selectedTemplateId} onValueChange={(value) => value && selectTemplate(value)}><SelectTrigger className="h-8 w-52" aria-label={copy.useTemplate}><SelectValue>{templates.find((template) => template.id === selectedTemplateId)?.name || copy.useTemplate}</SelectValue></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select> : <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
+        <Input className="h-8 min-w-40 flex-1 sm:max-w-72" value={name} onChange={(event) => setName(event.target.value)} placeholder={target.kind === "template" ? copy.templateName : copy.documentName} aria-label={target.kind === "template" ? copy.templateName : copy.documentName} />
+        <div className="flex items-center gap-1 overflow-x-auto"><DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} /><Separator orientation="vertical" className="mx-1 h-5" /><DocumentAIAssistant copy={copy} editor={editorRef.current} accountEmail={accountEmail} type={type} title={name} disabled={!editorReady} /></div>
+        <div className="ml-auto flex items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={!editorReady} onClick={() => void editorRef.current?.print()}><Printer />{copy.printDocument}</Button><Button type="button" variant="outline" size="sm" disabled={!editorReady} onClick={downloadDocument}><Download />{copy.downloadHTML}</Button><Button type="button" size="sm" disabled={!editorReady} onClick={save}><Check />{copy.saveDocument}</Button></div>
+      </div>
+      <div ref={editorScrollRef} className="canvas-document-scroll min-h-0 flex-1 overflow-auto bg-muted/30 p-3 sm:p-6">
+        <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-muted-foreground">{copy.loadingEditor}</div>}><CanvasDocumentEditor ref={editorRef} initialHTML={initialHTML} locale={copy === zh ? "zh-CN" : "en"} onReady={() => { setEditorReady(true); editorScrollRef.current?.scrollTo({ top: 0, left: 0 }); }} /></Suspense>
+      </div>
+    </DialogContent>
+  </Dialog>;
+}
+
+function DocumentAIAssistant({ copy, editor, accountEmail, type, title, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; accountEmail: string; type: DocumentTemplate; title: string; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"generate" | "rewrite">("generate");
+  const [instruction, setInstruction] = useState("");
+  const [result, setResult] = useState("");
+  const sourceHTMLRef = useRef("");
+  const mutation = useMutation({
+    mutationFn: () => {
+      sourceHTMLRef.current = editor?.getHTML() || "";
+      return generateDocument({ accountEmail, mode, documentType: type, title, instruction, currentHTML: mode === "rewrite" ? sourceHTMLRef.current : undefined });
+    },
+    onSuccess: (value) => setResult(value.html),
+  });
+  const sanitizeResult = (html: string) => {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
+    parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => Array.from(element.attributes).forEach((attribute) => { if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name); }));
+    return parsed.body.innerHTML;
+  };
+  const applyResult = () => {
+    if (!result) return;
+    const nextHTML = sanitizeResult(result);
+    if (mode === "rewrite" && sourceHTMLRef.current) {
+      const before = new DOMParser().parseFromString(sourceHTMLRef.current, "text/html");
+      const after = new DOMParser().parseFromString(nextHTML, "text/html");
+      if (before.querySelectorAll("table").length !== after.querySelectorAll("table").length || before.querySelectorAll("h1, h2, h3").length !== after.querySelectorAll("h1, h2, h3").length) {
+        toast.error(copy.aiStructureMismatch);
+        return;
+      }
+    }
+    editor?.setHTML(nextHTML);
+    editor?.focus();
+    setResult("");
+    setOpen(false);
+  };
+  return <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) { setResult(""); mutation.reset(); } }}>
+    <PopoverTrigger render={<Button type="button" variant={open ? "secondary" : "ghost"} size="sm" disabled={disabled || !accountEmail} />}><Sparkles />{copy.aiDocument}</PopoverTrigger>
+    <PopoverContent side="bottom" align="end" sideOffset={8} className="w-[min(32rem,calc(100vw-2rem))] gap-0 p-4">
+      <PopoverTitle className="text-sm font-semibold">{copy.aiDocument}</PopoverTitle>
+      <PopoverDescription className="mt-1 text-xs">{mode === "generate" ? copy.aiGenerateDocument : copy.aiRewriteDocument}</PopoverDescription>
+      <div className="mt-3 flex gap-1"><Button type="button" size="sm" variant={mode === "generate" ? "secondary" : "ghost"} onClick={() => setMode("generate")} disabled={mutation.isPending}>{copy.aiGenerateDocument}</Button><Button type="button" size="sm" variant={mode === "rewrite" ? "secondary" : "ghost"} onClick={() => setMode("rewrite")} disabled={mutation.isPending}>{copy.aiRewriteDocument}</Button></div>
+      <Label className="mt-3 grid gap-1.5 text-xs"><span>{copy.aiDocumentInstruction}</span><Textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={4} disabled={mutation.isPending} placeholder={type === "quotation" ? copy.quotation : copy.contract} /></Label>
+      {mutation.error && <p className="mt-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.aiDocumentFailed}</p>}
+      {result && <><p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{copy.aiApplyHint}</p><div className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 text-sm" dangerouslySetInnerHTML={{ __html: sanitizeResult(result) }} /></>}
+      <div className="mt-3 flex justify-end gap-2">{result && <Button type="button" variant="outline" size="sm" onClick={applyResult}><Check />{copy.aiApplyDocument}</Button>}<Button type="button" size="sm" disabled={mutation.isPending || !instruction.trim()} onClick={() => mutation.mutate()}><Sparkles />{mutation.isPending ? copy.aiGeneratingDocument : mode === "generate" ? copy.aiGenerateDocument : copy.aiRewriteDocument}</Button></div>
+    </PopoverContent>
+  </Popover>;
+}
+
+function DocumentListPage({ createDocument = false, documentId }: { createDocument?: boolean; documentId?: string }) {
+  const queryClient = useQueryClient();
+  const metadata = useQuery({ queryKey: ["conversations", "document-list-shell"], queryFn: () => getConversations() });
+  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
+  const copy = useLocale(metadata.data?.locale);
+  const [documents, setDocuments] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
+  const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
+  const [editorTarget, setEditorTarget] = useState<DocumentEditorTarget | null>(() => {
+    const existing = documentId ? readStoredDocuments().find((document) => document.id === documentId) : undefined;
+    if (existing) return { kind: "document", record: existing };
+    if (createDocument) {
+      const type = new URLSearchParams(window.location.search).get("type") === "contract" ? "contract" : "quotation";
+      return { kind: "document", initialTemplate: readStoredTemplates(copy).find((template) => template.type === type) };
+    }
+    return null;
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(prefersDarkMode);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  if (metadata.error instanceof ApiError && metadata.error.status === 401) return <LoginScreen copy={copy} />;
+
+  const closeEditor = () => {
+    setEditorTarget(null);
+    if (window.location.pathname !== "/documents") window.history.replaceState(window.history.state, "", "/documents");
+  };
+  const saveEditorRecord = (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
+    if (kind === "template") {
+      const next = [record, ...templates.filter((template) => template.id !== record.id)];
+      setTemplates(next);
+      writeStoredTemplates(next);
+      setEditorTarget({ kind, record });
+      toast.success(copy.templateSaved);
+      return;
+    }
+    const next = [record, ...documents.filter((document) => document.id !== record.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    setDocuments(next);
+    writeStoredDocuments(next);
+    setEditorTarget({ kind, record });
+    window.history.replaceState(window.history.state, "", `/documents/${encodeURIComponent(record.id)}`);
+    toast.success(copy.documentSaved);
+  };
+
+  return <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
+    {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={copy.cancel} onClick={() => setSidebarOpen(false)} />}
+    <Sidebar copy={copy} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentView="documents" onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
+        <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
+        <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
+        <h1 className="truncate text-sm font-semibold">{copy.documents}</h1>
+        <Button size="sm" onClick={() => setEditorTarget({ kind: "document", initialTemplate: templates[0] })}><Plus />{copy.newDocument}</Button>
+        <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
+          <PopoverTrigger render={<Button variant="outline" size="sm" />}><FileSpreadsheet />{copy.templateManagement}</PopoverTrigger>
+          <PopoverContent side="bottom" align="start" sideOffset={8} className="w-80 gap-2 p-2">
+            <PopoverTitle className="px-2 py-1 text-sm font-semibold">{copy.templateManagement}</PopoverTitle>
+            <div className="grid gap-1">{templates.map((template) => <Button key={template.id} type="button" variant="ghost" className="h-auto justify-start px-2 py-2 text-left" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", record: template }); }}><FileText className="size-4" /><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{template.name}</strong><small className="block text-muted-foreground">{template.type === "quotation" ? copy.quotation : copy.contract}</small></span><Pencil className="size-3.5" /></Button>)}</div>
+            <Separator />
+            <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", initialTemplate: templates[0] }); }}><Plus />{copy.newTemplate}</Button>
+          </PopoverContent>
+        </Popover>
+      </header>
+      <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+        <Table className="min-w-[640px] table-fixed">
+          <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent"><TableHead className="w-[52%] px-5">{copy.documentName}</TableHead><TableHead className="w-[20%]">{copy.documentType}</TableHead><TableHead className="w-[28%] pr-5 text-right">{copy.documentUpdatedAt}</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {documents.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
+              <TableCell className="px-5 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
+              <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
+              <TableCell className="pr-5 text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
+            </TableRow>)}
+            {!documents.length && <TableRow><TableCell colSpan={3} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </div>
+    </main>
+    <ComposeDialog copy={copy} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
+    <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
+    {editorTarget && <DocumentEditorDialog key={`${editorTarget.kind}-${editorTarget.record?.id || "new"}`} copy={copy} accountEmail={metadata.data?.accountEmail || ""} target={editorTarget} templates={templates} onOpenChange={(open) => { if (!open) closeEditor(); }} onSave={saveEditorRecord} />}
+  </div>;
 }
 
 function LoginScreen({ copy }: { copy: Copy }) {

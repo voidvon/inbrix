@@ -47,3 +47,7 @@ config.toml
 # frontend/src. Keep only the empty directory marker in source control.
 /frontend/dist/*
 !/frontend/dist/.gitkeep
+
+/tmp/
+/output/
+/release-local/

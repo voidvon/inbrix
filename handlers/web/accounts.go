@@ -423,6 +423,7 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 		IMAPPort:          req.IMAPPort,
 		SMTPServer:        req.SMTPServer,
 		SMTPPort:          req.SMTPPort,
+		SMTPStartTLS:      boolPointer(accountUseSTARTTLS(req.SMTPPort)),
 		EncryptedPassword: encPwd,
 	}
 	if err := h.acctStore.Save(owner, entry); err != nil {
@@ -437,6 +438,10 @@ func (h *AccountsHandler) HandleAddAccount(c *fiber.Ctx) error {
 		"label": entry.Label,
 	})
 }
+
+func accountUseSTARTTLS(port int) bool { return port != 465 }
+
+func boolPointer(value bool) *bool { return &value }
 
 func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
 	owner := h.mirrorOwner(c)

@@ -314,6 +314,22 @@ export function generateEmail(input: GenerateEmailInput) {
   });
 }
 
+export type GenerateDocumentInput = {
+  accountEmail: string;
+  mode: "generate" | "rewrite";
+  documentType: "quotation" | "contract";
+  title: string;
+  instruction: string;
+  currentHTML?: string;
+};
+
+export function generateDocument(input: GenerateDocumentInput) {
+  return apiFetch<{ html: string }>("/api/ai/write-document", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export type MailSummaryResult = {
   summary: string;
   status: "ready";

@@ -324,9 +324,10 @@ func main() {
 
 	// React owns every browser page. The shell is public; data endpoints remain
 	// session-gated and return JSON when the user is not authenticated.
-	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/settings", "/calendar", "/calendar/week"} {
+	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/documents", "/settings", "/calendar", "/calendar/week"} {
 		app.Get(path, csrfMiddleware, serveSPA)
 	}
+	app.Get("/documents/*", csrfMiddleware, serveSPA)
 	app.Get("/csrf", csrfMiddleware, func(c *fiber.Ctx) error {
 		token, _ := c.Locals("csrfToken").(string)
 		return c.JSON(fiber.Map{"token": token})
@@ -546,6 +547,7 @@ func main() {
 	protected.Put("/api/settings/ai/task-bindings", userAIHandler.HandleSaveTaskBinding)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
+	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)
 	// Build the completion backend before registering. With [ai] enabled = false
 	// this builds nothing at all; with mode = "embedded" it constructs the
 	// in-process llmux gateway and fails startup on a configuration that could

@@ -23,6 +23,7 @@ func openTestAccountStore(t *testing.T) (*AccountStore, string) {
 
 func TestAccountStore_SaveAndList(t *testing.T) {
 	s, _ := openTestAccountStore(t)
+	startTLS := false
 
 	entry := AccountEntry{
 		Email:             "work@company.com",
@@ -32,6 +33,7 @@ func TestAccountStore_SaveAndList(t *testing.T) {
 		IMAPPort:          993,
 		SMTPServer:        "smtp.company.com",
 		SMTPPort:          587,
+		SMTPStartTLS:      &startTLS,
 		EncryptedPassword: "encryptedblob",
 	}
 
@@ -58,6 +60,27 @@ func TestAccountStore_SaveAndList(t *testing.T) {
 	}
 	if got.EncryptedPassword != entry.EncryptedPassword {
 		t.Errorf("encrypted_password not preserved")
+	}
+	if got.SMTPStartTLS == nil || *got.SMTPStartTLS {
+		t.Errorf("smtp_starttls: got %v, want explicit false", got.SMTPStartTLS)
+	}
+}
+
+func TestAccountUseSTARTTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		port int
+		want bool
+	}{
+		{name: "implicit TLS port", port: 465, want: false},
+		{name: "submission port", port: 587, want: true},
+		{name: "custom submission port", port: 2525, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := accountUseSTARTTLS(tc.port); got != tc.want {
+				t.Fatalf("accountUseSTARTTLS(%d) = %v, want %v", tc.port, got, tc.want)
+			}
+		})
 	}
 }
 

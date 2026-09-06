@@ -21,6 +21,7 @@ type AccountEntry struct {
 	IMAPPort          int    `json:"imap_port"`
 	SMTPServer        string `json:"smtp_server"`
 	SMTPPort          int    `json:"smtp_port"`
+	SMTPStartTLS      *bool  `json:"smtp_starttls,omitempty"`
 	EncryptedPassword string `json:"encrypted_password"`
 }
 
