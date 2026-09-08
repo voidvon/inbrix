@@ -141,6 +141,31 @@ func TestConversationIdentitySeparatesParticipantSets(t *testing.T) {
 	}
 }
 
+func TestConversationIdentityIgnoresCcRecipients(t *testing.T) {
+	account := mailstore.Account{ID: "acct-cc", Email: "me@example.com"}
+	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	emails := []models.Email{
+		{
+			ID: "1", Folder: "INBOX", MessageID: "<incoming@example.com>",
+			From: "alice@example.com", To: "me@example.com", Cc: "bob@example.com",
+			Subject: "Project update", Date: when,
+		},
+		{
+			ID: "2", Folder: "Sent Messages", MessageID: "<reply@example.com>",
+			From: "me@example.com", To: "alice@example.com",
+			Subject: "Re: Project update", Date: when.Add(time.Hour),
+		},
+	}
+
+	conversations := buildConversations(account, emails)
+	if len(conversations) != 1 {
+		t.Fatalf("conversation count = %d, want 1 when reply omits original Cc recipient", len(conversations))
+	}
+	if conversations[0].Count != 2 || conversations[0].PeerEmail != "alice@example.com" {
+		t.Fatalf("conversation = %+v, want Alice conversation containing both messages", conversations[0])
+	}
+}
+
 func TestConversationIDIgnoresParticipantOrder(t *testing.T) {
 	accountID := "acct-order"
 	first := []string{"alice@example.com", "bob@example.com"}

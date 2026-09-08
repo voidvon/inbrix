@@ -195,7 +195,12 @@ func parseMailboxAddresses(value string) []string {
 func messageParticipants(email models.Email, mailbox string) []string {
 	mailbox = strings.ToLower(strings.TrimSpace(mailbox))
 	seen := make(map[string]struct{})
-	for _, value := range []string{email.From, email.To, email.Cc} {
+	// Cc recipients are intentionally excluded from the conversation identity.
+	// A reply commonly targets only the original sender; including the original
+	// message's Cc recipients would therefore create a second conversation for
+	// what is otherwise the same exchange. Keep From and To so incoming and
+	// outgoing messages still resolve to the same peer conversation.
+	for _, value := range []string{email.From, email.To} {
 		for _, address := range parseMailboxAddresses(value) {
 			if address != mailbox {
 				seen[address] = struct{}{}

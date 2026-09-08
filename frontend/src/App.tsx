@@ -10,6 +10,7 @@ import {
   Code2,
   Copy as CopyIcon,
   FilePenLine,
+  FilePlus2,
   FileArchive,
   FileImage,
   FileSpreadsheet,
@@ -68,6 +69,9 @@ import { EmailImage } from "./extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "./extensions/email-signature";
 import { ReplyQuote } from "./extensions/reply-quote";
 import type { CanvasDocumentEditorHandle } from "./components/app/canvas-document-editor";
+import { DocumentStampManager } from "./components/app/document-stamps";
+import { ReplyTemplates } from "./components/app/reply-templates";
+import { createDocumentPDF, exportDocumentPages } from "./components/app/document-export";
 import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
@@ -1490,8 +1494,8 @@ function SuggestedReplyBubble({ copy, detail, message, generation, onReply, onRe
           </div>
         </ContextMenuTrigger>
         {body && <ContextMenuContent className="w-40">
+          {message.cc?.trim() ? <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReplyAll(body)}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem> : null}
           <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReply(body)}><Send className="size-4" />{copy.reply}</ContextMenuItem>
-          <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReplyAll(body)}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem>
         </ContextMenuContent>}
       </ContextMenu>
       <div className="mt-1.5 flex min-h-7 justify-end gap-1">
@@ -1527,8 +1531,8 @@ function MessageBubble({ copy, message, senderFallback, accountEmail, rootRef, e
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">
+        {message.cc?.trim() ? <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem> : null}
         <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReply}><Send className="size-4" />{copy.reply}</ContextMenuItem>
-        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}><ReplyAll className="size-4" />{copy.replyAll}</ContextMenuItem>
         <ContextMenuItem className="gap-2 px-2 py-2" onClick={onNewMail}><Mail className="size-4" />{copy.sendEmail}</ContextMenuItem>
         <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteEmail}</ContextMenuItem>
       </ContextMenuContent>
@@ -2187,6 +2191,10 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
+  const attachmentsRef = useRef<File[]>([]);
+  attachmentsRef.current = attachments;
+  const [documentBusy, setDocumentBusy] = useState(false);
+  const [documentAction, setDocumentAction] = useState<"create" | "import" | null>(null);
   const [inlineImages, setInlineImages] = useState<InlineComposeImage[]>([]);
   const inlineImagesRef = useRef<InlineComposeImage[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -2228,6 +2236,8 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
     setSelectedSignatureId("none");
     signatureInitializedRef.current = false;
     setAttachments([]);
+    setDocumentAction(null);
+    setDocumentBusy(false);
     clearInlineImages();
     recipientDraftRef.current = "";
     ccDraftRef.current = "";
@@ -2295,6 +2305,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (documentBusy || documentAction || mutation.isPending) return;
     const pendingRecipients = splitRecipientValues(recipientDraftRef.current);
     const pendingCcRecipients = splitRecipientValues(ccDraftRef.current);
     const submittedRecipients = [...recipients, ...pendingRecipients.filter((value) => isValidRecipient(value))];
@@ -2346,6 +2357,10 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
             <Button type="button" variant="ghost" size="icon" disabled={sourceMode || !editor} onClick={() => inlineImageInputRef.current?.click()} aria-label={copy.insertImage} title={copy.insertImage}><ImagePlus /></Button>
             <Separator orientation="vertical" className="mx-1 h-5" />
             <AIAssistantButton copy={copy} editor={editor} disabled={sourceMode} composeOpen={open} accountEmail={accountEmail} subject={subject} recipients={[...recipients, ...ccRecipients].join(", ")} conversation={defaults.conversation} />
+            {open && <ReplyTemplates editor={editor} chinese={copy === zh} disabled={sourceMode || mutation.isPending || documentBusy} />}
+            <Separator orientation="vertical" className="mx-1 h-5" />
+            <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("create")}><FilePlus2 />{copy === zh ? "新建报价单" : "New quotation"}</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("import")}><Paperclip />{copy === zh ? "引入附件" : "Import attachment"}</Button>
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <Select value={selectedSignatureId} disabled={sourceMode || signatures.isPending} onValueChange={(value) => {
                 if (!value) return;
@@ -2374,8 +2389,15 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
             }} /></ScrollArea>}
           {attachments.length > 0 && <div className="flex flex-wrap gap-2 border-t px-5 py-2">{attachments.map((file, index) => <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}><Paperclip className="size-3.5 shrink-0" /><span className="truncate" title={file.name}>{file.name}</span><span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span><Button type="button" variant="ghost" size="icon" className="size-5" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`${copy.removeAttachment}: ${file.name}`} title={copy.removeAttachment}><X className="size-3" /></Button></span>)}</div>}
           {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
-          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => { const next = [...current, ...selected]; if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) { setError(copy.attachmentsTooLarge); return current; } setError(""); return next; }); event.target.value = ""; }} /><input ref={inlineImageInputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/gif" multiple onChange={(event) => { void insertInlineImages(Array.from(event.target.files || [])); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
+          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between"><input ref={attachmentInputRef} className="sr-only" type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setAttachments((current) => { const next = [...current, ...selected]; if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) { setError(copy.attachmentsTooLarge); return current; } setError(""); return next; }); event.target.value = ""; }} /><input ref={inlineImageInputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/gif" multiple onChange={(event) => { void insertInlineImages(Array.from(event.target.files || [])); event.target.value = ""; }} /><Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}><Paperclip />{copy.attach}</Button><div className="flex gap-2"><Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>{copy.cancel}</Button><Button type="submit" disabled={mutation.isPending || documentBusy || documentAction !== null}><Send />{mutation.isPending ? copy.sending : copy.send}</Button></div></DialogFooter>
         </form>
+        {open && documentAction && <ComposeDocumentAttachment copy={copy} accountEmail={accountEmail} action={documentAction} onClose={() => { setDocumentAction(null); setDocumentBusy(false); }} onBusyChange={setDocumentBusy} onAttach={(file) => {
+          const files = [...attachmentsRef.current, file];
+          if ([...files, ...inlineImagesRef.current.map((image) => image.file)].reduce((total, item) => total + item.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) throw new Error(copy.attachmentsTooLarge);
+          attachmentsRef.current = files;
+          setAttachments(files);
+          setError("");
+        }} />}
       </DialogContent>
     </Dialog>
   );
@@ -2508,7 +2530,78 @@ function writeStoredTemplates(templates: StoredTemplate[]) {
   window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
 }
 
-function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void }) {
+function ComposeDocumentAttachment({ copy, accountEmail, action, onClose, onAttach, onBusyChange }: {
+  copy: Copy; accountEmail: string; action: "create" | "import"; onClose: () => void;
+  onAttach: (file: File) => void; onBusyChange: (busy: boolean) => void;
+}) {
+  const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
+  const [documents] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<StoredDocument | null>(null);
+  const [target, setTarget] = useState<DocumentEditorTarget>({ kind: "document", initialTemplate: templates.find((template) => template.type === "quotation") });
+  const [busy, setBusy] = useState(false);
+  const converterRef = useRef<CanvasDocumentEditorHandle>(null);
+  const [converterReady, setConverterReady] = useState(false);
+  const conversionRef = useRef(false);
+  const callbacksRef = useRef({ onAttach, onClose, onBusyChange });
+  callbacksRef.current = { onAttach, onClose, onBusyChange };
+
+  useEffect(() => {
+    if (!selected || !converterReady || !converterRef.current || conversionRef.current) return;
+    conversionRef.current = true;
+    let cancelled = false;
+    const convert = async () => {
+      try {
+        const pages = await converterRef.current!.getPageImages();
+        const file = await createDocumentPDF(pages, selected.name);
+        if (cancelled) return;
+        callbacksRef.current.onAttach(file);
+        toast.success(copy === zh ? "PDF 已添加到邮件附件" : "PDF added to email attachments");
+        callbacksRef.current.onClose();
+      } catch (error) {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : copy.loadFailed);
+      } finally {
+        if (!cancelled) {
+          setBusy(false); setSelected(null); setConverterReady(false); conversionRef.current = false;
+          callbacksRef.current.onBusyChange(false);
+        }
+      }
+    };
+    void convert();
+    return () => { cancelled = true; conversionRef.current = false; };
+  }, [selected, converterReady, copy]);
+
+  if (action === "create") return <DocumentEditorDialog copy={copy} accountEmail={accountEmail} target={target} templates={templates}
+    onOpenChange={(open) => { if (!open) onClose(); }} onAttach={onAttach} onBusyChange={onBusyChange}
+    onSave={(kind, record) => {
+      if (kind === "template") {
+        const next = [record, ...readStoredTemplates(copy).filter((item) => item.id !== record.id)];
+        writeStoredTemplates(next); setTemplates(next);
+      } else writeStoredDocuments([record, ...readStoredDocuments().filter((item) => item.id !== record.id)]);
+      setTarget({ kind, record });
+      toast.success(copy.documentSaved);
+    }} />;
+
+  const filtered = documents.filter((document) => document.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <DialogContent data-testid="document-attachment-picker" className="sm:max-w-xl">
+      <DialogHeader><DialogTitle>{copy === zh ? "引入附件" : "Import attachment"}</DialogTitle><DialogDescription>{copy === zh ? "选择已保存的报价单或合同，自动转换为 PDF 并加入当前邮件，保留排版与印章。" : "Select a saved quotation or contract to attach it as a PDF, preserving its layout and stamps."}</DialogDescription></DialogHeader>
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy === zh ? "搜索文档" : "Search documents"} aria-label={copy === zh ? "搜索文档" : "Search documents"} disabled={busy} />
+      <div className="grid max-h-[50vh] gap-2 overflow-y-auto">
+        {filtered.map((document) => <Button type="button" key={document.id} variant="outline" disabled={busy} className="h-auto justify-start py-3 text-left" onClick={() => { setSelected(document); setBusy(true); onBusyChange(true); }}>
+          <FileText /><span className="min-w-0 flex-1"><span className="block truncate">{document.name}</span><span className="block text-xs font-normal text-muted-foreground">{document.type === "quotation" ? copy.quotation : copy.contract} · {new Date(document.updatedAt).toLocaleString(copy === zh ? "zh-CN" : "en")}</span></span><span className="shrink-0 text-xs">{copy === zh ? "引用为 PDF" : "Attach as PDF"}</span>
+        </Button>)}
+        {!filtered.length && <p className="py-6 text-center text-muted-foreground">{documents.length ? (copy === zh ? "没有匹配的文档" : "No matching documents") : copy.noDocuments}</p>}
+      </div>
+      {busy && <p role="status" className="text-sm text-muted-foreground">{copy === zh ? "正在转换 PDF，请稍候…" : "Converting to PDF…"}</p>}
+      {selected && <div aria-hidden="true" className="pointer-events-none fixed top-0 left-[-10000px] w-[794px]">
+        <Suspense fallback={null}><CanvasDocumentEditor key={selected.id} ref={converterRef} initialHTML={selected.html} locale={copy === zh ? "zh-CN" : "en"} onReady={() => setConverterReady(true)} /></Suspense>
+      </div>}
+    </DialogContent>
+  </Dialog>;
+}
+
+function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave, onAttach, onBusyChange }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void; onAttach?: (file: File) => void; onBusyChange?: (busy: boolean) => void }) {
   const initialTemplate = target?.initialTemplate || templates.find((template) => template.type === target?.record?.type) || templates[0];
   const initialType = target?.record?.type || initialTemplate?.type || "quotation";
   const editorRef = useRef<CanvasDocumentEditorHandle>(null);
@@ -2517,6 +2610,7 @@ function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenCha
   const [type, setType] = useState<DocumentTemplate>(initialType);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialTemplate?.id || "");
   const [editorReady, setEditorReady] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const initialHTML = target?.record?.html || initialTemplate?.html || documentTemplateHTML(initialType, copy);
 
   if (!target) return null;
@@ -2547,26 +2641,67 @@ function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenCha
     anchor.click();
     URL.revokeObjectURL(url);
   };
+  const exportDocument = async (format: "pdf" | "png") => {
+    if (!editorRef.current || exporting) return;
+    setExporting(true);
+    try {
+      await exportDocumentPages(await editorRef.current.getPageImages(), name || copy.newDocument, format);
+      toast.success(copy === zh ? "文档已导出" : "Document exported");
+    } catch (error) {
+      console.error("Document export failed", error);
+      toast.error(copy === zh ? "导出失败，请重试或使用打印功能另存为 PDF。" : "Export failed. Try again or use Print to save as PDF.");
+    } finally { setExporting(false); }
+  };
   const save = () => {
     const html = editorRef.current?.getDocument();
     if (!html) return;
-    onSave(target.kind, {
-      id: target.record?.id || crypto.randomUUID(),
-      type,
-      name: name.trim() || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
-      html,
-      updatedAt: new Date().toISOString(),
-    });
+    try {
+      onSave(target.kind, {
+        id: target.record?.id || crypto.randomUUID(),
+        type,
+        name: name.trim() || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
+        html,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      toast.error(copy === zh ? "保存失败，请检查浏览器存储空间。可先导出 PDF 或图片保留副本。" : "Save failed. Check browser storage space. Export a PDF or image to keep a copy.");
+    }
+  };
+  const attachPDF = async () => {
+    if (!editorRef.current || exporting || !onAttach) return;
+    setExporting(true);
+    onBusyChange?.(true);
+    try {
+      const file = await createDocumentPDF(await editorRef.current.getPageImages(), name || copy.newDocument);
+      onAttach(file);
+      toast.success(copy === zh ? "PDF 已添加到邮件附件" : "PDF added to email attachments");
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : copy.loadFailed);
+    } finally { setExporting(false); onBusyChange?.(false); }
   };
 
-  return <Dialog open onOpenChange={onOpenChange}>
+  return <Dialog open onOpenChange={(value) => { if (!exporting) onOpenChange(value); }}>
     <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} className="flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
       <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 text-left"><DialogTitle className="text-base">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle><DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription></DialogHeader>
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
         {target.kind === "document" ? <Select value={selectedTemplateId} onValueChange={(value) => value && selectTemplate(value)}><SelectTrigger className="h-8 w-52" aria-label={copy.useTemplate}><SelectValue>{templates.find((template) => template.id === selectedTemplateId)?.name || copy.useTemplate}</SelectValue></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select> : <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
         <Input className="h-8 min-w-40 flex-1 sm:max-w-72" value={name} onChange={(event) => setName(event.target.value)} placeholder={target.kind === "template" ? copy.templateName : copy.documentName} aria-label={target.kind === "template" ? copy.templateName : copy.documentName} />
         <div className="flex items-center gap-1 overflow-x-auto"><DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} /><Separator orientation="vertical" className="mx-1 h-5" /><DocumentAIAssistant copy={copy} editor={editorRef.current} accountEmail={accountEmail} type={type} title={name} disabled={!editorReady} /></div>
-        <div className="ml-auto flex items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={!editorReady} onClick={() => void editorRef.current?.print()}><Printer />{copy.printDocument}</Button><Button type="button" variant="outline" size="sm" disabled={!editorReady} onClick={downloadDocument}><Download />{copy.downloadHTML}</Button><Button type="button" size="sm" disabled={!editorReady} onClick={save}><Check />{copy.saveDocument}</Button></div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <DocumentStampManager chinese={copy === zh} disabled={!editorReady || exporting} onInsert={(stamp, width) => editorRef.current?.insertStamp(stamp, width)} />
+          <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}><Printer />{copy.printDocument}</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} />}><Download />{exporting ? (copy === zh ? "导出中…" : "Exporting…") : (copy === zh ? "导出" : "Export")}</DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => void exportDocument("pdf")}>{copy === zh ? "下载 PDF" : "Download PDF"}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void exportDocument("png")}>{copy === zh ? "下载 PNG 图片（多页 ZIP）" : "Download PNG images (multi-page ZIP)"}</DropdownMenuItem>
+              <DropdownMenuItem onClick={downloadDocument}>{copy.downloadHTML}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={save}><Check />{copy.saveDocument}</Button>
+          {onAttach && <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={() => void attachPDF()}><Paperclip />{exporting ? (copy === zh ? "正在生成 PDF…" : "Generating PDF…") : (copy === zh ? "作为 PDF 添加到邮件" : "Attach PDF to email")}</Button>}
+        </div>
       </div>
       <div ref={editorScrollRef} className="canvas-document-scroll min-h-0 flex-1 overflow-auto bg-muted/30 p-3 sm:p-6">
         <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-muted-foreground">{copy.loadingEditor}</div>}><CanvasDocumentEditor ref={editorRef} initialHTML={initialHTML} locale={copy === zh ? "zh-CN" : "en"} onReady={() => { setEditorReady(true); editorScrollRef.current?.scrollTo({ top: 0, left: 0 }); }} /></Suspense>
@@ -2660,15 +2795,15 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
   const saveEditorRecord = (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
     if (kind === "template") {
       const next = [record, ...templates.filter((template) => template.id !== record.id)];
-      setTemplates(next);
       writeStoredTemplates(next);
+      setTemplates(next);
       setEditorTarget({ kind, record });
       toast.success(copy.templateSaved);
       return;
     }
     const next = [record, ...documents.filter((document) => document.id !== record.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    setDocuments(next);
     writeStoredDocuments(next);
+    setDocuments(next);
     setEditorTarget({ kind, record });
     window.history.replaceState(window.history.state, "", `/documents/${encodeURIComponent(record.id)}`);
     toast.success(copy.documentSaved);
@@ -2682,6 +2817,7 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
         <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
         <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
         <h1 className="truncate text-sm font-semibold">{copy.documents}</h1>
+        <DocumentStampManager chinese={copy === zh} />
         <Button size="sm" onClick={() => setEditorTarget({ kind: "document", initialTemplate: templates[0] })}><Plus />{copy.newDocument}</Button>
         <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
           <PopoverTrigger render={<Button variant="outline" size="sm" />}><FileSpreadsheet />{copy.templateManagement}</PopoverTrigger>

@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import CanvasEditor, { BackgroundRepeat, BackgroundSize, ImageDisplay, ListStyle, ListType, PageMode, VerticalAlign } from "@hufe921/canvas-editor";
+import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ImageDisplay, ListStyle, ListType, PageMode, VerticalAlign } from "@hufe921/canvas-editor";
+import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument } from "./spirax-quotation-canvas";
 
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
@@ -108,6 +109,8 @@ export type CanvasDocumentEditorHandle = {
   getHTML: () => string;
   getDocument: () => string;
   insertAttachment: (file: File) => Promise<void>;
+  insertStamp: (stamp: DocumentStamp, width: number) => void;
+  getPageImages: () => Promise<string[]>;
   setHTML: (html: string) => void;
   focus: () => void;
   bold: () => void;
@@ -154,6 +157,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const readyRef = useRef(onReady);
   const storedDocument = parseStoredCanvasDocument(initialHTML);
   const isSpiraxTemplate = initialHTML.includes("data-spirax-quotation") || storedDocument?.template === "spirax-quotation";
+  const templateRef = useRef(isSpiraxTemplate);
 
   useEffect(() => {
     readyRef.current = onReady;
@@ -187,6 +191,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       placeholder: { data: "" },
     });
     editorRef.current = editor;
+    templateRef.current = isSpiraxTemplate;
     if (storedDocument) {
       editor.command.executeSetValue(isSpiraxTemplate ? migrateLegacySpiraxDocument(storedDocument.data) : storedDocument.data);
     } else if (isSpiraxTemplate) {
@@ -207,7 +212,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     getDocument: () => {
       const editor = editorRef.current;
       if (!editor) return "";
-      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: isSpiraxTemplate ? "spirax-quotation" : "document", data: editor.command.getValue().data })}`;
+      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: templateRef.current ? "spirax-quotation" : "document", data: editor.command.getValue().data })}`;
     },
     insertAttachment: async (file) => {
       const editor = editorRef.current;
@@ -227,11 +232,47 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         valueList: [{ value: `📎 ${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB)`, color: "#174db2", underline: true }],
       });
     },
+    insertStamp: (stamp, width) => {
+      const editor = editorRef.current;
+      if (!editor) throw new Error("Editor unavailable");
+      const range = editor.command.getRange();
+      editor.command.executeFocus(range && range.startIndex >= 0 ? { range } : undefined);
+      const id = editor.command.executeImage({
+        value: stamp.value, width, height: width * stamp.height / stamp.width,
+        imgDisplay: ImageDisplay.FLOAT_TOP,
+        extension: { stampId: stamp.id, stampName: stamp.name },
+      });
+      if (!id) throw new Error("Unable to insert stamp");
+    },
+    getPageImages: async () => {
+      const editor = editorRef.current;
+      if (!editor) throw new Error("Editor unavailable");
+      await document.fonts.ready;
+      return editor.command.getImage({ pixelRatio: 2, mode: EditorMode.PRINT });
+    },
     setHTML: (html) => {
-      if (html.includes("data-spirax-quotation")) {
-        editorRef.current?.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale)) });
+      const editor = editorRef.current;
+      if (!editor) return;
+      const stored = parseStoredCanvasDocument(html);
+      const spirax = html.includes("data-spirax-quotation") || stored?.template === "spirax-quotation";
+      templateRef.current = spirax;
+      editor.command.executeUpdateOptions({
+        margins: spirax ? [38, 38, 90, 38] : [64, 68, 64, 68],
+        defaultSize: spirax ? 11 : 16,
+        defaultRowMargin: spirax ? 1.05 : 1.25,
+        background: {
+          image: spirax ? createSpiraxQuotationCanvasBackground() : "",
+          size: BackgroundSize.COVER,
+          repeat: BackgroundRepeat.NO_REPEAT,
+        },
+        table: { tdPadding: spirax ? [0, 4, 0, 4] : [5, 5, 5, 5], defaultTrMinHeight: spirax ? 12 : 24 },
+      });
+      if (stored) {
+        editor.command.executeSetValue(spirax ? migrateLegacySpiraxDocument(stored.data) : stored.data);
+      } else if (spirax) {
+        editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale)) });
       } else {
-        editorRef.current?.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
+        editor.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
       }
     },
     focus: () => editorRef.current?.command.executeFocus(),
