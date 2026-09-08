@@ -72,7 +72,7 @@ import type { CanvasDocumentEditorHandle } from "./components/app/canvas-documen
 import { DocumentStampManager } from "./components/app/document-stamps";
 import { ReplyTemplates } from "./components/app/reply-templates";
 import { createDocumentPDF, exportDocumentPages } from "./components/app/document-export";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getFeishuWebhookSettings, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveFeishuWebhookSettings, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testFeishuWebhook, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AITaskBinding, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -3589,104 +3589,6 @@ function AgentSettings({ copy }: { copy: Copy }) {
   );
 }
 
-function MailboxAITaskSettings({ copy }: { copy: Copy }) {
-  const queryClient = useQueryClient();
-  const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, retry: false });
-  const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
-  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, retry: false });
-  const [drafts, setDrafts] = useState<Record<string, { agentId: string; modelId: string }>>({});
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!bindings.data) return;
-    setDrafts(Object.fromEntries(bindings.data.bindings.map((binding) => [`${binding.accountEmail}\u0000${binding.taskType}`, { agentId: binding.agentId || "", modelId: binding.modelId }])));
-  }, [bindings.data]);
-
-  const saveBinding = useMutation({
-    mutationFn: saveAITaskBinding,
-    onSuccess: () => {
-      setError("");
-      toast.success(copy.mailboxAIConfigurationSaved);
-      void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      void queryClient.invalidateQueries({ queryKey: ["suggested-reply"] });
-    },
-    onError: (value) => {
-      const message = value instanceof Error ? value.message : copy.loadFailed;
-      setError(message);
-      toast.error(message);
-      void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
-    },
-  });
-  const updateAndSave = (binding: AITaskBinding, field: "agentId" | "modelId", value: string) => {
-    const key = `${binding.accountEmail}\u0000${binding.taskType}`;
-    const current = drafts[key] || { agentId: binding.agentId || "", modelId: binding.modelId };
-    const next = { ...current, [field]: value };
-    setDrafts((items) => ({ ...items, [key]: next }));
-    if (!next.agentId || !next.modelId) return;
-    setError("");
-    saveBinding.mutate({ accountEmail: binding.accountEmail, taskType: binding.taskType, ...next });
-  };
-  const loadError = bindings.error instanceof Error ? bindings.error.message : models.error instanceof Error ? models.error.message : agents.error instanceof Error ? agents.error.message : "";
-
-  return (
-    <section className="mt-8 border-t pt-6">
-      <div>
-        <h3 className="text-base font-semibold">{copy.mailboxAIConfiguration}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p>
-      </div>
-      <div className="mt-4 overflow-hidden rounded-lg border">
-        <Table className="min-w-[40rem] table-fixed">
-          <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-[28%] px-4">{copy.email}</TableHead>
-              <TableHead className="w-[14%] px-4">{copy.aiTask}</TableHead>
-              <TableHead className="w-[29%] px-4">{copy.agentSettings}</TableHead>
-              <TableHead className="w-[29%] px-4">{copy.aiModel}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(bindings.isPending || models.isPending || agents.isPending) ? (
-              <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.loading}</TableCell></TableRow>
-            ) : bindings.data?.bindings.length ? bindings.data.bindings.map((binding) => {
-              const draft = drafts[`${binding.accountEmail}\u0000${binding.taskType}`] || { agentId: binding.agentId || "", modelId: binding.modelId };
-              const saving = saveBinding.isPending && saveBinding.variables?.accountEmail === binding.accountEmail && saveBinding.variables?.taskType === binding.taskType;
-              const availableAgents = agents.data?.agents || [];
-              const selectableAgents = binding.taskType === "mail_summary" ? availableAgents.filter((agent) => agent.outputLabels.length > 0) : availableAgents;
-              const selectedAgent = selectableAgents.find((agent) => agent.id === draft.agentId);
-              return (
-                <TableRow key={`${binding.accountEmail}:${binding.taskType}`}>
-                  <TableCell className="px-4 py-3">
-                    <div className="min-w-0"><span className="block truncate font-medium" title={binding.accountEmail}>{binding.accountEmail}</span><span className="mt-1 block text-xs text-muted-foreground">{binding.explicit ? copy.explicitConfiguration : copy.inheritedConfiguration}</span></div>
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-sm">{binding.taskType === "mail_summary" ? copy.mailSummaryAgent : binding.taskType === "reply_suggestion" ? copy.replySuggestionAgent : copy.emailDraftAgent}</TableCell>
-                  <TableCell className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <Select value={draft.agentId} onValueChange={(value) => updateAndSave(binding, "agentId", value || "")} disabled={!selectableAgents.length || saving}>
-                        <SelectTrigger className="min-w-0 flex-1"><SelectValue>{selectedAgent?.name || copy.noAgents}</SelectValue></SelectTrigger>
-                        <SelectContent>{selectableAgents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}</SelectContent>
-                      </Select>
-                    </div>
-                  </TableCell>
-                  <TableCell className="px-4 py-3">
-                    <Select value={draft.modelId} onValueChange={(value) => updateAndSave(binding, "modelId", value || "")} disabled={!models.data?.models.length || saving}>
-                      <SelectTrigger className="w-full"><SelectValue>{models.data?.models.find((model) => model.id === draft.modelId)?.model || copy.noAIModels}</SelectValue></SelectTrigger>
-                      <SelectContent>{models.data?.models.map((model) => <SelectItem key={model.id} value={model.id}>{model.model}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </TableCell>
-                </TableRow>
-              );
-            }) : (
-              <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      {(bindings.isError || models.isError || agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || loadError || copy.loadFailed}</p>}
-    </section>
-  );
-}
-
 function AISettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
@@ -3853,47 +3755,10 @@ function AccountInfoSettings({ copy }: { copy: Copy }) {
 }
 
 function GeneralSettings({ copy }: { copy: Copy }) {
-  const queryClient = useQueryClient();
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
-  const webhook = useQuery({ queryKey: ["feishu-webhook"], queryFn: getFeishuWebhookSettings, retry: false });
-  const [webhookEnabled, setWebhookEnabled] = useState(false);
-  const [webhookURL, setWebhookURL] = useState("");
-  const [webhookMessage, setWebhookMessage] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushMessage, setPushMessage] = useState("");
   useEffect(() => { void currentPushSubscription().then((subscription) => setPushEnabled(Boolean(subscription))); }, []);
-  useEffect(() => {
-    if (!webhook.data) return;
-    setWebhookEnabled(webhook.data.enabled);
-    setWebhookURL(webhook.data.url);
-  }, [webhook.data]);
-  const saveWebhook = useMutation({
-    mutationFn: saveFeishuWebhookSettings,
-    onSuccess: (settings) => {
-      queryClient.setQueryData(["feishu-webhook"], settings);
-      setWebhookMessage("");
-      toast.success(copy.feishuWebhookSaved);
-    },
-    onError: (value) => setWebhookMessage(value instanceof Error ? value.message : copy.loadFailed),
-  });
-  const testWebhook = useMutation({
-    mutationFn: testFeishuWebhook,
-    onSuccess: () => {
-      setWebhookMessage("");
-      toast.success(copy.feishuWebhookTestSent);
-    },
-    onError: (value) => setWebhookMessage(value instanceof Error ? value.message : copy.loadFailed),
-  });
-  const persistWebhook = (enabled = webhookEnabled, url = webhookURL) => {
-    const settings = { enabled, url: url.trim() };
-    if (settings.enabled && !settings.url) {
-      setWebhookMessage(copy.feishuWebhookURLRequired);
-      return;
-    }
-    if (webhook.data?.enabled === settings.enabled && webhook.data.url === settings.url) return;
-    setWebhookMessage("");
-    saveWebhook.mutate(settings);
-  };
   const togglePush = async () => {
     setPushMessage("");
     try {

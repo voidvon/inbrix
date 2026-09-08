@@ -14,6 +14,36 @@ No unreleased changes.
 
 ---
 
+## [1.17.0] - 2026-09-08
+
+### Added
+
+- Added account profile editing, password changes, account configuration
+  updates, and an in-app update checker and installer.
+- Added conversation status tracking, reply templates, and per-account AI
+  configuration with enabled/disabled task bindings.
+- Added document generation and canvas editing, PDF and multi-page PNG export,
+  and custom document stamp management.
+- Added local mail-flag queuing and synchronization, unread-mail APIs, and
+  per-account Feishu webhook configuration.
+
+### Changed
+
+- Accounts are now addressed by stable IDs instead of email addresses across
+  the API and account-management flows.
+- Conversation identity no longer includes CC recipients.
+- Added configurable SMTP STARTTLS behavior and improved initial-folder sync
+  handling.
+
+### Fixed
+
+- Fixed Feishu webhook state persistence and mailbox refresh after restoring
+  messages from spam.
+- Improved synchronization feedback and coverage for the account and mail
+  management flows.
+
+---
+
 ## [1.16.0] - 2026-08-21
 
 ### Added
@@ -1037,7 +1067,8 @@ password-only login, server-rendered Go templates.
 
 ---
 
-[Unreleased]: https://github.com/voidvon/inbrix/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/voidvon/inbrix/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/voidvon/inbrix/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/voidvon/inbrix/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/voidvon/inbrix/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/vul-os/inbrix/compare/v1.13.0...v1.14.0

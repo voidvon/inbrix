@@ -44,11 +44,11 @@ type aiModelInput struct {
 
 type aiDocumentInput struct {
 	AccountEmail string `json:"accountEmail"`
-	Mode string `json:"mode"`
+	Mode         string `json:"mode"`
 	DocumentType string `json:"documentType"`
-	Title string `json:"title"`
-	Instruction string `json:"instruction"`
-	CurrentHTML string `json:"currentHTML"`
+	Title        string `json:"title"`
+	Instruction  string `json:"instruction"`
+	CurrentHTML  string `json:"currentHTML"`
 }
 
 type aiModelPublic struct {
@@ -515,30 +515,60 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 
 func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	owner, err := h.ready(c)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var input aiDocumentInput
-	if err := c.BodyParser(&input); err != nil { return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body") }
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
 	input.AccountEmail = strings.TrimSpace(input.AccountEmail)
 	input.Mode = strings.TrimSpace(input.Mode)
 	input.DocumentType = strings.TrimSpace(input.DocumentType)
 	input.Title = strings.TrimSpace(input.Title)
 	input.Instruction = strings.TrimSpace(input.Instruction)
 	input.CurrentHTML = strings.TrimSpace(input.CurrentHTML)
-	if input.AccountEmail == "" { return fiber.NewError(fiber.StatusBadRequest, "accountEmail is required") }
-	if input.Mode != "generate" && input.Mode != "rewrite" { return fiber.NewError(fiber.StatusBadRequest, "mode must be generate or rewrite") }
-	if input.DocumentType != "quotation" && input.DocumentType != "contract" { return fiber.NewError(fiber.StatusBadRequest, "unsupported document type") }
-	if input.Instruction == "" && input.CurrentHTML == "" { return fiber.NewError(fiber.StatusBadRequest, "document instruction or current content is required") }
-	if len(input.CurrentHTML) > maxSummaryInputBytes || len(input.Instruction) > maxSummaryInputBytes { return fiber.NewError(fiber.StatusRequestEntityTooLarge, "document context is too large") }
+	if input.AccountEmail == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "accountEmail is required")
+	}
+	if input.Mode != "generate" && input.Mode != "rewrite" {
+		return fiber.NewError(fiber.StatusBadRequest, "mode must be generate or rewrite")
+	}
+	if input.DocumentType != "quotation" && input.DocumentType != "contract" {
+		return fiber.NewError(fiber.StatusBadRequest, "unsupported document type")
+	}
+	if input.Instruction == "" && input.CurrentHTML == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "document instruction or current content is required")
+	}
+	if len(input.CurrentHTML) > maxSummaryInputBytes || len(input.Instruction) > maxSummaryInputBytes {
+		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "document context is too large")
+	}
 	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, input.AccountEmail)
-	if errors.Is(err, mailstore.ErrNotFound) { return fiber.NewError(fiber.StatusNotFound, "mail account not found") }
-	if err != nil { return fiber.ErrInternalServerError }
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.NewError(fiber.StatusNotFound, "mail account not found")
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
 	var model mailstore.AIModelRecord
 	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
-	if bindingErr == nil { model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID) } else if errors.Is(bindingErr, mailstore.ErrNotFound) { model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner) } else { err = bindingErr }
-	if errors.Is(err, mailstore.ErrNotFound) { return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured") }
-	if err != nil { return fiber.ErrInternalServerError }
+	if bindingErr == nil {
+		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
+	} else if errors.Is(bindingErr, mailstore.ErrNotFound) {
+		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
+	} else {
+		err = bindingErr
+	}
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
 	var apiKey string
-	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil { return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured") }
+	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
+		return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured")
+	}
 	instructions := "Generate a professional " + input.DocumentType + " document. Return only clean HTML suitable for a rich text document. Use headings, paragraphs, and tables when useful. Do not include markdown fences, scripts, styles, or commentary. Match the user's language. Do not invent specific facts; use clear bracketed placeholders."
 	prompt := "Title: " + input.Title + "\nMode: " + input.Mode + "\nAdditional instructions: " + input.Instruction
 	if input.Mode == "rewrite" {
@@ -546,7 +576,9 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		prompt += "\n\nCurrent document HTML to rewrite:\n" + input.CurrentHTML
 	}
 	body, err := h.createOpenAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 1800)
-	if err != nil { return fiber.NewError(fiber.StatusBadGateway, err.Error()) }
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+	}
 	body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(body, "```"), "```html"))
 	return c.JSON(fiber.Map{"html": body})
 }

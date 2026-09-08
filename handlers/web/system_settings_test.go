@@ -158,7 +158,7 @@ func TestUpdateCurrentUserPassword(t *testing.T) {
 
 	request := httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"wrong-password","newPassword":"new-password","confirmation":"new-password"}`))
 	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	response, err := app.Test(request)
+	response, err := app.Test(request, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestUpdateCurrentUserPassword(t *testing.T) {
 
 	request = httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"old-password","newPassword":"new-password","confirmation":"different-password"}`))
 	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	response, err = app.Test(request)
+	response, err = app.Test(request, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestUpdateCurrentUserPassword(t *testing.T) {
 
 	request = httptest.NewRequest("PATCH", "/api/account/password", strings.NewReader(`{"currentPassword":"old-password","newPassword":"new-password","confirmation":"new-password"}`))
 	request.Header.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	response, err = app.Test(request)
+	response, err = app.Test(request, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}
