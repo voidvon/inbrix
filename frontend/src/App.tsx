@@ -166,13 +166,24 @@ const zh = {
   documentEditor: "文档编辑器",
   loadingEditor: "正在加载编辑器…",
   documentType: "类型",
+  allDocumentTypes: "全部",
   documentUpdatedAt: "更新时间",
+  selectedDocuments: "已选择",
+  deleteSelectedDocuments: "删除所选",
+  deleteDocument: "删除文档",
+  deleteDocumentConfirm: "确定删除这个文档吗？删除后无法恢复。",
+  deleteDocumentsConfirm: "确定删除所选文档吗？删除后无法恢复。",
+  documentDeleted: "文档已删除",
+  documentsDeleted: "所选文档已删除",
   noDocuments: "暂无报价单或合同",
   saveDocument: "保存",
   documentSaved: "文档已保存",
   backToDocuments: "返回文档列表",
   templateManagement: "模板管理",
   newTemplate: "新建模板",
+  deleteTemplate: "删除模板",
+  deleteTemplateConfirm: "确定删除这个模板吗？删除后无法恢复。",
+  templateDeleted: "模板已删除",
   editDocument: "编辑文档",
   editTemplate: "编辑模板",
   templateName: "模板名称",
@@ -486,13 +497,24 @@ const en = {
   documentEditor: "Document editor",
   loadingEditor: "Loading editor…",
   documentType: "Type",
+  allDocumentTypes: "All",
   documentUpdatedAt: "Updated",
+  selectedDocuments: "selected",
+  deleteSelectedDocuments: "Delete selected",
+  deleteDocument: "Delete document",
+  deleteDocumentConfirm: "Delete this document? This cannot be undone.",
+  deleteDocumentsConfirm: "Delete the selected documents? This cannot be undone.",
+  documentDeleted: "Document deleted",
+  documentsDeleted: "Selected documents deleted",
   noDocuments: "No quotations or contracts yet",
   saveDocument: "Save",
   documentSaved: "Document saved",
   backToDocuments: "Back to documents",
   templateManagement: "Manage templates",
   newTemplate: "New template",
+  deleteTemplate: "Delete template",
+  deleteTemplateConfirm: "Delete this template? This cannot be undone.",
+  templateDeleted: "Template deleted",
   editDocument: "Edit document",
   editTemplate: "Edit template",
   templateName: "Template name",
@@ -1674,6 +1696,9 @@ function EmailHTMLFrame({ html, title, rootRef, eager }: { html: string; title: 
         if (event.target instanceof HTMLImageElement) measure();
       };
       const onContextMenu = (event: MouseEvent) => {
+        const target = event.target as Element | null;
+        if (target?.closest?.("img")) return;
+
         event.preventDefault();
         const frameRect = frame.getBoundingClientRect();
         frame.dispatchEvent(new MouseEvent("contextmenu", {
@@ -2404,6 +2429,7 @@ function ComposeDialog({ copy, open, defaults, accountEmail, onOpenChange, onSen
 }
 
 type DocumentTemplate = "quotation" | "contract";
+type DocumentListFilter = "all" | DocumentTemplate;
 
 function spiraxQuotationTemplate(date: string) {
   return `<div data-spirax-quotation="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
@@ -2471,6 +2497,8 @@ type DocumentEditorTarget = {
 
 const DOCUMENT_STORAGE_KEY = "inbrix-documents";
 const TEMPLATE_STORAGE_KEY = "inbrix-document-templates";
+const DELETED_TEMPLATE_STORAGE_KEY = "inbrix-deleted-document-templates";
+const DOCUMENT_PAGE_SIZE = 20;
 
 function readStoredDocuments(): StoredDocument[] {
   try {
@@ -2517,17 +2545,37 @@ function readStoredTemplates(copy: Copy): StoredTemplate[] {
   } catch {
     stored = [];
   }
-  const storedById = new Map(stored.map((template) => [template.id, template]));
+  let deletedIds = new Set<string>();
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(DELETED_TEMPLATE_STORAGE_KEY) || "[]");
+    if (Array.isArray(value)) deletedIds = new Set(value.filter((id): id is string => typeof id === "string"));
+  } catch {
+    deletedIds = new Set();
+  }
+  const storedById = new Map(stored.filter((template) => !deletedIds.has(template.id)).map((template) => [template.id, template]));
   const defaults = defaultDocumentTemplates(copy).map((template) => {
     const storedTemplate = storedById.get(template.id);
     if (template.id === "default-quotation" && !storedTemplate?.html.includes('data-spirax-quotation="reference-v1"')) return template;
     return storedTemplate || template;
   });
-  return [...defaults, ...stored.filter((template) => !template.id.startsWith("default-"))];
+  return [...defaults.filter((template) => !deletedIds.has(template.id)), ...stored.filter((template) => !template.id.startsWith("default-") && !deletedIds.has(template.id))];
 }
 
 function writeStoredTemplates(templates: StoredTemplate[]) {
   window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+}
+
+function setStoredTemplateDeleted(id: string, deleted: boolean) {
+  let ids = new Set<string>();
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(DELETED_TEMPLATE_STORAGE_KEY) || "[]");
+    if (Array.isArray(value)) ids = new Set(value.filter((item): item is string => typeof item === "string"));
+  } catch {
+    ids = new Set();
+  }
+  if (deleted) ids.add(id);
+  else ids.delete(id);
+  window.localStorage.setItem(DELETED_TEMPLATE_STORAGE_KEY, JSON.stringify([...ids]));
 }
 
 function ComposeDocumentAttachment({ copy, accountEmail, action, onClose, onAttach, onBusyChange }: {
@@ -2576,6 +2624,7 @@ function ComposeDocumentAttachment({ copy, accountEmail, action, onClose, onAtta
     onSave={(kind, record) => {
       if (kind === "template") {
         const next = [record, ...readStoredTemplates(copy).filter((item) => item.id !== record.id)];
+        setStoredTemplateDeleted(record.id, false);
         writeStoredTemplates(next); setTemplates(next);
       } else writeStoredDocuments([record, ...readStoredDocuments().filter((item) => item.id !== record.id)]);
       setTarget({ kind, record });
@@ -2766,6 +2815,9 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
   const copy = useLocale(metadata.data?.locale);
   const [documents, setDocuments] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(() => new Set());
+  const [documentPage, setDocumentPage] = useState(1);
+  const [documentFilter, setDocumentFilter] = useState<DocumentListFilter>("all");
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
   const [editorTarget, setEditorTarget] = useState<DocumentEditorTarget | null>(() => {
     const existing = documentId ? readStoredDocuments().find((document) => document.id === documentId) : undefined;
@@ -2780,11 +2832,27 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
   const [composeOpen, setComposeOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const selectAllDocumentsRef = useRef<HTMLInputElement>(null);
+  const documentTableScrollRef = useRef<HTMLDivElement>(null);
+  const filteredDocuments = documentFilter === "all" ? documents : documents.filter((document) => document.type === documentFilter);
+  const documentPageCount = Math.max(1, Math.ceil(filteredDocuments.length / DOCUMENT_PAGE_SIZE));
+  const currentDocumentPage = Math.min(documentPage, documentPageCount);
+  const pageDocuments = filteredDocuments.slice((currentDocumentPage - 1) * DOCUMENT_PAGE_SIZE, currentDocumentPage * DOCUMENT_PAGE_SIZE);
+  const allDocumentsSelected = pageDocuments.length > 0 && pageDocuments.every((document) => selectedDocumentIds.has(document.id));
+  const someDocumentsSelected = pageDocuments.some((document) => selectedDocumentIds.has(document.id)) && !allDocumentsSelected;
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
     window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
+
+  useEffect(() => {
+    if (selectAllDocumentsRef.current) selectAllDocumentsRef.current.indeterminate = someDocumentsSelected;
+  }, [someDocumentsSelected]);
+
+  useEffect(() => {
+    if (documentPage > documentPageCount) setDocumentPage(documentPageCount);
+  }, [documentPage, documentPageCount]);
 
   if (metadata.error instanceof ApiError && metadata.error.status === 401) return <LoginScreen copy={copy} />;
 
@@ -2792,9 +2860,66 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
     setEditorTarget(null);
     if (window.location.pathname !== "/documents") window.history.replaceState(window.history.state, "", "/documents");
   };
+  const deleteTemplate = (template: StoredTemplate) => {
+    if (!window.confirm(`${copy.deleteTemplateConfirm}\n\n${template.name}`)) return;
+    const next = templates.filter((item) => item.id !== template.id);
+    try {
+      writeStoredTemplates(next);
+      setStoredTemplateDeleted(template.id, true);
+    } catch {
+      toast.error(copy.loadFailed);
+      return;
+    }
+    setTemplates(next);
+    if (editorTarget?.kind === "template" && editorTarget.record?.id === template.id) closeEditor();
+    toast.success(copy.templateDeleted);
+  };
+  const deleteDocuments = (ids: Set<string>) => {
+    const targets = documents.filter((document) => ids.has(document.id));
+    if (!targets.length) return;
+    const confirmed = window.confirm(targets.length === 1 ? `${copy.deleteDocumentConfirm}\n\n${targets[0].name}` : `${copy.deleteDocumentsConfirm}\n\n${targets.length} ${copy.selectedDocuments}`);
+    if (!confirmed) return;
+    const next = documents.filter((document) => !ids.has(document.id));
+    try {
+      writeStoredDocuments(next);
+    } catch {
+      toast.error(copy.loadFailed);
+      return;
+    }
+    setDocuments(next);
+    setSelectedDocumentIds((current) => new Set([...current].filter((id) => !ids.has(id))));
+    if (editorTarget?.kind === "document" && editorTarget.record && ids.has(editorTarget.record.id)) closeEditor();
+    toast.success(targets.length === 1 ? copy.documentDeleted : copy.documentsDeleted);
+  };
+  const toggleDocument = (id: string, selected: boolean) => {
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+  const togglePageDocuments = (selected: boolean) => {
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      pageDocuments.forEach((document) => selected ? next.add(document.id) : next.delete(document.id));
+      return next;
+    });
+  };
+  const changeDocumentPage = (page: number) => {
+    setDocumentPage(Math.min(documentPageCount, Math.max(1, page)));
+    documentTableScrollRef.current?.scrollTo({ top: 0 });
+  };
+  const changeDocumentFilter = (filter: DocumentListFilter) => {
+    setDocumentFilter(filter);
+    setDocumentPage(1);
+    setSelectedDocumentIds(new Set());
+    documentTableScrollRef.current?.scrollTo({ top: 0 });
+  };
   const saveEditorRecord = (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
     if (kind === "template") {
       const next = [record, ...templates.filter((template) => template.id !== record.id)];
+      setStoredTemplateDeleted(record.id, false);
       writeStoredTemplates(next);
       setTemplates(next);
       setEditorTarget({ kind, record });
@@ -2823,25 +2948,47 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
           <PopoverTrigger render={<Button variant="outline" size="sm" />}><FileSpreadsheet />{copy.templateManagement}</PopoverTrigger>
           <PopoverContent side="bottom" align="start" sideOffset={8} className="w-80 gap-2 p-2">
             <PopoverTitle className="px-2 py-1 text-sm font-semibold">{copy.templateManagement}</PopoverTitle>
-            <div className="grid gap-1">{templates.map((template) => <Button key={template.id} type="button" variant="ghost" className="h-auto justify-start px-2 py-2 text-left" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", record: template }); }}><FileText className="size-4" /><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{template.name}</strong><small className="block text-muted-foreground">{template.type === "quotation" ? copy.quotation : copy.contract}</small></span><Pencil className="size-3.5" /></Button>)}</div>
+            <div className="grid gap-1">{templates.map((template) => <div key={template.id} className="flex min-w-0 items-center gap-1"><Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", record: template }); }}><FileText className="size-4" /><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{template.name}</strong><small className="block text-muted-foreground">{template.type === "quotation" ? copy.quotation : copy.contract}</small></span><Pencil className="size-3.5" /></Button><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 text-destructive hover:text-destructive" onClick={() => deleteTemplate(template)} aria-label={`${copy.deleteTemplate}: ${template.name}`} title={copy.deleteTemplate}><Trash2 /></Button></div>)}</div>
             <Separator />
             <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", initialTemplate: templates[0] }); }}><Plus />{copy.newTemplate}</Button>
           </PopoverContent>
         </Popover>
       </header>
-      <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 sm:px-5">
+        <div className="inline-flex h-8 items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label={copy.documentType}>
+          {(["all", "quotation", "contract"] as const).map((filter) => <Button key={filter} type="button" variant={documentFilter === filter ? "secondary" : "ghost"} size="sm" className="h-7 px-3 text-xs shadow-none" aria-pressed={documentFilter === filter} onClick={() => changeDocumentFilter(filter)}>{filter === "all" ? copy.allDocumentTypes : filter === "quotation" ? copy.quotation : copy.contract}</Button>)}
+        </div>
+        <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{selectedDocumentIds.size} {copy.selectedDocuments}</span><Button type="button" variant="destructive" size="sm" disabled={!selectedDocumentIds.size} onClick={() => deleteDocuments(selectedDocumentIds)}><Trash2 />{copy.deleteSelectedDocuments}</Button></div>
+      </div>
+      <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
         <Table className="min-w-[640px] table-fixed">
-          <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent"><TableHead className="w-[52%] px-5">{copy.documentName}</TableHead><TableHead className="w-[20%]">{copy.documentType}</TableHead><TableHead className="w-[28%] pr-5 text-right">{copy.documentUpdatedAt}</TableHead></TableRow></TableHeader>
+          <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent">
+            <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>
+            <TableHead className="px-2">{copy.documentName}</TableHead><TableHead className="w-[18%]">{copy.documentType}</TableHead><TableHead className="w-[26%] text-right">{copy.documentUpdatedAt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead>
+          </TableRow></TableHeader>
           <TableBody>
-            {documents.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
-              <TableCell className="px-5 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
+            {pageDocuments.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
+              <TableCell className="px-4 py-3" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="size-4 accent-primary" checked={selectedDocumentIds.has(document.id)} onChange={(event) => toggleDocument(document.id, event.target.checked)} aria-label={`${copy.selectedDocuments}: ${document.name}`} /></TableCell>
+              <TableCell className="px-2 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
               <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
-              <TableCell className="pr-5 text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
+              <TableCell className="text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
+              <TableCell className="px-4 text-right"><Button type="button" variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={(event) => { event.stopPropagation(); deleteDocuments(new Set([document.id])); }} aria-label={`${copy.deleteDocument}: ${document.name}`} title={copy.deleteDocument}><Trash2 /></Button></TableCell>
             </TableRow>)}
-            {!documents.length && <TableRow><TableCell colSpan={3} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
+            {!filteredDocuments.length && <TableRow><TableCell colSpan={5} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
           </TableBody>
         </Table>
       </div>
+      {documentPageCount > 1 && <div className="shrink-0 border-t bg-background px-3 py-2 sm:px-5">
+        <Pagination>
+          <PaginationContent>
+            <PaginationItem><PaginationPrevious href="#" text={copy.previousPage} aria-label={copy.previousPage} aria-disabled={currentDocumentPage === 1} tabIndex={currentDocumentPage === 1 ? -1 : undefined} className={cn(currentDocumentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage > 1) changeDocumentPage(currentDocumentPage - 1); }} /></PaginationItem>
+            {paginationPageItems(currentDocumentPage, documentPageCount).map((item) => typeof item === "number"
+              ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentDocumentPage} onClick={(event) => { event.preventDefault(); changeDocumentPage(item); }}>{item}</PaginationLink></PaginationItem>
+              : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
+            <PaginationItem><PaginationNext href="#" text={copy.nextPage} aria-label={copy.nextPage} aria-disabled={currentDocumentPage === documentPageCount} tabIndex={currentDocumentPage === documentPageCount ? -1 : undefined} className={cn(currentDocumentPage === documentPageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage < documentPageCount) changeDocumentPage(currentDocumentPage + 1); }} /></PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      </div>}
     </main>
     <ComposeDialog copy={copy} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
     <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -2871,11 +3018,11 @@ function RegisterScreen({ copy }: { copy: Copy }) {
 }
 
 type AttachmentKind = "all" | "images" | "pdf" | "documents" | "spreadsheets" | "archives";
-type AttachmentPageItem = number | "start-ellipsis" | "end-ellipsis";
+type PaginationPageItem = number | "start-ellipsis" | "end-ellipsis";
 
-function attachmentPageItems(currentPage: number, pageCount: number): AttachmentPageItem[] {
+function paginationPageItems(currentPage: number, pageCount: number): PaginationPageItem[] {
   if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
-  const pages: AttachmentPageItem[] = [1];
+  const pages: PaginationPageItem[] = [1];
   if (currentPage > 4) pages.push("start-ellipsis");
   for (let page = Math.max(2, currentPage - 1); page <= Math.min(pageCount - 1, currentPage + 1); page += 1) pages.push(page);
   if (currentPage < pageCount - 3) pages.push("end-ellipsis");
@@ -2985,7 +3132,7 @@ function AttachmentsPage() {
           <Pagination className="mx-0 w-auto justify-end">
             <PaginationContent>
               <PaginationItem><PaginationPrevious href="#" text={locale.previousPage} aria-label={locale.previousPage} aria-disabled={currentPage === 1} tabIndex={currentPage === 1 ? -1 : undefined} className={cn(currentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage > 1) changePage(currentPage - 1); }} /></PaginationItem>
-              {attachmentPageItems(currentPage, pageCount).map((item) => typeof item === "number"
+              {paginationPageItems(currentPage, pageCount).map((item) => typeof item === "number"
                 ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentPage} aria-label={`${locale.attachmentPage} ${item}`} onClick={(event) => { event.preventDefault(); changePage(item); }}>{item}</PaginationLink></PaginationItem>
                 : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
               <PaginationItem><PaginationNext href="#" text={locale.nextPage} aria-label={locale.nextPage} aria-disabled={currentPage === pageCount} tabIndex={currentPage === pageCount ? -1 : undefined} className={cn(currentPage === pageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage < pageCount) changePage(currentPage + 1); }} /></PaginationItem>
