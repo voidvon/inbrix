@@ -113,16 +113,14 @@ git push --atomic origin "HEAD:main" "$tag"
 
 notes_file="$asset_dir/release-notes.md"
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-cat > "$notes_file" <<EOF
-## Verify before you run this
-
-```sh
-curl -fsSLO https://raw.githubusercontent.com/${repo}/${tag}/scripts/verify.sh
-bash verify.sh --repo ${repo} --tag ${tag} inbrix_${version}_linux_amd64.zip
-```
-
-The release assets include SHA256SUMS. Verify an archive before running it.
-EOF
+{
+  printf '%s\n\n' '## Verify before you run this'
+  printf '%s\n' '```sh'
+  printf 'curl -fsSLO https://raw.githubusercontent.com/%s/%s/scripts/verify.sh\n' "$repo" "$tag"
+  printf 'bash verify.sh --repo %s --tag %s inbrix_%s_linux_amd64.zip\n' "$repo" "$tag" "$version"
+  printf '%s\n\n' '```'
+  printf '%s\n' 'The release assets include SHA256SUMS. Verify an archive before running it.'
+} > "$notes_file"
 echo "==> Creating GitHub Release and uploading assets"
 gh release create "$tag" "${assets[@]}" "$asset_dir/SHA256SUMS" --repo "$repo" --verify-tag --draft --title "$tag" --notes-file "$notes_file"
 gh release edit "$tag" --repo "$repo" --draft=false
