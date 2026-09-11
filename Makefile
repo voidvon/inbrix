@@ -1,4 +1,4 @@
-.PHONY: dev build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest check clean
+.PHONY: dev build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest release release-version-selftest check clean
 
 # Local React/Vite development. Vite owns :2342 and proxies backend requests
 # to Go on :3001, so the browser never renders the embedded frontend/dist copy.
@@ -55,8 +55,17 @@ site-render:
 verify-selftest:
 	bash scripts/verify.sh --selftest
 
+# Exercise the release version rollover rules without touching git or GitHub.
+release-version-selftest:
+	bash scripts/release.sh --selftest
+
+# Bump VERSION, commit and tag it, then push the tag that triggers the GitHub
+# Actions release workflow. The script waits until the GitHub Release exists.
+release:
+	bash scripts/release.sh
+
 # Everything CI runs, in the same order. Run this before opening a PR.
-check: build fmt-check vet test site-docs-check site-render verify-selftest
+check: build fmt-check vet test site-docs-check site-render verify-selftest release-version-selftest
 
 # Regenerate docs/screenshots/*.png using Playwright.
 # Boots inbrix with a minimal demo config (login page captured without credentials).

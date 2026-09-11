@@ -251,6 +251,22 @@ For frontend development, open [http://localhost:2342](http://localhost:2342)
 after `make dev`. Vite serves the React source with hot reload and proxies API
 requests to the Go process.
 
+### Publish a release
+
+Install and authenticate the GitHub CLI (`gh auth login`), then run the release
+from a clean, up-to-date `main` branch:
+
+```bash
+make release
+```
+
+The command increments `VERSION`, updates every published version marker,
+regenerates the site docs, commits and tags the release, runs `make check`, and
+atomically pushes `main` and the tag. The existing GitHub Actions release
+workflow builds and signs the artifacts; the command waits for it to finish and
+prints the GitHub Release URL. Patch versions run from 0 through 20, then the
+minor version increments; `X.20.0` advances directly to `(X+1).0.0`.
+
 ## Contributing
 
 Issues and pull requests are welcome. For substantial changes, open an issue

@@ -243,6 +243,21 @@ make check        # 运行完整的项目验证流程
 [http://localhost:2342](http://localhost:2342)。Vite 提供 React 热更新，并将
 API 请求代理到 Go 进程。
 
+### 发布新版本
+
+安装并登录 GitHub CLI（`gh auth login`），然后在干净且与远端同步的 `main`
+分支执行：
+
+```bash
+make release
+```
+
+该命令会递增 `VERSION`、更新所有公开版本标记、重新生成站点文档、提交并创建
+版本标签，运行 `make check`，最后原子推送 `main` 和标签。现有 GitHub Actions
+发布流程负责构建和签名产物；命令会等待流程完成并输出 GitHub Release 地址。
+补丁版本从 0 递增到 20，之后次版本进一位；`X.20.0` 的下一版直接为
+`(X+1).0.0`。
+
 ## 参与贡献
 
 欢迎提交 Issue 和 Pull Request。对于较大的改动，请先创建 Issue 讨论实现
