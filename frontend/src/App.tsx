@@ -378,6 +378,9 @@ const zh = {
   unanswered: "未回复",
   noAction: "无需处理",
   statusSaveFailed: "状态保存失败",
+  copyEmail: "复制邮箱",
+  copyEmailSuccess: "邮箱地址已复制",
+  copyEmailFailed: "复制邮箱失败",
   markUnread: "标为未读",
   markUnreadFailed: "标记未读失败",
   deleteConversation: "删除对话",
@@ -709,6 +712,9 @@ const en = {
   unanswered: "Unanswered",
   noAction: "No action",
   statusSaveFailed: "Could not save status",
+  copyEmail: "Copy email",
+  copyEmailSuccess: "Email address copied",
+  copyEmailFailed: "Could not copy email",
   markUnread: "Mark as unread",
   markUnreadFailed: "Could not mark conversation as unread",
   deleteConversation: "Delete conversation",
@@ -1271,6 +1277,51 @@ function ConversationList({ copy, data, search, onSearch, onMenu, loading, error
   );
 }
 
+function extractEmailAddress(value?: string) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const parseSingle = (item: string) => {
+    const s = item.trim();
+    const angleMatch = s.match(/<([^<>]+)>\s*$/);
+    if (angleMatch?.[1]) return angleMatch[1].trim();
+    const emailMatch = s.match(/[^\s<]+@[^\s>]+/);
+    return emailMatch ? emailMatch[0].replace(/[;,]+$/, "").trim() : "";
+  };
+  if (trimmed.includes(",")) {
+    return trimmed
+      .split(",")
+      .map(parseSingle)
+      .filter(Boolean)
+      .join(", ");
+  }
+  return parseSingle(trimmed);
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback to execCommand below
+    }
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const success = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return success;
+  } catch {
+    return false;
+  }
+}
+
 function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, onDelete }: { copy: Copy; conversation: ConversationSummary; selected: boolean; onClick: () => void; onMarkUnread: () => void; onDelete: () => void }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1332,6 +1383,16 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
       setStatusSaving(false);
     }
   };
+  const emailToCopy = extractEmailAddress(conversation.peerEmail) || extractEmailAddress(conversation.title) || extractEmailAddress(conversation.accountEmail);
+  const handleCopyEmail = async () => {
+    if (!emailToCopy) return;
+    const ok = await copyToClipboard(emailToCopy);
+    if (ok) {
+      toast.success(copy.copyEmailSuccess);
+    } else {
+      toast.error(copy.copyEmailFailed);
+    }
+  };
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block">
@@ -1358,6 +1419,7 @@ function ConversationRow({ copy, conversation, selected, onClick, onMarkUnread, 
       </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44">
+        <ContextMenuItem className="gap-2 px-2 py-2" disabled={!emailToCopy} onClick={() => void handleCopyEmail()}><CopyIcon className="size-4" />{copy.copyEmail}</ContextMenuItem>
         <ContextMenuItem className="gap-2 px-2 py-2" onClick={onMarkUnread}><Mail className="size-4" />{copy.markUnread}</ContextMenuItem>
         <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}><Trash2 className="size-4" />{copy.deleteConversation}</ContextMenuItem>
       </ContextMenuContent>
