@@ -262,10 +262,11 @@ make release
 
 The command increments `VERSION`, updates every published version marker,
 regenerates the site docs, commits and tags the release, runs `make check`, and
-atomically pushes `main` and the tag. The existing GitHub Actions release
-workflow builds and signs the artifacts; the command waits for it to finish and
-prints the GitHub Release URL. Patch versions run from 0 through 20, then the
-minor version increments; `X.20.0` advances directly to `(X+1).0.0`.
+builds the Linux and macOS archives locally. It verifies every archive against
+the generated `SHA256SUMS`, atomically pushes `main` and the tag, then uploads
+and publishes a draft GitHub Release directly with `gh`. Patch versions run
+from 0 through 20, then the minor version increments; `X.20.0` advances
+directly to `(X+1).0.0`.
 
 ## Contributing
 

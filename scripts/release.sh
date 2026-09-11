@@ -53,7 +53,7 @@ if [[ ${1:-} == "--next" ]]; then
 fi
 [[ $# == 0 ]] || die "usage: make release"
 
-for command in git gh node npm go; do
+for command in git gh node npm go make zip shasum; do
   command -v "$command" >/dev/null || die "required command not found: $command"
 done
 gh auth status >/dev/null 2>&1 || die "GitHub CLI is not authenticated; run 'gh auth login'"
@@ -87,20 +87,45 @@ echo "==> Running release checks for $tag"
 if ! make check; then
   die "checks failed; $tag and its release commit remain local and were not pushed"
 fi
+[[ -z $(git status --porcelain) ]] || die "release checks changed tracked files; review and commit them before publishing"
+
+echo "==> Building release assets locally"
+asset_dir=$(mktemp -d)
+trap 'rm -rf "$asset_dir"' EXIT
+version="$next"
+ldflags="-s -w -X main.Version=$version"
+mkdir -p "$asset_dir/inbrix"
+cp config.toml.example "$asset_dir/inbrix/config.toml.example"
+
+for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+  IFS=/ read -r goos goarch <<< "$target"
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "$ldflags" -o "$asset_dir/inbrix/inbrix" .
+  (cd "$asset_dir" && zip -qr "inbrix_${version}_${goos}_${goarch}.zip" inbrix)
+  rm "$asset_dir/inbrix/inbrix"
+done
+git archive --format=zip HEAD -o "$asset_dir/inbrix_${version}_source.zip"
+(cd "$asset_dir" && shasum -a 256 inbrix_*.zip > SHA256SUMS)
+assets=("$asset_dir"/inbrix_*.zip)
+bash scripts/verify.sh --dir "$asset_dir" "${assets[@]##*/}"
 
 echo "==> Pushing release commit and tag"
 git push --atomic origin "HEAD:main" "$tag"
 
-echo "==> Waiting for the GitHub release workflow"
-run_id=""
-for _ in $(seq 1 30); do
-  release_commit=$(git rev-parse HEAD)
-  run_id=$(gh run list --workflow release.yml --event push --limit 20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$release_commit\") | .databaseId" | head -n 1)
-  [[ -n $run_id ]] && break
-  sleep 2
-done
-[[ -n $run_id ]] || die "tag was pushed, but no release workflow run appeared; inspect GitHub Actions"
-gh run watch "$run_id" --exit-status || die "GitHub release workflow failed for $tag"
+notes_file="$asset_dir/release-notes.md"
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+cat > "$notes_file" <<EOF
+## Verify before you run this
 
-release_url=$(gh release view "$tag" --json url --jq .url)
+```sh
+curl -fsSLO https://raw.githubusercontent.com/${repo}/${tag}/scripts/verify.sh
+bash verify.sh --repo ${repo} --tag ${tag} inbrix_${version}_linux_amd64.zip
+```
+
+The release assets include SHA256SUMS. Verify an archive before running it.
+EOF
+echo "==> Creating GitHub Release and uploading assets"
+gh release create "$tag" "${assets[@]}" "$asset_dir/SHA256SUMS" --repo "$repo" --verify-tag --draft --title "$tag" --notes-file "$notes_file"
+gh release edit "$tag" --repo "$repo" --draft=false
+
+release_url=$(gh release view "$tag" --repo "$repo" --json url --jq .url)
 echo "Published $tag: $release_url"

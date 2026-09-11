@@ -1,9 +1,7 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 # Job-level permissions are set on the job below. Keeping the workflow default
 # at read means a step added later does not silently inherit write scope.

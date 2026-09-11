@@ -59,8 +59,8 @@ verify-selftest:
 release-version-selftest:
 	bash scripts/release.sh --selftest
 
-# Bump VERSION, commit and tag it, then push the tag that triggers the GitHub
-# Actions release workflow. The script waits until the GitHub Release exists.
+# Bump VERSION, build and verify release assets locally, then commit, tag and
+# upload the GitHub Release directly with the gh CLI.
 release:
 	bash scripts/release.sh
 
