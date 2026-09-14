@@ -606,25 +606,34 @@ func (h *EmailHandler) HandleConversationDeleteJSON(c *fiber.Ctx) error {
 
 	trash, _ := h.mailDB.ResolveTrashFolder(c.UserContext(), account.ID)
 
-	keys := make([]mailstore.MessageMoveKey, 0, len(selected.Messages))
+	var moveKeys []mailstore.MessageMoveKey
+	var deleteKeys []mailstore.MessageMoveKey
 	for _, message := range selected.Messages {
 		email := message.Email
+		_ = deleteMessageAttachmentCache(c, nil, account.ID, email)
 		if trash != "" && strings.EqualFold(strings.TrimSpace(email.Folder), strings.TrimSpace(trash)) {
+			deleteKeys = append(deleteKeys, mailstore.MessageMoveKey{
+				FolderName: email.Folder,
+				UID:        email.ID,
+			})
 			continue
 		}
-		_ = deleteMessageAttachmentCache(c, nil, account.ID, email)
-		keys = append(keys, mailstore.MessageMoveKey{
+		moveKeys = append(moveKeys, mailstore.MessageMoveKey{
 			FolderName: email.Folder,
 			UID:        email.ID,
 		})
 	}
 
-	queued, err := h.mailDB.QueueMessageMoves(c.UserContext(), account.ID, keys, trash)
+	queuedMoves, err := h.mailDB.QueueMessageMoves(c.UserContext(), account.ID, moveKeys, trash)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation locally"})
+	}
+	queuedDeletes, err := h.mailDB.QueueMessageDeletions(c.UserContext(), account.ID, deleteKeys)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation locally"})
 	}
 
-	if queued > 0 && h.auth != nil && h.auth.syncer != nil {
+	if (queuedMoves > 0 || queuedDeletes > 0) && h.auth != nil && h.auth.syncer != nil {
 		h.auth.syncer.Trigger(account.ID)
 	}
 	return c.JSON(fiber.Map{"ok": true})
@@ -674,7 +683,17 @@ func (h *EmailHandler) HandleConversationMessageDeleteJSON(c *fiber.Ctx) error {
 
 	trash, _ := h.mailDB.ResolveTrashFolder(c.UserContext(), account.ID)
 	if trash != "" && strings.EqualFold(strings.TrimSpace(trash), body.Folder) {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "This email is already in Trash; permanent deletion is not available here"})
+		_ = deleteMessageAttachmentCache(c, nil, account.ID, targetEmail)
+		queued, err := h.mailDB.QueueMessageDeletions(c.UserContext(), account.ID, []mailstore.MessageMoveKey{
+			{FolderName: body.Folder, UID: uid},
+		})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete email locally"})
+		}
+		if queued > 0 && h.auth != nil && h.auth.syncer != nil {
+			h.auth.syncer.Trigger(account.ID)
+		}
+		return c.JSON(fiber.Map{"ok": true})
 	}
 
 	_ = deleteMessageAttachmentCache(c, nil, account.ID, targetEmail)

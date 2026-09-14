@@ -472,9 +472,11 @@ export function restoreJunkMessage(folder: string, id: string, accountEmail?: st
   return apiFetch<{ ok: boolean; folder: string }>(mailMessageMutationPath(folder, id, accountEmail, "/not-spam"), { method: "POST" });
 }
 
-export function permanentlyDeleteJunkMessage(folder: string, id: string, accountEmail?: string) {
+export function permanentlyDeleteMessage(folder: string, id: string, accountEmail?: string) {
   return apiFetch<{ ok: boolean }>(mailMessageMutationPath(folder, id, accountEmail), { method: "DELETE" });
 }
+
+export const permanentlyDeleteJunkMessage = permanentlyDeleteMessage;
 
 export function getAccounts() {
   return apiFetch<{ accounts: ConnectedAccount[] } | ConnectedAccount[]>("/api/accounts").then((payload) => ({

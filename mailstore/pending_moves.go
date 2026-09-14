@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// TargetFolderPermanentDelete is the sentinel target_folder value used in
+// pending_message_moves to indicate a permanent expunge/deletion rather than a move.
+const TargetFolderPermanentDelete = "<delete>"
+
 // MessageMoveKey identifies one mirrored message to be moved.
 type MessageMoveKey struct {
 	FolderName string
@@ -56,7 +60,7 @@ func (s *Store) QueueMessageMoves(ctx context.Context, accountID string, keys []
 		if parseErr != nil || folder == "" {
 			return 0, fmt.Errorf("mailstore: invalid message move key %q/%q", folder, key.UID)
 		}
-		if targetFolder != "" && strings.EqualFold(folder, targetFolder) {
+		if targetFolder != "" && targetFolder != TargetFolderPermanentDelete && strings.EqualFold(folder, targetFolder) {
 			continue
 		}
 		dedupeKey := folder + "\x00" + key.UID
@@ -178,4 +182,93 @@ func (s *Store) ResolveTrashFolder(ctx context.Context, accountID string) (strin
 		}
 	}
 	return "", nil
+}
+
+// ResolveJunkFolder inspects the mirrored folders for an account to identify
+// the canonical Junk/Spam folder without contacting IMAP.
+func (s *Store) ResolveJunkFolder(ctx context.Context, accountID string) (string, error) {
+	folders, err := s.ListFolders(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range folders {
+		for _, attr := range f.Attributes {
+			if strings.EqualFold(attr, `\Junk`) {
+				return f.Name, nil
+			}
+		}
+	}
+	for _, f := range folders {
+		lc := strings.ToLower(strings.TrimSpace(f.Name))
+		if lc == "junk" || lc == "spam" || lc == "junk mail" || lc == "junk email" || lc == "junk e-mail" || lc == "bulk mail" || lc == "垃圾邮件" || strings.HasSuffix(lc, "/junk") || strings.HasSuffix(lc, "/spam") {
+			return f.Name, nil
+		}
+	}
+	return "", nil
+}
+
+// IsTrashFolder returns true if the specified folder represents the Trash / Deleted mailbox.
+func (s *Store) IsTrashFolder(ctx context.Context, accountID, folderName string) (bool, error) {
+	folderName = strings.TrimSpace(folderName)
+	if folderName == "" {
+		return false, nil
+	}
+	folders, err := s.ListFolders(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range folders {
+		if strings.EqualFold(f.Name, folderName) {
+			for _, attr := range f.Attributes {
+				if strings.EqualFold(attr, `\Trash`) {
+					return true, nil
+				}
+			}
+		}
+	}
+	trash, err := s.ResolveTrashFolder(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	if trash != "" && strings.EqualFold(folderName, trash) {
+		return true, nil
+	}
+	lc := strings.ToLower(folderName)
+	return lc == "trash" || lc == "deleted" || lc == "deleted items" || lc == "bin" || lc == "已删除" || strings.HasSuffix(lc, "/trash"), nil
+}
+
+// IsJunkFolder returns true if the specified folder represents the Junk / Spam mailbox.
+func (s *Store) IsJunkFolder(ctx context.Context, accountID, folderName string) (bool, error) {
+	folderName = strings.TrimSpace(folderName)
+	if folderName == "" {
+		return false, nil
+	}
+	folders, err := s.ListFolders(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range folders {
+		if strings.EqualFold(f.Name, folderName) {
+			for _, attr := range f.Attributes {
+				if strings.EqualFold(attr, `\Junk`) {
+					return true, nil
+				}
+			}
+		}
+	}
+	junk, err := s.ResolveJunkFolder(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	if junk != "" && strings.EqualFold(folderName, junk) {
+		return true, nil
+	}
+	lc := strings.ToLower(folderName)
+	return lc == "junk" || lc == "spam" || lc == "junk mail" || lc == "junk email" || lc == "junk e-mail" || lc == "bulk mail" || lc == "垃圾邮件" || strings.HasSuffix(lc, "/junk") || strings.HasSuffix(lc, "/spam"), nil
+}
+
+// QueueMessageDeletions queues permanent deletion for the given messages, deleting them
+// locally from the mirror immediately and recording durable pending delete records.
+func (s *Store) QueueMessageDeletions(ctx context.Context, accountID string, keys []MessageMoveKey) (int, error) {
+	return s.QueueMessageMoves(ctx, accountID, keys, TargetFolderPermanentDelete)
 }

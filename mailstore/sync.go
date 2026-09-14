@@ -343,6 +343,7 @@ func pendingFlagRetryDelay(attempts int) time.Duration {
 
 type pendingMoveWriter interface {
 	MoveMessage(srcFolder, uid, destFolder string) error
+	DeleteMessage(folder, uid string) error
 	DiscoverTrashFolder() (string, error)
 }
 
@@ -386,6 +387,20 @@ func (m *SyncManager) flushPendingMoves(ctx context.Context, client pendingMoveW
 
 	for _, move := range moves {
 		destFolder := strings.TrimSpace(move.TargetFolder)
+		if destFolder == TargetFolderPermanentDelete {
+			if err := client.DeleteMessage(move.FolderName, move.UID); err != nil {
+				next := time.Now().Add(pendingMoveRetryDelay(move.Attempts))
+				if storeErr := m.store.FailPendingMessageMove(ctx, move, next, err); storeErr != nil {
+					return storeErr
+				}
+				continue
+			}
+			if err := m.store.CompletePendingMessageMove(ctx, move); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if destFolder == "" {
 			var trashErr error
 			destFolder, trashErr = getTrash()

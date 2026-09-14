@@ -3,6 +3,7 @@ package web_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -276,5 +277,141 @@ func TestHandleConversationMessageDeleteJSONQueuesMove(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].UID != "200" {
 		t.Fatalf("unexpected pending: %+v", pending)
+	}
+}
+
+func TestHandleLocalFolderMessageDeleteJSONQueuesDeletions(t *testing.T) {
+	ctx := context.Background()
+	db, err := mailstore.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	user, err := db.CreateUser(ctx, "testuser", "Test User", "password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := db.UpsertAccount(ctx, mailstore.Account{
+		OwnerID:           user.ID,
+		Email:             "user@example.com",
+		Username:          "user@example.com",
+		EncryptedPassword: "enc",
+		IMAPServer:        "imap.example.com",
+		IMAPPort:          993,
+		SMTPServer:        "smtp.example.com",
+		SMTPPort:          587,
+		IsDefault:         true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, folder := range []struct {
+		name  string
+		attrs []string
+	}{
+		{"INBOX", nil},
+		{"Trash", []string{`\Trash`}},
+		{"Junk", []string{`\Junk`}},
+	} {
+		if err := db.UpsertFolder(ctx, mailstore.Folder{
+			AccountID:  account.ID,
+			Name:       folder.name,
+			Attributes: folder.attrs,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := db.UpsertMessages(ctx, account.ID, "Junk", []models.Email{
+		{ID: "501", Folder: "Junk", Subject: "Spam mail", Date: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertMessages(ctx, account.ID, "Trash", []models.Email{
+		{ID: "601", Folder: "Trash", Subject: "Deleted mail", Date: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{ID: "701", Folder: "INBOX", Subject: "Inbox mail", Date: time.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessStore := session.New()
+	cfg := &config.Config{}
+	authHandler := web.NewAuthHandler(sessStore, cfg)
+	emailHandler := web.NewEmailHandler(sessStore, cfg, authHandler)
+	emailHandler.SetMailMirror(db)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("username", user.Login)
+		sess, sErr := sessStore.Get(c)
+		if sErr == nil {
+			sess.Set("user_id", user.ID)
+			sess.Set("account_id", account.ID)
+			sess.Set("username", user.Login)
+			sess.Set("token", "test-token")
+			_ = sess.Save()
+		}
+		return c.Next()
+	})
+
+	app.Delete("/api/mail/messages/:uid", emailHandler.HandleLocalFolderMessageDeleteJSON)
+
+	// 1. Delete from Junk -> should succeed and queue permanent delete
+	delJunkReq := httptest.NewRequest(http.MethodDelete, "/api/mail/messages/501?folder=Junk", nil)
+	delJunkResp, err := app.Test(delJunkReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delJunkResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete junk status = %d", delJunkResp.StatusCode)
+	}
+	if _, err := db.GetMessage(ctx, account.ID, "Junk", "501"); !errors.Is(err, mailstore.ErrNotFound) {
+		t.Fatalf("expected Junk/501 to be deleted locally, got %v", err)
+	}
+
+	// 2. Delete from Trash -> should succeed and queue permanent delete
+	delTrashReq := httptest.NewRequest(http.MethodDelete, "/api/mail/messages/601?folder=Trash", nil)
+	delTrashResp, err := app.Test(delTrashReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delTrashResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete trash status = %d", delTrashResp.StatusCode)
+	}
+	if _, err := db.GetMessage(ctx, account.ID, "Trash", "601"); !errors.Is(err, mailstore.ErrNotFound) {
+		t.Fatalf("expected Trash/601 to be deleted locally, got %v", err)
+	}
+
+	// 3. Verify pending moves are both queued with "<delete>"
+	pending, err := db.ListPendingMessageMoves(ctx, account.ID, time.Now(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 pending moves, got %d: %+v", len(pending), pending)
+	}
+	for _, p := range pending {
+		if p.TargetFolder != mailstore.TargetFolderPermanentDelete {
+			t.Fatalf("expected target folder %q, got %q", mailstore.TargetFolderPermanentDelete, p.TargetFolder)
+		}
+	}
+
+	// 4. Delete from INBOX -> should be rejected with 409 Conflict
+	delInboxReq := httptest.NewRequest(http.MethodDelete, "/api/mail/messages/701?folder=INBOX", nil)
+	delInboxResp, err := app.Test(delInboxReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delInboxResp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict for INBOX delete, got %d", delInboxResp.StatusCode)
+	}
+	if _, err := db.GetMessage(ctx, account.ID, "INBOX", "701"); err != nil {
+		t.Fatalf("expected INBOX/701 to still exist locally, got %v", err)
 	}
 }

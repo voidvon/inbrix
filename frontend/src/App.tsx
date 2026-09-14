@@ -72,7 +72,7 @@ import type { CanvasDocumentEditorHandle } from "./components/app/canvas-documen
 import { DocumentStampManager } from "./components/app/document-stamps";
 import { ReplyTemplates } from "./components/app/reply-templates";
 import { createDocumentPDF, exportDocumentPages } from "./components/app/document-export";
-import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteJunkMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
+import { ApiError, addAccount, addAIAgent, addAIModel, checkForUpdates, createCalendarEvent, deleteAccount, deleteAIModel, deleteConversation, deleteConversationMessage, generateDocument, generateEmail, getAccounts, getAIAgents, getAITaskBindings, getAIModels, getCalendarEvents, getCapabilities, getConversation, getConversations, getAccountFeishuWebhookSettings, getFolderMessages, getMailAttachments, getMessage, getPublicSettings, getSignatures, getSystemSettings, getUpdateInfo, installUpdate, markConversationRead, markConversationUnread, markMailMessageRead, permanentlyDeleteMessage, register, restoreJunkMessage, saveAITaskBinding, saveConversationNote, saveConversationStatus, saveAccountFeishuWebhookSettings, saveSignatures, sendMessage, setDefaultAIModel, signIn, signOut, summarizeMailMessage, switchAccount, switchLanguage, testAIModel, testSavedAIModel, updateAccount, updateAccountPassword, updateAccountProfile, updateAIAgent, updateAIModel, updateRegistrationOpen, updateSystemUserRole, type AIAgent, type AIModel, type EmailSignature, type SystemSettings as SystemSettingsData, type UpdateStatus, type UserRole } from "./lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "./lib/push";
 import { cn, formatSize, formatTime, isSentMailbox, linkifyText, splitQuotedText } from "./lib/utils";
 import { Badge } from "./components/ui/badge";
@@ -3348,16 +3348,16 @@ function flagsMarkedUnread(flags: string[] = []) {
   return flags.filter((flag) => flag.toLowerCase() !== "\\seen");
 }
 
-function FolderMessageRow({ copy, message, address, selected, junkActions, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; junkActions: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
+function FolderMessageRow({ copy, message, address, selected, canNotSpam, canPermanentDelete, actionPending, onSelect, onNotSpam, onPermanentDelete }: { copy: Copy; message: MailMessage; address: string; selected: boolean; canNotSpam: boolean; canPermanentDelete: boolean; actionPending: boolean; onSelect: () => void; onNotSpam: () => void; onPermanentDelete: () => void }) {
   const unread = messageIsUnread(message);
   const row = <button type="button" onClick={onSelect} className={cn("block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50", selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]")}><span className="flex items-baseline justify-between gap-2"><strong className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-muted-foreground")}>{address}</strong><span className="flex shrink-0 items-center gap-2">{unread && <span className="size-1.5 rounded-full bg-primary" aria-label={copy.unread} title={copy.unread} />}<time className="text-[10px] text-muted-foreground">{formatTime(message.date)}</time></span></span><span className={cn("mt-1 block truncate text-xs", unread ? "text-foreground/80" : "text-muted-foreground/70")}>{message.subject || copy.noSubject}</span></button>;
-  if (!junkActions) return row;
+  if (!canNotSpam && !canPermanentDelete) return row;
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block">{row}</ContextMenuTrigger>
       <ContextMenuContent className="w-44">
-        <ContextMenuItem disabled={actionPending} className="gap-2 px-2 py-2" onClick={onNotSpam}><ShieldCheck className="size-4" />{copy.notSpam}</ContextMenuItem>
-        <ContextMenuItem variant="destructive" disabled={actionPending} className="gap-2 px-2 py-2" onClick={onPermanentDelete}><Trash2 className="size-4" />{copy.permanentDelete}</ContextMenuItem>
+        {canNotSpam && <ContextMenuItem disabled={actionPending} className="gap-2 px-2 py-2" onClick={onNotSpam}><ShieldCheck className="size-4" />{copy.notSpam}</ContextMenuItem>}
+        {canPermanentDelete && <ContextMenuItem variant="destructive" disabled={actionPending} className="gap-2 px-2 py-2" onClick={onPermanentDelete}><Trash2 className="size-4" />{copy.permanentDelete}</ContextMenuItem>}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -3379,6 +3379,8 @@ function FolderPage({ folder }: { folder: string }) {
   const currentMailbox = folders.find((mailbox) => mailbox.name === folder) || { name: folder, delimiter: "/", attributes: [] };
   const folderTitle = folderLabel(locale, currentMailbox);
   const isJunkFolder = folderKind(currentMailbox) === "junk";
+  const isTrashFolder = folderKind(currentMailbox) === "trash";
+  const canPermanentDelete = isJunkFolder || isTrashFolder;
   const messages = (list.data?.messages || []).filter((message) => {
     const query = search.trim().toLowerCase();
     return !query || [message.from, message.fromName, message.to, message.subject, message.preview].some((value) => value?.toLowerCase().includes(query));
@@ -3408,7 +3410,7 @@ function FolderPage({ folder }: { folder: string }) {
     onError: (value) => toast.error(value instanceof Error ? value.message : locale.notSpamFailed),
   });
   const permanentDeleteMutation = useMutation({
-    mutationFn: (message: MailMessage) => permanentlyDeleteJunkMessage(folder, message.id, message.accountEmail || accountEmail),
+    mutationFn: (message: MailMessage) => permanentlyDeleteMessage(folder, message.id, message.accountEmail || accountEmail),
     onSuccess: async (_, message) => {
       setPermanentDeleteTarget(null);
       setPermanentDeleteError("");
@@ -3467,11 +3469,28 @@ function FolderPage({ folder }: { folder: string }) {
             {list.isPending && <ListSkeleton />}
             {!list.isPending && list.error && <ErrorState copy={locale} onRetry={() => void list.refetch()} />}
             {!list.isPending && !list.error && messages.length === 0 && <EmptyState icon={<Mail />} text={locale.noConversations} />}
-            {messages.map((message) => <FolderMessageRow key={message.id} copy={locale} message={message} address={messageAddress(message)} selected={selected === message.id} junkActions={isJunkFolder} actionPending={restoreMutation.isPending || permanentDeleteMutation.isPending} onSelect={() => select(message.id)} onNotSpam={() => restoreMutation.mutate(message)} onPermanentDelete={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(message); }} />)}
+            {messages.map((message) => <FolderMessageRow key={message.id} copy={locale} message={message} address={messageAddress(message)} selected={selected === message.id} canNotSpam={isJunkFolder} canPermanentDelete={canPermanentDelete} actionPending={restoreMutation.isPending || permanentDeleteMutation.isPending} onSelect={() => select(message.id)} onNotSpam={() => restoreMutation.mutate(message)} onPermanentDelete={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(message); }} />)}
           </ScrollArea>
         </section>
         <section className={cn("min-w-0 flex-1 flex-col bg-surface", detailOpen ? "flex" : "hidden lg:flex")}>
-          {detailOpen && <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5"><div><Button variant="ghost" size="icon" className="lg:hidden" onClick={closeDetail} aria-label={locale.back}><ArrowLeft /></Button></div><h2 className="truncate text-center text-sm font-semibold">{detail.data?.subject || folderTitle}</h2><div /></header>}
+          {detailOpen && (
+            <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
+              <div><Button variant="ghost" size="icon" className="lg:hidden" onClick={closeDetail} aria-label={locale.back}><ArrowLeft /></Button></div>
+              <h2 className="truncate text-center text-sm font-semibold">{detail.data?.subject || folderTitle}</h2>
+              <div className="flex items-center justify-end gap-1">
+                {isJunkFolder && detail.data && (
+                  <Button variant="ghost" size="sm" disabled={restoreMutation.isPending} onClick={() => restoreMutation.mutate(detail.data)} title={locale.notSpam}>
+                    <ShieldCheck className="size-4" /><span className="hidden sm:inline">{locale.notSpam}</span>
+                  </Button>
+                )}
+                {canPermanentDelete && detail.data && (
+                  <Button variant="ghost" size="icon" title={locale.permanentDelete} aria-label={locale.permanentDelete} disabled={permanentDeleteMutation.isPending} onClick={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(detail.data); }}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
+              </div>
+            </header>
+          )}
           <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8">{detail.isPending && selected ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{locale.loading}</div> : detail.error ? <ErrorState copy={locale} onRetry={() => void detail.refetch()} /> : detail.data ? <MailDetail copy={locale} message={detail.data} /> : <EmptyState icon={<Mail />} text={locale.selectConversation} />}</ScrollArea>
         </section>
       </main>

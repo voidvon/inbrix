@@ -12,9 +12,11 @@ import (
 
 type recordingMoveWriter struct {
 	moves       []string
+	deletes     []string
 	trashFolder string
 	discoverErr error
 	moveErr     error
+	deleteErr   error
 }
 
 func (r *recordingMoveWriter) MoveMessage(srcFolder, uid, destFolder string) error {
@@ -22,6 +24,14 @@ func (r *recordingMoveWriter) MoveMessage(srcFolder, uid, destFolder string) err
 		return r.moveErr
 	}
 	r.moves = append(r.moves, srcFolder+":"+uid+"->"+destFolder)
+	return nil
+}
+
+func (r *recordingMoveWriter) DeleteMessage(folder, uid string) error {
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
+	r.deletes = append(r.deletes, folder+":"+uid)
 	return nil
 }
 
@@ -233,5 +243,94 @@ func TestResolveTrashFolder(t *testing.T) {
 	trash2, err := s.ResolveTrashFolder(ctx, account2.ID)
 	if err != nil || trash2 != "Deleted Items" {
 		t.Fatalf("ResolveTrashFolder fallback: trash=%q err=%v, want 'Deleted Items'", trash2, err)
+	}
+}
+
+func TestResolveJunkFolder(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	account := testAccount(t, s, "owner", "owner@example.com", true)
+
+	if err := s.UpsertFolder(ctx, Folder{AccountID: account.ID, Name: "MySpam", Attributes: []string{`\Junk`}}); err != nil {
+		t.Fatal(err)
+	}
+	junk, err := s.ResolveJunkFolder(ctx, account.ID)
+	if err != nil || junk != "MySpam" {
+		t.Fatalf("ResolveJunkFolder: junk=%q err=%v, want MySpam", junk, err)
+	}
+
+	account2 := testAccount(t, s, "owner2", "owner2@example.com", false)
+	if err := s.UpsertFolder(ctx, Folder{AccountID: account2.ID, Name: "垃圾邮件"}); err != nil {
+		t.Fatal(err)
+	}
+	junk2, err := s.ResolveJunkFolder(ctx, account2.ID)
+	if err != nil || junk2 != "垃圾邮件" {
+		t.Fatalf("ResolveJunkFolder fallback: junk=%q err=%v, want '垃圾邮件'", junk2, err)
+	}
+}
+
+func TestQueueMessageDeletionsAndFlush(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	account := testAccount(t, s, "owner", "owner@example.com", true)
+
+	if err := s.UpsertFolder(ctx, Folder{AccountID: account.ID, Name: "Trash", Attributes: []string{`\Trash`}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertFolder(ctx, Folder{AccountID: account.ID, Name: "Junk", Attributes: []string{`\Junk`}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpsertMessages(ctx, account.ID, "Trash", []models.Email{
+		{ID: "301", Flags: nil},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMessages(ctx, account.ID, "Junk", []models.Email{
+		{ID: "401", Flags: nil},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.UpdateFolderStats(ctx, account.ID, "Trash")
+	_ = s.UpdateFolderStats(ctx, account.ID, "Junk")
+
+	keys := []MessageMoveKey{
+		{FolderName: "Trash", UID: "301"},
+		{FolderName: "Junk", UID: "401"},
+	}
+	queued, err := s.QueueMessageDeletions(ctx, account.ID, keys)
+	if err != nil || queued != 2 {
+		t.Fatalf("QueueMessageDeletions: queued=%d err=%v", queued, err)
+	}
+
+	// 1. Locally deleted
+	if _, err := s.GetMessage(ctx, account.ID, "Trash", "301"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Trash/301 was not deleted locally")
+	}
+	if _, err := s.GetMessage(ctx, account.ID, "Junk", "401"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Junk/401 was not deleted locally")
+	}
+
+	// 2. Flushed to DeleteMessage
+	manager := &SyncManager{store: s}
+	writer := &recordingMoveWriter{}
+	if err := manager.flushPendingMoves(ctx, writer, account.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(writer.deletes) != 2 {
+		t.Fatalf("expected 2 deletes, got %v", writer.deletes)
+	}
+	if writer.deletes[0] != "Junk:401" && writer.deletes[1] != "Junk:401" {
+		t.Fatalf("Junk:401 not in deletes: %v", writer.deletes)
+	}
+	if writer.deletes[0] != "Trash:301" && writer.deletes[1] != "Trash:301" {
+		t.Fatalf("Trash:301 not in deletes: %v", writer.deletes)
+	}
+
+	// 3. Pending moves cleared
+	pending, err := s.ListPendingMessageMoves(ctx, account.ID, time.Now(), 10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending moves not cleared: %+v", pending)
 	}
 }

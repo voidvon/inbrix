@@ -425,8 +425,51 @@ func (h *EmailHandler) HandleLocalJunkMessageRestoreJSON(c *fiber.Ctx) error {
 	return h.localJunkMessageMutation(c, false)
 }
 
-// HandleLocalJunkMessageDeleteJSON permanently expunges a message. The handler
-// deliberately rejects messages outside the server-discovered Junk mailbox.
+// HandleLocalFolderMessageDeleteJSON permanently expunges a message asynchronously.
+// The handler permits permanent deletion from Junk/Spam or Trash folders.
+func (h *EmailHandler) HandleLocalFolderMessageDeleteJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	account, err := h.localFolderAccount(c)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	folder := strings.TrimSpace(c.Query("folder"))
+	uid := strings.TrimSpace(c.Params("uid"))
+	if folder == "" || uid == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Message folder and UID are required"})
+	}
+	email, err := h.mailDB.GetMessage(c.UserContext(), account.ID, folder, uid)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found"})
+	} else if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read local message"})
+	}
+
+	isJunk, _ := h.mailDB.IsJunkFolder(c.UserContext(), account.ID, folder)
+	isTrash, _ := h.mailDB.IsTrashFolder(c.UserContext(), account.ID, folder)
+	if !isJunk && !isTrash {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Permanent deletion is only available in junk or trash folders"})
+	}
+
+	_ = deleteMessageAttachmentCache(c, nil, account.ID, email)
+
+	queued, err := h.mailDB.QueueMessageDeletions(c.UserContext(), account.ID, []mailstore.MessageMoveKey{
+		{FolderName: folder, UID: uid},
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete email locally"})
+	}
+
+	if queued > 0 && h.auth != nil && h.auth.syncer != nil {
+		h.auth.syncer.Trigger(account.ID)
+	}
+
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+// HandleLocalJunkMessageDeleteJSON permanently expunges a message asynchronously.
 func (h *EmailHandler) HandleLocalJunkMessageDeleteJSON(c *fiber.Ctx) error {
-	return h.localJunkMessageMutation(c, true)
+	return h.HandleLocalFolderMessageDeleteJSON(c)
 }
