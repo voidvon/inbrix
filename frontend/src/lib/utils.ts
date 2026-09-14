@@ -1,5 +1,15 @@
+import { useState, useEffect } from "react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+
+export function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -148,3 +158,16 @@ export function splitQuotedText(text: string): SplitQuotedTextResult {
     quoted: lines.slice(boundary).join("\n").trim(),
   };
 }
+
+export type PaginationPageItem = number | "start-ellipsis" | "end-ellipsis";
+
+export function paginationPageItems(currentPage: number, pageCount: number): PaginationPageItem[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+  const pages: PaginationPageItem[] = [1];
+  if (currentPage > 4) pages.push("start-ellipsis");
+  for (let page = Math.max(2, currentPage - 1); page <= Math.min(pageCount - 1, currentPage + 1); page += 1) pages.push(page);
+  if (currentPage < pageCount - 3) pages.push("end-ellipsis");
+  pages.push(pageCount);
+  return pages;
+}
+
