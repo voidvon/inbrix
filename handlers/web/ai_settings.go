@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -258,7 +259,8 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 }
 
 func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
-	if _, err := h.ready(c); err != nil {
+	owner, err := h.ready(c)
+	if err != nil {
 		return err
 	}
 	var input aiModelInput
@@ -313,6 +315,7 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		Provider: input.Provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
 	}, input.APIKey, "This is a model connectivity test. Reply with exactly: OK")
 	if err != nil {
+		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true, "output": output, "latencyMs": time.Since(started).Milliseconds()})
@@ -372,6 +375,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
 	}, apiKey, "This is a model connectivity test. Reply with exactly: OK")
 	if err != nil {
+		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true, "output": output, "latencyMs": time.Since(started).Milliseconds()})
@@ -455,26 +459,33 @@ func (h *AISettingsHandler) HandleSummarizeMail(c *fiber.Ctx) error {
 	}
 	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, input.AccountEmail)
 	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", errors.New("mail account not found"))
 		return fiber.NewError(fiber.StatusNotFound, "mail account not found")
 	}
 	if err != nil {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", err)
 		return fiber.ErrInternalServerError
 	}
 	message, err := h.mailDB.GetMessage(c.UserContext(), account.ID, input.Folder, input.MessageID)
 	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", errors.New("mail message not found"))
 		return fiber.NewError(fiber.StatusNotFound, "mail message not found")
 	}
 	if err != nil {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", err)
 		return fiber.ErrInternalServerError
 	}
 	if !message.BodyCached && strings.TrimSpace(message.Body) == "" && strings.TrimSpace(message.HTML) == "" {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", errors.New("mail body is still synchronizing"))
 		return fiber.NewError(fiber.StatusConflict, "mail body is still synchronizing")
 	}
 	result, err := mailstore.GetOrCreateMailSummary(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
 	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", errors.New("no AI model or summary agent is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model or summary agent is configured")
 	}
 	if err != nil {
+		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", err)
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	return c.JSON(fiber.Map{
@@ -547,6 +558,7 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 		}
 		result, suggestionErr := mailstore.GetOrCreateReplySuggestion(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, true)
 		if suggestionErr != nil {
+			h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", suggestionErr)
 			return fiber.NewError(fiber.StatusBadGateway, suggestionErr.Error())
 		}
 		return c.JSON(fiber.Map{"body": result.Record.Summary, "persisted": true, "updatedAt": result.Record.UpdatedAt.UTC().Format(time.RFC3339)})
@@ -556,6 +568,7 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, taskType)
 	if bindingErr == nil {
 		if !binding.Enabled {
+			h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", errors.New("this AI function is disabled for the mailbox"))
 			return fiber.NewError(fiber.StatusPreconditionRequired, "this AI function is disabled for the mailbox")
 		}
 		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
@@ -570,19 +583,23 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 		err = bindingErr
 	}
 	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", errors.New("no AI model or email draft agent is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model or email draft agent is configured")
 	}
 	if err != nil {
+		h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", err)
 		return fiber.ErrInternalServerError
 	}
 	var apiKey string
 	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
+		h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, model.Model, "", errors.New("AI model API key is not configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey,
 		emailDraftInstructions(agentPrompt),
 		prompt, 1200)
 	if err != nil {
+		h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, model.Model, "", err)
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	return c.JSON(fiber.Map{"body": stripBestRegards(body)})
@@ -635,13 +652,16 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		err = bindingErr
 	}
 	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, "", "", errors.New("no AI model is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
 	}
 	if err != nil {
+		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, "", "", err)
 		return fiber.ErrInternalServerError
 	}
 	var apiKey string
 	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
+		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", errors.New("AI model API key is not configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	instructions := "Generate a professional " + input.DocumentType + " document. Return only clean HTML suitable for a rich text document. Use headings, paragraphs, and tables when useful. Do not include markdown fences, scripts, styles, or commentary. Match the user's language. Do not invent specific facts; use clear bracketed placeholders."
@@ -652,6 +672,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	}
 	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 1800)
 	if err != nil {
+		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", err)
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(body, "```"), "```html"))
@@ -720,4 +741,70 @@ func (h *AISettingsHandler) createOpenAIResponse(ctx context.Context, cfg mailst
 
 func (h *AISettingsHandler) createOpenAIResponseWithInstructions(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, instructions, input string, maxOutputTokens int) (string, error) {
 	return h.createAIResponseWithInstructions(ctx, cfg, apiKey, instructions, input, maxOutputTokens)
+}
+
+func (h *AISettingsHandler) recordError(ctx context.Context, owner, taskType, accountEmail, modelName, agentName string, err error) {
+	if h == nil || h.mailDB == nil || err == nil || strings.TrimSpace(owner) == "" {
+		return
+	}
+	_ = h.mailDB.RecordAIError(ctx, mailstore.AIErrorLogRecord{
+		OwnerID:      owner,
+		TaskType:     taskType,
+		AccountEmail: accountEmail,
+		ModelName:    modelName,
+		AgentName:    agentName,
+		ErrorMessage: err.Error(),
+	})
+}
+
+// HandleListAIErrorLogs returns recent AI error records for the authenticated user.
+func (h *AISettingsHandler) HandleListAIErrorLogs(c *fiber.Ctx) error {
+	owner, err := h.ready(c)
+	if err != nil {
+		return err
+	}
+	limit := 100
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	logs, err := h.mailDB.ListAIErrorLogs(c.UserContext(), owner, limit)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	type errorLogPublic struct {
+		ID           string `json:"id"`
+		TaskType     string `json:"taskType"`
+		AccountEmail string `json:"accountEmail"`
+		ModelName    string `json:"modelName"`
+		AgentName    string `json:"agentName"`
+		ErrorMessage string `json:"errorMessage"`
+		CreatedAt    string `json:"createdAt"`
+	}
+	publicLogs := make([]errorLogPublic, 0, len(logs))
+	for _, l := range logs {
+		publicLogs = append(publicLogs, errorLogPublic{
+			ID:           l.ID,
+			TaskType:     l.TaskType,
+			AccountEmail: l.AccountEmail,
+			ModelName:    l.ModelName,
+			AgentName:    l.AgentName,
+			ErrorMessage: l.ErrorMessage,
+			CreatedAt:    l.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return c.JSON(fiber.Map{"logs": publicLogs})
+}
+
+// HandleClearAIErrorLogs removes all AI error logs for the authenticated user.
+func (h *AISettingsHandler) HandleClearAIErrorLogs(c *fiber.Ctx) error {
+	owner, err := h.ready(c)
+	if err != nil {
+		return err
+	}
+	if err := h.mailDB.ClearAIErrorLogs(c.UserContext(), owner); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }

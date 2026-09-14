@@ -398,9 +398,29 @@ export function getAITaskBindings() {
 }
 
 export function saveAITaskBinding(binding: AITaskBindingInput) {
-  return apiFetch<AITaskBinding>("/api/settings/ai/task-bindings", {
+  return apiFetch<{ ok: boolean }>("/api/settings/ai/task-bindings", {
     method: "PUT",
     body: JSON.stringify(binding),
+  });
+}
+
+export type AIErrorLog = {
+  id: string;
+  taskType: string;
+  accountEmail: string;
+  modelName: string;
+  agentName: string;
+  errorMessage: string;
+  createdAt: string;
+};
+
+export function getAIErrorLogs(limit = 100) {
+  return apiFetch<{ logs: AIErrorLog[] }>(`/api/settings/ai/error-logs?limit=${encodeURIComponent(limit)}`);
+}
+
+export function clearAIErrorLogs() {
+  return apiFetch<{ ok: boolean }>("/api/settings/ai/error-logs", {
+    method: "DELETE",
   });
 }
 

@@ -232,6 +232,12 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 	key := MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID}
 	previous, err := previousMailSummary(ctx, store, account.ID, message)
 	if err != nil {
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     MailSummaryTask,
+			AccountEmail: account.Email,
+			ErrorMessage: "load previous email summary: " + err.Error(),
+		})
 		return MailSummaryResult{}, err
 	}
 	sourceHash := hashMailSummaryValue(mailSummaryInput(account, message, previous))
@@ -247,6 +253,12 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 
 	cfg, err := resolveMailSummaryConfig(ctx, store, encryptionKey, account)
 	if err != nil {
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     MailSummaryTask,
+			AccountEmail: account.Email,
+			ErrorMessage: err.Error(),
+		})
 		return MailSummaryResult{}, err
 	}
 	claim := MessageSummaryRecord{
@@ -260,6 +272,14 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 	}
 	current, claimed, err := store.ClaimMessageSummaryGeneration(ctx, claim, regenerate, mailSummaryGenerationLease)
 	if err != nil {
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     MailSummaryTask,
+			AccountEmail: account.Email,
+			ModelName:    cfg.model.Model,
+			AgentName:    cfg.agent.Name,
+			ErrorMessage: "claim generation lease: " + err.Error(),
+		})
 		return MailSummaryResult{}, err
 	}
 	if !claimed {
@@ -271,6 +291,14 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 		for {
 			select {
 			case <-ctx.Done():
+				_ = store.RecordAIError(ctx, AIErrorLogRecord{
+					OwnerID:      account.OwnerID,
+					TaskType:     MailSummaryTask,
+					AccountEmail: account.Email,
+					ModelName:    cfg.model.Model,
+					AgentName:    cfg.agent.Name,
+					ErrorMessage: "wait concurrent generation: " + ctx.Err().Error(),
+				})
 				return MailSummaryResult{}, ctx.Err()
 			case <-ticker.C:
 				current, err = store.GetMessageSummary(ctx, key)
@@ -293,6 +321,14 @@ func GetOrCreateMailSummary(ctx context.Context, client HTTPClient, store *Store
 	summary, generationErr := generateMailSummary(ctx, client, account, message, previous, cfg)
 	if generationErr != nil {
 		_ = store.FailMessageSummaryGeneration(ctx, key, current.GenerationToken, generationErr)
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     MailSummaryTask,
+			AccountEmail: account.Email,
+			ModelName:    cfg.model.Model,
+			AgentName:    cfg.agent.Name,
+			ErrorMessage: generationErr.Error(),
+		})
 		return MailSummaryResult{}, generationErr
 	}
 	completed, err := store.CompleteMessageSummaryGeneration(ctx, claim, current.GenerationToken, summary)

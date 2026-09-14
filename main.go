@@ -545,6 +545,8 @@ func main() {
 	protected.Delete("/api/settings/ai/agents/:id", userAIHandler.HandleDeleteAgent)
 	protected.Get("/api/settings/ai/task-bindings", userAIHandler.HandleListTaskBindings)
 	protected.Put("/api/settings/ai/task-bindings", userAIHandler.HandleSaveTaskBinding)
+	protected.Get("/api/settings/ai/error-logs", userAIHandler.HandleListAIErrorLogs)
+	protected.Delete("/api/settings/ai/error-logs", userAIHandler.HandleClearAIErrorLogs)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)

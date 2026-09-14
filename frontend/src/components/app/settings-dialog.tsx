@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   Bell,
   BellOff,
   Bot,
@@ -34,10 +35,12 @@ import {
   addAIAgent,
   addAIModel,
   checkForUpdates,
+  clearAIErrorLogs,
   deleteAccount,
   deleteAIModel,
   getAccounts,
   getAIAgents,
+  getAIErrorLogs,
   getAITaskBindings,
   getAIModels,
   getCapabilities,
@@ -61,6 +64,7 @@ import {
   updateRegistrationOpen,
   updateSystemUserRole,
   type AIAgent,
+  type AIErrorLog,
   type AIModel,
   type EmailSignature,
   type SystemSettings as SystemSettingsData,
@@ -504,7 +508,211 @@ export function AgentSettings({ copy }: { copy: Copy }) {
           </form>
         </DialogContent>
       </Dialog>
+      <AIErrorLogsSection copy={copy} />
     </section>
+  );
+}
+
+function AIErrorLogsSection({ copy }: { copy: Copy }) {
+  const queryClient = useQueryClient();
+  const errorLogs = useQuery({
+    queryKey: ["ai-error-logs"],
+    queryFn: () => getAIErrorLogs(100),
+    retry: false,
+  });
+  const [detailLog, setDetailLog] = useState<AIErrorLog | null>(null);
+
+  const clearMutation = useMutation({
+    mutationFn: clearAIErrorLogs,
+    onSuccess: () => {
+      toast.success(copy.errorLogsCleared);
+      void queryClient.invalidateQueries({ queryKey: ["ai-error-logs"] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : copy.loadFailed);
+    },
+  });
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["ai-error-logs"] });
+  };
+
+  const formatTime = (timeStr: string) => {
+    if (!timeStr) return "-";
+    try {
+      const d = new Date(timeStr);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    } catch {
+      return timeStr;
+    }
+  };
+
+  const taskBadge = (task: string) => {
+    switch (task) {
+      case "mail_summary":
+        return <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400">{copy.mailSummaryAgent || copy.mailSummaryTitle || "邮件总结"}</Badge>;
+      case "email_draft":
+        return <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{copy.emailDraftAgent || "邮件撰写"}</Badge>;
+      case "reply_suggestion":
+        return <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400">{copy.replySuggestionAgent || "建议回复"}</Badge>;
+      case "document_generation":
+        return <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">文档生成</Badge>;
+      case "model_test":
+        return <Badge variant="outline" className="border-muted-foreground/30 bg-muted/40 text-muted-foreground">模型测试</Badge>;
+      default:
+        return <Badge variant="outline">{task || "-"}</Badge>;
+    }
+  };
+
+  const logs = errorLogs.data?.logs || [];
+
+  return (
+    <div className="mt-8 border-t pt-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <AlertCircle className="size-4 text-destructive" />
+            {copy.aiErrorLogs}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">{copy.aiErrorLogsDescription}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={errorLogs.isFetching}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <RefreshCw className={cn("size-3.5", errorLogs.isFetching && "animate-spin")} />
+            {copy.refreshLogs || "刷新"}
+          </Button>
+          {logs.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (window.confirm(copy.clearErrorLogsConfirm)) {
+                  clearMutation.mutate();
+                }
+              }}
+              disabled={clearMutation.isPending}
+              className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="size-3.5" />
+              {copy.clearErrorLogs}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-lg border">
+        <Table className="min-w-[42rem] table-fixed">
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[20%] px-4">{copy.errorLogTime}</TableHead>
+              <TableHead className="w-[18%] px-4">{copy.errorLogTask}</TableHead>
+              <TableHead className="w-[22%] px-4">{copy.errorLogAccount}</TableHead>
+              <TableHead className="w-[18%] px-4">{copy.errorLogModel} / {copy.errorLogAgent}</TableHead>
+              <TableHead className="px-4">{copy.errorLogMessage}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {errorLogs.isPending ? (
+              <TableRow>
+                <TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>
+                  {copy.loading}
+                </TableCell>
+              </TableRow>
+            ) : logs.length > 0 ? (
+              logs.map((log) => (
+                <TableRow
+                  key={log.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => setDetailLog(log)}
+                >
+                  <TableCell className="px-4 py-2.5 text-xs font-mono text-muted-foreground">
+                    {formatTime(log.createdAt)}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5">
+                    {taskBadge(log.taskType)}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-xs font-mono truncate text-muted-foreground">
+                    {log.accountEmail || "-"}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-xs text-muted-foreground truncate">
+                    {log.modelName || log.agentName ? (
+                      <span title={`${log.modelName} ${log.agentName ? `(${log.agentName})` : ""}`}>
+                        {log.modelName || log.agentName}
+                      </span>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                  <TableCell className="px-4 py-2.5 text-xs text-destructive">
+                    <p className="line-clamp-1 break-all font-mono" title={log.errorMessage}>
+                      {log.errorMessage}
+                    </p>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>
+                  {copy.noErrorLogs}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <Dialog open={Boolean(detailLog)} onOpenChange={(next) => !next && setDetailLog(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="size-5" />
+              {copy.errorLogDetails}
+            </DialogTitle>
+            <DialogDescription>
+              {detailLog ? `${formatTime(detailLog.createdAt)} · ${detailLog.taskType}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {detailLog && (
+            <div className="grid gap-3 text-sm">
+              <div className="grid grid-cols-3 gap-2 rounded-md bg-muted/50 p-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground block">{copy.errorLogTask}</span>
+                  <span className="font-medium">{detailLog.taskType}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">{copy.errorLogAccount}</span>
+                  <span className="font-medium truncate block" title={detailLog.accountEmail}>{detailLog.accountEmail || "-"}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">{copy.errorLogModel}</span>
+                  <span className="font-medium truncate block" title={detailLog.modelName}>{detailLog.modelName || "-"}</span>
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">{copy.errorLogMessage}</Label>
+                <div className="max-h-60 overflow-y-auto rounded-md border bg-muted/30 p-3 font-mono text-xs text-destructive whitespace-pre-wrap break-all select-text">
+                  {detailLog.errorMessage}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDetailLog(null)}>
+              {copy.cancel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
