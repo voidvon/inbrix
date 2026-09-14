@@ -241,7 +241,7 @@ export function saveSignatures(signatures: EmailSignature[]) {
 
 export type AIModel = {
   id: string;
-  provider: "openai";
+  provider: "openai" | "gemini" | "deepseek";
   baseUrl: string;
   model: string;
   reasoningEffort: "low" | "medium";
@@ -249,6 +249,7 @@ export type AIModel = {
 };
 
 export type AddAIModelInput = {
+  provider?: "openai" | "gemini" | "deepseek";
   baseUrl: string;
   model: string;
   apiKey: string;

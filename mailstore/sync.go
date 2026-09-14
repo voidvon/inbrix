@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"inbrix/config"
 	"inbrix/handlers/api"
@@ -273,6 +274,9 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	defer client.Close()
+	if err := m.flushPendingMoves(ctx, client, accountID); err != nil {
+		log.Printf("mail sync: account %s pending moves: %v", accountID, err)
+	}
 	if err := m.flushPendingFlags(ctx, client, accountID); err != nil {
 		log.Printf("mail sync: account %s pending flags: %v", accountID, err)
 	}
@@ -335,6 +339,85 @@ func pendingFlagRetryDelay(attempts int) time.Duration {
 		return 5 * time.Minute
 	}
 	return delay
+}
+
+type pendingMoveWriter interface {
+	MoveMessage(srcFolder, uid, destFolder string) error
+	DiscoverTrashFolder() (string, error)
+}
+
+func pendingMoveRetryDelay(attempts int) time.Duration {
+	delay := 5 * time.Second
+	for i := 0; i < attempts && delay < 5*time.Minute; i++ {
+		delay *= 2
+	}
+	if delay > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return delay
+}
+
+// flushPendingMoves delivers pending message moves (such as moving messages to Trash)
+// to the upstream IMAP server before metadata scans.
+func (m *SyncManager) flushPendingMoves(ctx context.Context, client pendingMoveWriter, accountID string) error {
+	moves, err := m.store.ListPendingMessageMoves(ctx, accountID, time.Now(), 500)
+	if err != nil {
+		return err
+	}
+	if len(moves) == 0 {
+		return nil
+	}
+
+	var cachedTrash string
+	getTrash := func() (string, error) {
+		if cachedTrash != "" {
+			return cachedTrash, nil
+		}
+		trash, err := client.DiscoverTrashFolder()
+		if err != nil || strings.TrimSpace(trash) == "" {
+			if err == nil {
+				err = errors.New("trash folder could not be found")
+			}
+			return "", err
+		}
+		cachedTrash = trash
+		return cachedTrash, nil
+	}
+
+	for _, move := range moves {
+		destFolder := strings.TrimSpace(move.TargetFolder)
+		if destFolder == "" {
+			var trashErr error
+			destFolder, trashErr = getTrash()
+			if trashErr != nil {
+				next := time.Now().Add(pendingMoveRetryDelay(move.Attempts))
+				if storeErr := m.store.FailPendingMessageMove(ctx, move, next, trashErr); storeErr != nil {
+					return storeErr
+				}
+				continue
+			}
+		}
+
+		if strings.EqualFold(strings.TrimSpace(move.FolderName), strings.TrimSpace(destFolder)) {
+			if err := m.store.CompletePendingMessageMove(ctx, move); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := client.MoveMessage(move.FolderName, move.UID, destFolder); err != nil {
+			next := time.Now().Add(pendingMoveRetryDelay(move.Attempts))
+			if storeErr := m.store.FailPendingMessageMove(ctx, move, next, err); storeErr != nil {
+				return storeErr
+			}
+			continue
+		}
+
+		if err := m.store.CompletePendingMessageMove(ctx, move); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // flushPendingFlags delivers the durable local flag intent before pulling
@@ -556,6 +639,9 @@ func (m *SyncManager) syncBodies(ctx context.Context, client *api.Client, accoun
 	for _, uid := range pending {
 		cached, err := m.store.GetMessage(ctx, accountID, folderName, uid)
 		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
 			return fmt.Errorf("check body cache %s/%s: %w", folderName, uid, err)
 		}
 		_, isPageMessage := pageIDs[uid]

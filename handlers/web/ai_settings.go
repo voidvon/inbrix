@@ -1,12 +1,9 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -24,6 +21,10 @@ import (
 const (
 	defaultOpenAIBaseURL   = "https://api.openai.com/v1"
 	defaultOpenAIModel     = "gpt-5.6-sol"
+	defaultGeminiBaseURL   = "https://generativelanguage.googleapis.com"
+	defaultGeminiModel     = "gemini-3.8-flash"
+	defaultDeepSeekBaseURL = "https://api.deepseek.com"
+	defaultDeepSeekModel   = "deepseek-chat"
 	defaultReasoningEffort = "medium"
 	maxSummaryInputBytes   = 200_000
 )
@@ -36,6 +37,7 @@ type AISettingsHandler struct {
 }
 
 type aiModelInput struct {
+	Provider        string `json:"provider"`
 	BaseURL         string `json:"baseUrl"`
 	Model           string `json:"model"`
 	APIKey          string `json:"apiKey"`
@@ -119,6 +121,10 @@ func (h *AISettingsHandler) HandleListModels(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"models": out})
 }
 
+func validProvider(p string) bool {
+	return p == "openai" || p == "gemini" || p == "deepseek"
+}
+
 func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	owner, err := h.ready(c)
 	if err != nil {
@@ -128,15 +134,36 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+	if input.Provider == "" {
+		input.Provider = "openai"
+	}
+	if !validProvider(input.Provider) {
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
 	if input.BaseURL == "" {
-		input.BaseURL = defaultOpenAIBaseURL
+		switch input.Provider {
+		case "gemini":
+			input.BaseURL = defaultGeminiBaseURL
+		case "deepseek":
+			input.BaseURL = defaultDeepSeekBaseURL
+		default:
+			input.BaseURL = defaultOpenAIBaseURL
+		}
 	}
 	if input.Model == "" {
-		input.Model = defaultOpenAIModel
+		switch input.Provider {
+		case "gemini":
+			input.Model = defaultGeminiModel
+		case "deepseek":
+			input.Model = defaultDeepSeekModel
+		default:
+			input.Model = defaultOpenAIModel
+		}
 	}
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = defaultReasoningEffort
@@ -144,7 +171,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	if !validReasoningEffort(input.ReasoningEffort) {
 		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
 	}
-	if err := validateOpenAIBaseURL(input.BaseURL); err != nil {
+	if err := validateAIBaseURL(input.Provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
@@ -157,7 +184,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	}
 	created, err := h.mailDB.CreateAIModel(c.UserContext(), mailstore.AIModelRecord{
 		OwnerID:         owner,
-		Provider:        "openai",
+		Provider:        input.Provider,
 		BaseURL:         strings.TrimRight(input.BaseURL, "/"),
 		Model:           input.Model,
 		ReasoningEffort: input.ReasoningEffort,
@@ -174,9 +201,26 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	stored, err := h.mailDB.GetAIModel(c.UserContext(), owner, c.Params("id"))
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
 	var input aiModelInput
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	provider := strings.ToLower(strings.TrimSpace(input.Provider))
+	if provider == "" {
+		provider = stored.Provider
+	}
+	if provider == "" {
+		provider = "openai"
+	}
+	if !validProvider(provider) {
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -191,7 +235,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 	if !validReasoningEffort(input.ReasoningEffort) {
 		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
 	}
-	if err := validateOpenAIBaseURL(input.BaseURL); err != nil {
+	if err := validateAIBaseURL(provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	var encryptedKey string
@@ -202,7 +246,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		}
 	}
 	updated, err := h.mailDB.UpdateAIModel(c.UserContext(), mailstore.AIModelRecord{
-		ID: c.Params("id"), OwnerID: owner, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, EncryptedAPIKey: encryptedKey,
+		ID: c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, EncryptedAPIKey: encryptedKey,
 	})
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
@@ -221,20 +265,41 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+	if input.Provider == "" {
+		input.Provider = "openai"
+	}
+	if !validProvider(input.Provider) {
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
 	if input.BaseURL == "" {
-		input.BaseURL = defaultOpenAIBaseURL
+		switch input.Provider {
+		case "gemini":
+			input.BaseURL = defaultGeminiBaseURL
+		case "deepseek":
+			input.BaseURL = defaultDeepSeekBaseURL
+		default:
+			input.BaseURL = defaultOpenAIBaseURL
+		}
 	}
 	if input.Model == "" {
-		input.Model = defaultOpenAIModel
+		switch input.Provider {
+		case "gemini":
+			input.Model = defaultGeminiModel
+		case "deepseek":
+			input.Model = defaultDeepSeekModel
+		default:
+			input.Model = defaultOpenAIModel
+		}
 	}
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = defaultReasoningEffort
 	}
-	if err := validateOpenAIBaseURL(input.BaseURL); err != nil {
+	if err := validateAIBaseURL(input.Provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if input.APIKey == "" {
@@ -244,8 +309,8 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
 	}
 	started := time.Now()
-	output, err := h.createOpenAIResponse(c.UserContext(), mailstore.AIModelRecord{
-		BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
+	output, err := h.createAIResponse(c.UserContext(), mailstore.AIModelRecord{
+		Provider: input.Provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
 	}, input.APIKey, "This is a model connectivity test. Reply with exactly: OK")
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
@@ -269,6 +334,16 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	provider := strings.ToLower(strings.TrimSpace(input.Provider))
+	if provider == "" {
+		provider = stored.Provider
+	}
+	if provider == "" {
+		provider = "openai"
+	}
+	if !validProvider(provider) {
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
@@ -282,7 +357,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = stored.ReasoningEffort
 	}
-	if err := validateOpenAIBaseURL(input.BaseURL); err != nil {
+	if err := validateAIBaseURL(provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if !validReasoningEffort(input.ReasoningEffort) {
@@ -290,11 +365,11 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 	}
 	apiKey := input.APIKey
 	if apiKey == "" && (stored.EncryptedAPIKey == "" || mailapi.DecryptJSON(stored.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil) {
-		return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured")
+		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	started := time.Now()
-	output, err := h.createOpenAIResponse(c.UserContext(), mailstore.AIModelRecord{
-		BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
+	output, err := h.createAIResponse(c.UserContext(), mailstore.AIModelRecord{
+		Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
 	}, apiKey, "This is a model connectivity test. Reply with exactly: OK")
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
@@ -502,9 +577,9 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	}
 	var apiKey string
 	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
-		return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured")
+		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
-	body, err := h.createOpenAIResponseWithInstructions(c.UserContext(), model, apiKey,
+	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey,
 		emailDraftInstructions(agentPrompt),
 		prompt, 1200)
 	if err != nil {
@@ -567,7 +642,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	}
 	var apiKey string
 	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil {
-		return fiber.NewError(fiber.StatusPreconditionRequired, "OpenAI API key is not configured")
+		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	instructions := "Generate a professional " + input.DocumentType + " document. Return only clean HTML suitable for a rich text document. Use headings, paragraphs, and tables when useful. Do not include markdown fences, scripts, styles, or commentary. Match the user's language. Do not invent specific facts; use clear bracketed placeholders."
 	prompt := "Title: " + input.Title + "\nMode: " + input.Mode + "\nAdditional instructions: " + input.Instruction
@@ -575,7 +650,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		instructions = "Modify the supplied current document in place; do not regenerate or redesign it. Preserve the exact HTML structure, element order, headings, tables, column count, styles, and existing content unless the user's instruction explicitly asks to change them. Change only the minimum necessary text nodes and table-cell values. Extract every concrete fact from the user's request (including product names, quantities, unit prices, dates, names, totals, and terms) and write those facts into the appropriate existing fields and table cells, replacing bracketed placeholders and example values. For a quotation, use the existing item row, fill the product, quantity, and unit price cells, calculate that row amount, and update the existing subtotal, tax, and total cells when the necessary numbers are available. Do not add a new document, remove sections, or replace the template with a different layout. Return the complete modified HTML with the original structure preserved, and nothing else. Do not include markdown fences, scripts, styles, or commentary. Match the user's language."
 		prompt += "\n\nCurrent document HTML to rewrite:\n" + input.CurrentHTML
 	}
-	body, err := h.createOpenAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 1800)
+	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 1800)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
@@ -594,7 +669,7 @@ func stripBestRegards(body string) string {
 	return strings.TrimSpace(body)
 }
 
-func validateOpenAIBaseURL(raw string) error {
+func validateAIBaseURL(provider, raw string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("Base URL must be a valid API root URL")
@@ -605,89 +680,44 @@ func validateOpenAIBaseURL(raw string) error {
 			return errors.New("Base URL must use HTTPS; HTTP is allowed only for localhost")
 		}
 	}
-	if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/responses") {
-		return errors.New("Base URL must be the API root, without /responses")
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "gemini":
+		trimmedPath := strings.TrimRight(u.Path, "/")
+		if strings.HasSuffix(trimmedPath, ":generateContent") || strings.HasSuffix(trimmedPath, "/models") {
+			return errors.New("Base URL must be the API root (e.g. https://generativelanguage.googleapis.com)")
+		}
+	case "deepseek":
+		trimmedPath := strings.TrimRight(u.Path, "/")
+		if strings.HasSuffix(trimmedPath, "/chat/completions") {
+			return errors.New("Base URL must be the API root (e.g. https://api.deepseek.com), without /chat/completions")
+		}
+	default:
+		if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/responses") {
+			return errors.New("Base URL must be the API root, without /responses")
+		}
 	}
 	return nil
 }
 
-func (h *AISettingsHandler) createOpenAIResponse(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, thread string) (string, error) {
-	return h.createOpenAIResponseWithInstructions(ctx, cfg, apiKey,
+func validateOpenAIBaseURL(raw string) error {
+	return validateAIBaseURL("openai", raw)
+}
+
+func (h *AISettingsHandler) createAIResponse(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, thread string) (string, error) {
+	return h.createAIResponseWithInstructions(ctx, cfg, apiKey,
 		"Summarize this email conversation concisely. Use the same primary language as the conversation. Cover the main topic, decisions, and action items. Do not invent facts.",
 		thread, 800)
 }
 
+func (h *AISettingsHandler) createAIResponseWithInstructions(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, instructions, input string, maxOutputTokens int) (string, error) {
+	return mailstore.CreateAIResponse(ctx, h.client, cfg, apiKey, instructions, input, maxOutputTokens, cfg.ReasoningEffort)
+}
+
+func (h *AISettingsHandler) createOpenAIResponse(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, thread string) (string, error) {
+	return h.createAIResponse(ctx, cfg, apiKey, thread)
+}
+
 func (h *AISettingsHandler) createOpenAIResponseWithInstructions(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, instructions, input string, maxOutputTokens int) (string, error) {
-	if cfg.ReasoningEffort == "" {
-		cfg.ReasoningEffort = defaultReasoningEffort
-	}
-	body, err := json.Marshal(fiber.Map{
-		"model":             cfg.Model,
-		"instructions":      instructions,
-		"input":             input,
-		"max_output_tokens": maxOutputTokens,
-		"reasoning":         fiber.Map{"effort": cfg.ReasoningEffort},
-	})
-	if err != nil {
-		return "", err
-	}
-	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/responses"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("OpenAI request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return "", fmt.Errorf("read OpenAI response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(raw, &apiErr)
-		if apiErr.Error.Message != "" {
-			return "", fmt.Errorf("OpenAI returned HTTP %d: %s", resp.StatusCode, apiErr.Error.Message)
-		}
-		return "", fmt.Errorf("OpenAI returned HTTP %d", resp.StatusCode)
-	}
-	var result struct {
-		OutputText string `json:"output_text"`
-		Output     []struct {
-			Type    string `json:"type"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", errors.New("OpenAI returned invalid JSON")
-	}
-	if text := strings.TrimSpace(result.OutputText); text != "" {
-		return text, nil
-	}
-	var parts []string
-	for _, item := range result.Output {
-		if item.Type != "message" {
-			continue
-		}
-		for _, content := range item.Content {
-			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
-				parts = append(parts, strings.TrimSpace(content.Text))
-			}
-		}
-	}
-	if len(parts) == 0 {
-		return "", errors.New("OpenAI returned no output text")
-	}
-	return strings.Join(parts, "\n"), nil
+	return h.createAIResponseWithInstructions(ctx, cfg, apiKey, instructions, input, maxOutputTokens)
 }

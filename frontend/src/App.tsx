@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, Suspense, createContext, lazy, useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -247,7 +247,7 @@ const zh = {
   feishuWebhookTestSent: "飞书测试消息已发送",
   feishuWebhookUnavailable: "飞书 Webhook 仅在本地邮件同步启用时可用",
   aiSettings: "模型管理",
-  aiSettingsDescription: "管理用于邮件总结的 OpenAI 模型，API Key 会加密保存。",
+  aiSettingsDescription: "管理用于邮件总结与撰写的 AI 模型（支持 OpenAI、Google Gemini 与 DeepSeek），API Key 会加密保存。",
   addAIModel: "新增模型",
   addingAIModel: "正在添加…",
   editAIModel: "编辑模型",
@@ -581,7 +581,7 @@ const en = {
   feishuWebhookTestSent: "Feishu test message sent",
   feishuWebhookUnavailable: "Feishu webhooks require local mail sync",
   aiSettings: "Model management",
-  aiSettingsDescription: "Manage OpenAI models used for mail summaries. API keys are stored encrypted.",
+  aiSettingsDescription: "Manage AI models used for mail summaries and drafting (supports OpenAI, Google Gemini, and DeepSeek). API keys are stored encrypted.",
   addAIModel: "Add model",
   addingAIModel: "Adding…",
   editAIModel: "Edit model",
@@ -840,6 +840,167 @@ function setConversationURL(id: string | null, mode: "push" | "replace" = "push"
   window.history[mode === "push" ? "pushState" : "replaceState"](window.history.state, "", url);
 }
 
+type ShellContextType = {
+  copy: Copy;
+  accountEmail: string;
+  folders: Mailbox[];
+  accounts: ConversationListResponse["accounts"];
+  openMobileMenu: () => void;
+  openCompose: (defaults?: ComposeDefaults) => void;
+  openSettings: () => void;
+};
+
+const ShellContext = createContext<ShellContextType | null>(null);
+
+function useShell(): ShellContextType {
+  const context = useContext(ShellContext);
+  if (!context) {
+    throw new Error("useShell must be used within AppLayout");
+  }
+  return context;
+}
+
+function AppLayout({ path, children }: { path: string; children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
+  const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
+  const [darkMode, setDarkMode] = useState(prefersDarkMode);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  const shell = useQuery({
+    queryKey: ["mailbox-shell"],
+    queryFn: () => getConversations(),
+    staleTime: 60_000,
+    refetchInterval: 30_000,
+  });
+
+  const capabilities = useQuery({
+    queryKey: ["capabilities"],
+    queryFn: getCapabilities,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!capabilities.data?.notifications) return;
+    const events = new EventSource("/events", { withCredentials: true });
+    events.onmessage = (event) => {
+      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["conversation"] });
+      void queryClient.invalidateQueries({ queryKey: ["folder"] });
+      void queryClient.invalidateQueries({ queryKey: ["attachments"] });
+      try {
+        const payload = JSON.parse(String(event.data)) as { from?: string; subject?: string };
+        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
+          new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
+        }
+      } catch {
+        // A malformed optional notification must not interrupt inbox refreshes.
+      }
+    };
+    return () => events.close();
+  }, [capabilities.data?.notifications, queryClient]);
+
+  const copy = useLocale(shell.data?.locale);
+
+  const openCompose = (defaults: ComposeDefaults = { to: "", subject: "" }) => {
+    setComposeDefaults(defaults);
+    setComposeOpen(true);
+    setSidebarOpen(false);
+  };
+
+  const openSettings = () => {
+    setSidebarOpen(false);
+    setSettingsOpen(true);
+  };
+
+  const openMobileMenu = () => {
+    setSidebarOpen(true);
+  };
+
+  if (shell.error instanceof ApiError && shell.error.status === 401) {
+    return <LoginScreen copy={copy} />;
+  }
+
+  let currentView: "mail" | "calendar" | "attachments" | "documents" = "mail";
+  let currentFolder: string | undefined = undefined;
+
+  if (path === "/documents" || path.startsWith("/documents/")) {
+    currentView = "documents";
+  } else if (path === "/attachments") {
+    currentView = "attachments";
+  } else if (path === "/calendar" || path === "/calendar/week") {
+    currentView = "calendar";
+  } else if (path.startsWith("/folder/")) {
+    currentView = "mail";
+    currentFolder = decodeURIComponent(path.slice("/folder/".length));
+  } else {
+    currentView = "mail";
+  }
+
+  const contextValue: ShellContextType = {
+    copy,
+    accountEmail: shell.data?.accountEmail || "",
+    folders: shell.data?.folders || [],
+    accounts: shell.data?.accounts || [],
+    openMobileMenu,
+    openCompose,
+    openSettings,
+  };
+
+  return (
+    <ShellContext.Provider value={contextValue}>
+      <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
+        {sidebarOpen && (
+          <button
+            className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden"
+            aria-label={copy.cancel}
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+        <Sidebar
+          copy={copy}
+          folders={shell.data?.folders || []}
+          accounts={shell.data?.accounts || []}
+          accountEmail={shell.data?.accountEmail || ""}
+          calendarEnabled={capabilities.data?.calendar === true}
+          currentFolder={currentFolder}
+          currentView={currentView}
+          loading={shell.isPending}
+          onCompose={() => openCompose()}
+          onSettings={openSettings}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          darkMode={darkMode}
+          onToggleDarkMode={() => setDarkMode((value) => !value)}
+        />
+        {children}
+        <ComposeDialog
+          copy={copy}
+          open={composeOpen}
+          defaults={composeDefaults}
+          accountEmail={composeDefaults.accountEmail || shell.data?.accountEmail || ""}
+          onOpenChange={setComposeOpen}
+          onSent={() => {
+            void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+            void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+            void queryClient.invalidateQueries({ queryKey: ["conversation"] });
+            void queryClient.invalidateQueries({ queryKey: ["folder"] });
+            void queryClient.invalidateQueries({ queryKey: ["attachments"] });
+          }}
+        />
+        <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
+      </div>
+    </ShellContext.Provider>
+  );
+}
+
 function App() {
   const [path, setPath] = useState(() => window.location.pathname);
   useEffect(() => {
@@ -871,38 +1032,40 @@ function App() {
   }, []);
   if (path === "/login" || path === "/user-login") return <LoginScreen copy={zh} />;
   if (path === "/register") return <RegisterScreen copy={zh} />;
-  // Keep the legacy URL as a compatibility/setup entry, but use the same
-  // inbox shell and settings dialog as the sidebar entry point.
-  if (path === "/settings") return <InboxPage />;
-  if (path === "/attachments") return <AttachmentsPage />;
-  if (path === "/documents") return <DocumentListPage />;
-  if (path === "/documents/new") return <DocumentListPage key={path} createDocument />;
-  if (path.startsWith("/documents/")) return <DocumentListPage key={path} documentId={decodeURIComponent(path.slice("/documents/".length))} />;
-  if (path === "/calendar" || path === "/calendar/week") return <CalendarPage />;
-  if (path.startsWith("/folder/")) return <FolderPage key={path} folder={decodeURIComponent(path.slice("/folder/".length))} />;
-  return <InboxPage />;
+
+  let content: ReactNode;
+  if (path === "/settings") {
+    content = <InboxPage />;
+  } else if (path === "/attachments") {
+    content = <AttachmentsPage />;
+  } else if (path === "/documents") {
+    content = <DocumentListPage />;
+  } else if (path === "/documents/new") {
+    content = <DocumentListPage key={path} createDocument />;
+  } else if (path.startsWith("/documents/")) {
+    content = <DocumentListPage key={path} documentId={decodeURIComponent(path.slice("/documents/".length))} />;
+  } else if (path === "/calendar" || path === "/calendar/week") {
+    content = <CalendarPage />;
+  } else if (path.startsWith("/folder/")) {
+    content = <FolderPage key={path} folder={decodeURIComponent(path.slice("/folder/".length))} />;
+  } else {
+    content = <InboxPage />;
+  }
+
+  return <AppLayout path={path}>{content}</AppLayout>;
 }
 
 function InboxPage() {
   const queryClient = useQueryClient();
+  const { copy: locale, openMobileMenu, openCompose } = useShell();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(conversationIdFromURL);
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
-  const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
-  const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const autoReadRef = useRef(new Set<string>());
   const manuallyUnreadRef = useRef(new Set<string>());
   const debouncedSearch = useDebouncedValue(search, 250);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
 
   useEffect(() => {
     const restoreConversationFromURL = () => {
@@ -919,26 +1082,7 @@ function InboxPage() {
     queryFn: () => getConversations(debouncedSearch),
     refetchInterval: 30_000,
   });
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
 
-  useEffect(() => {
-    if (!capabilities.data?.notifications) return;
-    const events = new EventSource("/events", { withCredentials: true });
-    events.onmessage = (event) => {
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-      try {
-        const payload = JSON.parse(String(event.data)) as { from?: string; subject?: string };
-        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
-          new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
-        }
-      } catch {
-        // A malformed optional notification must not interrupt inbox refreshes.
-      }
-    };
-    return () => events.close();
-  }, [capabilities.data?.notifications, queryClient]);
-  const locale = useLocale(conversations.data?.locale);
   const detail = useQuery({
     queryKey: ["conversation", selectedId],
     queryFn: () => getConversation(selectedId!),
@@ -957,7 +1101,10 @@ function InboxPage() {
         setChatOpen(false);
         setConversationURL(null, "replace");
       }
-      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
+      ]);
       queryClient.removeQueries({ queryKey: ["conversation", conversation.id] });
     },
     onError: (value) => setDeleteError(value instanceof Error ? value.message : locale.deleteConversationFailed),
@@ -984,6 +1131,7 @@ function InboxPage() {
     void markConversationRead(conversation.id).then(async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
       ]);
     }).catch(() => {
@@ -1010,6 +1158,7 @@ function InboxPage() {
       await markConversationUnread(conversation.id);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
       ]);
     } catch (value) {
@@ -1034,12 +1183,6 @@ function InboxPage() {
       setChatOpen(true);
     }
   }, [conversations.data, selectedId]);
-
-  const openCompose = (defaults: ComposeDefaults = { to: "", subject: "" }) => {
-    setComposeDefaults(defaults);
-    setComposeOpen(true);
-    setSidebarOpen(false);
-  };
 
   const openReply = (conversation: ConversationDetail, message?: ConversationMessage, suggestedBody?: string) => {
     const source = message || conversation.messages.at(-1);
@@ -1103,53 +1246,45 @@ function InboxPage() {
   if (authenticated) return <LoginScreen copy={locale} />;
 
   return (
-    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
-        {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
-        <Sidebar copy={locale} folders={conversations.data?.folders || []} accounts={conversations.data?.accounts || []} accountEmail={conversations.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} onCompose={() => openCompose()} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
-        <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
-          <ConversationList
-            copy={locale}
-            data={conversations.data}
-            search={search}
-            onSearch={setSearch}
-            onMenu={() => setSidebarOpen(true)}
-            loading={conversations.isPending}
-            error={conversations.error}
-            selectedId={selectedId}
-            onSelect={(id) => {
-              manuallyUnreadRef.current.delete(id);
-              setSelectedId(id);
-              setChatOpen(true);
-              setSidebarOpen(false);
-              if (conversationIdFromURL() !== id) setConversationURL(id);
-            }}
-            onMarkUnread={(conversation) => void markUnread(conversation)}
-            onDelete={(conversation) => { setDeleteError(""); setDeleteTarget(conversation); }}
-            onRefresh={() => void conversations.refetch()}
-            className={chatOpen ? "hidden lg:flex" : "flex"}
-          />
-          <ChatPanel
-            copy={locale}
-            detail={detail.data?.conversation}
-            loading={detail.isPending && Boolean(selectedId)}
-            error={detail.error}
-            onBack={() => setChatOpen(false)}
-            onReply={openReply}
-            onReplyAll={openReplyAll}
-            onNewMail={openNewMailForMessage}
-            onConversationEmpty={() => {
-              setSelectedId(null);
-              setChatOpen(false);
-              setConversationURL(null, "replace");
-            }}
-            className={chatOpen ? "flex" : "hidden lg:flex"}
-          />
-        </main>
-      <ComposeDialog copy={locale} open={composeOpen} defaults={composeDefaults} accountEmail={composeDefaults.accountEmail || conversations.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => {
-        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-        void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-      }} />
-      <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
+    <>
+      <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
+        <ConversationList
+          copy={locale}
+          data={conversations.data}
+          search={search}
+          onSearch={setSearch}
+          onMenu={openMobileMenu}
+          loading={conversations.isPending}
+          error={conversations.error}
+          selectedId={selectedId}
+          onSelect={(id) => {
+            manuallyUnreadRef.current.delete(id);
+            setSelectedId(id);
+            setChatOpen(true);
+            if (conversationIdFromURL() !== id) setConversationURL(id);
+          }}
+          onMarkUnread={(conversation) => void markUnread(conversation)}
+          onDelete={(conversation) => { setDeleteError(""); setDeleteTarget(conversation); }}
+          onRefresh={() => void conversations.refetch()}
+          className={chatOpen ? "hidden lg:flex" : "flex"}
+        />
+        <ChatPanel
+          copy={locale}
+          detail={detail.data?.conversation}
+          loading={detail.isPending && Boolean(selectedId)}
+          error={detail.error}
+          onBack={() => setChatOpen(false)}
+          onReply={openReply}
+          onReplyAll={openReplyAll}
+          onNewMail={openNewMailForMessage}
+          onConversationEmpty={() => {
+            setSelectedId(null);
+            setChatOpen(false);
+            setConversationURL(null, "replace");
+          }}
+          className={chatOpen ? "flex" : "hidden lg:flex"}
+        />
+      </main>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1163,11 +1298,11 @@ function InboxPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 
-function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar" | "attachments" | "documents"; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
+function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, currentFolder, currentView, loading = false, onCompose, onSettings, open, onClose, darkMode, onToggleDarkMode }: { copy: Copy; folders: Mailbox[]; accounts: ConversationListResponse["accounts"]; accountEmail: string; calendarEnabled: boolean; currentFolder?: string; currentView?: "mail" | "calendar" | "attachments" | "documents"; loading?: boolean; onCompose: () => void; onSettings: () => void; open: boolean; onClose: () => void; darkMode: boolean; onToggleDarkMode: () => void }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
@@ -1180,7 +1315,20 @@ function Sidebar({ copy, folders, accounts, accountEmail, calendarEnabled, curre
         <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
         {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
         <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
-        {foldersOpen && <ScrollArea className="min-h-0 flex-1" contentClassName="flex flex-col gap-1">{visibleFolders.map((folder) => <FolderLink key={folder.name} copy={copy} folder={folder} selected={folder.name === currentFolder} onClose={onClose} />)}{!visibleFolders.length && <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>}</ScrollArea>}
+        {foldersOpen && (
+          <ScrollArea className="min-h-0 flex-1" contentClassName="flex flex-col gap-1">
+            {visibleFolders.map((folder) => <FolderLink key={folder.name} copy={copy} folder={folder} selected={folder.name === currentFolder} onClose={onClose} />)}
+            {loading && !visibleFolders.length ? (
+              <div className="grid gap-2 px-9 py-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-24" />
+              </div>
+            ) : !visibleFolders.length ? (
+              <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>
+            ) : null}
+          </ScrollArea>
+        )}
         <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
           <AccountMenu copy={copy} accounts={accounts} accountEmail={accountEmail} />
           <Button variant="ghost" size="icon" onClick={onSettings} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
@@ -1460,7 +1608,10 @@ function ChatView({ copy, detail, onBack, onReply, onReplyAll, onNewMail, onConv
       setDeleteTarget(null);
       setDeleteError("");
       if (detail.messages.length === 1) onConversationEmpty();
-      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
+      ]);
       if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
     },
     onError: (value) => setDeleteError(value instanceof Error ? value.message : copy.deleteEmailFailed),
@@ -2871,10 +3022,7 @@ function DocumentAIAssistant({ copy, editor, accountEmail, type, title, disabled
 }
 
 function DocumentListPage({ createDocument = false, documentId }: { createDocument?: boolean; documentId?: string }) {
-  const queryClient = useQueryClient();
-  const metadata = useQuery({ queryKey: ["conversations", "document-list-shell"], queryFn: () => getConversations() });
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
-  const copy = useLocale(metadata.data?.locale);
+  const { copy, accountEmail, openMobileMenu } = useShell();
   const [documents, setDocuments] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(() => new Set());
@@ -2890,10 +3038,6 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
     }
     return null;
   });
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const selectAllDocumentsRef = useRef<HTMLInputElement>(null);
   const documentTableScrollRef = useRef<HTMLDivElement>(null);
   const filteredDocuments = documentFilter === "all" ? documents : documents.filter((document) => document.type === documentFilter);
@@ -2904,19 +3048,12 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
   const someDocumentsSelected = pageDocuments.some((document) => selectedDocumentIds.has(document.id)) && !allDocumentsSelected;
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
-
-  useEffect(() => {
     if (selectAllDocumentsRef.current) selectAllDocumentsRef.current.indeterminate = someDocumentsSelected;
   }, [someDocumentsSelected]);
 
   useEffect(() => {
     if (documentPage > documentPageCount) setDocumentPage(documentPageCount);
   }, [documentPage, documentPageCount]);
-
-  if (metadata.error instanceof ApiError && metadata.error.status === 401) return <LoginScreen copy={copy} />;
 
   const closeEditor = () => {
     setEditorTarget(null);
@@ -2996,66 +3133,75 @@ function DocumentListPage({ createDocument = false, documentId }: { createDocume
     toast.success(copy.documentSaved);
   };
 
-  return <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
-    {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={copy.cancel} onClick={() => setSidebarOpen(false)} />}
-    <Sidebar copy={copy} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentView="documents" onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
-    <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
-        <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
-        <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
-        <h1 className="truncate text-sm font-semibold">{copy.documents}</h1>
-        <DocumentStampManager chinese={copy === zh} />
-        <Button size="sm" onClick={() => setEditorTarget({ kind: "document", initialTemplate: templates[0] })}><Plus />{copy.newDocument}</Button>
-        <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
-          <PopoverTrigger render={<Button variant="outline" size="sm" />}><FileSpreadsheet />{copy.templateManagement}</PopoverTrigger>
-          <PopoverContent side="bottom" align="start" sideOffset={8} className="w-80 gap-2 p-2">
-            <PopoverTitle className="px-2 py-1 text-sm font-semibold">{copy.templateManagement}</PopoverTitle>
-            <div className="grid gap-1">{templates.map((template) => <div key={template.id} className="flex min-w-0 items-center gap-1"><Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", record: template }); }}><FileText className="size-4" /><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{template.name}</strong><small className="block text-muted-foreground">{template.type === "quotation" ? copy.quotation : copy.contract}</small></span><Pencil className="size-3.5" /></Button><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 text-destructive hover:text-destructive" onClick={() => deleteTemplate(template)} aria-label={`${copy.deleteTemplate}: ${template.name}`} title={copy.deleteTemplate}><Trash2 /></Button></div>)}</div>
-            <Separator />
-            <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", initialTemplate: templates[0] }); }}><Plus />{copy.newTemplate}</Button>
-          </PopoverContent>
-        </Popover>
-      </header>
-      <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 sm:px-5">
-        <div className="inline-flex h-8 items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label={copy.documentType}>
-          {(["all", "quotation", "contract"] as const).map((filter) => <Button key={filter} type="button" variant={documentFilter === filter ? "secondary" : "ghost"} size="sm" className="h-7 px-3 text-xs shadow-none" aria-pressed={documentFilter === filter} onClick={() => changeDocumentFilter(filter)}>{filter === "all" ? copy.allDocumentTypes : filter === "quotation" ? copy.quotation : copy.contract}</Button>)}
+  return (
+    <>
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
+          <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
+          <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
+          <h1 className="truncate text-sm font-semibold">{copy.documents}</h1>
+          <DocumentStampManager chinese={copy === zh} />
+          <Button size="sm" onClick={() => setEditorTarget({ kind: "document", initialTemplate: templates[0] })}><Plus />{copy.newDocument}</Button>
+          <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
+            <PopoverTrigger render={<Button variant="outline" size="sm" />}><FileSpreadsheet />{copy.templateManagement}</PopoverTrigger>
+            <PopoverContent side="bottom" align="start" sideOffset={8} className="w-80 gap-2 p-2">
+              <PopoverTitle className="px-2 py-1 text-sm font-semibold">{copy.templateManagement}</PopoverTitle>
+              <div className="grid gap-1">{templates.map((template) => <div key={template.id} className="flex min-w-0 items-center gap-1"><Button type="button" variant="ghost" className="h-auto min-w-0 flex-1 justify-start px-2 py-2 text-left" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", record: template }); }}><FileText className="size-4" /><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{template.name}</strong><small className="block text-muted-foreground">{template.type === "quotation" ? copy.quotation : copy.contract}</small></span><Pencil className="size-3.5" /></Button><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 text-destructive hover:text-destructive" onClick={() => deleteTemplate(template)} aria-label={`${copy.deleteTemplate}: ${template.name}`} title={copy.deleteTemplate}><Trash2 /></Button></div>)}</div>
+              <Separator />
+              <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => { setTemplatePopoverOpen(false); setEditorTarget({ kind: "template", initialTemplate: templates[0] }); }}><Plus />{copy.newTemplate}</Button>
+            </PopoverContent>
+          </Popover>
+          {Boolean(selectedDocumentIds.size) && <Button variant="destructive" size="sm" onClick={() => deleteDocuments(selectedDocumentIds)}><Trash2 />{copy.deleteSelectedDocuments} ({selectedDocumentIds.size})</Button>}
+          <div className="ml-auto flex items-center gap-2">
+            <Select value={documentFilter} onValueChange={(value) => changeDocumentFilter(value as DocumentListFilter)}>
+              <SelectTrigger className="h-8 w-28 text-xs sm:w-32"><SelectValue>{documentFilter === "all" ? copy.allDocumentTypes : documentFilter === "quotation" ? copy.quotation : copy.contract}</SelectValue></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{copy.allDocumentTypes}</SelectItem>
+                <SelectItem value="quotation">{copy.quotation}</SelectItem>
+                <SelectItem value="contract">{copy.contract}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </header>
+        <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 sm:px-5">
+          <div className="inline-flex h-8 items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label={copy.documentType}>
+            {(["all", "quotation", "contract"] as const).map((filter) => <Button key={filter} type="button" variant={documentFilter === filter ? "secondary" : "ghost"} size="sm" className="h-7 px-3 text-xs shadow-none" aria-pressed={documentFilter === filter} onClick={() => changeDocumentFilter(filter)}>{filter === "all" ? copy.allDocumentTypes : filter === "quotation" ? copy.quotation : copy.contract}</Button>)}
+          </div>
+          <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{selectedDocumentIds.size} {copy.selectedDocuments}</span><Button type="button" variant="destructive" size="sm" disabled={!selectedDocumentIds.size} onClick={() => deleteDocuments(selectedDocumentIds)}><Trash2 />{copy.deleteSelectedDocuments}</Button></div>
         </div>
-        <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{selectedDocumentIds.size} {copy.selectedDocuments}</span><Button type="button" variant="destructive" size="sm" disabled={!selectedDocumentIds.size} onClick={() => deleteDocuments(selectedDocumentIds)}><Trash2 />{copy.deleteSelectedDocuments}</Button></div>
-      </div>
-      <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
-        <Table className="min-w-[640px] table-fixed">
-          <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent">
-            <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>
-            <TableHead className="px-2">{copy.documentName}</TableHead><TableHead className="w-[18%]">{copy.documentType}</TableHead><TableHead className="w-[26%] text-right">{copy.documentUpdatedAt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {pageDocuments.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
-              <TableCell className="px-4 py-3" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="size-4 accent-primary" checked={selectedDocumentIds.has(document.id)} onChange={(event) => toggleDocument(document.id, event.target.checked)} aria-label={`${copy.selectedDocuments}: ${document.name}`} /></TableCell>
-              <TableCell className="px-2 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
-              <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
-              <TableCell className="text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
-              <TableCell className="px-4 text-right"><Button type="button" variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={(event) => { event.stopPropagation(); deleteDocuments(new Set([document.id])); }} aria-label={`${copy.deleteDocument}: ${document.name}`} title={copy.deleteDocument}><Trash2 /></Button></TableCell>
-            </TableRow>)}
-            {!filteredDocuments.length && <TableRow><TableCell colSpan={5} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
-          </TableBody>
-        </Table>
-      </div>
-      {documentPageCount > 1 && <div className="shrink-0 border-t bg-background px-3 py-2 sm:px-5">
-        <Pagination>
-          <PaginationContent>
-            <PaginationItem><PaginationPrevious href="#" text={copy.previousPage} aria-label={copy.previousPage} aria-disabled={currentDocumentPage === 1} tabIndex={currentDocumentPage === 1 ? -1 : undefined} className={cn(currentDocumentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage > 1) changeDocumentPage(currentDocumentPage - 1); }} /></PaginationItem>
-            {paginationPageItems(currentDocumentPage, documentPageCount).map((item) => typeof item === "number"
-              ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentDocumentPage} onClick={(event) => { event.preventDefault(); changeDocumentPage(item); }}>{item}</PaginationLink></PaginationItem>
-              : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
-            <PaginationItem><PaginationNext href="#" text={copy.nextPage} aria-label={copy.nextPage} aria-disabled={currentDocumentPage === documentPageCount} tabIndex={currentDocumentPage === documentPageCount ? -1 : undefined} className={cn(currentDocumentPage === documentPageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage < documentPageCount) changeDocumentPage(currentDocumentPage + 1); }} /></PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      </div>}
-    </main>
-    <ComposeDialog copy={copy} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
-    <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
-    {editorTarget && <DocumentEditorDialog key={`${editorTarget.kind}-${editorTarget.record?.id || "new"}`} copy={copy} accountEmail={metadata.data?.accountEmail || ""} target={editorTarget} templates={templates} onOpenChange={(open) => { if (!open) closeEditor(); }} onSave={saveEditorRecord} />}
-  </div>;
+        <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+          <Table className="min-w-[640px] table-fixed">
+            <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent">
+              <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>
+              <TableHead className="px-2">{copy.documentName}</TableHead><TableHead className="w-[18%]">{copy.documentType}</TableHead><TableHead className="w-[26%] text-right">{copy.documentUpdatedAt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {pageDocuments.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
+                <TableCell className="px-4 py-3" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="size-4 accent-primary" checked={selectedDocumentIds.has(document.id)} onChange={(event) => toggleDocument(document.id, event.target.checked)} aria-label={`${copy.selectedDocuments}: ${document.name}`} /></TableCell>
+                <TableCell className="px-2 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
+                <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
+                <TableCell className="text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
+                <TableCell className="px-4 text-right"><Button type="button" variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={(event) => { event.stopPropagation(); deleteDocuments(new Set([document.id])); }} aria-label={`${copy.deleteDocument}: ${document.name}`} title={copy.deleteDocument}><Trash2 /></Button></TableCell>
+              </TableRow>)}
+              {!filteredDocuments.length && <TableRow><TableCell colSpan={5} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
+            </TableBody>
+          </Table>
+        </div>
+        {documentPageCount > 1 && <div className="shrink-0 border-t bg-background px-3 py-2 sm:px-5">
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem><PaginationPrevious href="#" text={copy.previousPage} aria-label={copy.previousPage} aria-disabled={currentDocumentPage === 1} tabIndex={currentDocumentPage === 1 ? -1 : undefined} className={cn(currentDocumentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage > 1) changeDocumentPage(currentDocumentPage - 1); }} /></PaginationItem>
+              {paginationPageItems(currentDocumentPage, documentPageCount).map((item) => typeof item === "number"
+                ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentDocumentPage} onClick={(event) => { event.preventDefault(); changeDocumentPage(item); }}>{item}</PaginationLink></PaginationItem>
+                : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
+              <PaginationItem><PaginationNext href="#" text={copy.nextPage} aria-label={copy.nextPage} aria-disabled={currentDocumentPage === documentPageCount} tabIndex={currentDocumentPage === documentPageCount ? -1 : undefined} className={cn(currentDocumentPage === documentPageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentDocumentPage < documentPageCount) changeDocumentPage(currentDocumentPage + 1); }} /></PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>}
+      </main>
+      {editorTarget && <DocumentEditorDialog key={`${editorTarget.kind}-${editorTarget.record?.id || "new"}`} copy={copy} accountEmail={accountEmail} target={editorTarget} templates={templates} onOpenChange={(open) => { if (!open) closeEditor(); }} onSave={saveEditorRecord} />}
+    </>
+  );
 }
 
 function LoginScreen({ copy }: { copy: Copy }) {
@@ -3112,28 +3258,16 @@ function attachmentMessageURL(attachment: MailAttachment) {
 }
 
 function AttachmentsPage() {
-  const metadata = useQuery({ queryKey: ["conversations", "attachment-shell"], queryFn: () => getConversations() });
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
-  const locale = useLocale(metadata.data?.locale);
+  const { copy: locale, openMobileMenu } = useShell();
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState<AttachmentKind>("all");
   const [offset, setOffset] = useState(0);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const debouncedSearch = useDebouncedValue(search, 250);
   const attachments = useQuery({
     queryKey: ["attachments", debouncedSearch, kind, offset],
     queryFn: () => getMailAttachments(debouncedSearch, kind, offset),
   });
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
 
-  const authenticated = (metadata.error instanceof ApiError && metadata.error.status === 401) || (attachments.error instanceof ApiError && attachments.error.status === 401);
-  if (authenticated) return <LoginScreen copy={locale} />;
   const kinds: Array<{ value: AttachmentKind; label: string }> = [
     { value: "all", label: locale.allAttachmentTypes },
     { value: "images", label: locale.attachmentImages },
@@ -3147,64 +3281,58 @@ function AttachmentsPage() {
   const currentPage = Math.min(pageCount, Math.floor(offset / pageSize) + 1);
   const changePage = (page: number) => setOffset((page - 1) * pageSize);
   return (
-    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
-      {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
-      <Sidebar copy={locale} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentView="attachments" onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
-          <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={locale.folders} title={locale.folders}><Menu /></Button>
-          <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-semibold">{locale.attachmentManager}</h1><p className="text-xs text-muted-foreground">{attachments.data?.total || 0} {locale.attachmentCount}</p></div>
-        </header>
-        <div className="flex flex-col items-start justify-start gap-2 border-b bg-card px-3 py-3 sm:flex-row sm:items-center sm:px-5">
-          <div className="relative flex h-8 w-full min-w-0 items-center sm:w-[220px] sm:flex-none"><Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" /><Input type="search" className="h-8 w-full bg-muted/60 pl-9 pr-9" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={locale.attachmentSearch} aria-label={locale.attachmentSearch} />{search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => { setSearch(""); setOffset(0); }} aria-label={locale.cancel}><X /></Button>}</div>
-          <Select value={kind} onValueChange={(value) => { setKind(value as AttachmentKind); setOffset(0); }}><SelectTrigger className="h-8 w-full min-w-0 sm:w-48" aria-label={locale.allAttachmentTypes}><SelectValue>{kinds.find((item) => item.value === kind)?.label}</SelectValue></SelectTrigger><SelectContent>{kinds.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
-          {attachments.isPending && <ListSkeleton />}
-          {!attachments.isPending && attachments.error && <ErrorState copy={locale} onRetry={() => void attachments.refetch()} />}
-          {!attachments.isPending && !attachments.error && !attachments.data?.attachments.length && <EmptyState icon={<Paperclip />} text={locale.noAttachments} />}
-          {!!attachments.data?.attachments.length && <Table className="min-w-[780px] table-fixed">
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-[30%] px-5">{locale.attachmentName}</TableHead>
-                <TableHead className="w-[27%]">{locale.attachmentMessage}</TableHead>
-                <TableHead className="w-[17%]">{locale.attachmentSender}</TableHead>
-                <TableHead className="w-[9%] text-right">{locale.attachmentSize}</TableHead>
-                <TableHead className="w-[8rem] text-right">{locale.attachmentDate}</TableHead>
-                <TableHead className="w-[7.5rem] pr-5 text-right"><span className="sr-only">{locale.attachmentActions}</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {attachments.data.attachments.map((attachment) => {
-                const Icon = attachmentFileIcon(attachment);
-                return <TableRow key={`${attachment.folder}/${attachment.messageId}/${attachment.partId || attachment.id}`}>
-                  <TableCell className="px-5 py-2.5"><div className="flex min-w-0 items-center gap-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><Icon className="size-4" /></span><strong className="min-w-0 truncate text-sm font-medium" title={attachment.filename}>{attachment.filename || locale.noSubject}</strong></div></TableCell>
-                  <TableCell><a className="block truncate text-sm hover:underline" href={attachmentMessageURL(attachment)} title={attachment.messageSubject}>{attachment.messageSubject || locale.noSubject}</a></TableCell>
-                  <TableCell><span className="block truncate text-sm text-muted-foreground" title={attachment.fromName || attachment.messageFrom}>{attachment.fromName || attachment.messageFrom}</span></TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">{formatSize(attachment.size)}</TableCell>
-                  <TableCell className="w-[8rem] max-w-[8rem] text-right text-xs text-muted-foreground"><time className="block truncate" title={formatTime(attachment.messageDate)}>{formatTime(attachment.messageDate)}</time></TableCell>
-                  <TableCell className="pr-5"><div className="flex items-center justify-end gap-0.5"><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment, true)} target="_blank" rel="noreferrer" aria-label={locale.previewAttachment} title={locale.previewAttachment} />} variant="ghost" size="icon" className="size-8"><Eye /></Button><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment)} aria-label={locale.downloadAttachment} title={locale.downloadAttachment} />} variant="ghost" size="icon" className="size-8"><Download /></Button><Button nativeButton={false} render={<a href={attachmentMessageURL(attachment)} aria-label={locale.viewOriginalMessage} title={locale.viewOriginalMessage} />} variant="ghost" size="icon" className="size-8"><ExternalLink /></Button></div></TableCell>
-                </TableRow>;
-              })}
-            </TableBody>
-          </Table>}
-        </div>
-        {attachments.data && attachments.data.total > 0 && <footer className="flex min-h-11 flex-col items-center justify-between gap-1 px-3 py-1.5 sm:flex-row sm:px-5">
-          <span className="shrink-0 text-xs text-muted-foreground">{offset + 1}-{Math.min(offset + attachments.data.attachments.length, attachments.data.total)} / {attachments.data.total}</span>
-          <Pagination className="mx-0 w-auto justify-end">
-            <PaginationContent>
-              <PaginationItem><PaginationPrevious href="#" text={locale.previousPage} aria-label={locale.previousPage} aria-disabled={currentPage === 1} tabIndex={currentPage === 1 ? -1 : undefined} className={cn(currentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage > 1) changePage(currentPage - 1); }} /></PaginationItem>
-              {paginationPageItems(currentPage, pageCount).map((item) => typeof item === "number"
-                ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentPage} aria-label={`${locale.attachmentPage} ${item}`} onClick={(event) => { event.preventDefault(); changePage(item); }}>{item}</PaginationLink></PaginationItem>
-                : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
-              <PaginationItem><PaginationNext href="#" text={locale.nextPage} aria-label={locale.nextPage} aria-disabled={currentPage === pageCount} tabIndex={currentPage === pageCount ? -1 : undefined} className={cn(currentPage === pageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage < pageCount) changePage(currentPage + 1); }} /></PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </footer>}
-      </main>
-      <ComposeDialog copy={locale} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void attachments.refetch()} />
-      <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
-    </div>
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
+        <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={locale.folders} title={locale.folders}><Menu /></Button>
+        <div className="min-w-0 flex-1"><h1 className="truncate text-sm font-semibold">{locale.attachmentManager}</h1><p className="text-xs text-muted-foreground">{attachments.data?.total || 0} {locale.attachmentCount}</p></div>
+      </header>
+      <div className="flex flex-col items-start justify-start gap-2 border-b bg-card px-3 py-3 sm:flex-row sm:items-center sm:px-5">
+        <div className="relative flex h-8 w-full min-w-0 items-center sm:w-[220px] sm:flex-none"><Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" /><Input type="search" className="h-8 w-full bg-muted/60 pl-9 pr-9" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder={locale.attachmentSearch} aria-label={locale.attachmentSearch} />{search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => { setSearch(""); setOffset(0); }} aria-label={locale.cancel}><X /></Button>}</div>
+        <Select value={kind} onValueChange={(value) => { setKind(value as AttachmentKind); setOffset(0); }}><SelectTrigger className="h-8 w-full min-w-0 sm:w-48" aria-label={locale.allAttachmentTypes}><SelectValue>{kinds.find((item) => item.value === kind)?.label}</SelectValue></SelectTrigger><SelectContent>{kinds.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+        {attachments.isPending && <ListSkeleton />}
+        {!attachments.isPending && attachments.error && <ErrorState copy={locale} onRetry={() => void attachments.refetch()} />}
+        {!attachments.isPending && !attachments.error && !attachments.data?.attachments.length && <EmptyState icon={<Paperclip />} text={locale.noAttachments} />}
+        {!!attachments.data?.attachments.length && <Table className="min-w-[780px] table-fixed">
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[30%] px-5">{locale.attachmentName}</TableHead>
+              <TableHead className="w-[27%]">{locale.attachmentMessage}</TableHead>
+              <TableHead className="w-[17%]">{locale.attachmentSender}</TableHead>
+              <TableHead className="w-[9%] text-right">{locale.attachmentSize}</TableHead>
+              <TableHead className="w-[8rem] text-right">{locale.attachmentDate}</TableHead>
+              <TableHead className="w-[7.5rem] pr-5 text-right"><span className="sr-only">{locale.attachmentActions}</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {attachments.data.attachments.map((attachment) => {
+              const Icon = attachmentFileIcon(attachment);
+              return <TableRow key={`${attachment.folder}/${attachment.messageId}/${attachment.partId || attachment.id}`}>
+                <TableCell className="px-5 py-2.5"><div className="flex min-w-0 items-center gap-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><Icon className="size-4" /></span><strong className="min-w-0 truncate text-sm font-medium" title={attachment.filename}>{attachment.filename || locale.noSubject}</strong></div></TableCell>
+                <TableCell><a className="block truncate text-sm hover:underline" href={attachmentMessageURL(attachment)} title={attachment.messageSubject}>{attachment.messageSubject || locale.noSubject}</a></TableCell>
+                <TableCell><span className="block truncate text-sm text-muted-foreground" title={attachment.fromName || attachment.messageFrom}>{attachment.fromName || attachment.messageFrom}</span></TableCell>
+                <TableCell className="text-right text-sm text-muted-foreground">{formatSize(attachment.size)}</TableCell>
+                <TableCell className="w-[8rem] max-w-[8rem] text-right text-xs text-muted-foreground"><time className="block truncate" title={formatTime(attachment.messageDate)}>{formatTime(attachment.messageDate)}</time></TableCell>
+                <TableCell className="pr-5"><div className="flex items-center justify-end gap-0.5"><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment, true)} target="_blank" rel="noreferrer" aria-label={locale.previewAttachment} title={locale.previewAttachment} />} variant="ghost" size="icon" className="size-8"><Eye /></Button><Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment)} aria-label={locale.downloadAttachment} title={locale.downloadAttachment} />} variant="ghost" size="icon" className="size-8"><Download /></Button><Button nativeButton={false} render={<a href={attachmentMessageURL(attachment)} aria-label={locale.viewOriginalMessage} title={locale.viewOriginalMessage} />} variant="ghost" size="icon" className="size-8"><ExternalLink /></Button></div></TableCell>
+              </TableRow>;
+            })}
+          </TableBody>
+        </Table>}
+      </div>
+      {attachments.data && attachments.data.total > 0 && <footer className="flex min-h-11 flex-col items-center justify-between gap-1 px-3 py-1.5 sm:flex-row sm:px-5">
+        <span className="shrink-0 text-xs text-muted-foreground">{offset + 1}-{Math.min(offset + attachments.data.attachments.length, attachments.data.total)} / {attachments.data.total}</span>
+        <Pagination className="mx-0 w-auto justify-end">
+          <PaginationContent>
+            <PaginationItem><PaginationPrevious href="#" text={locale.previousPage} aria-label={locale.previousPage} aria-disabled={currentPage === 1} tabIndex={currentPage === 1 ? -1 : undefined} className={cn(currentPage === 1 && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage > 1) changePage(currentPage - 1); }} /></PaginationItem>
+            {paginationPageItems(currentPage, pageCount).map((item) => typeof item === "number"
+              ? <PaginationItem key={item}><PaginationLink href="#" isActive={item === currentPage} aria-label={`${locale.attachmentPage} ${item}`} onClick={(event) => { event.preventDefault(); changePage(item); }}>{item}</PaginationLink></PaginationItem>
+              : <PaginationItem key={item}><PaginationEllipsis /></PaginationItem>)}
+            <PaginationItem><PaginationNext href="#" text={locale.nextPage} aria-label={locale.nextPage} aria-disabled={currentPage === pageCount} tabIndex={currentPage === pageCount ? -1 : undefined} className={cn(currentPage === pageCount && "pointer-events-none opacity-50")} onClick={(event) => { event.preventDefault(); if (currentPage < pageCount) changePage(currentPage + 1); }} /></PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      </footer>}
+    </main>
   );
 }
 
@@ -3237,16 +3365,10 @@ function FolderMessageRow({ copy, message, address, selected, junkActions, actio
 
 function FolderPage({ folder }: { folder: string }) {
   const queryClient = useQueryClient();
-  const metadata = useQuery({ queryKey: ["conversations", "folder-shell"], queryFn: () => getConversations() });
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
-  const locale = useLocale(metadata.data?.locale);
+  const { copy: locale, accountEmail, folders, openMobileMenu } = useShell();
   const [selected, setSelected] = useState<string | null>(() => new URL(window.location.href).searchParams.get("message"));
   const [detailOpen, setDetailOpen] = useState(() => Boolean(new URL(window.location.href).searchParams.get("message")));
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<MailMessage | null>(null);
   const [permanentDeleteError, setPermanentDeleteError] = useState("");
   const markingReadRef = useRef(new Set<string>());
@@ -3254,7 +3376,7 @@ function FolderPage({ folder }: { folder: string }) {
   const detail = useQuery({ queryKey: ["message", folder, selected], queryFn: () => getMessage(folder, selected!), enabled: Boolean(selected) });
   const select = (id: string) => { setSelected(id); setDetailOpen(true); const url = new URL(window.location.href); url.searchParams.set("message", id); window.history.pushState({}, "", url); };
   const closeDetail = () => { setDetailOpen(false); setSelected(null); const url = new URL(window.location.href); url.searchParams.delete("message"); window.history.pushState({}, "", url); };
-  const currentMailbox = metadata.data?.folders.find((mailbox) => mailbox.name === folder) || { name: folder, delimiter: "/", attributes: [] };
+  const currentMailbox = folders.find((mailbox) => mailbox.name === folder) || { name: folder, delimiter: "/", attributes: [] };
   const folderTitle = folderLabel(locale, currentMailbox);
   const isJunkFolder = folderKind(currentMailbox) === "junk";
   const messages = (list.data?.messages || []).filter((message) => {
@@ -3264,8 +3386,8 @@ function FolderPage({ folder }: { folder: string }) {
 
   const messageAddress = (message: MailMessage) => {
     const from = message.from?.trim() || "";
-    const accountEmail = message.accountEmail?.trim() || metadata.data?.accountEmail?.trim() || "";
-    return accountEmail && from.toLowerCase() === accountEmail.toLowerCase()
+    const effectiveEmail = message.accountEmail?.trim() || accountEmail.trim();
+    return effectiveEmail && from.toLowerCase() === effectiveEmail.toLowerCase()
       ? message.to || from || locale.me
       : from || message.to || locale.me;
   };
@@ -3275,17 +3397,18 @@ function FolderPage({ folder }: { folder: string }) {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["folder", folder] }),
       queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
     ]);
   };
   const restoreMutation = useMutation({
-    mutationFn: (message: MailMessage) => restoreJunkMessage(folder, message.id, message.accountEmail || metadata.data?.accountEmail),
+    mutationFn: (message: MailMessage) => restoreJunkMessage(folder, message.id, message.accountEmail || accountEmail),
     onSuccess: async (_, message) => {
       await removeMessageFromView(message);
     },
     onError: (value) => toast.error(value instanceof Error ? value.message : locale.notSpamFailed),
   });
   const permanentDeleteMutation = useMutation({
-    mutationFn: (message: MailMessage) => permanentlyDeleteJunkMessage(folder, message.id, message.accountEmail || metadata.data?.accountEmail),
+    mutationFn: (message: MailMessage) => permanentlyDeleteJunkMessage(folder, message.id, message.accountEmail || accountEmail),
     onSuccess: async (_, message) => {
       setPermanentDeleteTarget(null);
       setPermanentDeleteError("");
@@ -3293,10 +3416,6 @@ function FolderPage({ folder }: { folder: string }) {
     },
     onError: (value) => setPermanentDeleteError(value instanceof Error ? value.message : locale.permanentDeleteFailed),
   });
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
   useEffect(() => {
     const restoreMessageFromURL = () => {
       const id = new URL(window.location.href).searchParams.get("message");
@@ -3313,8 +3432,8 @@ function FolderPage({ folder }: { folder: string }) {
     if (!selected) return;
     const message = list.data?.messages.find((item) => item.id === selected);
     if (!message || !messageIsUnread(message)) return;
-    const accountEmail = message.accountEmail || metadata.data?.accountEmail || "";
-    const key = `${accountEmail}/${folder}/${message.id}`;
+    const effectiveEmail = message.accountEmail || accountEmail || "";
+    const key = `${effectiveEmail}/${folder}/${message.id}`;
     if (markingReadRef.current.has(key)) return;
     markingReadRef.current.add(key);
     const previousList = queryClient.getQueryData<{ messages: MailMessage[]; syncComplete: boolean; syncError?: string }>(["folder", folder]);
@@ -3324,25 +3443,23 @@ function FolderPage({ folder }: { folder: string }) {
       messages: current.messages.map((item) => item.id === message.id ? { ...item, flags: flagsMarkedSeen(item.flags) } : item),
     } : current);
     queryClient.setQueryData<MailMessage>(["message", folder, message.id], (current) => current ? { ...current, flags: flagsMarkedSeen(current.flags) } : current);
-    void markMailMessageRead(folder, message.id, accountEmail).then(() => {
+    void markMailMessageRead(folder, message.id, effectiveEmail).then(() => {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     }).catch((value) => {
       queryClient.setQueryData(["folder", folder], previousList);
       queryClient.setQueryData(["message", folder, message.id], previousDetail);
       toast.error(value instanceof Error ? value.message : locale.loadFailed);
     });
-  }, [folder, list.data?.messages, locale.loadFailed, metadata.data?.accountEmail, queryClient, selected]);
-  const authenticated = (metadata.error instanceof ApiError && metadata.error.status === 401) || (list.error instanceof ApiError && list.error.status === 401);
-  if (authenticated) return <LoginScreen copy={locale} />;
+  }, [accountEmail, folder, list.data?.messages, locale.loadFailed, queryClient, selected]);
+
   return (
-    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
-      {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={locale.cancel} onClick={() => setSidebarOpen(false)} />}
-      <Sidebar copy={locale} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentFolder={folder} onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
+    <>
       <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
         <section className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", detailOpen ? "hidden lg:flex" : "flex")}>
           <div className="border-b bg-card px-3 py-3">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={locale.folders} title={locale.folders}><Menu /></Button>
+              <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={locale.folders} title={locale.folders}><Menu /></Button>
               <div className="relative flex min-w-0 flex-1 items-center"><Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" /><Input type="search" className="h-9 bg-muted/60 pl-9 pr-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`${locale.search} · ${folderTitle}`} aria-label={locale.search} />{search && <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => setSearch("")} aria-label={locale.cancel}><X /></Button>}</div>
             </div>
           </div>
@@ -3358,8 +3475,6 @@ function FolderPage({ folder }: { folder: string }) {
           <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8">{detail.isPending && selected ? <div className="grid h-full place-items-center text-sm text-muted-foreground">{locale.loading}</div> : detail.error ? <ErrorState copy={locale} onRetry={() => void detail.refetch()} /> : detail.data ? <MailDetail copy={locale} message={detail.data} /> : <EmptyState icon={<Mail />} text={locale.selectConversation} />}</ScrollArea>
         </section>
       </main>
-      <ComposeDialog copy={locale} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void list.refetch()} />
-      <SettingsDialog copy={locale} open={settingsOpen} onOpenChange={setSettingsOpen} />
       <Dialog open={Boolean(permanentDeleteTarget)} onOpenChange={(open) => { if (!open && !permanentDeleteMutation.isPending) { setPermanentDeleteTarget(null); setPermanentDeleteError(""); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>{locale.permanentDeleteTitle}</DialogTitle><DialogDescription>{locale.permanentDeleteDescription}</DialogDescription></DialogHeader>
@@ -3367,7 +3482,7 @@ function FolderPage({ folder }: { folder: string }) {
           <DialogFooter><Button variant="ghost" disabled={permanentDeleteMutation.isPending} onClick={() => setPermanentDeleteTarget(null)}>{locale.cancel}</Button><Button variant="destructive" disabled={permanentDeleteMutation.isPending || !permanentDeleteTarget} onClick={() => permanentDeleteTarget && permanentDeleteMutation.mutate(permanentDeleteTarget)}><Trash2 />{permanentDeleteMutation.isPending ? locale.deleting : locale.permanentDelete}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 
@@ -3803,6 +3918,7 @@ function AISettings({ copy }: { copy: Copy }) {
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
   const [addOpen, setAddOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
+  const [provider, setProvider] = useState<"openai" | "gemini" | "deepseek">("openai");
   const [baseURL, setBaseURL] = useState("https://api.openai.com/v1");
   const [model, setModel] = useState("gpt-5.6-sol");
   const [apiKey, setAPIKey] = useState("");
@@ -3811,10 +3927,36 @@ function AISettings({ copy }: { copy: Copy }) {
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["ai-models"] });
   };
+  const handleProviderChange = (nextProvider: "openai" | "gemini" | "deepseek") => {
+    setProvider(nextProvider);
+    if (nextProvider === "gemini") {
+      if (baseURL === "https://api.openai.com/v1" || baseURL === "https://api.deepseek.com" || !baseURL) {
+        setBaseURL("https://generativelanguage.googleapis.com");
+      }
+      if (model === "gpt-5.6-sol" || model === "deepseek-chat" || !model) {
+        setModel("gemini-3.8-flash");
+      }
+    } else if (nextProvider === "deepseek") {
+      if (baseURL === "https://api.openai.com/v1" || baseURL === "https://generativelanguage.googleapis.com" || !baseURL) {
+        setBaseURL("https://api.deepseek.com");
+      }
+      if (model === "gpt-5.6-sol" || model === "gemini-3.8-flash" || !model) {
+        setModel("deepseek-chat");
+      }
+    } else {
+      if (baseURL === "https://generativelanguage.googleapis.com" || baseURL === "https://api.deepseek.com" || !baseURL) {
+        setBaseURL("https://api.openai.com/v1");
+      }
+      if (model === "gemini-3.8-flash" || model === "deepseek-chat" || !model) {
+        setModel("gpt-5.6-sol");
+      }
+    }
+  };
   const add = useMutation({
     mutationFn: addAIModel,
     onSuccess: () => {
       setAPIKey("");
+      setProvider("openai");
       setModel("gpt-5.6-sol");
       setBaseURL("https://api.openai.com/v1");
       setReasoningEffort("medium");
@@ -3850,12 +3992,13 @@ function AISettings({ copy }: { copy: Copy }) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    const input = { baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort };
+    const input = { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort };
     if (editingModel) update.mutate({ id: editingModel.id, input });
     else add.mutate(input);
   };
   const openAdd = () => {
     setEditingModel(null);
+    setProvider("openai");
     setBaseURL("https://api.openai.com/v1");
     setModel("gpt-5.6-sol");
     setReasoningEffort("medium");
@@ -3865,6 +4008,7 @@ function AISettings({ copy }: { copy: Copy }) {
   };
   const openEdit = (item: AIModel) => {
     setEditingModel(item);
+    setProvider(item.provider || "openai");
     setBaseURL(item.baseUrl);
     setModel(item.model);
     setReasoningEffort(item.reasoningEffort);
@@ -3881,7 +4025,7 @@ function AISettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[46rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[19%] px-4">{copy.aiModel}</TableHead><TableHead className="w-[12%] px-4">{copy.aiProvider}</TableHead><TableHead className="w-[16%] px-4">{copy.aiReasoningEffort}</TableHead><TableHead className="px-4">{copy.aiBaseURL}</TableHead><TableHead className="w-52 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">OpenAI</TableCell><TableCell className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
+          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">{item.provider === "gemini" ? "Google Gemini" : item.provider === "deepseek" ? "DeepSeek" : "OpenAI"}</TableCell><TableCell className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
       {(models.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (models.error instanceof Error ? models.error.message : copy.loadFailed)}</p>}
@@ -3889,13 +4033,13 @@ function AISettings({ copy }: { copy: Copy }) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle><DialogDescription>{copy.aiSettingsDescription}</DialogDescription></DialogHeader>
           <form className="grid gap-4" onSubmit={submit}>
-            <div className="grid gap-2"><Label htmlFor="add-ai-provider">{copy.aiProvider}</Label><Input id="add-ai-provider" value="OpenAI" disabled /></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setBaseURL(event.target.value)} placeholder="https://api.openai.com/v1" /></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.6-sol" /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-provider">{copy.aiProvider}</Label><Select value={provider} onValueChange={(val) => handleProviderChange(val as "openai" | "gemini" | "deepseek")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="openai">OpenAI</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem><SelectItem value="deepseek">DeepSeek</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setBaseURL(event.target.value)} placeholder={provider === "gemini" ? "https://generativelanguage.googleapis.com" : provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com/v1"} /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setModel(event.target.value)} placeholder={provider === "gemini" ? "gemini-3.8-flash" : provider === "deepseek" ? "deepseek-chat" : "gpt-5.6-sol"} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem></SelectContent></Select></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setAPIKey(event.target.value)} placeholder={editingModel ? copy.aiAPIKeyKeep : "sk-..."} autoComplete="off" /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setAPIKey(event.target.value)} placeholder={editingModel ? copy.aiAPIKeyKeep : (provider === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
             {(add.isError || update.isError || test.isError) && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -4009,6 +4153,7 @@ function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccoun
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
   };
   const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => { setError(""); refreshAccountData(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
@@ -4070,7 +4215,7 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
     if (!value) setError("");
     onOpenChange(value);
   };
-  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
   const field = (name: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.type === "number" ? Number(event.target.value) : event.target.value;
     setForm((current) => ({ ...current, [name]: value }));
@@ -4134,41 +4279,25 @@ function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open
 
 function CalendarPage() {
   const queryClient = useQueryClient();
-  const metadata = useQuery({ queryKey: ["conversations", "calendar-shell"], queryFn: () => getConversations() });
-  const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities });
-  const copy = useLocale(metadata.data?.locale);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const { copy, openMobileMenu } = useShell();
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
   const events = useQuery({ queryKey: ["calendar", start], queryFn: () => getCalendarEvents(start, end), retry: false });
   const [form, setForm] = useState({ summary: "", location: "", start: "", end: "" });
   const create = useMutation({ mutationFn: () => createCalendarEvent({ ...form, start: new Date(form.start).toISOString(), end: new Date(form.end).toISOString(), allDay: false }), onSuccess: () => { setForm({ summary: "", location: "", start: "", end: "" }); void queryClient.invalidateQueries({ queryKey: ["calendar"] }); } });
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
-  if (metadata.error instanceof ApiError && metadata.error.status === 401) return <LoginScreen copy={copy} />;
+
   return (
-    <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
-      {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden" aria-label={copy.cancel} onClick={() => setSidebarOpen(false)} />}
-      <Sidebar copy={copy} folders={metadata.data?.folders || []} accounts={metadata.data?.accounts || []} accountEmail={metadata.data?.accountEmail || ""} calendarEnabled={capabilities.data?.calendar === true} currentView="calendar" onCompose={() => setComposeOpen(true)} onSettings={() => { setSidebarOpen(false); setSettingsOpen(true); }} open={sidebarOpen} onClose={() => setSidebarOpen(false)} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
-      <ScrollArea className="min-w-0 flex-1 bg-background" contentClassName="min-h-full" render={<main />}>
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b bg-card px-3 sm:px-5">
-          <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
-          <h1 className="text-sm font-semibold">{copy.calendar}</h1>
-        </header>
-        <div className="mx-auto grid max-w-5xl gap-8 p-4 py-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
-          <section><h2 className="text-lg font-semibold">{now.toLocaleDateString(copy === en ? "en" : "zh-CN", { month: "long", year: "numeric" })}</h2><div className="mt-5 grid gap-2">{events.data?.events.map((event: CalendarEvent) => <article className="grid grid-cols-[6rem_minmax(0,1fr)] gap-4 border-b py-3" key={event.uid}><time className="text-xs text-muted-foreground">{formatTime(event.start)}</time><div className="min-w-0"><strong className="block truncate text-sm">{event.summary}</strong>{event.location && <p className="mt-1 truncate text-xs text-muted-foreground">{event.location}</p>}</div></article>)}{events.isPending && <p>{copy.loading}</p>}{events.error && <p className="text-sm text-destructive">{events.error.message}</p>}</div></section>
-          <form className="grid content-start gap-3 border-t pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><h2 className="font-semibold">{copy.newEvent}</h2><Label className="grid gap-1.5">{copy.subject}<Input value={form.summary} onChange={(event) => setForm({ ...form, summary: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.location}<Input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></Label><Label className="grid gap-1.5">{copy.start}<Input type="datetime-local" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.end}<Input type="datetime-local" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required /></Label><Button disabled={create.isPending}>{copy.save}</Button></form>
-        </div>
-      </ScrollArea>
-      <ComposeDialog copy={copy} open={composeOpen} defaults={{ to: "", subject: "" }} accountEmail={metadata.data?.accountEmail || ""} onOpenChange={setComposeOpen} onSent={() => void queryClient.invalidateQueries({ queryKey: ["conversations"] })} />
-      <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
-    </div>
+    <ScrollArea className="min-w-0 flex-1 bg-background" contentClassName="min-h-full" render={<main />}>
+      <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b bg-card px-3 sm:px-5">
+        <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
+        <h1 className="text-sm font-semibold">{copy.calendar}</h1>
+      </header>
+      <div className="mx-auto grid max-w-5xl gap-8 p-4 py-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+        <section><h2 className="text-lg font-semibold">{now.toLocaleDateString(copy === en ? "en" : "zh-CN", { month: "long", year: "numeric" })}</h2><div className="mt-5 grid gap-2">{events.data?.events.map((event: CalendarEvent) => <article className="grid grid-cols-[6rem_minmax(0,1fr)] gap-4 border-b py-3" key={event.uid}><time className="text-xs text-muted-foreground">{formatTime(event.start)}</time><div className="min-w-0"><strong className="block truncate text-sm">{event.summary}</strong>{event.location && <p className="mt-1 truncate text-xs text-muted-foreground">{event.location}</p>}</div></article>)}{events.isPending && <p>{copy.loading}</p>}{events.error && <p className="text-sm text-destructive">{events.error.message}</p>}</div></section>
+        <form className="grid content-start gap-3 border-t pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><h2 className="font-semibold">{copy.newEvent}</h2><Label className="grid gap-1.5">{copy.subject}<Input value={form.summary} onChange={(event) => setForm({ ...form, summary: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.location}<Input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} /></Label><Label className="grid gap-1.5">{copy.start}<Input type="datetime-local" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required /></Label><Label className="grid gap-1.5">{copy.end}<Input type="datetime-local" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required /></Label><Button disabled={create.isPending}>{copy.save}</Button></form>
+      </div>
+    </ScrollArea>
   );
 }
 

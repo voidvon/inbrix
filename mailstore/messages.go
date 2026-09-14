@@ -60,12 +60,23 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		return fmt.Errorf("mailstore: prepare pending flag lookup: %w", err)
 	}
 	defer pendingSeenStmt.Close()
+	pendingMoveStmt, err := tx.PrepareContext(ctx, `SELECT 1 FROM pending_message_moves WHERE account_id = ? AND folder_name = ? AND uid = ?`)
+	if err != nil {
+		return fmt.Errorf("mailstore: prepare pending move lookup: %w", err)
+	}
+	defer pendingMoveStmt.Close()
 
 	now := time.Now().Unix()
 	for _, email := range emails {
 		uid, err := parseUIDString(email.ID)
 		if err != nil {
 			continue
+		}
+		var pendingMove int
+		if lookupErr := pendingMoveStmt.QueryRowContext(ctx, accountID, folderName, uid).Scan(&pendingMove); lookupErr == nil {
+			continue
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return fmt.Errorf("mailstore: read pending move check for %s/%s/%s: %w", accountID, folderName, email.ID, lookupErr)
 		}
 		var pendingSeen int
 		if lookupErr := pendingSeenStmt.QueryRowContext(ctx, accountID, folderName, uid, seenFlag).Scan(&pendingSeen); lookupErr == nil {

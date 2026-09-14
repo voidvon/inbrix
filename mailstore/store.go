@@ -356,6 +356,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY(account_id, folder_name, uid) REFERENCES messages(account_id, folder_name, uid) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_pending_flag_updates_due ON pending_flag_updates(account_id, next_attempt_at, updated_at)`,
+		`CREATE TABLE IF NOT EXISTS pending_message_moves (
+			account_id TEXT NOT NULL,
+			folder_name TEXT NOT NULL,
+			uid INTEGER NOT NULL,
+			target_folder TEXT NOT NULL DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 1,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, folder_name, uid),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pending_message_moves_due ON pending_message_moves(account_id, next_attempt_at, updated_at)`,
 		`CREATE TABLE IF NOT EXISTS message_attachments (
 			account_id TEXT NOT NULL,
 			folder_name TEXT NOT NULL,

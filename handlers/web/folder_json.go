@@ -62,6 +62,9 @@ func deleteMessageAttachmentCache(c *fiber.Ctx, client api.MailClient, accountID
 		return nil
 	}
 	if !message.AttachmentMetadataCached {
+		if client == nil {
+			return nil
+		}
 		metadataClient, ok := client.(interface {
 			FetchAttachmentMetadata(folderName, uid string) ([]models.Attachment, error)
 		})

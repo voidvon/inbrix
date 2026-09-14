@@ -53,8 +53,12 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	if strings.TrimSpace(model.OwnerID) == "" || strings.TrimSpace(model.BaseURL) == "" || strings.TrimSpace(model.Model) == "" || model.EncryptedAPIKey == "" {
 		return AIModelRecord{}, errors.New("mailstore: AI model owner, Base URL, model, and API key are required")
 	}
+	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
 	if model.Provider == "" {
 		model.Provider = "openai"
+	}
+	if model.Provider != "openai" && model.Provider != "gemini" && model.Provider != "deepseek" {
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, gemini, or deepseek")
 	}
 	if model.ReasoningEffort == "" {
 		model.ReasoningEffort = "medium"
@@ -97,8 +101,12 @@ func (s *Store) UpdateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	if strings.TrimSpace(model.ID) == "" || strings.TrimSpace(model.OwnerID) == "" || strings.TrimSpace(model.BaseURL) == "" || strings.TrimSpace(model.Model) == "" || strings.TrimSpace(model.ReasoningEffort) == "" {
 		return AIModelRecord{}, errors.New("mailstore: AI model id, owner, Base URL, model, and reasoning effort are required")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET base_url = ?, model = ?, reasoning_effort = ?, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
-		model.BaseURL, model.Model, model.ReasoningEffort, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
+	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
+	if model.Provider != "" && model.Provider != "openai" && model.Provider != "gemini" && model.Provider != "deepseek" {
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, gemini, or deepseek")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
+		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
 	if err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: update AI model: %w", err)
 	}

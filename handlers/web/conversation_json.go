@@ -599,43 +599,33 @@ func (h *EmailHandler) HandleConversationDeleteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
 
-	client, account, err := h.messageClientForAccount(c, selected.AccountEmail)
-	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not connect to the mail server"})
-	}
-	defer client.Close()
-	trash, err := client.DiscoverTrashFolder()
-	if err != nil || strings.TrimSpace(trash) == "" {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Trash folder could not be found; the conversation was not deleted"})
-	}
-	for _, message := range selected.Messages {
-		email := message.Email
-		if strings.EqualFold(strings.TrimSpace(email.Folder), strings.TrimSpace(trash)) {
-			continue
-		}
-		if err := deleteMessageAttachmentCache(c, client, account.ID, email); err != nil {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not clear every attachment cache; the conversation was not deleted"})
-		}
+	account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail)
+	if !ok {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
 
-	folders := make(map[string]struct{})
+	trash, _ := h.mailDB.ResolveTrashFolder(c.UserContext(), account.ID)
+
+	keys := make([]mailstore.MessageMoveKey, 0, len(selected.Messages))
 	for _, message := range selected.Messages {
 		email := message.Email
-		if strings.EqualFold(strings.TrimSpace(email.Folder), strings.TrimSpace(trash)) {
+		if trash != "" && strings.EqualFold(strings.TrimSpace(email.Folder), strings.TrimSpace(trash)) {
 			continue
 		}
-		if err := client.MoveMessage(email.Folder, email.ID, trash); err != nil {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not move every email in the conversation to Trash"})
-		}
-		if err := h.mailDB.DeleteMessage(c.UserContext(), account.ID, email.Folder, email.ID); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email was moved to Trash, but the local mailbox could not be updated"})
-		}
-		folders[email.Folder] = struct{}{}
+		_ = deleteMessageAttachmentCache(c, nil, account.ID, email)
+		keys = append(keys, mailstore.MessageMoveKey{
+			FolderName: email.Folder,
+			UID:        email.ID,
+		})
 	}
-	for folder := range folders {
-		if err := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, folder); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Conversation was deleted, but the local folder count could not be updated"})
-		}
+
+	queued, err := h.mailDB.QueueMessageMoves(c.UserContext(), account.ID, keys, trash)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation locally"})
+	}
+
+	if queued > 0 && h.auth != nil && h.auth.syncer != nil {
+		h.auth.syncer.Trigger(account.ID)
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }
@@ -677,30 +667,27 @@ func (h *EmailHandler) HandleConversationMessageDeleteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found in conversation"})
 	}
 
-	client, account, err := h.messageClientForAccount(c, selected.AccountEmail)
-	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not connect to the mail server"})
+	account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail)
+	if !ok {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
-	defer client.Close()
 
-	trash, err := client.DiscoverTrashFolder()
-	if err != nil || strings.TrimSpace(trash) == "" {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Trash folder could not be found; the email was not permanently deleted"})
-	}
-	if strings.EqualFold(strings.TrimSpace(trash), body.Folder) {
+	trash, _ := h.mailDB.ResolveTrashFolder(c.UserContext(), account.ID)
+	if trash != "" && strings.EqualFold(strings.TrimSpace(trash), body.Folder) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "This email is already in Trash; permanent deletion is not available here"})
 	}
-	if err := deleteMessageAttachmentCache(c, client, account.ID, targetEmail); err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not clear the attachment cache; the email was not deleted"})
+
+	_ = deleteMessageAttachmentCache(c, nil, account.ID, targetEmail)
+
+	queued, err := h.mailDB.QueueMessageMoves(c.UserContext(), account.ID, []mailstore.MessageMoveKey{
+		{FolderName: body.Folder, UID: uid},
+	}, trash)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete email locally"})
 	}
-	if err := client.MoveMessage(body.Folder, uid, trash); err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not move the email to Trash"})
-	}
-	if err := h.mailDB.DeleteMessage(c.UserContext(), account.ID, body.Folder, uid); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email was moved to Trash, but the local mailbox could not be updated"})
-	}
-	if err := h.mailDB.UpdateFolderStats(c.UserContext(), account.ID, body.Folder); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Email was deleted, but the local folder count could not be updated"})
+
+	if queued > 0 && h.auth != nil && h.auth.syncer != nil {
+		h.auth.syncer.Trigger(account.ID)
 	}
 
 	return c.JSON(fiber.Map{"ok": true})

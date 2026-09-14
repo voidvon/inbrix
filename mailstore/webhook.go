@@ -191,44 +191,7 @@ func (m *SyncManager) summarizeInquiryForWebhook(ctx context.Context, client HTT
 }
 
 func createOpenAIWebhookResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input, effort string) (string, error) {
-	body, err := json.Marshal(map[string]any{
-		"model":             model.Model,
-		"instructions":      instructions,
-		"input":             input,
-		"max_output_tokens": 500,
-		"reasoning":         map[string]string{"effort": effort},
-	})
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(model.BaseURL, "/")+"/responses", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("OpenAI request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxOpenAIResponseBytes))
-	if err != nil {
-		return "", fmt.Errorf("read OpenAI response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(raw, &apiErr)
-		if apiErr.Error.Message != "" {
-			return "", fmt.Errorf("OpenAI returned HTTP %d: %s", resp.StatusCode, apiErr.Error.Message)
-		}
-		return "", fmt.Errorf("OpenAI returned HTTP %d", resp.StatusCode)
-	}
-	return openAIResponseText(raw)
+	return CreateAIResponse(ctx, client, model, apiKey, instructions, input, 0, effort)
 }
 
 func fullEmailForInquiryAnalysis(account Account, message models.Email) string {

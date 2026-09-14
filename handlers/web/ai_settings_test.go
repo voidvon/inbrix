@@ -142,3 +142,112 @@ func TestStripBestRegards(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateGeminiBaseURL(t *testing.T) {
+	valid := []string{
+		"https://generativelanguage.googleapis.com",
+		"https://generativelanguage.googleapis.com/v1beta",
+		"https://proxy.example.com/gemini",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+	}
+	for _, raw := range valid {
+		if err := validateAIBaseURL("gemini", raw); err != nil {
+			t.Errorf("valid Gemini URL %q: %v", raw, err)
+		}
+	}
+	invalid := []string{
+		"http://api.example.com",
+		"https://user:pass@example.com",
+		"https://generativelanguage.googleapis.com/v1beta/models",
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+		"not-a-url",
+	}
+	for _, raw := range invalid {
+		if err := validateAIBaseURL("gemini", raw); err == nil {
+			t.Errorf("invalid Gemini URL accepted: %q", raw)
+		}
+	}
+}
+
+func TestCreateGeminiResponseInWebHandler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1beta/models/gemini-3.8-flash:generateContent" {
+			t.Errorf("path: got %q", r.URL.Path)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "test-gemini-key" {
+			t.Errorf("api key header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"Gemini test output"}]}}]}`)
+	}))
+	defer server.Close()
+
+	h := &AISettingsHandler{client: server.Client()}
+	got, err := h.createAIResponse(context.Background(), mailstore.AIModelRecord{
+		Provider: "gemini",
+		BaseURL:  server.URL,
+		Model:    "gemini-3.8-flash",
+	}, "test-gemini-key", "test prompt")
+	if err != nil {
+		t.Fatalf("createAIResponse: %v", err)
+	}
+	if got != "Gemini test output" {
+		t.Fatalf("output: got %q, want 'Gemini test output'", got)
+	}
+}
+
+func TestValidateDeepSeekBaseURL(t *testing.T) {
+	valid := []string{
+		"https://api.deepseek.com",
+		"https://api.deepseek.com/v1",
+		"https://custom-proxy.example.com",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+	}
+	for _, raw := range valid {
+		if err := validateAIBaseURL("deepseek", raw); err != nil {
+			t.Errorf("valid DeepSeek URL %q: %v", raw, err)
+		}
+	}
+	invalid := []string{
+		"http://api.deepseek.com",
+		"https://user:pass@example.com",
+		"https://api.deepseek.com/chat/completions",
+		"not-a-url",
+	}
+	for _, raw := range invalid {
+		if err := validateAIBaseURL("deepseek", raw); err == nil {
+			t.Errorf("invalid DeepSeek URL accepted: %q", raw)
+		}
+	}
+}
+
+func TestCreateDeepSeekResponseInWebHandler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path: got %q, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-ds-key" {
+			t.Errorf("authorization header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"DeepSeek web test output","reasoning_content":"thought"}}],"finish_reason":"stop"}`)
+	}))
+	defer server.Close()
+
+	h := &AISettingsHandler{client: server.Client()}
+	got, err := h.createAIResponse(context.Background(), mailstore.AIModelRecord{
+		Provider: "deepseek",
+		BaseURL:  server.URL,
+		Model:    "deepseek-chat",
+	}, "test-ds-key", "test prompt")
+	if err != nil {
+		t.Fatalf("createAIResponse: %v", err)
+	}
+	if got != "DeepSeek web test output" {
+		t.Fatalf("output: got %q, want 'DeepSeek web test output'", got)
+	}
+}
+
+

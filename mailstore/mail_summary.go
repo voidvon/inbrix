@@ -133,9 +133,10 @@ func mailSummaryInstructions(agent AIAgentRecord) string {
 }
 
 func formatTaggedMailSummary(raw string, labels []string) (string, error) {
+	raw = CleanJSONFence(raw)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &fields); err != nil {
-		return "", errors.New("OpenAI analysis did not return the configured output fields")
+		return "", errors.New("AI analysis did not return the configured output fields")
 	}
 	allowed := make(map[string]struct{}, len(labels))
 	for _, label := range labels {
