@@ -150,8 +150,8 @@ Each release includes a `SHA256SUMS` manifest. Verify an archive before running
 it (replace the platform in the filename when needed):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/voidvon/inbrix/v1.17.6/scripts/verify.sh
-bash verify.sh --repo voidvon/inbrix --tag v1.17.6 inbrix_1.17.6_linux_amd64.zip
+curl -fsSLO https://raw.githubusercontent.com/voidvon/inbrix/v1.17.7/scripts/verify.sh
+bash verify.sh --repo voidvon/inbrix --tag v1.17.7 inbrix_1.17.7_linux_amd64.zip
 ```
 
 ### Run with Docker
