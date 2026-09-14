@@ -131,4 +131,4 @@ gh release create "$tag" "${assets[@]}" "$asset_dir/SHA256SUMS" --repo "$repo" -
 gh release edit "$tag" --repo "$repo" --draft=false
 
 release_url=$(gh release view "$tag" --repo "$repo" --json url --jq .url)
-echo "已发布 $tag：$release_url"
+echo "已发布 ${tag}：$release_url"
