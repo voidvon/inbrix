@@ -142,8 +142,8 @@ Linux 和 macOS 的预编译压缩包可在
 （其他平台请替换对应文件名）：
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/voidvon/inbrix/v1.17.4/scripts/verify.sh
-bash verify.sh --repo voidvon/inbrix --tag v1.17.4 inbrix_1.17.4_linux_amd64.zip
+curl -fsSLO https://raw.githubusercontent.com/voidvon/inbrix/v1.17.5/scripts/verify.sh
+bash verify.sh --repo voidvon/inbrix --tag v1.17.5 inbrix_1.17.5_linux_amd64.zip
 ```
 
 ### 使用 Docker 运行
