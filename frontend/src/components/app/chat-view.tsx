@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ChevronDown,
   Copy as CopyIcon,
+  Loader2,
   Mail,
   MessageCircle,
   Paperclip,
@@ -32,10 +33,25 @@ import {
   getAIModels,
   saveConversationNote,
   saveConversationStatus,
+  sendMessage,
   summarizeMailMessage,
 } from "../../lib/api";
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
-import { copyToClipboard, extractEmailAddress, renderLinkifiedText } from "../../lib/email-format";
+import {
+  copyToClipboard,
+  escapeHTML,
+  extractEmailAddress,
+  renderLinkifiedText,
+  splitRecipientValues,
+  structuredQuotedTextToHTML,
+  uniqueRecipients,
+} from "../../lib/email-format";
+import {
+  addOptimisticMessage,
+  removeOptimisticMessage,
+  updateOptimisticStatus,
+  type OptimisticMessage,
+} from "../../lib/optimistic-messages";
 import type {
   ConversationDetail,
   ConversationDetailResponse,
@@ -328,6 +344,8 @@ export function ChatPanel({
   onReply,
   onReplyAll,
   onNewMail,
+  onRetrySend,
+  onReEdit,
   onConversationEmpty,
   className,
 }: {
@@ -339,6 +357,8 @@ export function ChatPanel({
   onReply: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void;
   onReplyAll: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void;
   onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void;
+  onRetrySend?: (message: ConversationMessage) => void;
+  onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
   className?: string;
 }) {
@@ -369,6 +389,8 @@ export function ChatPanel({
       onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
       onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
       onNewMail={(message) => onNewMail(detail, message)}
+      onRetrySend={onRetrySend}
+      onReEdit={onReEdit}
       onConversationEmpty={onConversationEmpty}
     />
   );
@@ -381,6 +403,8 @@ export function ChatView({
   onReply,
   onReplyAll,
   onNewMail,
+  onRetrySend,
+  onReEdit,
   onConversationEmpty,
 }: {
   copy: Copy;
@@ -389,6 +413,8 @@ export function ChatView({
   onReply: (message: ConversationMessage, suggestedBody?: string) => void;
   onReplyAll: (message: ConversationMessage, suggestedBody?: string) => void;
   onNewMail: (message: ConversationMessage) => void;
+  onRetrySend?: (message: ConversationMessage) => void;
+  onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -419,10 +445,20 @@ export function ChatView({
   }, [persistedSuggestionKey, suggestionTargetKey]);
 
   const deleteMutation = useMutation({
-    mutationFn: (message: ConversationMessage) => deleteConversationMessage(detail.id, message.id, message.folder || "INBOX"),
-    onSuccess: async () => {
+    mutationFn: (message: ConversationMessage) => {
+      if (message.id.startsWith("optimistic-")) {
+        removeOptimisticMessage(message.id);
+        return Promise.resolve({ ok: true });
+      }
+      return deleteConversationMessage(detail.id, message.id, message.folder || "INBOX");
+    },
+    onSuccess: async (_, message) => {
       setDeleteTarget(null);
       setDeleteError("");
+      if (message.id.startsWith("optimistic-")) {
+        removeOptimisticMessage(message.id);
+        return;
+      }
       if (detail.messages.length === 1) onConversationEmpty();
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["conversations"] }), queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] })]);
       if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
@@ -481,7 +517,34 @@ export function ChatView({
             {detail.count} {copy.messages}
           </p>
         </div>
-        <div aria-hidden="true" />
+        <div className="flex min-w-0 items-center justify-end gap-1.5">
+          {detail.messages.length > 0 && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => onReply(detail.messages.at(-1)!)}
+                title={copy.reply}
+              >
+                <Send className="size-3.5" />
+                <span className="hidden sm:inline">{copy.reply}</span>
+              </Button>
+              {Boolean(detail.messages.at(-1)?.cc?.trim()) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => onReplyAll(detail.messages.at(-1)!)}
+                  title={copy.replyAll}
+                >
+                  <ReplyAll className="size-3.5" />
+                  <span className="hidden sm:inline">{copy.replyAll}</span>
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </header>
       <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8" viewportRef={scrollRef}>
         <div ref={contentRef}>
@@ -505,6 +568,8 @@ export function ChatView({
                     setDeleteTarget(message);
                   }}
                   onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
+                  onRetrySend={onRetrySend ? () => onRetrySend(message) : undefined}
+                  onReEdit={onReEdit ? () => onReEdit(message) : undefined}
                 />
                 {!message.outgoing && suggestionTargetKey === messageKey ? (
                   <SuggestedReplyBubble
@@ -522,6 +587,12 @@ export function ChatView({
           })}
         </div>
       </ScrollArea>
+      <QuickReplyBar
+        copy={copy}
+        detail={detail}
+        onOpenFullReply={(body) => onReply(detail.messages.at(-1)!, body)}
+        onOpenFullReplyAll={(body) => onReplyAll(detail.messages.at(-1)!, body)}
+      />
       <Dialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
@@ -674,6 +745,8 @@ export function MessageBubble({
   onNewMail,
   onDelete,
   onGenerateReply,
+  onRetrySend,
+  onReEdit,
 }: {
   copy: Copy;
   message: ConversationMessage;
@@ -686,6 +759,8 @@ export function MessageBubble({
   onNewMail: () => void;
   onDelete: () => void;
   onGenerateReply?: () => void;
+  onRetrySend?: () => void;
+  onReEdit?: () => void;
 }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
@@ -716,7 +791,28 @@ export function MessageBubble({
               </div>
             </div>
           </div>
-          <div className={cn("flex items-end", outgoing && "justify-end")}>
+          <div className={cn("flex items-end gap-2", outgoing && "justify-end")}>
+            {outgoing && message.sendStatus === "sending" && (
+              <div className="mb-2 flex shrink-0 items-center justify-center self-center text-muted-foreground" title={copy.sending}>
+                <Loader2 className="size-4 animate-spin text-muted-foreground/80" />
+              </div>
+            )}
+            {outgoing && message.sendStatus === "failed" && (
+              <div className="mb-2 flex shrink-0 items-center justify-center self-center">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRetrySend?.();
+                  }}
+                  className="group flex size-5 shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground font-bold text-xs leading-none shadow-xs transition-transform hover:scale-110 active:scale-95 focus:outline-hidden cursor-pointer"
+                  title={message.sendError ? `${message.sendError} · ${copy.retrySend}` : copy.sendFailedRetry}
+                  aria-label={copy.sendFailedRetry}
+                >
+                  !
+                </button>
+              </div>
+            )}
             <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border border-transparent bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground", message.html && "w-full")}>
               {message.html ? (
                 <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} />
@@ -740,7 +836,8 @@ export function MessageBubble({
                       <a
                         className="flex min-w-0 items-center gap-1.5 text-xs text-primary"
                         key={attachment.id}
-                        href={`/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}
+                        href={attachment.id.startsWith("opt-att-") ? "#" : `/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}
+                        onClick={attachment.id.startsWith("opt-att-") ? (e) => e.preventDefault() : undefined}
                       >
                         <Paperclip className="size-3.5 shrink-0" />
                         <span className="min-w-0 truncate">{attachment.filename}</span>
@@ -752,28 +849,72 @@ export function MessageBubble({
               ) : null}
             </div>
           </div>
-          <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} onGenerateReply={onGenerateReply} />
+          {outgoing && message.sendStatus === "failed" && (
+            <div className="mt-1 flex items-center justify-end gap-1.5 text-right text-xs text-destructive">
+              <span>{message.sendError || copy.sendFailed}</span>
+              {onRetrySend && (
+                <button
+                  type="button"
+                  className="font-medium underline hover:opacity-80 cursor-pointer"
+                  onClick={onRetrySend}
+                >
+                  {copy.retry}
+                </button>
+              )}
+            </div>
+          )}
+          {!message.id.startsWith("optimistic-") && (
+            <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} onGenerateReply={onGenerateReply} />
+          )}
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">
-        {message.cc?.trim() ? (
-          <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}>
-            <ReplyAll className="size-4" />
-            {copy.replyAll}
+        {message.sendStatus === "failed" ? (
+          <>
+            {onRetrySend && (
+              <ContextMenuItem className="gap-2 px-2 py-2" onClick={onRetrySend}>
+                <RotateCcw className="size-4" />
+                {copy.resend}
+              </ContextMenuItem>
+            )}
+            {onReEdit && (
+              <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReEdit}>
+                <Pencil className="size-4" />
+                {copy.reEdit}
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
+              <Trash2 className="size-4" />
+              {copy.deleteEmail}
+            </ContextMenuItem>
+          </>
+        ) : message.sendStatus === "sending" ? (
+          <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
+            <Trash2 className="size-4" />
+            {copy.cancel}
           </ContextMenuItem>
-        ) : null}
-        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReply}>
-          <Send className="size-4" />
-          {copy.reply}
-        </ContextMenuItem>
-        <ContextMenuItem className="gap-2 px-2 py-2" onClick={onNewMail}>
-          <Mail className="size-4" />
-          {copy.sendEmail}
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
-          <Trash2 className="size-4" />
-          {copy.deleteEmail}
-        </ContextMenuItem>
+        ) : (
+          <>
+            {message.cc?.trim() ? (
+              <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}>
+                <ReplyAll className="size-4" />
+                {copy.replyAll}
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReply}>
+              <Send className="size-4" />
+              {copy.reply}
+            </ContextMenuItem>
+            <ContextMenuItem className="gap-2 px-2 py-2" onClick={onNewMail}>
+              <Mail className="size-4" />
+              {copy.sendEmail}
+            </ContextMenuItem>
+            <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
+              <Trash2 className="size-4" />
+              {copy.deleteEmail}
+            </ContextMenuItem>
+          </>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -1088,5 +1229,187 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
       </div>
       <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} />
     </article>
+  );
+}
+
+export function QuickReplyBar({
+  copy,
+  detail,
+  onOpenFullReply,
+  onOpenFullReplyAll,
+}: {
+  copy: Copy;
+  detail: ConversationDetail;
+  onOpenFullReply: (suggestedBody?: string) => void;
+  onOpenFullReplyAll: (suggestedBody?: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const queryClient = useQueryClient();
+  const latestMessage = detail.messages.filter((m) => !m.id.startsWith("optimistic-")).at(-1) || detail.messages.at(-1);
+  const hasCc = Boolean(latestMessage?.cc?.trim());
+
+  if (!latestMessage) return null;
+
+  const handleSend = async (replyAll = false) => {
+    const trimmed = text.trim();
+    if (!trimmed || !latestMessage) return;
+
+    const source = latestMessage;
+    const subject = source.subject || detail.subject;
+    const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+    const accountEmail = detail.accountEmail || "";
+
+    let toRecipients: string[] = [];
+    let ccRecipients: string[] = [];
+    if (replyAll) {
+      const originalTo = splitRecipientValues(source.to);
+      const originalCc = splitRecipientValues(source.cc || "");
+      toRecipients = source.outgoing
+        ? uniqueRecipients(originalTo, [accountEmail])
+        : uniqueRecipients([source.from], [accountEmail]);
+      ccRecipients = uniqueRecipients([...originalTo, ...originalCc], [accountEmail, ...toRecipients]);
+    } else {
+      const recipient = source.outgoing ? source.to : source.from || detail.peerEmail || "";
+      toRecipients = [recipient];
+    }
+
+    const sender = source.fromName && source.from ? `${source.fromName} <${source.from}>` : source.from || detail.peerEmail || "";
+    const quoteLead = `On ${new Date(source.date || Date.now()).toLocaleString()}, ${sender} wrote:`;
+    const originalBody = source.body || source.preview || "";
+    const htmlBody = `<p>${escapeHTML(trimmed).replace(/\n/g, "<br>")}</p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`;
+
+    const form = new FormData();
+    form.set("to", toRecipients.join(", "));
+    if (ccRecipients.length) form.set("cc", ccRecipients.join(", "));
+    form.set("subject", replySubject);
+    form.set("body", trimmed);
+    form.set("html_body", htmlBody);
+    if (source.messageId) form.set("in_reply_to", source.messageId);
+    const references = [...(source.references || [])];
+    if (source.messageId && !references.includes(source.messageId)) references.push(source.messageId);
+    if (references.length) form.set("references", references.join(" "));
+    form.set("conversation_id", detail.id);
+    if (accountEmail) form.set("account_email", accountEmail);
+
+    const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const optimisticMessage: OptimisticMessage = {
+      id: optimisticId,
+      conversationId: detail.id,
+      from: accountEmail,
+      to: toRecipients.join(", "),
+      cc: ccRecipients.length ? ccRecipients.join(", ") : undefined,
+      subject: replySubject,
+      preview: trimmed.slice(0, 200),
+      body: trimmed,
+      html: htmlBody,
+      date: new Date().toISOString(),
+      hasAttachments: false,
+      outgoing: true,
+      sendStatus: "sending",
+      form,
+      createdAt: Date.now(),
+    };
+
+    addOptimisticMessage(optimisticMessage);
+    setText("");
+
+    queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        conversations: current.conversations.map((item) =>
+          item.id === detail.id
+            ? {
+                ...item,
+                preview: trimmed.slice(0, 100),
+                date: optimisticMessage.date,
+                status: "answered",
+              }
+            : item
+        ),
+      };
+    });
+
+    try {
+      await sendMessage(form);
+      updateOptimisticStatus(optimisticId, "sent");
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+      void queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : copy.sendFailed;
+      updateOptimisticStatus(optimisticId, "failed", msg);
+      toast.error(msg);
+    }
+  };
+
+  return (
+    <footer className="border-t bg-card px-3 py-2.5 sm:px-5">
+      <div className="flex items-end gap-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+              e.preventDefault();
+              void handleSend(false);
+            }
+          }}
+          placeholder={copy.quickReply}
+          rows={1}
+          className="min-h-9 max-h-32 flex-1 resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 text-muted-foreground hover:text-foreground"
+            onClick={() => onOpenFullReply(text.trim() || undefined)}
+            title={copy.reply}
+            aria-label={copy.reply}
+          >
+            <Pencil className="size-4" />
+          </Button>
+          {hasCc && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 text-muted-foreground hover:text-foreground"
+              onClick={() => onOpenFullReplyAll(text.trim() || undefined)}
+              title={copy.replyAll}
+              aria-label={copy.replyAll}
+            >
+              <ReplyAll className="size-4" />
+            </Button>
+          )}
+          {hasCc && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 px-2.5 text-xs gap-1"
+              disabled={!text.trim()}
+              onClick={() => void handleSend(true)}
+              title={copy.replyAll}
+            >
+              <ReplyAll className="size-3.5" />
+              <span className="hidden sm:inline">{copy.replyAll}</span>
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 px-3 gap-1.5"
+            disabled={!text.trim()}
+            onClick={() => void handleSend(false)}
+          >
+            <Send className="size-3.5" />
+            <span>{copy.send}</span>
+          </Button>
+        </div>
+      </div>
+    </footer>
   );
 }

@@ -74,6 +74,8 @@ export type ConversationMessage = {
   outgoing: boolean;
   mailSummary?: MailSummary;
   suggestedReply?: SuggestedReply;
+  sendStatus?: "sending" | "failed" | "sent";
+  sendError?: string;
 };
 
 export type ConversationDetail = {

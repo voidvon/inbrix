@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   Code2,
@@ -48,7 +48,8 @@ import {
   replaceEditorDraft,
 } from "../../lib/email-format";
 import { type Copy, zh } from "../../lib/locale";
-import type { ConversationMessage } from "../../types";
+import { addOptimisticMessage, updateOptimisticStatus, type OptimisticMessage } from "../../lib/optimistic-messages";
+import type { ConversationListResponse, ConversationMessage } from "../../types";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -425,6 +426,7 @@ export function ComposeDialog({
   });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
+  const queryClient = useQueryClient();
 
   const replaceInlineImages = (images: InlineComposeImage[]) => {
     inlineImagesRef.current = images;
@@ -571,6 +573,69 @@ export function ComposeDialog({
       return { field, contentId: image.contentId };
     });
     if (inlineManifest.length) form.set("inline_attachments", JSON.stringify(inlineManifest));
+
+    if (defaults.conversationId) {
+      const convId = defaults.conversationId;
+      const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const optimisticMessage: OptimisticMessage = {
+        id: optimisticId,
+        conversationId: convId,
+        from: accountEmail || "",
+        to: submittedRecipients.join(", "),
+        cc: submittedCcRecipients.length ? submittedCcRecipients.join(", ") : undefined,
+        subject: subject.trim(),
+        preview: plainBody.slice(0, 200),
+        body: plainBody,
+        html: htmlBody,
+        date: new Date().toISOString(),
+        hasAttachments: attachments.length > 0,
+        attachments: attachments.map((f, i) => ({
+          id: `opt-att-${i}`,
+          partId: `opt-att-${i}`,
+          filename: f.name,
+          contentType: f.type || "application/octet-stream",
+          size: f.size,
+          isInline: false,
+        })),
+        outgoing: true,
+        sendStatus: "sending",
+        form,
+        createdAt: Date.now(),
+      };
+
+      addOptimisticMessage(optimisticMessage);
+      onOpenChange(false);
+
+      queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          conversations: current.conversations.map((item) =>
+            item.id === convId
+              ? {
+                  ...item,
+                  preview: plainBody.slice(0, 100),
+                  date: optimisticMessage.date,
+                  status: "answered",
+                }
+              : item
+          ),
+        };
+      });
+
+      sendMessage(form)
+        .then(() => {
+          updateOptimisticStatus(optimisticId, "sent");
+          onSent();
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : copy.sendFailed;
+          updateOptimisticStatus(optimisticId, "failed", msg);
+          toast.error(msg);
+        });
+      return;
+    }
+
     mutation.mutate(form, {
       onSuccess: () => {
         onSent();

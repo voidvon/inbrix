@@ -344,6 +344,13 @@ export const zh = {
   regenerateSuggestedReply: "重新生成建议回复",
   useSuggestedReply: "采用并回复",
   suggestedReplyFailed: "建议回复生成失败",
+  sendFailed: "发送失败",
+  retrySend: "点击重发",
+  sendFailedRetry: "发送失败，点击重试",
+  resend: "重新发送",
+  reEdit: "重新编辑",
+  quickReply: "快捷回复…",
+  replySent: "回复已发送",
 };
 
 export const en = {
@@ -692,6 +699,13 @@ export const en = {
   regenerateSuggestedReply: "Regenerate suggested reply",
   useSuggestedReply: "Use and reply",
   suggestedReplyFailed: "Could not generate a suggested reply",
+  sendFailed: "Failed to send",
+  retrySend: "Click to resend",
+  sendFailedRetry: "Failed to send, click to retry",
+  resend: "Resend",
+  reEdit: "Edit draft",
+  quickReply: "Quick reply…",
+  replySent: "Reply sent",
 };
 
 export type Copy = typeof zh;

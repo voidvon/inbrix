@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,6 +18,12 @@ import {
   structuredQuotedTextToHTML,
   uniqueRecipients,
 } from "../../lib/email-format";
+import {
+  reconcileOptimisticMessages,
+  removeOptimisticMessage,
+  retrySendMessage,
+  useOptimisticMessages,
+} from "../../lib/optimistic-messages";
 import { flagsMarkedSeen, flagsMarkedUnread } from "../../lib/mailbox";
 import { useDebouncedValue } from "../../lib/utils";
 import type {
@@ -81,6 +87,30 @@ export function InboxPage() {
     enabled: Boolean(selectedId),
     retry: 1,
   });
+
+  const optimisticMessages = useOptimisticMessages(selectedId);
+
+  useEffect(() => {
+    if (selectedId && detail.data?.conversation?.messages) {
+      reconcileOptimisticMessages(selectedId, detail.data.conversation.messages);
+    }
+  }, [selectedId, detail.data?.conversation?.messages]);
+
+  const mergedConversation = useMemo(() => {
+    const conv = detail.data?.conversation;
+    if (!conv) return undefined;
+    if (!optimisticMessages.length) return conv;
+
+    const existingIds = new Set(conv.messages.map((m) => m.id));
+    const extraMessages = optimisticMessages.filter((m) => !existingIds.has(m.id));
+    if (!extraMessages.length) return conv;
+
+    return {
+      ...conv,
+      count: conv.messages.length + extraMessages.length,
+      messages: [...conv.messages, ...extraMessages],
+    };
+  }, [detail.data?.conversation, optimisticMessages]);
 
   useEffect(() => {
     const isAuthError = conversations.error instanceof ApiError && conversations.error.status === 401;
@@ -263,7 +293,38 @@ export function InboxPage() {
 
   const openNewMailForMessage = (conversation: ConversationDetail, message: ConversationMessage) => {
     const recipient = message.outgoing ? message.to : message.from || conversation.peerEmail || "";
-    openCompose({ accountEmail: conversation.accountEmail, to: recipient, subject: "", conversation: conversation.messages });
+    openCompose({ accountEmail: conversation.accountEmail, to: recipient, subject: "", conversation: conversation.messages, conversationId: conversation.id });
+  };
+
+  const handleRetrySend = async (message: ConversationMessage) => {
+    await retrySendMessage(
+      message.id,
+      () => {
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversation", selectedId] });
+        void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+      },
+      (err) => {
+        toast.error(err.message || locale.sendFailedRetry);
+      }
+    );
+  };
+
+  const handleReEditMessage = (message: ConversationMessage) => {
+    const opt = optimisticMessages.find((m) => m.id === message.id);
+    removeOptimisticMessage(message.id);
+    if (!opt || !detail.data?.conversation) return;
+    openCompose({
+      accountEmail: detail.data.conversation.accountEmail,
+      to: opt.to,
+      cc: opt.cc,
+      subject: opt.subject,
+      html: opt.html || `<p>${escapeHTML(opt.body)}</p>`,
+      inReplyTo: opt.inReplyTo,
+      references: opt.references,
+      conversation: detail.data.conversation.messages,
+      conversationId: opt.conversationId,
+    });
   };
 
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
@@ -294,13 +355,15 @@ export function InboxPage() {
         />
         <ChatPanel
           copy={locale}
-          detail={detail.data?.conversation}
+          detail={mergedConversation}
           loading={detail.isPending && Boolean(selectedId)}
           error={detail.error}
           onBack={() => setChatOpen(false)}
           onReply={openReply}
           onReplyAll={openReplyAll}
           onNewMail={openNewMailForMessage}
+          onRetrySend={(message) => { void handleRetrySend(message); }}
+          onReEdit={handleReEditMessage}
           onConversationEmpty={() => {
             setSelectedId(null);
             setChatOpen(false);
