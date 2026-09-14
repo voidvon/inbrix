@@ -90,7 +90,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Textarea } from "../ui/textarea";
 import { RichTextButtons } from "./rich-text-buttons";
 
-export type SettingsSection = "account" | "general" | "signatures" | "ai" | "agents" | "mailboxes" | "system" | "about";
+export type SettingsSection = "account" | "general" | "signatures" | "ai" | "agents" | "error_logs" | "mailboxes" | "system" | "about";
 
 export function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [accountEditor, setAccountEditor] = useState<ConnectedAccount | null | undefined>(undefined);
@@ -133,11 +133,12 @@ export function SettingsContent({ copy, section, onSectionChange, onManageAccoun
         <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => onSectionChange("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => onSectionChange("ai")}><Sparkles />{copy.aiSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => onSectionChange("agents")}><Bot />{copy.agentSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "error_logs" ? "secondary" : "ghost"} onClick={() => onSectionChange("error_logs")}><AlertCircle />{copy.aiErrorLogs}</Button>
         {isSuperAdmin && <Button className="shrink-0 justify-start" variant={section === "system" ? "secondary" : "ghost"} onClick={() => onSectionChange("system")}><ShieldCheck />{copy.systemSettings}</Button>}
         <Button className="shrink-0 justify-start" variant={section === "about" ? "secondary" : "ghost"} onClick={() => onSectionChange("about")}><Info />{copy.about}</Button>
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
+        {section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "error_logs" ? <AIErrorLogsSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
       </div>
     </div>
   );
@@ -508,12 +509,11 @@ export function AgentSettings({ copy }: { copy: Copy }) {
           </form>
         </DialogContent>
       </Dialog>
-      <AIErrorLogsSection copy={copy} />
     </section>
   );
 }
 
-function AIErrorLogsSection({ copy }: { copy: Copy }) {
+export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const errorLogs = useQuery({
     queryKey: ["ai-error-logs"],
@@ -568,13 +568,13 @@ function AIErrorLogsSection({ copy }: { copy: Copy }) {
   const logs = errorLogs.data?.logs || [];
 
   return (
-    <div className="mt-8 border-t pt-6">
+    <section className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="flex items-center gap-2 text-base font-semibold text-foreground">
-            <AlertCircle className="size-4 text-destructive" />
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <AlertCircle className="size-5 text-destructive" />
             {copy.aiErrorLogs}
-          </h3>
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">{copy.aiErrorLogsDescription}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -712,7 +712,7 @@ function AIErrorLogsSection({ copy }: { copy: Copy }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   );
 }
 

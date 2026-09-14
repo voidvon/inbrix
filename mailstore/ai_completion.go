@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -229,6 +230,9 @@ func geminiResponseText(raw []byte) (string, error) {
 
 	if len(parts) == 0 {
 		if reason := resp.Candidates[0].FinishReason; reason != "" && reason != "STOP" {
+			if reason == "MAX_TOKENS" {
+				return "", errors.New("Gemini response was truncated: max output tokens limit reached during thinking or generation")
+			}
 			return "", fmt.Errorf("Gemini returned no output text (finish reason: %s)", reason)
 		}
 		return "", errors.New("Gemini returned no output text")
@@ -332,6 +336,15 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 		msgs = append(msgs, deepSeekChatMessage{Role: "user", Content: input})
 	}
 
+	// For DeepSeek (including V3, R1 / reasoner models, and proxies like deepseek-flash),
+	// reasoning models consume substantial tokens during thinking. We ensure max_tokens is
+	// always 8192 (DeepSeek's maximum output limit) so reasoning never starves generation.
+	if maxOutputTokens < 8192 {
+		maxOutputTokens = 8192
+	} else if maxOutputTokens > 8192 {
+		maxOutputTokens = 8192
+	}
+
 	reqBody := deepSeekRequest{
 		Model:     model.Model,
 		Messages:  msgs,
@@ -385,6 +398,7 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 	}
 
 	content := strings.TrimSpace(result.Choices[0].Message.Content)
+	content = StripThinkTags(content)
 	if content == "" {
 		if len(result.Choices) > 0 {
 			switch result.Choices[0].FinishReason {
@@ -398,6 +412,20 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 	}
 
 	return content, nil
+}
+
+var thinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>`)
+
+// StripThinkTags removes <think>...</think> reasoning blocks from model responses
+// (emitted by some DeepSeek / reasoning providers in the content field).
+// If an unclosed <think> tag exists (due to token truncation during thinking),
+// everything from <think> onward is stripped.
+func StripThinkTags(s string) string {
+	s = thinkTagRegex.ReplaceAllString(s, "")
+	if idx := strings.Index(s, "<think>"); idx != -1 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
 
 // CleanJSONFence strips markdown code fences (```json ... ``` or ``` ... ```) from model output.

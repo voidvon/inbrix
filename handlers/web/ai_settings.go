@@ -311,12 +311,12 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
 	}
 	started := time.Now()
-	output, err := h.createAIResponse(c.UserContext(), mailstore.AIModelRecord{
+	output, err := h.createAIResponseWithInstructions(c.UserContext(), mailstore.AIModelRecord{
 		Provider: input.Provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
-	}, input.APIKey, "This is a model connectivity test. Reply with exactly: OK")
+	}, input.APIKey, "You are an AI connectivity tester. Reply with: OK", "This is a model connectivity test. Reply with exactly: OK", 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true, "output": output, "latencyMs": time.Since(started).Milliseconds()})
 }
@@ -371,12 +371,12 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	started := time.Now()
-	output, err := h.createAIResponse(c.UserContext(), mailstore.AIModelRecord{
+	output, err := h.createAIResponseWithInstructions(c.UserContext(), mailstore.AIModelRecord{
 		Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
-	}, apiKey, "This is a model connectivity test. Reply with exactly: OK")
+	}, apiKey, "You are an AI connectivity tester. Reply with: OK", "This is a model connectivity test. Reply with exactly: OK", 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true, "output": output, "latencyMs": time.Since(started).Milliseconds()})
 }
@@ -481,12 +481,10 @@ func (h *AISettingsHandler) HandleSummarizeMail(c *fiber.Ctx) error {
 	}
 	result, err := mailstore.GetOrCreateMailSummary(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
 	if errors.Is(err, mailstore.ErrNotFound) {
-		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", errors.New("no AI model or summary agent is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model or summary agent is configured")
 	}
 	if err != nil {
-		h.recordError(c.UserContext(), owner, mailstore.MailSummaryTask, input.AccountEmail, "", "", err)
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	return c.JSON(fiber.Map{
 		"summary":   result.Record.Summary,
@@ -558,8 +556,7 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 		}
 		result, suggestionErr := mailstore.GetOrCreateReplySuggestion(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, true)
 		if suggestionErr != nil {
-			h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", suggestionErr)
-			return fiber.NewError(fiber.StatusBadGateway, suggestionErr.Error())
+			return fiber.NewError(fiber.StatusUnprocessableEntity, suggestionErr.Error())
 		}
 		return c.JSON(fiber.Map{"body": result.Record.Summary, "persisted": true, "updatedAt": result.Record.UpdatedAt.UTC().Format(time.RFC3339)})
 	}
@@ -597,10 +594,10 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	}
 	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey,
 		emailDraftInstructions(agentPrompt),
-		prompt, 1200)
+		prompt, 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, model.Model, "", err)
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	return c.JSON(fiber.Map{"body": stripBestRegards(body)})
 }
@@ -670,10 +667,10 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		instructions = "Modify the supplied current document in place; do not regenerate or redesign it. Preserve the exact HTML structure, element order, headings, tables, column count, styles, and existing content unless the user's instruction explicitly asks to change them. Change only the minimum necessary text nodes and table-cell values. Extract every concrete fact from the user's request (including product names, quantities, unit prices, dates, names, totals, and terms) and write those facts into the appropriate existing fields and table cells, replacing bracketed placeholders and example values. For a quotation, use the existing item row, fill the product, quantity, and unit price cells, calculate that row amount, and update the existing subtotal, tax, and total cells when the necessary numbers are available. Do not add a new document, remove sections, or replace the template with a different layout. Return the complete modified HTML with the original structure preserved, and nothing else. Do not include markdown fences, scripts, styles, or commentary. Match the user's language."
 		prompt += "\n\nCurrent document HTML to rewrite:\n" + input.CurrentHTML
 	}
-	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 1800)
+	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", err)
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(body, "```"), "```html"))
 	return c.JSON(fiber.Map{"html": body})
@@ -728,7 +725,7 @@ func validateOpenAIBaseURL(raw string) error {
 func (h *AISettingsHandler) createAIResponse(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, thread string) (string, error) {
 	return h.createAIResponseWithInstructions(ctx, cfg, apiKey,
 		"Summarize this email conversation concisely. Use the same primary language as the conversation. Cover the main topic, decisions, and action items. Do not invent facts.",
-		thread, 800)
+		thread, 8192)
 }
 
 func (h *AISettingsHandler) createAIResponseWithInstructions(ctx context.Context, cfg mailstore.AIModelRecord, apiKey, instructions, input string, maxOutputTokens int) (string, error) {

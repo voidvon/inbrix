@@ -83,11 +83,25 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 	}
 	cfg, err := resolveReplySuggestionConfig(ctx, store, encryptionKey, account)
 	if err != nil {
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     ReplySuggestionTask,
+			AccountEmail: account.Email,
+			ErrorMessage: err.Error(),
+		})
 		return ReplySuggestionResult{}, err
 	}
 	claim := MessageSummaryRecord{MessageSummaryKey: key, SourceHash: sourceHash, ConfigHash: cfg.configHash, ModelID: cfg.model.ID, ModelName: cfg.model.Model, AgentID: cfg.agent.ID, PipelineVersion: replySuggestionPipelineVersion}
 	current, claimed, err := store.ClaimMessageReplySuggestionGeneration(ctx, claim, regenerate, replySuggestionGenerationLease)
 	if err != nil {
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     ReplySuggestionTask,
+			AccountEmail: account.Email,
+			ModelName:    cfg.model.Model,
+			AgentName:    cfg.agent.Name,
+			ErrorMessage: "claim generation lease: " + err.Error(),
+		})
 		return ReplySuggestionResult{}, err
 	}
 	if !claimed {
@@ -99,6 +113,14 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 		for {
 			select {
 			case <-ctx.Done():
+				_ = store.RecordAIError(ctx, AIErrorLogRecord{
+					OwnerID:      account.OwnerID,
+					TaskType:     ReplySuggestionTask,
+					AccountEmail: account.Email,
+					ModelName:    cfg.model.Model,
+					AgentName:    cfg.agent.Name,
+					ErrorMessage: "wait concurrent generation: " + ctx.Err().Error(),
+				})
 				return ReplySuggestionResult{}, ctx.Err()
 			case <-ticker.C:
 				current, err = store.GetMessageReplySuggestion(ctx, key)
@@ -121,6 +143,14 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 	suggestion, generationErr := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, instructions, replySuggestionInput(account, message), cfg.effort)
 	if generationErr != nil {
 		_ = store.FailMessageReplySuggestionGeneration(ctx, key, current.GenerationToken, generationErr)
+		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+			OwnerID:      account.OwnerID,
+			TaskType:     ReplySuggestionTask,
+			AccountEmail: account.Email,
+			ModelName:    cfg.model.Model,
+			AgentName:    cfg.agent.Name,
+			ErrorMessage: generationErr.Error(),
+		})
 		return ReplySuggestionResult{}, generationErr
 	}
 	completed, err := store.CompleteMessageReplySuggestionGeneration(ctx, claim, current.GenerationToken, strings.TrimSpace(suggestion))

@@ -57,7 +57,7 @@ func TestCreateOpenAIResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		if body.Model != "gpt-test" || body.Input != "mail thread" || body.Instructions == "" || body.MaxOutputTokens != 800 || body.Reasoning.Effort != "low" {
+		if body.Model != "gpt-test" || body.Input != "mail thread" || body.Instructions == "" || body.MaxOutputTokens != 8192 || body.Reasoning.Effort != "low" {
 			t.Errorf("unexpected request: %+v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")

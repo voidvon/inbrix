@@ -369,14 +369,14 @@ func TestCreateDeepSeekResponseTruncatedByLength(t *testing.T) {
 	}
 }
 
-func TestCreateDeepSeekResponseOmitMaxTokens(t *testing.T) {
+func TestCreateDeepSeekResponseDefaultMaxTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if _, ok := req["max_tokens"]; ok {
-			t.Errorf("expected max_tokens to be omitted when maxOutputTokens <= 0, got: %v", req["max_tokens"])
+		if maxTok, ok := req["max_tokens"].(float64); !ok || int(maxTok) != 8192 {
+			t.Errorf("expected max_tokens to default to 8192 when maxOutputTokens <= 0, got: %v", req["max_tokens"])
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -397,7 +397,7 @@ func TestCreateDeepSeekResponseOmitMaxTokens(t *testing.T) {
 	model := AIModelRecord{
 		Provider: "deepseek",
 		BaseURL:  server.URL,
-		Model:    "deepseek-chat",
+		Model:    "deepseek-flash",
 	}
 
 	got, err := CreateAIResponse(context.Background(), server.Client(), model, "key", "inst", "inp", 0, "medium")
@@ -406,5 +406,35 @@ func TestCreateDeepSeekResponseOmitMaxTokens(t *testing.T) {
 	}
 	if got != "ok" {
 		t.Fatalf("got %q, want 'ok'", got)
+	}
+}
+
+func TestStripThinkTags(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{
+			input: "<think>\nThinking about the problem...\n</think>\nActual response",
+			want:  "Actual response",
+		},
+		{
+			input: "Direct response without think tags",
+			want:  "Direct response without think tags",
+		},
+		{
+			input: "<think>\nUnclosed think tag due to length truncation",
+			want:  "",
+		},
+		{
+			input: "<think>thinking</think>",
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		got := StripThinkTags(tt.input)
+		if got != tt.want {
+			t.Errorf("StripThinkTags(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }
