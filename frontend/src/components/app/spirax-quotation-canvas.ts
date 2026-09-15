@@ -91,21 +91,23 @@ function iconBadge(index: number): IElement[] {
     shape.setAttribute("stroke-linejoin", "round");
   });
   const badge = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="24" viewBox="0 0 30 24"><path fill="${BLUE}" d="M0 0h30l-5 24H0z"/>${new XMLSerializer().serializeToString(source)}</svg>`;
-  return [{ type: ElementType.IMAGE, value: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(badge)}`, width: 23, height: 18 }, text("  ", { size: 3 })];
+  return [{ type: ElementType.IMAGE, value: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(badge)}`, width: 23, height: 18 }];
 }
 
-function sectionTitle(title: string, iconIndex: number, trailing = ""): IElement[] {
-  return [
-    ...iconBadge(iconIndex),
-    text(title, { bold: true, size: 13 }),
-    ...(trailing ? [text(trailing, { size: 10, rowFlex: RowFlex.RIGHT })] : []),
-    lineBreak({ size: 1, rowMargin: 1 }),
-  ];
+function sectionTitleCells(title: string, iconIndex: number) {
+  return [cell(iconBadge(iconIndex)), cell([text(title, { bold: true, size: 13 })])];
+}
+
+function sectionTitle(title: string, iconIndex: number, width: number): IElement[] {
+  return [table([31, width - 31], [{
+    height: 24,
+    cells: sectionTitleCells(title, iconIndex),
+  }], { borderType: TableBorder.EMPTY })];
 }
 
 function infoTable(rows: Array<[string, string]>, width = 345) {
   return table([70, width - 70], rows.map(([label, value]) => ({
-    height: 13,
+    height: 32,
     cells: [
       cell([text(label, { bold: true, size: 11 })]),
       cell([text(value, { size: 11 })]),
@@ -115,7 +117,7 @@ function infoTable(rows: Array<[string, string]>, width = 345) {
 
 function partyPanel(title: string, rows: Array<[string, string]>, width: number, iconIndex: number): IElement[] {
   return [
-    ...sectionTitle(title, iconIndex),
+    ...sectionTitle(title, iconIndex, width),
     {
       type: ElementType.SEPARATOR,
       value: "",
@@ -129,16 +131,17 @@ function partyPanel(title: string, rows: Array<[string, string]>, width: number,
 
 function productTable() {
   const widths = [136, 222, 115, 122, 123];
+  const itemRowHeight = 32;
   const centered = { rowFlex: RowFlex.CENTER, bold: true, size: 10, color: "#ffffff" } as const;
   const header = ["MODEL", "DESCRIPTION", "QTY", "UNIT PRICE", "AMOUNT"].map((value) => cell([text(value, centered)], NAVY));
   const firstRow = ["SP400", "Spirax Sarco SP400", "1", "1,634.47", "1,634.47"].map((value) => cell([text(value, { size: 11 })]));
-  const fillerRows = Array.from({ length: 6 }, () => ({ height: 25, cells: widths.map(() => cell([text(" ", { size: 11 })])) }));
+  const fillerRows = Array.from({ length: 6 }, () => ({ height: itemRowHeight, cells: widths.map(() => cell([text(" ", { size: 11 })])) }));
   return table(widths, [
-    { height: 36, cells: header, repeat: true },
-    { height: 38, cells: firstRow },
+    { height: 32, cells: header, repeat: true },
+    { height: itemRowHeight, cells: firstRow },
     ...fillerRows,
     {
-      height: 38,
+      height: 32,
       cells: [
         { ...cell([text("TOTAL", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE), colspan: 4 },
         cell([text("1,634.47", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
@@ -147,7 +150,7 @@ function productTable() {
   ]);
 }
 
-export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
+export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quote number]"): IElement[] {
   const logo = svgDataURL(".quote-logo svg");
   const leftHero: IElement[] = [
     ...(logo ? [{ type: ElementType.IMAGE, value: logo, width: 170, height: 50 } as IElement] : [text("spirax sarco", { bold: true, color: "#0a3578", size: 27 })]),
@@ -159,7 +162,7 @@ export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
     text("━━━━", { bold: true, size: 7, color: BLUE }),
   ];
   const metaRows: Array<[string, string]> = [
-    ["Quote No.", `SP-${new Date().getFullYear()}081410`],
+    ["Quote No.", number],
     ["Issue Date", date.replaceAll("/", "-")],
     ["Currency", "USD"],
     ["Validity", "Valid for 30 days"],
@@ -168,11 +171,11 @@ export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
   const meta = table([26, 89, 135], [
     { height: 10, cells: [cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })])] },
     ...metaRows.map(([label, value], index) => ({
-      height: 30,
+      height: 27,
       cells: [
         cell(inlineLucideIcon(metaIcons[index])),
         cell([text(label, { bold: true, color: index === 0 ? BLUE : NAVY, size: 12 })]),
-        cell([text(value, { bold: true, rowFlex: RowFlex.RIGHT, size: 11 })]),
+        cell([text(value, { bold: true, rowFlex: RowFlex.RIGHT, size: index === 0 ? 10 : 11 })]),
       ],
     })),
   ], { borderType: TableBorder.EMPTY });
@@ -196,7 +199,7 @@ export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
     ["Address", "–"],
   ];
   const parties = table([354, 354], [{
-    height: 112,
+    height: 184,
     cells: [cell(partyPanel("Customer Information", customer, 340, 0)), cell(partyPanel("Seller Information", seller, 340, 1))],
   }], { borderType: TableBorder.EMPTY });
 
@@ -211,20 +214,20 @@ export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
     {
       height: 30,
       cells: [
-        { ...cell([...iconBadge(3), text("Commercial Terms", { bold: true, size: 13 })], undefined, [TdBorder.BOTTOM]), colspan: 2 },
-        cell([...iconBadge(4), text("Remarks", { bold: true, size: 13 })], undefined, [TdBorder.BOTTOM]),
+        { ...cell(sectionTitle("Commercial Terms", 3, 346), undefined, [TdBorder.BOTTOM]), colspan: 2 },
+        cell(sectionTitle("Remarks", 4, 346), undefined, [TdBorder.BOTTOM]),
       ],
     },
     {
-      height: 20,
+      height: 32,
       cells: [
         cell([text(terms[0][0], { bold: true, size: 10 })]),
         cell([text(terms[0][1], { size: 10 })]),
-        { ...cell([text(remarks, { size: 10, rowMargin: 1.45 })]), rowspan: 4 },
+        { ...cell([text(remarks, { size: 10, rowMargin: 0.35 })]), rowspan: 4 },
       ],
     },
     ...terms.slice(1).map(([label, value]) => ({
-      height: 20,
+      height: 32,
       cells: [cell([text(label, { bold: true, size: 10 })]), cell([text(value, { size: 10 })])],
     })),
   ];
@@ -235,7 +238,7 @@ export function createSpiraxQuotationCanvasDocument(date: string): IElement[] {
     lineBreak({ size: 1, rowMargin: 1 }),
     parties,
     lineBreak({ size: 2, rowMargin: 1 }),
-    table([600, 118], [{ height: 24, cells: [cell([...iconBadge(2), text("Quotation Items", { bold: true, size: 13 })]), cell([text("1 items", { size: 10, rowFlex: RowFlex.RIGHT })])] }], { borderType: TableBorder.EMPTY }),
+    table([31, 569, 118], [{ height: 24, cells: [...sectionTitleCells("Quotation Items", 2), cell([text("1 items", { size: 10, rowFlex: RowFlex.RIGHT })])] }], { borderType: TableBorder.EMPTY }),
     lineBreak({ size: 1, rowMargin: 1 }),
     productTable(),
     lineBreak({ size: 2, rowMargin: 1 }),

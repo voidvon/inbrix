@@ -23,6 +23,7 @@ import { DocumentStampManager } from "./document-stamps";
 import { createDocumentPDF, exportDocumentPages } from "./document-export";
 import { generateDocument } from "../../lib/api";
 import { escapeHTML } from "../../lib/email-format";
+import { createDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
 import { type Copy, zh } from "../../lib/locale";
 import {
   type StoredDocument,
@@ -146,7 +147,13 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialTemplate?.id || "");
   const [editorReady, setEditorReady] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const initialHTML = target?.record?.html || initialTemplate?.html || documentTemplateHTML(initialType, copy);
+  const numbersRef = useRef<Partial<Record<DocumentTemplate, string>>>({});
+  const prepareTemplate = (html: string, documentType: DocumentTemplate) => {
+    if (target?.kind !== "document") return html;
+    const number = numbersRef.current[documentType] ??= createDocumentNumber(documentType);
+    return numberDocumentTemplate(html, number);
+  };
+  const [initialHTML] = useState(() => target?.record?.html || prepareTemplate(initialTemplate?.html || documentTemplateHTML(initialType, copy), initialType));
 
   if (!target) return null;
 
@@ -156,7 +163,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
     setSelectedTemplateId(template.id);
     setType(template.type);
     if (!target.record) setName(template.type === "quotation" ? copy.quotation : copy.contract);
-    editorRef.current?.setHTML(template.html);
+    editorRef.current?.setHTML(prepareTemplate(template.html, template.type));
     window.requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, left: 0 }));
   };
   const selectType = (next: DocumentTemplate) => {
@@ -218,7 +225,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
 
   return (
     <Dialog open onOpenChange={(value) => { if (!exporting) onOpenChange(value); }}>
-      <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} className="flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
+      <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} className="canvas-document-dialog flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 text-left"><DialogTitle className="text-base">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle><DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription></DialogHeader>
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
           {target.kind === "document" ? <Select value={selectedTemplateId} onValueChange={(value) => value && selectTemplate(value)}><SelectTrigger className="h-8 w-52" aria-label={copy.useTemplate}><SelectValue>{templates.find((template) => template.id === selectedTemplateId)?.name || copy.useTemplate}</SelectValue></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select> : <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}

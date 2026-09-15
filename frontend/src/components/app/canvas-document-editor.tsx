@@ -148,6 +148,11 @@ function normalizeDocumentHTML(html: string) {
   return `<div style="color:#111827;font-family:Arial;font-size:16px">${document.body.innerHTML}</div>`;
 }
 
+function quotationNumber(html: string) {
+  return new DOMParser().parseFromString(html, "text/html")
+    .querySelector("[data-spirax-quotation]")?.getAttribute("data-document-number") || undefined;
+}
+
 export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, CanvasDocumentEditorProps>(function CanvasDocumentEditor(
   { initialHTML, locale, onReady },
   forwardedRef,
@@ -176,7 +181,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       defaultFont: "Arial",
       defaultColor: "#111827",
       defaultSize: isSpiraxTemplate ? 11 : 16,
-      defaultRowMargin: isSpiraxTemplate ? 1.05 : 1.25,
+      // Canvas rowMargin adds space above and below each line; it is not CSS line-height.
+      defaultRowMargin: isSpiraxTemplate ? 0.35 : 1.25,
       pageGap: 16,
       table: {
         tdPadding: isSpiraxTemplate ? [0, 4, 0, 4] : [5, 5, 5, 5],
@@ -195,7 +201,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     if (storedDocument) {
       editor.command.executeSetValue(isSpiraxTemplate ? migrateLegacySpiraxDocument(storedDocument.data) : storedDocument.data);
     } else if (isSpiraxTemplate) {
-      editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale)) });
+      editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(initialHTML)) });
     } else {
       editor.command.executeSetHTML({ main: normalizeDocumentHTML(initialHTML) });
     }
@@ -259,7 +265,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.command.executeUpdateOptions({
         margins: spirax ? [38, 38, 90, 38] : [64, 68, 64, 68],
         defaultSize: spirax ? 11 : 16,
-        defaultRowMargin: spirax ? 1.05 : 1.25,
+        defaultRowMargin: spirax ? 0.35 : 1.25,
         background: {
           image: spirax ? createSpiraxQuotationCanvasBackground() : "",
           size: BackgroundSize.COVER,
@@ -270,7 +276,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (stored) {
         editor.command.executeSetValue(spirax ? migrateLegacySpiraxDocument(stored.data) : stored.data);
       } else if (spirax) {
-        editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale)) });
+        editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(html)) });
       } else {
         editor.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
       }

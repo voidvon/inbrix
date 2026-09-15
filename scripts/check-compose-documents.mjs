@@ -41,9 +41,28 @@ try {
   await compose.getByRole('button', { name: '新建报价单', exact: true }).click();
   const editor = page.getByTestId('document-editor-dialog');
   await editor.locator('canvas').first().waitFor();
+  // Fixed-position submenus must use viewport coordinates inside the dialog.
+  const quotationCanvas = editor.locator('.ce-page-container > canvas').first();
+  await quotationCanvas.click({ position: { x: 200, y: 510 } });
+  await quotationCanvas.click({ position: { x: 200, y: 510 }, button: 'right' });
+  const tableMenu = editor.locator('.ce-contextmenu-container').first();
+  await tableMenu.getByText('插入行列', { exact: true }).hover();
+  const submenu = editor.locator('.ce-contextmenu-container').nth(1);
+  await submenu.waitFor({ state: 'visible' });
+  const coordinates = await submenu.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, left: parseFloat(element.style.left), top: parseFloat(element.style.top) };
+  });
+  assert.ok(Math.abs(coordinates.x - coordinates.left) < 1 && Math.abs(coordinates.y - coordinates.top) < 1,
+    'Submenu viewport coordinates must not acquire an offset from the dialog');
+  await submenu.locator('.ce-contextmenu-item').first().click();
+  await tableMenu.waitFor({ state: 'detached' });
+  console.log('Table submenu positioned correctly and insertion clicked');
   await editor.getByRole('textbox', { name: '文档名称', exact: true }).fill('报价2026.doc');
   await editor.getByRole('button', { name: '保存', exact: true }).click();
   await page.waitForFunction(() => localStorage.getItem('inbrix-documents')?.includes('报价2026.doc'));
+  const firstQuoteNumber = await page.evaluate(() => localStorage.getItem('inbrix-documents').match(/SP-\d{8}-[A-F0-9]{8}/)?.[0]);
+  assert.ok(firstQuoteNumber, 'New quotation must save an automatically generated number');
   await editor.getByRole('button', { name: '作为 PDF 添加到邮件', exact: true }).click();
   await editor.waitFor({ state: 'hidden' });
   console.log('Document editor closed');
@@ -62,6 +81,20 @@ try {
   // Canceling the new editor should not add or send anything.
   await compose.getByRole('button', { name: '新建报价单', exact: true }).click();
   await editor.locator('canvas').first().waitFor();
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  const quoteNumbers = await page.evaluate(() => [...new Set(localStorage.getItem('inbrix-documents').match(/SP-\d{8}-[A-F0-9]{8}/g))]);
+  assert.equal(quoteNumbers.length, 2, 'Separate quotations must have distinct numbers');
+  assert.ok(quoteNumbers.includes(firstQuoteNumber), 'Creating another document must preserve the saved number');
+  await editor.getByRole('combobox').click();
+  await page.getByRole('option', { name: '标准合同模板', exact: true }).click();
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  const contractNumber = await page.evaluate(() => localStorage.getItem('inbrix-documents').match(/CT-\d{8}-[A-F0-9]{8}/)?.[0]);
+  assert.ok(contractNumber, 'New contract must save an automatically generated contract number');
+  await editor.getByRole('combobox').click();
+  await page.getByRole('option', { name: '标准报价单模板', exact: true }).click();
+  await editor.getByRole('button', { name: '保存', exact: true }).click();
+  const afterSwitch = await page.evaluate(() => [...new Set(localStorage.getItem('inbrix-documents').match(/SP-\d{8}-[A-F0-9]{8}/g))]);
+  assert.deepEqual(afterSwitch.sort(), quoteNumbers.sort(), 'Switching back to a quotation must retain its number');
   await page.keyboard.press('Escape');
   await editor.waitFor({ state: 'hidden' });
   console.log('Document editor closed');
