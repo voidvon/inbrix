@@ -15,6 +15,7 @@ import {
   Sparkles,
   Table2,
   Underline,
+  Upload,
   Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -142,6 +143,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const initialType = target?.record?.type || initialTemplate?.type || "quotation";
   const editorRef = useRef<CanvasDocumentEditorHandle>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
+  const docxInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(target?.record?.name || (target?.kind === "template" ? copy.newTemplate : initialType === "quotation" ? copy.quotation : copy.contract));
   const [type, setType] = useState<DocumentTemplate>(initialType);
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialTemplate?.id || "");
@@ -183,11 +185,32 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
     anchor.click();
     URL.revokeObjectURL(url);
   };
-  const exportDocument = async (format: "pdf" | "png") => {
+  const importDocx = async (file: File) => {
+    if (!editorRef.current || exporting) return;
+    if (!/\.docx$/i.test(file.name) || file.size > 10 * 1024 * 1024) {
+      toast.error(copy === zh ? "请选择不超过 10 MB 的 .docx 文件。" : "Choose a .docx file no larger than 10 MB.");
+      return;
+    }
+    if (!window.confirm(copy === zh ? "导入将替换当前编辑内容，是否继续？" : "Import will replace the current editor contents. Continue?")) return;
+    setExporting(true);
+    onBusyChange?.(true);
+    try {
+      await editorRef.current.importDocx(file);
+      setName(file.name.replace(/\.docx$/i, ""));
+      setSelectedTemplateId("");
+      editorScrollRef.current?.scrollTo({ top: 0, left: 0 });
+      toast.success(copy === zh ? "Word 文档已导入，请检查排版后保存。" : "Word document imported. Review the layout before saving.");
+    } catch (error) {
+      console.error("DOCX import failed", error);
+      toast.error(copy === zh ? "导入失败，请检查文件是否为有效的 DOCX 文档。当前内容已保留。" : "Import failed. Check that this is a valid DOCX document. Your current content was preserved.");
+    } finally { setExporting(false); onBusyChange?.(false); }
+  };
+  const exportDocument = async (format: "pdf" | "png" | "docx") => {
     if (!editorRef.current || exporting) return;
     setExporting(true);
     try {
-      await exportDocumentPages(await editorRef.current.getPageImages(), name || copy.newDocument, format);
+      if (format === "docx") await editorRef.current.exportDocx(name || copy.newDocument);
+      else await exportDocumentPages(await editorRef.current.getPageImages(), name || copy.newDocument, format);
       toast.success(copy === zh ? "文档已导出" : "Document exported");
     } catch (error) {
       console.error("Document export failed", error);
@@ -225,18 +248,21 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
 
   return (
     <Dialog open onOpenChange={(value) => { if (!exporting) onOpenChange(value); }}>
-      <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} className="canvas-document-dialog flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
+      <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} style={{ translate: "none", scale: "none" }} className="canvas-document-dialog flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
         <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 text-left"><DialogTitle className="text-base">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle><DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription></DialogHeader>
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
           {target.kind === "document" ? <Select value={selectedTemplateId} onValueChange={(value) => value && selectTemplate(value)}><SelectTrigger className="h-8 w-52" aria-label={copy.useTemplate}><SelectValue>{templates.find((template) => template.id === selectedTemplateId)?.name || copy.useTemplate}</SelectValue></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select> : <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
           <Input className="h-8 min-w-40 flex-1 sm:max-w-72" value={name} onChange={(event) => setName(event.target.value)} placeholder={target.kind === "template" ? copy.templateName : copy.documentName} aria-label={target.kind === "template" ? copy.templateName : copy.documentName} />
           <div className="flex items-center gap-1 overflow-x-auto"><DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} /><Separator orientation="vertical" className="mx-1 h-5" /><DocumentAIAssistant copy={copy} editor={editorRef.current} accountEmail={accountEmail} type={type} title={name} disabled={!editorReady} /></div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <input ref={docxInputRef} type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" data-testid="document-docx-input" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importDocx(file); }} />
+            <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => docxInputRef.current?.click()}><Upload />{copy === zh ? "导入 Word" : "Import Word"}</Button>
             <DocumentStampManager chinese={copy === zh} disabled={!editorReady || exporting} onInsert={(stamp, width) => editorRef.current?.insertStamp(stamp, width)} />
             <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}><Printer />{copy.printDocument}</Button>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} />}><Download />{exporting ? (copy === zh ? "导出中…" : "Exporting…") : (copy === zh ? "导出" : "Export")}</DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void exportDocument("docx")}>{copy === zh ? "下载 Word（DOCX）" : "Download Word (DOCX)"}</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void exportDocument("pdf")}>{copy === zh ? "下载 PDF" : "Download PDF"}</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void exportDocument("png")}>{copy === zh ? "下载 PNG 图片（多页 ZIP）" : "Download PNG images (multi-page ZIP)"}</DropdownMenuItem>
                 <DropdownMenuItem onClick={downloadDocument}>{copy.downloadHTML}</DropdownMenuItem>

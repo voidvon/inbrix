@@ -315,10 +315,10 @@
 [data-slot="dialog-content"].canvas-document-dialog {
   top: 4vh;
   left: max(3vw, calc((100vw - 1400px) / 2));
-  translate: none;
-  transform: none;
-  scale: none;
-  animation: none;
+  translate: none !important;
+  transform: none !important;
+  scale: none !important;
+  animation: none !important;
 }
 
 .canvas-document-scroll {

@@ -9,6 +9,7 @@ const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 type StoredCanvasDocument = {
   template?: "spirax-quotation" | "document";
   data: ReturnType<CanvasEditor["command"]["getValue"]>["data"];
+  options?: ReturnType<CanvasEditor["command"]["getValue"]>["options"];
 };
 
 function parseStoredCanvasDocument(value: string): StoredCanvasDocument | null {
@@ -108,6 +109,8 @@ async function prepareEmbeddedImage(file: File) {
 export type CanvasDocumentEditorHandle = {
   getHTML: () => string;
   getDocument: () => string;
+  importDocx: (file: File) => Promise<void>;
+  exportDocx: (name: string) => Promise<void>;
   insertAttachment: (file: File) => Promise<void>;
   insertStamp: (stamp: DocumentStamp, width: number) => void;
   getPageImages: () => Promise<string[]>;
@@ -199,6 +202,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     editorRef.current = editor;
     templateRef.current = isSpiraxTemplate;
     if (storedDocument) {
+      if (storedDocument.options) editor.command.executeUpdateOptions(storedDocument.options);
       editor.command.executeSetValue(isSpiraxTemplate ? migrateLegacySpiraxDocument(storedDocument.data) : storedDocument.data);
     } else if (isSpiraxTemplate) {
       editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(initialHTML)) });
@@ -218,7 +222,25 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     getDocument: () => {
       const editor = editorRef.current;
       if (!editor) return "";
-      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: templateRef.current ? "spirax-quotation" : "document", data: editor.command.getValue().data })}`;
+      const { data, options } = editor.command.getValue();
+      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: templateRef.current ? "spirax-quotation" : "document", data, options })}`;
+    },
+    importDocx: async (file) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const { importDocumentDocx } = await import("./document-docx");
+      const snapshot = await importDocumentDocx(file);
+      if (editorRef.current !== editor) return;
+      editor.command.executeUpdateOptions(snapshot.options);
+      editor.command.executeSetValue(snapshot.data);
+      templateRef.current = false;
+    },
+    exportDocx: async (name) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const snapshot = editor.command.getValue();
+      const { exportDocumentDocx } = await import("./document-docx");
+      await exportDocumentDocx(snapshot, name);
     },
     insertAttachment: async (file) => {
       const editor = editorRef.current;
@@ -274,6 +296,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         table: { tdPadding: spirax ? [0, 4, 0, 4] : [5, 5, 5, 5], defaultTrMinHeight: spirax ? 12 : 24 },
       });
       if (stored) {
+        if (stored.options) editor.command.executeUpdateOptions(stored.options);
         editor.command.executeSetValue(spirax ? migrateLegacySpiraxDocument(stored.data) : stored.data);
       } else if (spirax) {
         editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(html)) });
