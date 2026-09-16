@@ -373,5 +373,3 @@ func TestStripHeavyHTMLForAI(t *testing.T) {
 		t.Errorf("stripHeavyHTMLForAI() = %q, want %q", got, expected)
 	}
 }
-
-
