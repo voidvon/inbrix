@@ -799,7 +799,7 @@ export function MessageBubble({
                 </button>
               </div>
             )}
-            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border border-transparent bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground", message.html && "w-full")}>
+            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : message.sendStatus === "failed" ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full")}>
               {message.html ? (
                 <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} />
               ) : (

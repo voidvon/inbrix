@@ -13,7 +13,15 @@ export type OptimisticMessage = ConversationMessage & {
 type Listener = () => void;
 const listeners = new Set<Listener>();
 
-let optimisticStore: OptimisticMessage[] = [];
+const STORAGE_KEY = "inbrix-optimistic-messages";
+function loadStore(): OptimisticMessage[] {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+}
+let optimisticStore: OptimisticMessage[] = typeof window === "undefined" ? [] : loadStore();
+function persist() {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(optimisticStore.map(({ form, ...message }) => message)));
+}
 
 function notify() {
   for (const listener of listeners) {
@@ -36,6 +44,7 @@ export function addOptimisticMessage(message: OptimisticMessage) {
   } else {
     optimisticStore.push(message);
   }
+  persist();
   notify();
 }
 
@@ -48,6 +57,7 @@ export function updateOptimisticStatus(
   if (msg) {
     msg.sendStatus = sendStatus;
     msg.sendError = sendError;
+    persist();
     notify();
   }
 }
@@ -56,6 +66,7 @@ export function removeOptimisticMessage(id: string) {
   const initialLen = optimisticStore.length;
   optimisticStore = optimisticStore.filter((m) => m.id !== id);
   if (optimisticStore.length !== initialLen) {
+    persist();
     notify();
   }
 }
