@@ -2,11 +2,13 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,13 +47,20 @@ type aiModelInput struct {
 	ReasoningEffort string `json:"reasoningEffort"`
 }
 
+type aiVariableItem struct {
+	ConceptID    string `json:"conceptId"`
+	Label        string `json:"label"`
+	CurrentValue string `json:"currentValue"`
+}
+
 type aiDocumentInput struct {
-	AccountEmail string `json:"accountEmail"`
-	Mode         string `json:"mode"`
-	DocumentType string `json:"documentType"`
-	Title        string `json:"title"`
-	Instruction  string `json:"instruction"`
-	CurrentHTML  string `json:"currentHTML"`
+	AccountEmail string           `json:"accountEmail"`
+	Mode         string           `json:"mode"`
+	DocumentType string           `json:"documentType"`
+	Title        string           `json:"title"`
+	Instruction  string           `json:"instruction"`
+	CurrentHTML  string           `json:"currentHTML"`
+	Variables    []aiVariableItem `json:"variables,omitempty"`
 }
 
 type aiModelPublic struct {
@@ -620,13 +629,20 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	if input.AccountEmail == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "accountEmail is required")
 	}
-	if input.Mode != "generate" && input.Mode != "rewrite" {
-		return fiber.NewError(fiber.StatusBadRequest, "mode must be generate or rewrite")
+	if input.Mode == "" {
+		if len(input.Variables) > 0 {
+			input.Mode = "variables"
+		} else {
+			input.Mode = "rewrite"
+		}
+	}
+	if input.Mode != "generate" && input.Mode != "rewrite" && input.Mode != "variables" {
+		return fiber.NewError(fiber.StatusBadRequest, "mode must be generate, rewrite, or variables")
 	}
 	if input.DocumentType != "quotation" && input.DocumentType != "contract" {
 		return fiber.NewError(fiber.StatusBadRequest, "unsupported document type")
 	}
-	if input.Instruction == "" && input.CurrentHTML == "" {
+	if input.Instruction == "" && input.CurrentHTML == "" && len(input.Variables) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "document instruction or current content is required")
 	}
 	if len(input.CurrentHTML) > maxSummaryInputBytes || len(input.Instruction) > maxSummaryInputBytes {
@@ -641,14 +657,13 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	}
 	var model mailstore.AIModelRecord
 	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
-	if bindingErr == nil {
+	if bindingErr == nil && binding.ModelID != "" {
 		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
-	} else if errors.Is(bindingErr, mailstore.ErrNotFound) {
-		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
-	} else {
-		err = bindingErr
 	}
-	if errors.Is(err, mailstore.ErrNotFound) {
+	if model.ID == "" || err != nil {
+		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
+	}
+	if errors.Is(err, mailstore.ErrNotFound) || model.ID == "" {
 		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, "", "", errors.New("no AI model is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
 	}
@@ -661,19 +676,192 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", errors.New("AI model API key is not configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
+	if input.Mode == "variables" || len(input.Variables) > 0 {
+		instructions := `You are a professional business document assistant.
+The user wants to update a structured business document based on their instructions or a customer inquiry.
+Extract or calculate the updated values for the document fields and any product/line items.
+
+CRITICAL INSTRUCTIONS:
+1. Output format: Return ONLY a valid, parseable JSON object with the following structure:
+{
+  "values": {
+    "customer_company": "...",
+    "customer_contact": "...",
+    "customer_phone": "...",
+    "customer_email": "...",
+    "customer_address": "...",
+    "payment_terms": "...",
+    "lead_time": "...",
+    "notes": "...",
+    "remarks": "...",
+    "total_amount": "..."
+  },
+  "items": [
+    {
+      "model": "model number or part code (e.g. CLIN001 Part # 67980 PC20)",
+      "description": "product description",
+      "qty": "quantity (e.g. 18)",
+      "price": "unit price (e.g. 450.00)",
+      "amount": "line total amount = qty * price (e.g. 8,100.00)"
+    }
+  ]
+}
+2. Extract ALL product/line items into the "items" array. Dynamically output as many item entries as there are products in the request (e.g. 1, 4, 8, 15, or any count). Never omit, truncate, or merge items into a single entry. If the user asks to add or modify items, output the complete list of items.
+3. Calculate line amounts (qty * price) and total_amount accurately. Format numbers with commas (e.g. 24,326.00).
+4. If customer information (company, contact, phone, email, address) is provided in the prompt, extract them into "values".
+5. If payment terms, lead times, delivery instructions, or notes are provided, extract them into "values".
+6. Keep internal reasoning to the absolute minimum (1-2 sentences). Do not include markdown code fences, commentary, or thoughts. Only return pure JSON.`
+
+		prompt := fmt.Sprintf("Document Title: %s (%s)\nUser Instruction:\n%s\n\nAvailable Document Variables:\n", input.Title, input.DocumentType, input.Instruction)
+		for _, v := range input.Variables {
+			prompt += fmt.Sprintf("- ID: %s | Description: %s | Current Value: %s\n", v.ConceptID, v.Label, v.CurrentValue)
+		}
+
+		body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 4096)
+		if err != nil {
+			h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", err)
+			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		}
+		stringUpdates, items, err := parseAIDocumentUpdateResponse(body)
+		if err != nil {
+			h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", fmt.Errorf("invalid json output: %s (%w)", body, err))
+			return fiber.NewError(fiber.StatusUnprocessableEntity, "AI did not return valid variable updates")
+		}
+
+		res := fiber.Map{
+			"mode":   "variables",
+			"values": stringUpdates,
+		}
+		if len(items) > 0 {
+			res["items"] = items
+		}
+		return c.JSON(res)
+	}
 	instructions := "Generate a professional " + input.DocumentType + " document. Return only clean HTML suitable for a rich text document. Use headings, paragraphs, and tables when useful. Do not include markdown fences, scripts, styles, or commentary. Match the user's language. Do not invent specific facts; use clear bracketed placeholders."
 	prompt := "Title: " + input.Title + "\nMode: " + input.Mode + "\nAdditional instructions: " + input.Instruction
 	if input.Mode == "rewrite" {
-		instructions = "Modify the supplied current document in place; do not regenerate or redesign it. Preserve the exact HTML structure, element order, headings, tables, column count, styles, and existing content unless the user's instruction explicitly asks to change them. Change only the minimum necessary text nodes and table-cell values. Extract every concrete fact from the user's request (including product names, quantities, unit prices, dates, names, totals, and terms) and write those facts into the appropriate existing fields and table cells, replacing bracketed placeholders and example values. For a quotation, use the existing item row, fill the product, quantity, and unit price cells, calculate that row amount, and update the existing subtotal, tax, and total cells when the necessary numbers are available. Do not add a new document, remove sections, or replace the template with a different layout. Return the complete modified HTML with the original structure preserved, and nothing else. Do not include markdown fences, scripts, styles, or commentary. Match the user's language."
-		prompt += "\n\nCurrent document HTML to rewrite:\n" + input.CurrentHTML
+		instructions = "Modify the supplied current document in place; do not regenerate or redesign it. Keep internal reasoning to the absolute minimum. Preserve the exact HTML structure, element order, headings, tables, column count, styles, and existing content unless the user's instruction explicitly asks to change them. Change only the minimum necessary text nodes and table-cell values. Extract every concrete fact from the user's request (including product names, quantities, unit prices, dates, names, totals, and terms) and write those facts into the appropriate existing fields and table cells, replacing bracketed placeholders and example values. For a quotation, use the existing item row, fill the product, quantity, and unit price cells, calculate that row amount, and update the existing subtotal, tax, and total cells when the necessary numbers are available. Do not add a new document, remove sections, or replace the template with a different layout. Return the complete modified HTML with the original structure preserved, and nothing else. Do not include markdown fences, scripts, styles, or commentary. Match the user's language."
+		prompt += "\n\nCurrent document HTML to rewrite:\n" + stripHeavyHTMLForAI(input.CurrentHTML)
 	}
 	body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", err)
 		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
-	body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(body, "```"), "```html"))
+	body = cleanDocumentHTML(body)
 	return c.JSON(fiber.Map{"html": body})
+}
+
+var (
+	reDataURI = regexp.MustCompile(`data:[^;]+;base64,[a-zA-Z0-9/+=]+`)
+	reSVG     = regexp.MustCompile(`(?s)<svg[^>]*>.*?</svg>`)
+)
+
+func stripHeavyHTMLForAI(html string) string {
+	html = reDataURI.ReplaceAllString(html, "[image]")
+	html = reSVG.ReplaceAllString(html, "[svg-graphic]")
+	return html
+}
+
+type AIDocumentItem struct {
+	Model       string `json:"model"`
+	Description string `json:"description"`
+	Qty         string `json:"qty"`
+	Price       string `json:"price"`
+	Amount      string `json:"amount"`
+}
+
+func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocumentItem, error) {
+	clean := cleanJSONResponse(body)
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal([]byte(clean), &rawMap); err != nil {
+		return nil, nil, fmt.Errorf("invalid json: %w", err)
+	}
+
+	values := make(map[string]string)
+	var items []AIDocumentItem
+
+	if vMap, ok := rawMap["values"].(map[string]interface{}); ok {
+		for k, v := range vMap {
+			if v != nil {
+				values[k] = fmt.Sprint(v)
+			}
+		}
+	}
+
+	for k, v := range rawMap {
+		if k != "values" && k != "items" {
+			if _, exists := values[k]; !exists && v != nil {
+				values[k] = fmt.Sprint(v)
+			}
+		}
+	}
+
+	if itemsRaw, ok := rawMap["items"].([]interface{}); ok {
+		for _, it := range itemsRaw {
+			if itMap, ok := it.(map[string]interface{}); ok {
+				getStr := func(key string) string {
+					if val, ok := itMap[key]; ok && val != nil {
+						return fmt.Sprint(val)
+					}
+					return ""
+				}
+				items = append(items, AIDocumentItem{
+					Model:       getStr("model"),
+					Description: getStr("description"),
+					Qty:         getStr("qty"),
+					Price:       getStr("price"),
+					Amount:      getStr("amount"),
+				})
+			}
+		}
+	}
+
+	return values, items, nil
+}
+
+func cleanJSONResponse(body string) string {
+	body = strings.TrimSpace(body)
+	if start := strings.Index(body, "```"); start != -1 {
+		rest := body[start+3:]
+		if nl := strings.IndexByte(rest, '\n'); nl != -1 {
+			tag := strings.TrimSpace(rest[:nl])
+			if tag == "" || strings.EqualFold(tag, "json") {
+				rest = rest[nl+1:]
+			}
+		}
+		if end := strings.LastIndex(rest, "```"); end != -1 {
+			body = rest[:end]
+		} else {
+			body = rest
+		}
+	}
+	body = strings.TrimSpace(body)
+	if first := strings.IndexByte(body, '{'); first != -1 {
+		if last := strings.LastIndexByte(body, '}'); last > first {
+			body = body[first : last+1]
+		}
+	}
+	return strings.TrimSpace(body)
+}
+
+func cleanDocumentHTML(body string) string {
+	body = strings.TrimSpace(body)
+	if start := strings.Index(body, "```"); start != -1 {
+		rest := body[start+3:]
+		if nl := strings.IndexByte(rest, '\n'); nl != -1 {
+			tag := strings.TrimSpace(rest[:nl])
+			if tag == "" || strings.EqualFold(tag, "html") || strings.EqualFold(tag, "xml") {
+				rest = rest[nl+1:]
+			}
+		}
+		if end := strings.LastIndex(rest, "```"); end != -1 {
+			body = rest[:end]
+		} else {
+			body = rest
+		}
+	}
+	return strings.TrimSpace(body)
 }
 
 func stripBestRegards(body string) string {

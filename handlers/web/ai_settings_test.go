@@ -249,3 +249,129 @@ func TestCreateDeepSeekResponseInWebHandler(t *testing.T) {
 		t.Fatalf("output: got %q, want 'DeepSeek web test output'", got)
 	}
 }
+
+func TestCleanDocumentHTML(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "clean html untouched",
+			input:    "<div><p>Hello world</p></div>",
+			expected: "<div><p>Hello world</p></div>",
+		},
+		{
+			name:     "wrapped in code fence with html tag",
+			input:    "```html\n<div><p>Hello world</p></div>\n```",
+			expected: "<div><p>Hello world</p></div>",
+		},
+		{
+			name:     "wrapped in code fence without tag",
+			input:    "```\n<div><p>Hello world</p></div>\n```",
+			expected: "<div><p>Hello world</p></div>",
+		},
+		{
+			name:     "conversational prefix and suffix",
+			input:    "Here is the revised document:\n```html\n<p>Updated content</p>\n```\nHope that helps!",
+			expected: "<p>Updated content</p>",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cleanDocumentHTML(tc.input)
+			if got != tc.expected {
+				t.Errorf("cleanDocumentHTML() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestCleanJSONResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "clean json untouched",
+			input:    `{"customer_name":"Acme Corp","price":"100"}`,
+			expected: `{"customer_name":"Acme Corp","price":"100"}`,
+		},
+		{
+			name:     "wrapped in code fence with json tag",
+			input:    "```json\n{\"customer_name\":\"Acme Corp\"}\n```",
+			expected: `{"customer_name":"Acme Corp"}`,
+		},
+		{
+			name:     "conversational prefix and suffix",
+			input:    "Here is the data:\n```json\n{\"customer_name\":\"Acme Corp\"}\n```\nHope that helps!",
+			expected: `{"customer_name":"Acme Corp"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cleanJSONResponse(tc.input)
+			if got != tc.expected {
+				t.Errorf("cleanJSONResponse() = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestParseAIDocumentUpdateResponse(t *testing.T) {
+	input := `{
+		"values": {
+			"customer_company": "IT Vision Networks",
+			"total_amount": "24,326.00"
+		},
+		"items": [
+			{
+				"model": "CLIN001 Part # 67980 PC20",
+				"description": "Universal Connector",
+				"qty": "18",
+				"price": "450.00",
+				"amount": "8,100.00"
+			},
+			{
+				"model": "CLIN002 Part # 1465300 UFT32-4.5",
+				"description": "Steam Trap",
+				"qty": "12",
+				"price": "1000.00",
+				"amount": "12,000.00"
+			}
+		]
+	}`
+	values, items, err := parseAIDocumentUpdateResponse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if values["customer_company"] != "IT Vision Networks" {
+		t.Errorf("customer_company = %q, want %q", values["customer_company"], "IT Vision Networks")
+	}
+	if values["total_amount"] != "24,326.00" {
+		t.Errorf("total_amount = %q, want %q", values["total_amount"], "24,326.00")
+	}
+	if len(items) != 2 {
+		t.Fatalf("items count = %d, want 2", len(items))
+	}
+	if items[0].Model != "CLIN001 Part # 67980 PC20" || items[0].Qty != "18" {
+		t.Errorf("item[0] mismatch: %+v", items[0])
+	}
+	if items[1].Model != "CLIN002 Part # 1465300 UFT32-4.5" || items[1].Amount != "12,000.00" {
+		t.Errorf("item[1] mismatch: %+v", items[1])
+	}
+}
+
+func TestStripHeavyHTMLForAI(t *testing.T) {
+	input := `<div><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="><svg width="10" height="10"><path d="M0 0h10v10H0z"/></svg><p>Text</p></div>`
+	expected := `<div><img src="[image]">[svg-graphic]<p>Text</p></div>`
+	got := stripHeavyHTMLForAI(input)
+	if got != expected {
+		t.Errorf("stripHeavyHTMLForAI() = %q, want %q", got, expected)
+	}
+}
+
+

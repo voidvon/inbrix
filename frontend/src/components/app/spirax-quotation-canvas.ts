@@ -1,4 +1,4 @@
-import { ElementType, RowFlex, TableBorder, TdBorder, VerticalAlign, type IElement } from "@hufe921/canvas-editor";
+import { ElementType, RowFlex, TableBorder, TdBorder, VerticalAlign, ControlType, type IElement } from "@hufe921/canvas-editor";
 import calendarDaysIcon from "../../assets/lucide/calendar-days.svg?raw";
 import circleDollarSignIcon from "../../assets/lucide/circle-dollar-sign.svg?raw";
 import clock3Icon from "../../assets/lucide/clock-3.svg?raw";
@@ -33,6 +33,23 @@ type TextStyle = Pick<IElement, "bold" | "color" | "font" | "size" | "rowFlex" |
 
 function text(value: string, style: TextStyle = {}): IElement {
   return { value, font: FONT, color: NAVY, size: 11, ...style };
+}
+
+export function controlText(conceptId: string, defaultValue: string, placeholder?: string, style: TextStyle = {}): IElement {
+  return {
+    type: ElementType.CONTROL,
+    value: "",
+    font: FONT,
+    color: NAVY,
+    size: 11,
+    ...style,
+    control: {
+      type: ControlType.TEXT,
+      conceptId,
+      placeholder: placeholder || defaultValue,
+      value: defaultValue ? [text(defaultValue, style)] : null,
+    },
+  };
 }
 
 function lineBreak(style: TextStyle = {}): IElement {
@@ -105,17 +122,17 @@ function sectionTitle(title: string, iconIndex: number, width: number): IElement
   }], { borderType: TableBorder.EMPTY })];
 }
 
-function infoTable(rows: Array<[string, string]>, width = 345) {
-  return table([70, width - 70], rows.map(([label, value]) => ({
+function infoTable(rows: Array<[string, string, string?]>, width = 345) {
+  return table([70, width - 70], rows.map(([label, value, conceptId]) => ({
     height: 32,
     cells: [
       cell([text(label, { bold: true, size: 11 })]),
-      cell([text(value, { size: 11 })]),
+      cell([conceptId ? controlText(conceptId, value, label, { size: 11 }) : text(value, { size: 11 })]),
     ],
   })), { borderType: TableBorder.EMPTY });
 }
 
-function partyPanel(title: string, rows: Array<[string, string]>, width: number, iconIndex: number): IElement[] {
+function partyPanel(title: string, rows: Array<[string, string, string?]>, width: number, iconIndex: number): IElement[] {
   return [
     ...sectionTitle(title, iconIndex, width),
     {
@@ -129,28 +146,87 @@ function partyPanel(title: string, rows: Array<[string, string]>, width: number,
   ];
 }
 
-function productTable() {
+export type QuotationItem = {
+  model: string;
+  description: string;
+  qty: string;
+  price: string;
+  amount: string;
+};
+
+export type SpiraxQuotationValues = Record<string, string> & {
+  items?: QuotationItem[];
+};
+
+function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
   const widths = [136, 222, 115, 122, 123];
   const itemRowHeight = 32;
   const centered = { rowFlex: RowFlex.CENTER, bold: true, size: 10, color: "#ffffff" } as const;
   const header = ["MODEL", "DESCRIPTION", "QTY", "UNIT PRICE", "AMOUNT"].map((value) => cell([text(value, centered)], NAVY));
-  const firstRow = ["SP400", "Spirax Sarco SP400", "1", "1,634.47", "1,634.47"].map((value) => cell([text(value, { size: 11 })]));
-  const fillerRows = Array.from({ length: 6 }, () => ({ height: itemRowHeight, cells: widths.map(() => cell([text(" ", { size: 11 })])) }));
+
+  const activeItems: QuotationItem[] = (items && items.length > 0)
+    ? items
+    : values?.items && values.items.length > 0
+    ? values.items
+    : [
+        {
+          model: values?.item_model || "SP400",
+          description: values?.item_description || "Spirax Sarco SP400",
+          qty: values?.item_qty || "1",
+          price: values?.item_price || "1,634.47",
+          amount: values?.item_amount || "1,634.47",
+        },
+      ];
+
+  const itemRows = activeItems.map((item, index) => {
+    const isSingle = activeItems.length === 1;
+    const modelId = isSingle ? "item_model" : `item_model_${index}`;
+    const descId = isSingle ? "item_description" : `item_description_${index}`;
+    const qtyId = isSingle ? "item_qty" : `item_qty_${index}`;
+    const priceId = isSingle ? "item_price" : `item_price_${index}`;
+    const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
+
+    return {
+      height: itemRowHeight,
+      cells: [
+        cell([controlText(modelId, item.model, "Model", { size: 10 })]),
+        cell([controlText(descId, item.description, "Description", { size: 10 })]),
+        cell([controlText(qtyId, item.qty, "Quantity", { size: 10 })]),
+        cell([controlText(priceId, item.price, "Unit Price", { size: 10 })]),
+        cell([controlText(amountId, item.amount, "Amount", { size: 10 })]),
+      ],
+    };
+  });
+
+  const fillerCount = Math.max(0, 6 - activeItems.length);
+  const fillerRows = Array.from({ length: fillerCount }, () => ({
+    height: itemRowHeight,
+    cells: widths.map(() => cell([text(" ", { size: 11 })])),
+  }));
+
   return table(widths, [
     { height: 32, cells: header, repeat: true },
-    { height: itemRowHeight, cells: firstRow },
+    ...itemRows,
     ...fillerRows,
     {
       height: 32,
       cells: [
         { ...cell([text("TOTAL", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE), colspan: 4 },
-        cell([text("1,634.47", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
+        cell([controlText("total_amount", values?.total_amount || "1,634.47", "Total Amount", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
       ],
     },
   ]);
 }
 
-export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quote number]"): IElement[] {
+export function createSpiraxQuotationCanvasDocument(
+  date: string,
+  number = "[Quote number]",
+  initialValues?: SpiraxQuotationValues,
+  items?: QuotationItem[]
+): IElement[] {
+  const activeItems = (items && items.length > 0) ? items : initialValues?.items;
+  const itemCount = activeItems && activeItems.length > 0 ? activeItems.length : 1;
+
   const logo = svgDataURL(".quote-logo svg");
   const leftHero: IElement[] = [
     ...(logo ? [{ type: ElementType.IMAGE, value: logo, width: 170, height: 50 } as IElement] : [text("spirax sarco", { bold: true, color: "#0a3578", size: 27 })]),
@@ -161,21 +237,21 @@ export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quo
     lineBreak({ size: 1, rowMargin: 1 }),
     text("━━━━", { bold: true, size: 7, color: BLUE }),
   ];
-  const metaRows: Array<[string, string]> = [
-    ["Quote No.", number],
-    ["Issue Date", date.replaceAll("/", "-")],
-    ["Currency", "USD"],
-    ["Validity", "Valid for 30 days"],
+  const metaRows: Array<[string, string, string]> = [
+    ["Quote No.", initialValues?.quote_number || number, "quote_number"],
+    ["Issue Date", initialValues?.issue_date || (date ? date.replaceAll("/", "-") : new Date().toISOString().slice(0, 10)), "issue_date"],
+    ["Currency", initialValues?.currency || "USD", "currency"],
+    ["Validity", initialValues?.validity || "Valid for 30 days", "validity"],
   ];
   const metaIcons = [tagIcon, calendarDaysIcon, circleDollarSignIcon, clock3Icon];
   const meta = table([26, 89, 135], [
     { height: 10, cells: [cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })])] },
-    ...metaRows.map(([label, value], index) => ({
+    ...metaRows.map(([label, value, conceptId], index) => ({
       height: 27,
       cells: [
         cell(inlineLucideIcon(metaIcons[index])),
         cell([text(label, { bold: true, color: index === 0 ? BLUE : NAVY, size: 12 })]),
-        cell([text(value, { bold: true, rowFlex: RowFlex.RIGHT, size: index === 0 ? 10 : 11 })]),
+        cell([controlText(conceptId, value, label, { bold: true, rowFlex: RowFlex.RIGHT, size: index === 0 ? 10 : 11 })]),
       ],
     })),
   ], { borderType: TableBorder.EMPTY });
@@ -184,32 +260,32 @@ export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quo
     cells: [cell(leftHero, undefined, [TdBorder.RIGHT]), { ...cell([meta]), verticalAlign: VerticalAlign.TOP }],
   }], { borderType: TableBorder.EMPTY, borderColor: LINE });
 
-  const customer: Array<[string, string]> = [
-    ["Company", 'LLC "Bocco"'],
-    ["Contact", "Mariia Savostian, Manager of Supply and Foreign Economic Activity"],
-    ["Phone", "+38 067 826 09 10 (Viber, Telegram, WhatsApp)"],
-    ["Email", "–"],
-    ["Address", "25006 Kropyvnytskyi, Ukraine"],
+  const customer: Array<[string, string, string]> = [
+    ["Company", initialValues?.customer_company || 'LLC "Bocco"', "customer_company"],
+    ["Contact", initialValues?.customer_contact || "Mariia Savostian, Manager of Supply and Foreign Economic Activity", "customer_contact"],
+    ["Phone", initialValues?.customer_phone || "+38 067 826 09 10 (Viber, Telegram, WhatsApp)", "customer_phone"],
+    ["Email", initialValues?.customer_email || "–", "customer_email"],
+    ["Address", initialValues?.customer_address || "25006 Kropyvnytskyi, Ukraine", "customer_address"],
   ];
-  const seller: Array<[string, string]> = [
-    ["Company", "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD"],
-    ["Contact", "Shane Zhao"],
-    ["Phone", "+86 157 9019 6438/+44 7707 709941"],
-    ["Email", "sales@spiraxsteam.com"],
-    ["Address", "–"],
+  const seller: Array<[string, string, string]> = [
+    ["Company", initialValues?.seller_company || "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD", "seller_company"],
+    ["Contact", initialValues?.seller_contact || "Shane Zhao", "seller_contact"],
+    ["Phone", initialValues?.seller_phone || "+86 157 9019 6438/+44 7707 709941", "seller_phone"],
+    ["Email", initialValues?.seller_email || "sales@spiraxsteam.com", "seller_email"],
+    ["Address", initialValues?.seller_address || "–", "seller_address"],
   ];
   const parties = table([354, 354], [{
     height: 184,
     cells: [cell(partyPanel("Customer Information", customer, 340, 0)), cell(partyPanel("Seller Information", seller, 340, 1))],
   }], { borderType: TableBorder.EMPTY });
 
-  const terms: Array<[string, string]> = [
-    ["Lead Time", "In stock; available for prompt shipment."],
-    ["Payment Terms", "30% advance payment, 70% before shipment"],
-    ["Validity", "Valid for 30 days"],
-    ["Notes", "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY."],
+  const terms: Array<[string, string, string]> = [
+    ["Lead Time", initialValues?.lead_time || "In stock; available for prompt shipment.", "lead_time"],
+    ["Payment Terms", initialValues?.payment_terms || "30% advance payment, 70% before shipment", "payment_terms"],
+    ["Validity", initialValues?.commercial_validity || "Valid for 30 days", "commercial_validity"],
+    ["Notes", initialValues?.notes || "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY.", "notes"],
   ];
-  const remarks = "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY. Shipping cost to 25006 Kropyvnytskyi, Ukraine is not included and will be quoted separately.";
+  const remarks = initialValues?.remarks || "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY. Shipping cost to 25006 Kropyvnytskyi, Ukraine is not included and will be quoted separately.";
   const bottomRows: Array<{ height: number; cells: ReturnType<typeof cell>[] }> = [
     {
       height: 30,
@@ -222,13 +298,13 @@ export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quo
       height: 32,
       cells: [
         cell([text(terms[0][0], { bold: true, size: 10 })]),
-        cell([text(terms[0][1], { size: 10 })]),
-        { ...cell([text(remarks, { size: 10, rowMargin: 0.35 })]), rowspan: 4 },
+        cell([controlText(terms[0][2], terms[0][1], terms[0][0], { size: 10 })]),
+        { ...cell([controlText("remarks", remarks, "Remarks", { size: 10, rowMargin: 0.35 })]), rowspan: 4 },
       ],
     },
-    ...terms.slice(1).map(([label, value]) => ({
+    ...terms.slice(1).map(([label, value, conceptId]) => ({
       height: 32,
-      cells: [cell([text(label, { bold: true, size: 10 })]), cell([text(value, { size: 10 })])],
+      cells: [cell([text(label, { bold: true, size: 10 })]), cell([controlText(conceptId, value, label, { size: 10 })])],
     })),
   ];
   const bottom = table([90, 264, 354], bottomRows, { borderType: TableBorder.EMPTY, borderColor: BLUE });
@@ -238,9 +314,15 @@ export function createSpiraxQuotationCanvasDocument(date: string, number = "[Quo
     lineBreak({ size: 1, rowMargin: 1 }),
     parties,
     lineBreak({ size: 2, rowMargin: 1 }),
-    table([31, 569, 118], [{ height: 24, cells: [...sectionTitleCells("Quotation Items", 2), cell([text("1 items", { size: 10, rowFlex: RowFlex.RIGHT })])] }], { borderType: TableBorder.EMPTY }),
+    table([31, 569, 118], [{
+      height: 24,
+      cells: [
+        ...sectionTitleCells("Quotation Items", 2),
+        cell([text(`${itemCount} items`, { size: 10, rowFlex: RowFlex.RIGHT })])
+      ]
+    }], { borderType: TableBorder.EMPTY }),
     lineBreak({ size: 1, rowMargin: 1 }),
-    productTable(),
+    productTable(activeItems, initialValues),
     lineBreak({ size: 2, rowMargin: 1 }),
     bottom,
   ];

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ImageDisplay, ListStyle, ListType, PageMode, VerticalAlign } from "@hufe921/canvas-editor";
+import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode, VerticalAlign } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
-import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument } from "./spirax-quotation-canvas";
+import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, controlText, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
 
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
@@ -30,40 +30,119 @@ function containsText(value: unknown, text: string): boolean {
   return Object.values(value).some((item) => containsText(item, text));
 }
 
-function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]) {
-  let main = [...data.main];
-  const legacyFooterIndex = data.main.findIndex((element) => containsText(element, "Prepared by Shane Zhao"));
-  if (legacyFooterIndex >= 0) {
-    const footerStartIndex = Math.max(0, legacyFooterIndex - 3);
-    main.splice(footerStartIndex, legacyFooterIndex - footerStartIndex + 1);
+function extractPlainText(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]> | undefined): string {
+  if (!elements) return "";
+  let text = "";
+  for (const el of elements) {
+    if (el.value) text += el.value;
+    else if (el.control?.value) text += extractPlainText(el.control.value);
   }
-  const heroIndex = main.findIndex((element) => containsText(element, "Quote No."));
-  const hero = main[heroIndex];
-  const heroRow = hero?.trList?.[0];
-  if (hero && heroRow?.tdList?.[1]) {
-    let rightCell = { ...heroRow.tdList[1], verticalAlign: VerticalAlign.TOP };
-    const currentMeta = rightCell.value.find((element) => element.trList?.some((row) => containsText(row, "Quote No.")));
-    const referenceHero = createSpiraxQuotationCanvasDocument("").find((element) => containsText(element, "Quote No."));
-    const referenceMeta = referenceHero?.trList?.[0]?.tdList?.[1]?.value.find((element) => element.trList?.some((row) => containsText(row, "Quote No.")));
-    if (currentMeta?.trList && referenceMeta?.trList) {
-      const labels = ["Quote No.", "Issue Date", "Currency", "Validity"];
-      const trList = referenceMeta.trList.map((referenceRow) => {
-        const label = labels.find((item) => containsText(referenceRow, item));
-        const currentRow = label ? currentMeta.trList?.find((row) => containsText(row, label)) : undefined;
-        const currentValueCell = currentRow?.tdList?.[currentRow.tdList.length - 1];
-        const referenceValueIndex = referenceRow.tdList ? referenceRow.tdList.length - 1 : -1;
-        if (!currentValueCell || referenceValueIndex < 0) return referenceRow;
-        const tdList = referenceRow.tdList.map((td, index) => index === referenceValueIndex ? { ...td, value: currentValueCell.value } : td);
-        return { ...referenceRow, tdList };
-      });
-      const nextMeta = { ...referenceMeta, trList };
-      rightCell = { ...rightCell, value: rightCell.value.map((element) => element === currentMeta ? nextMeta : element) };
+  return text.trim();
+}
+
+function hasControls(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): boolean {
+  for (const el of elements) {
+    if (el.type === ElementType.CONTROL || el.control?.conceptId) return true;
+    if (el.trList) {
+      for (const tr of el.trList) {
+        for (const td of tr.tdList || []) {
+          if (td.value && hasControls(td.value)) return true;
+        }
+      }
     }
-    const tdList = heroRow.tdList.map((td, index) => index === 1 ? rightCell : td);
-    const trList = [{ ...heroRow, height: 178, minHeight: 178, tdList }, ...hero.trList!.slice(1)];
-    main = main.map((element, index) => index === heroIndex ? { ...element, trList } : element);
+    if (el.valueList && hasControls(el.valueList)) return true;
   }
-  return { ...data, main };
+  return false;
+}
+
+function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): SpiraxQuotationValues {
+  const values: SpiraxQuotationValues = {};
+  const visit = (elements: typeof main) => {
+    for (const el of elements) {
+      if (el.type === ElementType.CONTROL && el.control?.conceptId) {
+        let textVal = "";
+        if (el.control.value && Array.isArray(el.control.value)) {
+          textVal = el.control.value.map((v) => v.value || "").join("").trim();
+        }
+        if (textVal) {
+          values[el.control.conceptId] = textVal;
+        }
+      }
+      if (el.type === ElementType.TABLE && el.trList) {
+        for (const tr of el.trList) {
+          if (!tr.tdList) continue;
+          for (const td of tr.tdList) {
+            if (td.value) visit(td.value);
+          }
+          if (tr.tdList.length === 2 || tr.tdList.length === 3) {
+            const label = extractPlainText(tr.tdList[0].value);
+            const val = extractPlainText(tr.tdList[tr.tdList.length - 1].value);
+            if (!val || val === label) continue;
+            if (label.includes("Quote No.")) values.quote_number = val;
+            else if (label.includes("Issue Date")) values.issue_date = val;
+            else if (label.includes("Currency")) values.currency = val;
+            else if (label.includes("Validity")) values.validity = val;
+            else if (label.includes("Lead Time")) values.lead_time = val;
+            else if (label.includes("Payment Terms")) values.payment_terms = val;
+            else if (label.includes("Notes")) values.notes = val;
+          }
+          if (tr.tdList.length === 5) {
+            const first = extractPlainText(tr.tdList[0].value);
+            if (first && !first.includes("MODEL")) {
+              values.item_model = first;
+              values.item_description = extractPlainText(tr.tdList[1].value);
+              values.item_qty = extractPlainText(tr.tdList[2].value);
+              values.item_price = extractPlainText(tr.tdList[3].value);
+              values.item_amount = extractPlainText(tr.tdList[4].value);
+            }
+          }
+        }
+      }
+      if (el.valueList) {
+        visit(el.valueList);
+      }
+    }
+  };
+  visit(main);
+
+  const extractedItems: QuotationItem[] = [];
+  let index = 0;
+  while (`item_model_${index}` in values) {
+    extractedItems.push({
+      model: values[`item_model_${index}`] || "",
+      description: values[`item_description_${index}`] || "",
+      qty: values[`item_qty_${index}`] || "",
+      price: values[`item_price_${index}`] || "",
+      amount: values[`item_amount_${index}`] || "",
+    });
+    index++;
+  }
+  if (extractedItems.length > 0) {
+    values.items = extractedItems;
+  } else if (values.item_model) {
+    values.items = [
+      {
+        model: values.item_model,
+        description: values.item_description || "",
+        qty: values.item_qty || "",
+        price: values.item_price || "",
+        amount: values.item_amount || "",
+      },
+    ];
+  }
+
+  return values;
+}
+
+function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
+  if (hasControls(data.main)) {
+    return data;
+  }
+  const extracted = extractLegacySpiraxValues(data.main);
+  return {
+    ...data,
+    main: createSpiraxQuotationCanvasDocument("", "", extracted),
+  };
 }
 
 function readFileAsDataURL(file: File) {
@@ -126,6 +205,9 @@ export type CanvasDocumentEditorHandle = {
   undo: () => void;
   redo: () => void;
   print: () => Promise<void>;
+  getControls: () => Array<{ conceptId: string; placeholder?: string; value?: string }>;
+  setControlValues: (values: Array<{ conceptId: string; value: string }>) => boolean;
+  applyDocumentUpdates: (payload: { values?: Record<string, string>; items?: QuotationItem[] }) => boolean;
 };
 
 type CanvasDocumentEditorProps = {
@@ -282,7 +364,9 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const editor = editorRef.current;
       if (!editor) return;
       const stored = parseStoredCanvasDocument(html);
-      const spirax = html.includes("data-spirax-quotation") || stored?.template === "spirax-quotation";
+      const isSpiraxPlaceholder = html.includes("data-spirax-quotation") && !html.includes("<table");
+      const isContract = html.includes("合同") || html.includes("CONTRACT");
+      const spirax = isSpiraxPlaceholder || stored?.template === "spirax-quotation" || (!isContract && templateRef.current);
       templateRef.current = spirax;
       editor.command.executeUpdateOptions({
         margins: spirax ? [38, 38, 90, 38] : [64, 68, 64, 68],
@@ -298,7 +382,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (stored) {
         if (stored.options) editor.command.executeUpdateOptions(stored.options);
         editor.command.executeSetValue(spirax ? migrateLegacySpiraxDocument(stored.data) : stored.data);
-      } else if (spirax) {
+      } else if (spirax && isSpiraxPlaceholder) {
         editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(html)) });
       } else {
         editor.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
@@ -315,6 +399,230 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     undo: () => editorRef.current?.command.executeUndo(),
     redo: () => editorRef.current?.command.executeRedo(),
     print: async () => { await editorRef.current?.command.executePrint(); },
+    getControls: () => {
+      const editor = editorRef.current;
+      if (!editor) return [];
+      const map = new Map<string, { conceptId: string; placeholder?: string; value?: string }>();
+
+      // 1. Check native controls via getControlList
+      try {
+        const list = editor.command.getControlList() || [];
+        for (const el of list) {
+          const conceptId = el.control?.conceptId;
+          if (!conceptId || map.has(conceptId)) continue;
+          let textVal = "";
+          try {
+            const val = editor.command.getControlValue({ conceptId });
+            if (val && val.length > 0) {
+              textVal = (val[0]?.value ?? val[0]?.innerText ?? "").trim();
+            }
+          } catch {
+            // ignore
+          }
+          map.set(conceptId, {
+            conceptId,
+            placeholder: el.control?.placeholder || conceptId,
+            value: textVal,
+          });
+        }
+      } catch {
+        // ignore
+      }
+
+      // 2. Also inspect the document element tree to catch any controls or bracketed placeholder variables
+      try {
+        const snapshot = editor.command.getValue();
+        const traverse = (elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>) => {
+          for (const el of elements) {
+            if (el.type === ElementType.CONTROL && el.control?.conceptId) {
+              const id = el.control.conceptId;
+              if (!map.has(id)) {
+                let textVal = "";
+                if (el.control.value && Array.isArray(el.control.value)) {
+                  textVal = el.control.value.map((v) => v.value || "").join("").trim();
+                }
+                map.set(id, {
+                  conceptId: id,
+                  placeholder: el.control.placeholder || id,
+                  value: textVal,
+                });
+              }
+            } else if (el.value && typeof el.value === "string") {
+              const matches = el.value.matchAll(/\[([^\]\n]{2,30})\]/g);
+              for (const m of matches) {
+                const fullTag = m[0];
+                const label = m[1];
+                if (!map.has(fullTag)) {
+                  map.set(fullTag, {
+                    conceptId: fullTag,
+                    placeholder: label,
+                    value: fullTag,
+                  });
+                }
+              }
+            }
+            if (el.trList) {
+              for (const tr of el.trList) {
+                for (const td of tr.tdList || []) {
+                  if (td.value) traverse(td.value);
+                }
+              }
+            }
+            if (el.valueList) {
+              traverse(el.valueList);
+            }
+          }
+        };
+        if (snapshot.data?.main) traverse(snapshot.data.main);
+      } catch {
+        // ignore
+      }
+
+      return Array.from(map.values());
+    },
+    setControlValues: (values) => {
+      const editor = editorRef.current;
+      if (!editor || !values.length) return false;
+      let anyApplied = false;
+
+      const nativeUpdates = values.filter((v) => !v.conceptId.startsWith("["));
+      const bracketUpdates = values.filter((v) => v.conceptId.startsWith("[") && v.conceptId.endsWith("]"));
+
+      if (nativeUpdates.length > 0) {
+        try {
+          editor.command.executeSetControlValueList(
+            nativeUpdates.map((item) => ({
+              conceptId: item.conceptId,
+              value: item.value,
+              isSubmitHistory: true,
+            }))
+          );
+          anyApplied = true;
+        } catch (error) {
+          console.error("executeSetControlValueList failed", error);
+        }
+      }
+
+      if (bracketUpdates.length > 0) {
+        try {
+          const snapshot = editor.command.getValue();
+          const repMap = new Map<string, string>(bracketUpdates.map((u) => [u.conceptId, u.value]));
+          const replaceInElements = (elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>) => {
+            for (const el of elements) {
+              if (el.value && typeof el.value === "string") {
+                for (const [tag, replacement] of repMap.entries()) {
+                  if (el.value.includes(tag)) {
+                    el.value = el.value.replaceAll(tag, replacement);
+                    anyApplied = true;
+                  }
+                }
+              }
+              if (el.trList) {
+                for (const tr of el.trList) {
+                  for (const td of tr.tdList || []) {
+                    if (td.value) replaceInElements(td.value);
+                  }
+                }
+              }
+              if (el.valueList) {
+                replaceInElements(el.valueList);
+              }
+            }
+          };
+          if (snapshot.data?.main) {
+            replaceInElements(snapshot.data.main);
+            editor.command.executeSetValue(snapshot.data);
+          }
+        } catch (error) {
+          console.error("bracket replacement failed", error);
+        }
+      }
+
+      return anyApplied;
+    },
+    applyDocumentUpdates: (payload) => {
+      const editor = editorRef.current;
+      if (!editor) return false;
+      const { values = {}, items } = payload;
+      let applied = false;
+
+      if (templateRef.current && items && items.length > 0) {
+        try {
+          const snapshot = editor.command.getValue();
+          const existing = extractLegacySpiraxValues(snapshot.data.main);
+          const merged: SpiraxQuotationValues = { ...existing, ...values };
+          const newMain = createSpiraxQuotationCanvasDocument(
+            merged.issue_date || "",
+            merged.quote_number || "",
+            merged,
+            items
+          );
+          editor.command.executeSetValue({ main: newMain });
+          applied = true;
+          return applied;
+        } catch (err) {
+          console.error("Failed to apply quotation document items", err);
+        }
+      }
+
+      if (Object.keys(values).length > 0) {
+        const nativeUpdates = Object.entries(values).map(([conceptId, value]) => ({ conceptId, value: String(value) }));
+        const nativeFiltered = nativeUpdates.filter((v) => !v.conceptId.startsWith("["));
+        const bracketUpdates = nativeUpdates.filter((v) => v.conceptId.startsWith("[") && v.conceptId.endsWith("]"));
+
+        if (nativeFiltered.length > 0) {
+          try {
+            editor.command.executeSetControlValueList(
+              nativeFiltered.map((item) => ({
+                conceptId: item.conceptId,
+                value: item.value,
+                isSubmitHistory: true,
+              }))
+            );
+            applied = true;
+          } catch (error) {
+            console.error("executeSetControlValueList failed", error);
+          }
+        }
+
+        if (bracketUpdates.length > 0) {
+          try {
+            const snapshot = editor.command.getValue();
+            const repMap = new Map<string, string>(bracketUpdates.map((u) => [u.conceptId, u.value]));
+            const replaceInElements = (elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>) => {
+              for (const el of elements) {
+                if (el.value && typeof el.value === "string") {
+                  for (const [tag, replacement] of repMap.entries()) {
+                    if (el.value.includes(tag)) {
+                      el.value = el.value.replaceAll(tag, replacement);
+                      applied = true;
+                    }
+                  }
+                }
+                if (el.trList) {
+                  for (const tr of el.trList) {
+                    for (const td of tr.tdList || []) {
+                      if (td.value) replaceInElements(td.value);
+                    }
+                  }
+                }
+                if (el.valueList) {
+                  replaceInElements(el.valueList);
+                }
+              }
+            };
+            if (snapshot.data?.main) {
+              replaceInElements(snapshot.data.main);
+              editor.command.executeSetValue(snapshot.data);
+            }
+          } catch (error) {
+            console.error("bracket replacement failed", error);
+          }
+        }
+      }
+
+      return applied;
+    },
   }), [isSpiraxTemplate, locale]);
 
   return <div ref={containerRef} className="canvas-document-editor" data-document-template={isSpiraxTemplate ? "spirax-quotation" : undefined} />;

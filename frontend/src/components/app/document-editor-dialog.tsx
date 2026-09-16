@@ -89,50 +89,136 @@ export function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; 
 
 export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; accountEmail: string; type: DocumentTemplate; title: string; disabled: boolean }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"generate" | "rewrite">("generate");
   const [instruction, setInstruction] = useState("");
-  const [result, setResult] = useState("");
-  const sourceHTMLRef = useRef("");
+  const controls = open && editor ? editor.getControls() : [];
+
   const mutation = useMutation({
     mutationFn: () => {
-      sourceHTMLRef.current = editor?.getHTML() || "";
-      return generateDocument({ accountEmail, mode, documentType: type, title, instruction, currentHTML: mode === "rewrite" ? sourceHTMLRef.current : undefined });
+      const activeControls = editor?.getControls() || [];
+      if (activeControls.length > 0) {
+        return generateDocument({
+          accountEmail,
+          mode: "variables",
+          documentType: type,
+          title,
+          instruction,
+          variables: activeControls.map((c) => ({
+            conceptId: c.conceptId,
+            label: c.placeholder || c.conceptId,
+            currentValue: c.value || "",
+          })),
+        });
+      }
+      const rawHTML = editor?.getHTML() || "";
+      const currentHTML = rawHTML
+        .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
+        .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
+      return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction, currentHTML });
     },
-    onSuccess: (value) => setResult(value.html),
-  });
-  const sanitizeResult = (html: string) => {
-    const parsed = new DOMParser().parseFromString(html, "text/html");
-    parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
-    parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => Array.from(element.attributes).forEach((attribute) => { if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name); }));
-    return parsed.body.innerHTML;
-  };
-  const applyResult = () => {
-    if (!result) return;
-    const nextHTML = sanitizeResult(result);
-    if (mode === "rewrite" && sourceHTMLRef.current) {
-      const before = new DOMParser().parseFromString(sourceHTMLRef.current, "text/html");
-      const after = new DOMParser().parseFromString(nextHTML, "text/html");
-      if (before.querySelectorAll("table").length !== after.querySelectorAll("table").length || before.querySelectorAll("h1, h2, h3").length !== after.querySelectorAll("h1, h2, h3").length) {
-        toast.error(copy.aiStructureMismatch);
+    onSuccess: (value) => {
+      if (value.mode === "variables" && (value.values || value.items)) {
+        const hasValues = value.values && Object.keys(value.values).length > 0;
+        const hasItems = value.items && value.items.length > 0;
+        if (!hasValues && !hasItems) {
+          toast.info(copy === zh ? "AI 未发现需要变更的变量" : "No variable updates detected");
+          return;
+        }
+        const applied = editor?.applyDocumentUpdates({
+          values: value.values,
+          items: value.items,
+        });
+        editor?.focus();
+        if (applied) {
+          const itemCount = value.items?.length || 0;
+          const varCount = Object.keys(value.values || {}).length;
+          toast.success(
+            copy === zh
+              ? `已智能更新 ${itemCount > 0 ? `${itemCount} 项产品及 ` : ""}${varCount} 处文档变量`
+              : `Updated ${itemCount > 0 ? `${itemCount} items and ` : ""}${varCount} variables`
+          );
+        } else {
+          toast.info(copy === zh ? "变量已识别但未能应用到文档" : "Variables recognized but could not be applied");
+        }
+        setInstruction("");
+        setOpen(false);
         return;
       }
+      if (value.html) {
+        const nextHTML = sanitizeResult(value.html);
+        if (!nextHTML) {
+          toast.error(copy.aiDocumentFailed);
+          return;
+        }
+        editor?.setHTML(nextHTML);
+        editor?.focus();
+        toast.success(copy.aiDocumentRewritten);
+        setInstruction("");
+        setOpen(false);
+        return;
+      }
+      toast.error(copy.aiDocumentFailed);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : copy.aiDocumentFailed);
+    },
+  });
+
+  const sanitizeResult = (html: string) => {
+    let clean = html.trim();
+    const match = clean.match(/```(?:html)?\s*([\s\S]*?)```/i);
+    if (match) {
+      clean = match[1].trim();
     }
-    editor?.setHTML(nextHTML);
-    editor?.focus();
-    setResult("");
-    setOpen(false);
+    const parsed = new DOMParser().parseFromString(clean, "text/html");
+    parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
+    parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => {
+      Array.from(element.attributes).forEach((attribute) => {
+        if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name);
+      });
+    });
+    return parsed.body.innerHTML;
   };
+
   return (
-    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) { setResult(""); mutation.reset(); } }}>
+    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) { mutation.reset(); } }}>
       <PopoverTrigger render={<Button type="button" variant={open ? "secondary" : "ghost"} size="sm" disabled={disabled || !accountEmail} />}><Sparkles />{copy.aiDocument}</PopoverTrigger>
       <PopoverContent side="bottom" align="end" sideOffset={8} className="w-[min(32rem,calc(100vw-2rem))] gap-0 p-4">
         <PopoverTitle className="text-sm font-semibold">{copy.aiDocument}</PopoverTitle>
-        <PopoverDescription className="mt-1 text-xs">{mode === "generate" ? copy.aiGenerateDocument : copy.aiRewriteDocument}</PopoverDescription>
-        <div className="mt-3 flex gap-1"><Button type="button" size="sm" variant={mode === "generate" ? "secondary" : "ghost"} onClick={() => setMode("generate")} disabled={mutation.isPending}>{copy.aiGenerateDocument}</Button><Button type="button" size="sm" variant={mode === "rewrite" ? "secondary" : "ghost"} onClick={() => setMode("rewrite")} disabled={mutation.isPending}>{copy.aiRewriteDocument}</Button></div>
-        <Label className="mt-3 grid gap-1.5 text-xs"><span>{copy.aiDocumentInstruction}</span><Textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={4} disabled={mutation.isPending} placeholder={type === "quotation" ? copy.quotation : copy.contract} /></Label>
+        <PopoverDescription className="mt-1 text-xs">
+          {controls.length > 0
+            ? (copy === zh ? `已检测到 ${controls.length} 个模板变量，AI 将精准赋值不破坏排版` : `${controls.length} template variables detected for precise update`)
+            : copy.aiRewriteDocument}
+        </PopoverDescription>
+        <Label className="mt-3 grid gap-1.5 text-xs">
+          <span>{copy.aiDocumentInstruction}</span>
+          <Textarea
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            rows={4}
+            disabled={mutation.isPending}
+            placeholder={
+              controls.length > 0
+                ? (copy === zh
+                    ? "例如：客户名称改成华为技术，单价改成 1800，交货期改为 45 天，付款方式改为全款发货"
+                    : "e.g. Change customer to Huawei, unit price to 1800, lead time to 45 days, 100% advance payment")
+                : (type === "quotation"
+                    ? (copy === zh ? "例如：修改产品单价、增加折扣条款、更新交货期…" : "e.g. Adjust unit prices, add discount terms, update delivery time...")
+                    : (copy === zh ? "例如：调整合同金额、修改违约责任条款、补充付款节点…" : "e.g. Adjust contract amount, revise breach terms, update payment schedule..."))
+            }
+          />
+        </Label>
         {mutation.error && <p className="mt-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.aiDocumentFailed}</p>}
-        {result && <><p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{copy.aiApplyHint}</p><div className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 text-sm" dangerouslySetInnerHTML={{ __html: sanitizeResult(result) }} /></>}
-        <div className="mt-3 flex justify-end gap-2">{result && <Button type="button" variant="outline" size="sm" onClick={applyResult}><Check />{copy.aiApplyDocument}</Button>}<Button type="button" size="sm" disabled={mutation.isPending || !instruction.trim()} onClick={() => mutation.mutate()}><Sparkles />{mutation.isPending ? copy.aiGeneratingDocument : mode === "generate" ? copy.aiGenerateDocument : copy.aiRewriteDocument}</Button></div>
+        <div className="mt-3 flex justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={mutation.isPending || !instruction.trim()}
+            onClick={() => mutation.mutate()}
+          >
+            <Sparkles className={mutation.isPending ? "animate-spin" : ""} />
+            {mutation.isPending ? copy.aiRewritingDocument : copy.aiRewriteDocument}
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   );

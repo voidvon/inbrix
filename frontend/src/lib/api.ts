@@ -315,17 +315,39 @@ export function generateEmail(input: GenerateEmailInput) {
   });
 }
 
+export type DocumentVariable = {
+  conceptId: string;
+  label?: string;
+  currentValue?: string;
+};
+
 export type GenerateDocumentInput = {
   accountEmail: string;
-  mode: "generate" | "rewrite";
+  mode?: "generate" | "rewrite" | "variables";
   documentType: "quotation" | "contract";
   title: string;
   instruction: string;
   currentHTML?: string;
+  variables?: DocumentVariable[];
+};
+
+export type QuotationItem = {
+  model: string;
+  description: string;
+  qty: string;
+  price: string;
+  amount: string;
+};
+
+export type GenerateDocumentResult = {
+  mode?: "variables" | "rewrite" | "generate";
+  html?: string;
+  values?: Record<string, string>;
+  items?: QuotationItem[];
 };
 
 export function generateDocument(input: GenerateDocumentInput) {
-  return apiFetch<{ html: string }>("/api/ai/write-document", {
+  return apiFetch<GenerateDocumentResult>("/api/ai/write-document", {
     method: "POST",
     body: JSON.stringify(input),
   });
