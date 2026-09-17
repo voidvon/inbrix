@@ -605,7 +605,7 @@ func (c *Config) GetSecurityHeaders() map[string]string {
 	// ordinary mail <img> elements can load as intended; active content remains
 	// constrained by the script/object directives and the iframe sandbox.
 	imgSrc := "'self' data: blob: https: http:"
-	connectSrc := "'self'"
+	connectSrc := "'self' data: blob:"
 	csp := "default-src 'self'; script-src " + scriptSrc + "; style-src 'self' 'unsafe-inline'; img-src " + imgSrc + "; connect-src " + connectSrc + "; object-src 'none'; base-uri 'self';"
 
 	// Framing policy. When a host shell (e.g. Vulos OS) is allowed to embed

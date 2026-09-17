@@ -347,11 +347,18 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (!editor) throw new Error("Editor unavailable");
       const range = editor.command.getRange();
       editor.command.executeFocus(range && range.startIndex >= 0 ? { range } : undefined);
-      const id = editor.command.executeImage({
-        value: stamp.value, width, height: width * stamp.height / stamp.width,
+      const payload = {
+        value: stamp.value,
+        width,
+        height: width * stamp.height / stamp.width,
         imgDisplay: ImageDisplay.FLOAT_TOP,
         extension: { stampId: stamp.id, stampName: stamp.name },
-      });
+      };
+      let id = editor.command.executeImage(payload);
+      if (!id) {
+        editor.command.executeFocus(undefined);
+        id = editor.command.executeImage(payload);
+      }
       if (!id) throw new Error("Unable to insert stamp");
     },
     getPageImages: async () => {

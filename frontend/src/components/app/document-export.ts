@@ -23,6 +23,19 @@ export async function createDocumentPDF(pages: string[], name: string): Promise<
   return new File([pdf.output("blob")], `${documentFilename(name)}.pdf`, { type: "application/pdf" });
 }
 
+function dataURLToBlob(dataURL: string): Blob {
+  const commaIndex = dataURL.indexOf(",");
+  const header = commaIndex >= 0 ? dataURL.slice(0, commaIndex) : "";
+  const base64 = commaIndex >= 0 ? dataURL.slice(commaIndex + 1) : dataURL;
+  const mime = header.match(/:(.*?);/)?.[1] || "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
 export async function exportDocumentPages(pages: string[], name: string, format: "pdf" | "png") {
   if (!pages.length) throw new Error("No document pages to export");
   const filename = documentFilename(name);
@@ -31,7 +44,7 @@ export async function exportDocumentPages(pages: string[], name: string, format:
     downloadBlob(file, file.name);
     return;
   }
-  const blobs = await Promise.all(pages.map(async (page) => (await fetch(page)).blob()));
+  const blobs = pages.map(dataURLToBlob);
   if (blobs.length === 1) {
     downloadBlob(blobs[0], `${filename}.png`);
     return;

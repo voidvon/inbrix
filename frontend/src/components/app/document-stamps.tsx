@@ -38,29 +38,37 @@ async function prepareStamp(file: File): Promise<DocumentStamp> {
   }
 }
 
+function loadStampImage(source: string): Promise<HTMLImageElement> {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to decode stamp image"));
+    image.src = source;
+  });
+}
+
 async function transformStamp(stamp: DocumentStamp, rotation: number, opacity: number): Promise<DocumentStamp> {
-  const source = await createImageBitmap(await (await fetch(stamp.value)).blob());
-  try {
-    const radians = rotation * Math.PI / 180;
-    const cosine = Math.abs(Math.cos(radians));
-    const sine = Math.abs(Math.sin(radians));
-    const width = Math.max(1, Math.ceil(source.width * cosine + source.height * sine));
-    const height = Math.max(1, Math.ceil(source.width * sine + source.height * cosine));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Canvas unavailable");
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.globalAlpha = opacity / 100;
-    context.translate(width / 2, height / 2);
-    context.rotate(radians);
-    context.drawImage(source, -source.width / 2, -source.height / 2);
-    return { ...stamp, value: canvas.toDataURL("image/png"), width, height };
-  } finally {
-    source.close();
-  }
+  if (rotation === 0 && opacity === 100) return stamp;
+  const source = await loadStampImage(stamp.value);
+  const naturalWidth = source.naturalWidth || source.width || stamp.width;
+  const naturalHeight = source.naturalHeight || source.height || stamp.height;
+  const radians = rotation * Math.PI / 180;
+  const cosine = Math.abs(Math.cos(radians));
+  const sine = Math.abs(Math.sin(radians));
+  const width = Math.max(1, Math.ceil(naturalWidth * cosine + naturalHeight * sine));
+  const height = Math.max(1, Math.ceil(naturalWidth * sine + naturalHeight * cosine));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas unavailable");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.globalAlpha = opacity / 100;
+  context.translate(width / 2, height / 2);
+  context.rotate(radians);
+  context.drawImage(source, -naturalWidth / 2, -naturalHeight / 2);
+  return { ...stamp, value: canvas.toDataURL("image/png"), width, height };
 }
 
 export function DocumentStampManager({ chinese, disabled, onInsert }: {
