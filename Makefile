@@ -1,4 +1,4 @@
-.PHONY: dev build test vet fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest release release-version-selftest check clean
+.PHONY: dev build test vet fmt fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest release release-version-selftest check clean
 
 # Local React/Vite development. Vite owns :2342 and proxies backend requests
 # to Go on :3001, so the browser never renders the embedded frontend/dist copy.
@@ -24,10 +24,14 @@ test:
 vet:
 	go vet ./...
 
+# Format all Go source files with gofmt.
+fmt:
+	gofmt -w .
+
 # Fail if anything is unformatted (the same gate CI runs).
 fmt-check:
 	@unformatted="$$(gofmt -l .)"; \
-	if [ -n "$$unformatted" ]; then echo "gofmt found unformatted files:"; echo "$$unformatted"; exit 1; fi; \
+	if [ -n "$$unformatted" ]; then echo "gofmt found unformatted files:"; echo "$$unformatted"; echo "Run 'make fmt' to format them."; exit 1; fi; \
 	echo "gofmt: clean"
 
 # Fail if the published docs have drifted from their sources OR carry a link
