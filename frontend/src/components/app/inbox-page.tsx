@@ -38,6 +38,7 @@ import { ChatPanel, ConversationList } from "./chat-view";
 import { LoginScreen } from "./auth-screens";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 
 export function conversationIdFromURL() {
   if (typeof window === "undefined") return null;
@@ -59,6 +60,7 @@ export function InboxPage() {
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
   const autoReadRef = useRef(new Set<string>());
   const manuallyUnreadRef = useRef(new Set<string>());
   const debouncedSearch = useDebouncedValue(search, 250);
@@ -351,8 +353,10 @@ export function InboxPage() {
           onMarkUnread={(conversation) => void markUnread(conversation)}
           onDelete={(conversation) => { setDeleteError(""); setDeleteTarget(conversation); }}
           onRefresh={() => void conversations.refetch()}
+          desktopWidth={listWidth}
           className={chatOpen ? "hidden lg:flex" : "flex"}
         />
+        {chatOpen && <ResizeHandle label="Resize conversation list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
         <ChatPanel
           copy={locale}
           detail={mergedConversation}

@@ -29,6 +29,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
+import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 
 export function FolderMessageRow({
   copy,
@@ -109,6 +110,7 @@ export function FolderPage({ folder }: { folder: string }) {
   const [search, setSearch] = useState("");
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<MailMessage | null>(null);
   const [permanentDeleteError, setPermanentDeleteError] = useState("");
+  const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
   const markingReadRef = useRef(new Set<string>());
   const list = useQuery({ queryKey: ["folder", folder], queryFn: () => getFolderMessages(folder), retry: 1 });
   const detail = useQuery({
@@ -250,7 +252,7 @@ export function FolderPage({ folder }: { folder: string }) {
   return (
     <>
       <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
-        <section className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", detailOpen ? "hidden lg:flex" : "flex")}>
+        <section style={{ "--message-list-width": `${listWidth}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--message-list-width) lg:flex-none", detailOpen ? "hidden lg:flex" : "flex")}>
           <div className="border-b bg-card px-3 py-3">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={locale.folders} title={locale.folders}>
@@ -295,6 +297,7 @@ export function FolderPage({ folder }: { folder: string }) {
             ))}
           </ScrollArea>
         </section>
+        {detailOpen && <ResizeHandle label="Resize message list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
         <section className={cn("min-w-0 flex-1 flex-col bg-surface", detailOpen ? "flex" : "hidden lg:flex")}>
           {detailOpen && (
             <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">

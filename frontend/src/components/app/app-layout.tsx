@@ -39,6 +39,7 @@ import {
 } from "../ui/dropdown-menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Skeleton } from "../ui/skeleton";
+import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 
 export function FolderLink({ copy, folder, selected = false, onClose }: { copy: Copy; folder: Mailbox; selected?: boolean; onClose: () => void }) {
   const kind = folderKind(folder);
@@ -111,6 +112,7 @@ export function Sidebar({
   onClose,
   darkMode,
   onToggleDarkMode,
+  desktopWidth,
 }: {
   copy: Copy;
   folders: Mailbox[];
@@ -126,12 +128,13 @@ export function Sidebar({
   onClose: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
+  desktopWidth: number;
 }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
   return (
-    <aside className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-[14.375rem] lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
+    <aside style={{ "--sidebar-width": `${desktopWidth}px` } as React.CSSProperties} className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-(--sidebar-width) lg:shrink-0 lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
       <Button data-testid="compose-button" className="mb-4 w-full" onClick={onCompose}><Pencil />{copy.compose}</Button>
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
         <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView !== "calendar" && currentView !== "attachments" && currentView !== "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView !== "calendar" && currentView !== "attachments" && currentView !== "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
@@ -172,6 +175,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
   const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
+  const [sidebarWidth, setSidebarWidth] = usePersistedPaneWidth("inbrix-sidebar-width", 230, 180, 360);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -284,7 +288,9 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
           onClose={() => setSidebarOpen(false)}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((value) => !value)}
+          desktopWidth={sidebarWidth}
         />
+        <ResizeHandle label="Resize navigation" width={sidebarWidth} minWidth={180} maxWidth={360} onResize={setSidebarWidth} />
         {children}
         <ComposeDialog
           copy={copy}

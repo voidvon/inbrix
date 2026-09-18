@@ -68,6 +68,7 @@ export function ConversationList({
   onMarkUnread,
   onDelete,
   onRefresh,
+  desktopWidth,
   className,
 }: {
   copy: Copy;
@@ -82,12 +83,13 @@ export function ConversationList({
   onMarkUnread: (conversation: ConversationSummary) => void;
   onDelete: (conversation: ConversationSummary) => void;
   onRefresh: () => void;
+  desktopWidth?: number;
   className?: string;
 }) {
   const rows = data?.conversations || [];
   const hasData = Boolean(data);
   return (
-    <section data-testid="conversation-list" className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-[23.125rem] lg:flex-none", className)}>
+    <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
       <div className="border-b bg-card px-3 py-3">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}>
