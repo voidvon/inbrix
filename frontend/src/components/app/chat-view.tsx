@@ -38,6 +38,7 @@ import {
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
 import {
   copyToClipboard,
+  htmlToPlainText,
   extractEmailAddress,
   renderLinkifiedText,
 } from "../../lib/email-format";
@@ -721,6 +722,22 @@ export function SuggestedReplyBubble({
   );
 }
 
+function CopyMessageMenuItem({ copy, message }: { copy: Copy; message: { html?: string; body?: string; preview?: string } }) {
+  const copyAll = async () => {
+    const text = message.html ? htmlToPlainText(message.html) : message.body || message.preview || "";
+    const success = await copyToClipboard(text);
+    if (success) toast.success(copy.copyMessageSuccess);
+    else toast.error(copy.copyMessageFailed);
+  };
+
+  return (
+    <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => void copyAll()}>
+      <CopyIcon className="size-4" />
+      {copy.copyMessage}
+    </ContextMenuItem>
+  );
+}
+
 export function MessageBubble({
   copy,
   message,
@@ -857,6 +874,7 @@ export function MessageBubble({
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">
+        <CopyMessageMenuItem copy={copy} message={message} />
         {message.sendStatus === "failed" ? (
           <>
             {onRetrySend && (
@@ -1185,6 +1203,8 @@ export function EmailHTMLFrame({
 export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (
+    <ContextMenu>
+      <ContextMenuTrigger className="block select-text">
     <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl">
       <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
         <span className="font-medium">{message.fromName || message.from}</span>
@@ -1217,5 +1237,10 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
       </div>
       <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} />
     </article>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-40">
+        <CopyMessageMenuItem copy={copy} message={message} />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
