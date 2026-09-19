@@ -313,12 +313,15 @@
 /* Canvas menus use viewport coordinates. A transformed dialog would make
    their fixed positioning relative to the dialog and offset every submenu. */
 [data-slot="dialog-content"].canvas-document-dialog {
-  top: 4vh;
-  left: max(3vw, calc((100vw - 1400px) / 2));
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  border-radius: 0 !important;
   translate: none !important;
-  transform: none !important;
-  scale: none !important;
-  animation: none !important;
 }
 
 .canvas-document-scroll {

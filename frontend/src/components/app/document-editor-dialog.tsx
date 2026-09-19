@@ -15,8 +15,9 @@ import {
   Sparkles,
   Table2,
   Underline,
-  Upload,
   Undo2,
+  Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { CanvasDocumentEditorHandle } from "./canvas-document-editor";
@@ -24,7 +25,7 @@ import { DocumentStampManager } from "./document-stamps";
 import { createDocumentPDF, exportDocumentPages } from "./document-export";
 import { generateDocument } from "../../lib/api";
 import { escapeHTML } from "../../lib/email-format";
-import { createDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
+import { createDocumentNumber, extractDocumentCompany, extractDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
 import { type Copy, zh } from "../../lib/locale";
 import {
   type StoredDocument,
@@ -44,7 +45,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "../ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 
@@ -230,12 +230,19 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const editorRef = useRef<CanvasDocumentEditorHandle>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
   const docxInputRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState(target?.record?.name || (target?.kind === "template" ? copy.newTemplate : initialType === "quotation" ? copy.quotation : copy.contract));
+  const numbersRef = useRef<Partial<Record<DocumentTemplate, string>>>({});
+  const defaultDocNumber = target?.kind === "document" && !target?.record
+    ? (numbersRef.current[initialType] ??= createDocumentNumber(initialType))
+    : undefined;
+  const [name, setName] = useState(
+    target?.record?.name ||
+      defaultDocNumber ||
+      (target?.kind === "template" ? copy.newTemplate : initialType === "quotation" ? copy.quotation : copy.contract)
+  );
   const [type, setType] = useState<DocumentTemplate>(initialType);
-  const [selectedTemplateId, setSelectedTemplateId] = useState(initialTemplate?.id || "");
   const [editorReady, setEditorReady] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const numbersRef = useRef<Partial<Record<DocumentTemplate, string>>>({});
+  const [open, setOpen] = useState(true);
   const prepareTemplate = (html: string, documentType: DocumentTemplate) => {
     if (target?.kind !== "document") return html;
     const number = numbersRef.current[documentType] ??= createDocumentNumber(documentType);
@@ -245,15 +252,11 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
 
   if (!target) return null;
 
-  const selectTemplate = (templateId: string) => {
-    const template = templates.find((item) => item.id === templateId);
-    if (!template) return;
-    setSelectedTemplateId(template.id);
-    setType(template.type);
-    if (!target.record) setName(template.type === "quotation" ? copy.quotation : copy.contract);
-    editorRef.current?.setHTML(prepareTemplate(template.html, template.type));
-    window.requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, left: 0 }));
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (exporting) return;
+    setOpen(nextOpen);
   };
+
   const selectType = (next: DocumentTemplate) => {
     setType(next);
     if (!target.record) setName(next === "quotation" ? copy.quotationTemplate : copy.contractTemplate);
@@ -262,12 +265,12 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   };
   const downloadDocument = () => {
     const body = editorRef.current?.getHTML() || "";
-    const title = escapeHTML(name || copy.newDocument);
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    if (!body) return;
+    const blob = new Blob([body], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${(name || copy.newDocument).replace(/[\\/:*?"<>|]/g, "-")}.html`;
+    anchor.download = `${resolveExportName()}.html`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -283,7 +286,6 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
     try {
       await editorRef.current.importDocx(file);
       setName(file.name.replace(/\.docx$/i, ""));
-      setSelectedTemplateId("");
       editorScrollRef.current?.scrollTo({ top: 0, left: 0 });
       toast.success(copy === zh ? "Word 文档已导入，请检查排版后保存。" : "Word document imported. Review the layout before saving.");
     } catch (error) {
@@ -291,12 +293,20 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
       toast.error(copy === zh ? "导入失败，请检查文件是否为有效的 DOCX 文档。当前内容已保留。" : "Import failed. Check that this is a valid DOCX document. Your current content was preserved.");
     } finally { setExporting(false); onBusyChange?.(false); }
   };
-  const exportDocument = async (format: "pdf" | "png" | "docx") => {
+  const resolveExportName = () => {
+    if (target.kind === "document" && editorRef.current) {
+      const docNum = extractDocumentNumber(editorRef.current);
+      if (docNum) return docNum;
+    }
+    return name.trim() || defaultDocNumber || (target.kind === "template" ? copy.newTemplate : copy.newDocument);
+  };
+  const exportDocument = async (format: "docx" | "pdf" | "image-pdf" | "jpg") => {
     if (!editorRef.current || exporting) return;
     setExporting(true);
+    const exportName = resolveExportName();
     try {
-      if (format === "docx") await editorRef.current.exportDocx(name || copy.newDocument);
-      else await exportDocumentPages(await editorRef.current.getPageImages(), name || copy.newDocument, format);
+      if (format === "docx") await editorRef.current.exportDocx(exportName);
+      else await exportDocumentPages(await editorRef.current.getPageImages(), exportName, format);
       toast.success(copy === zh ? "文档已导出" : "Document exported");
     } catch (error) {
       console.error("Document export failed", error);
@@ -306,11 +316,13 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const save = () => {
     const html = editorRef.current?.getDocument();
     if (!html) return;
+    const company = extractDocumentCompany(editorRef.current) || extractDocumentCompany(html);
     try {
       onSave(target.kind, {
         id: target.record?.id || crypto.randomUUID(),
         type,
-        name: name.trim() || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
+        name: name.trim() || defaultDocNumber || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
+        company,
         html,
         updatedAt: new Date().toISOString(),
       });
@@ -322,22 +334,35 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
     if (!editorRef.current || exporting || !onAttach) return;
     setExporting(true);
     onBusyChange?.(true);
+    const exportName = resolveExportName();
     try {
-      const file = await createDocumentPDF(await editorRef.current.getPageImages(), name || copy.newDocument);
+      const file = await createDocumentPDF(await editorRef.current.getPageImages(), exportName);
       onAttach(file);
       toast.success(copy === zh ? "PDF 已添加到邮件附件" : "PDF added to email attachments");
-      onOpenChange(false);
+      setOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : copy.loadFailed);
     } finally { setExporting(false); onBusyChange?.(false); }
   };
 
   return (
-    <Dialog open onOpenChange={(value) => { if (!exporting) onOpenChange(value); }}>
-      <DialogContent data-testid="document-editor-dialog" data-editor-kind={target.kind} style={{ translate: "none", scale: "none" }} className="canvas-document-dialog flex h-[92vh] w-[94vw] max-w-[1400px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1400px]">
-        <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 text-left"><DialogTitle className="text-base">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle><DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription></DialogHeader>
+    <Dialog
+      open={open}
+      onOpenChange={handleOpenChange}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) onOpenChange(false);
+      }}
+    >
+      <DialogContent
+        data-testid="document-editor-dialog"
+        data-editor-kind={target.kind}
+        showCloseButton={false}
+        className="canvas-document-dialog fixed inset-0 flex h-screen w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+      >
+        <DialogTitle className="sr-only">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle>
+        <DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription>
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
-          {target.kind === "document" ? <Select value={selectedTemplateId} onValueChange={(value) => value && selectTemplate(value)}><SelectTrigger className="h-8 w-52" aria-label={copy.useTemplate}><SelectValue>{templates.find((template) => template.id === selectedTemplateId)?.name || copy.useTemplate}</SelectValue></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select> : <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
+          {target.kind === "template" && <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
           <Input className="h-8 min-w-40 flex-1 sm:max-w-72" value={name} onChange={(event) => setName(event.target.value)} placeholder={target.kind === "template" ? copy.templateName : copy.documentName} aria-label={target.kind === "template" ? copy.templateName : copy.documentName} />
           <div className="flex items-center gap-1 overflow-x-auto"><DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} /><Separator orientation="vertical" className="mx-1 h-5" /><DocumentAIAssistant copy={copy} editor={editorRef.current} accountEmail={accountEmail} type={type} title={name} disabled={!editorReady} /></div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -347,15 +372,17 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
             <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}><Printer />{copy.printDocument}</Button>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} />}><Download />{exporting ? (copy === zh ? "导出中…" : "Exporting…") : (copy === zh ? "导出" : "Export")}</DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => void exportDocument("docx")}>{copy === zh ? "下载 Word（DOCX）" : "Download Word (DOCX)"}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void exportDocument("pdf")}>{copy === zh ? "下载 PDF" : "Download PDF"}</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void exportDocument("png")}>{copy === zh ? "下载 PNG 图片（多页 ZIP）" : "Download PNG images (multi-page ZIP)"}</DropdownMenuItem>
-                <DropdownMenuItem onClick={downloadDocument}>{copy.downloadHTML}</DropdownMenuItem>
+              <DropdownMenuContent align="end" className="w-auto min-w-44 whitespace-nowrap">
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("docx")}>{copy === zh ? "下载 docx" : "Download docx"}</DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("pdf")}>{copy === zh ? "下载 PDF" : "Download PDF"}</DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("image-pdf")}>{copy === zh ? "下载 PDF（图片）" : "Download PDF (Image)"}</DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("jpg")}>{copy === zh ? "下载图片" : "Download Image"}</DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={downloadDocument}>{copy.downloadHTML}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={save}><Check />{copy.saveDocument}</Button>
             {onAttach && <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={() => void attachPDF()}><Paperclip />{exporting ? (copy === zh ? "正在生成 PDF…" : "Generating PDF…") : (copy === zh ? "作为 PDF 添加到邮件" : "Attach PDF to email")}</Button>}
+            <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => setOpen(false)}><X />{copy === zh ? "关闭" : "Close"}</Button>
           </div>
         </div>
         <div ref={editorScrollRef} className="canvas-document-scroll min-h-0 flex-1 overflow-auto bg-muted/30 p-3 sm:p-6">

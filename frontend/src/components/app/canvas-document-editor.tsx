@@ -1,13 +1,16 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode, VerticalAlign } from "@hufe921/canvas-editor";
+import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
-import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, controlText, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
+import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
+import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, type SpiraxContractValues } from "./spirax-contract-canvas";
 
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 
+export type DocumentTemplateKind = "spirax-quotation" | "spirax-contract" | "document";
+
 type StoredCanvasDocument = {
-  template?: "spirax-quotation" | "document";
+  template?: DocumentTemplateKind;
   data: ReturnType<CanvasEditor["command"]["getValue"]>["data"];
   options?: ReturnType<CanvasEditor["command"]["getValue"]>["options"];
 };
@@ -21,13 +24,6 @@ function parseStoredCanvasDocument(value: string): StoredCanvasDocument | null {
   } catch {
     return null;
   }
-}
-
-function containsText(value: unknown, text: string): boolean {
-  if (typeof value === "string") return value.includes(text);
-  if (Array.isArray(value)) return value.some((item) => containsText(item, text));
-  if (!value || typeof value !== "object") return false;
-  return Object.values(value).some((item) => containsText(item, text));
 }
 
 function extractPlainText(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]> | undefined): string {
@@ -238,6 +234,77 @@ function quotationNumber(html: string) {
     .querySelector("[data-spirax-quotation]")?.getAttribute("data-document-number") || undefined;
 }
 
+function contractNumber(html: string) {
+  return new DOMParser().parseFromString(html, "text/html")
+    .querySelector("[data-spirax-contract]")?.getAttribute("data-document-number") || undefined;
+}
+
+function resolveDocumentTemplateKind(html: string, stored?: StoredCanvasDocument | null): DocumentTemplateKind {
+  if (stored?.template === "spirax-contract") return "spirax-contract";
+  if (stored?.template === "spirax-quotation") return "spirax-quotation";
+  if (html.includes("data-spirax-contract")) return "spirax-contract";
+  if (html.includes("data-spirax-quotation")) return "spirax-quotation";
+  return "document";
+}
+
+function getCanvasEditorOptions(templateKind: DocumentTemplateKind) {
+  if (templateKind === "spirax-contract") {
+    return {
+      margins: [38, 38, 80, 38] as [number, number, number, number],
+      defaultFont: "Arial",
+      defaultColor: "#111827",
+      defaultSize: 10,
+      defaultRowMargin: 0.35,
+      background: {
+        image: createSpiraxContractCanvasBackground(),
+        size: BackgroundSize.COVER,
+        repeat: BackgroundRepeat.NO_REPEAT,
+      },
+      table: {
+        tdPadding: [2, 5, 2, 5] as [number, number, number, number],
+        defaultTrMinHeight: 12,
+        defaultBorderColor: "#005691",
+      },
+    };
+  }
+  if (templateKind === "spirax-quotation") {
+    return {
+      margins: [38, 38, 90, 38] as [number, number, number, number],
+      defaultFont: "Arial",
+      defaultColor: "#111827",
+      defaultSize: 11,
+      defaultRowMargin: 0.35,
+      background: {
+        image: createSpiraxQuotationCanvasBackground(),
+        size: BackgroundSize.COVER,
+        repeat: BackgroundRepeat.NO_REPEAT,
+      },
+      table: {
+        tdPadding: [0, 4, 0, 4] as [number, number, number, number],
+        defaultTrMinHeight: 12,
+        defaultBorderColor: "#d7dfec",
+      },
+    };
+  }
+  return {
+    margins: [64, 68, 64, 68] as [number, number, number, number],
+    defaultFont: "Arial",
+    defaultColor: "#111827",
+    defaultSize: 16,
+    defaultRowMargin: 1.25,
+    background: {
+      image: "",
+      size: BackgroundSize.COVER,
+      repeat: BackgroundRepeat.NO_REPEAT,
+    },
+    table: {
+      tdPadding: [5, 5, 5, 5] as [number, number, number, number],
+      defaultTrMinHeight: 24,
+      defaultBorderColor: "#d7dfec",
+    },
+  };
+}
+
 export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, CanvasDocumentEditorProps>(function CanvasDocumentEditor(
   { initialHTML, locale, onReady },
   forwardedRef,
@@ -246,8 +313,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const editorRef = useRef<CanvasEditor | null>(null);
   const readyRef = useRef(onReady);
   const storedDocument = parseStoredCanvasDocument(initialHTML);
-  const isSpiraxTemplate = initialHTML.includes("data-spirax-quotation") || storedDocument?.template === "spirax-quotation";
-  const templateRef = useRef(isSpiraxTemplate);
+  const initialTemplateKind = resolveDocumentTemplateKind(initialHTML, storedDocument);
+  const templateRef = useRef<DocumentTemplateKind>(initialTemplateKind);
 
   useEffect(() => {
     readyRef.current = onReady;
@@ -257,36 +324,35 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     const container = containerRef.current;
     if (!container) return;
 
+    const templateOptions = getCanvasEditorOptions(initialTemplateKind);
     const editor = new CanvasEditor(container, [{ value: "" }], {
       locale: locale.startsWith("zh") ? "zhCN" : "en",
       pageMode: PageMode.PAGING,
       width: 794,
       height: 1123,
-      margins: isSpiraxTemplate ? [38, 38, 90, 38] : [64, 68, 64, 68],
-      defaultFont: "Arial",
-      defaultColor: "#111827",
-      defaultSize: isSpiraxTemplate ? 11 : 16,
+      margins: templateOptions.margins,
+      defaultFont: templateOptions.defaultFont,
+      defaultColor: templateOptions.defaultColor,
+      defaultSize: templateOptions.defaultSize,
       // Canvas rowMargin adds space above and below each line; it is not CSS line-height.
-      defaultRowMargin: isSpiraxTemplate ? 0.35 : 1.25,
+      defaultRowMargin: templateOptions.defaultRowMargin,
       pageGap: 16,
-      table: {
-        tdPadding: isSpiraxTemplate ? [0, 4, 0, 4] : [5, 5, 5, 5],
-        defaultTrMinHeight: isSpiraxTemplate ? 12 : 24,
-        defaultBorderColor: "#d7dfec",
-      },
-      background: isSpiraxTemplate ? {
-        image: createSpiraxQuotationCanvasBackground(),
-        size: BackgroundSize.COVER,
-        repeat: BackgroundRepeat.NO_REPEAT,
-      } : undefined,
+      table: templateOptions.table,
+      background: templateOptions.background?.image ? templateOptions.background : undefined,
       placeholder: { data: "" },
     });
     editorRef.current = editor;
-    templateRef.current = isSpiraxTemplate;
+    templateRef.current = initialTemplateKind;
     if (storedDocument) {
       if (storedDocument.options) editor.command.executeUpdateOptions(storedDocument.options);
-      editor.command.executeSetValue(isSpiraxTemplate ? migrateLegacySpiraxDocument(storedDocument.data) : storedDocument.data);
-    } else if (isSpiraxTemplate) {
+      editor.command.executeSetValue(
+        initialTemplateKind === "spirax-quotation"
+          ? migrateLegacySpiraxDocument(storedDocument.data)
+          : storedDocument.data
+      );
+    } else if (initialTemplateKind === "spirax-contract") {
+      editor.command.executeSetValue({ main: createSpiraxContractCanvasDocument(new Date().toLocaleDateString(locale), contractNumber(initialHTML)) });
+    } else if (initialTemplateKind === "spirax-quotation") {
       editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(initialHTML)) });
     } else {
       editor.command.executeSetHTML({ main: normalizeDocumentHTML(initialHTML) });
@@ -297,7 +363,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.destroy();
       editorRef.current = null;
     };
-  }, [initialHTML, isSpiraxTemplate, locale]);
+  }, [initialHTML, initialTemplateKind, locale]);
 
   useImperativeHandle(forwardedRef, () => ({
     getHTML: () => editorRef.current?.command.getHTML().main || "",
@@ -305,7 +371,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const editor = editorRef.current;
       if (!editor) return "";
       const { data, options } = editor.command.getValue();
-      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: templateRef.current ? "spirax-quotation" : "document", data, options })}`;
+      const currentTemplate = templateRef.current !== "document" ? templateRef.current : "document";
+      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options })}`;
     },
     importDocx: async (file) => {
       const editor = editorRef.current;
@@ -315,7 +382,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (editorRef.current !== editor) return;
       editor.command.executeUpdateOptions(snapshot.options);
       editor.command.executeSetValue(snapshot.data);
-      templateRef.current = false;
+      templateRef.current = "document";
     },
     exportDocx: async (name) => {
       const editor = editorRef.current;
@@ -371,25 +438,38 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const editor = editorRef.current;
       if (!editor) return;
       const stored = parseStoredCanvasDocument(html);
-      const isSpiraxPlaceholder = html.includes("data-spirax-quotation") && !html.includes("<table");
-      const isContract = html.includes("合同") || html.includes("CONTRACT");
-      const spirax = isSpiraxPlaceholder || stored?.template === "spirax-quotation" || (!isContract && templateRef.current);
-      templateRef.current = spirax;
-      editor.command.executeUpdateOptions({
-        margins: spirax ? [38, 38, 90, 38] : [64, 68, 64, 68],
-        defaultSize: spirax ? 11 : 16,
-        defaultRowMargin: spirax ? 0.35 : 1.25,
-        background: {
-          image: spirax ? createSpiraxQuotationCanvasBackground() : "",
-          size: BackgroundSize.COVER,
-          repeat: BackgroundRepeat.NO_REPEAT,
-        },
-        table: { tdPadding: spirax ? [0, 4, 0, 4] : [5, 5, 5, 5], defaultTrMinHeight: spirax ? 12 : 24 },
-      });
+      const isContractPlaceholder = html.includes("data-spirax-contract") && !html.includes("<table");
+      const isQuotationPlaceholder = html.includes("data-spirax-quotation") && !html.includes("<table");
+      const isLegacyContract = (html.includes("合同") || html.includes("CONTRACT")) && !isContractPlaceholder && stored?.template !== "spirax-contract";
+
+      let nextTemplate: DocumentTemplateKind;
+      if (stored?.template) {
+        nextTemplate = stored.template;
+      } else if (isContractPlaceholder) {
+        nextTemplate = "spirax-contract";
+      } else if (isQuotationPlaceholder) {
+        nextTemplate = "spirax-quotation";
+      } else if (isLegacyContract) {
+        nextTemplate = "document";
+      } else if (templateRef.current && templateRef.current !== "document" && !html.includes("<table")) {
+        nextTemplate = templateRef.current;
+      } else {
+        nextTemplate = "document";
+      }
+
+      templateRef.current = nextTemplate;
+      editor.command.executeUpdateOptions(getCanvasEditorOptions(nextTemplate));
+
       if (stored) {
         if (stored.options) editor.command.executeUpdateOptions(stored.options);
-        editor.command.executeSetValue(spirax ? migrateLegacySpiraxDocument(stored.data) : stored.data);
-      } else if (spirax && isSpiraxPlaceholder) {
+        editor.command.executeSetValue(
+          nextTemplate === "spirax-quotation"
+            ? migrateLegacySpiraxDocument(stored.data)
+            : stored.data
+        );
+      } else if (nextTemplate === "spirax-contract" && isContractPlaceholder) {
+        editor.command.executeSetValue({ main: createSpiraxContractCanvasDocument(new Date().toLocaleDateString(locale), contractNumber(html)) });
+      } else if (nextTemplate === "spirax-quotation" && isQuotationPlaceholder) {
         editor.command.executeSetValue({ main: createSpiraxQuotationCanvasDocument(new Date().toLocaleDateString(locale), quotationNumber(html)) });
       } else {
         editor.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
@@ -553,7 +633,21 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const { values = {}, items } = payload;
       let applied = false;
 
-      if (templateRef.current && items && items.length > 0) {
+      // Normalize counterparty and document aliases across quotation and contract
+      if (values.customer_company && !values.buyer_company) values.buyer_company = values.customer_company;
+      if (values.buyer_company && !values.customer_company) values.customer_company = values.buyer_company;
+      if (values.customer_contact && !values.buyer_contact) values.buyer_contact = values.customer_contact;
+      if (values.buyer_contact && !values.customer_contact) values.customer_contact = values.buyer_contact;
+      if (values.customer_email && !values.buyer_email) values.buyer_email = values.customer_email;
+      if (values.buyer_email && !values.customer_email) values.customer_email = values.buyer_email;
+      if (values.customer_address && !values.buyer_address) values.buyer_address = values.customer_address;
+      if (values.buyer_address && !values.customer_address) values.customer_address = values.buyer_address;
+      if (values.quote_number && !values.contract_number) values.contract_number = values.quote_number;
+      if (values.contract_number && !values.quote_number) values.quote_number = values.contract_number;
+      if (values.issue_date && !values.contract_date) values.contract_date = values.issue_date;
+      if (values.contract_date && !values.issue_date) values.issue_date = values.contract_date;
+
+      if (templateRef.current === "spirax-quotation" && items && items.length > 0) {
         try {
           const snapshot = editor.command.getValue();
           const existing = extractLegacySpiraxValues(snapshot.data.main);
@@ -569,6 +663,23 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           return applied;
         } catch (err) {
           console.error("Failed to apply quotation document items", err);
+        }
+      } else if (templateRef.current === "spirax-contract" && items && items.length > 0) {
+        try {
+          const snapshot = editor.command.getValue();
+          const existing = extractLegacySpiraxContractValues(snapshot.data.main);
+          const merged: SpiraxContractValues = { ...existing, ...values };
+          const newMain = createSpiraxContractCanvasDocument(
+            merged.contract_date || "",
+            merged.contract_number || "",
+            merged,
+            items
+          );
+          editor.command.executeSetValue({ main: newMain });
+          applied = true;
+          return applied;
+        } catch (err) {
+          console.error("Failed to apply contract document items", err);
         }
       }
 
@@ -630,7 +741,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
       return applied;
     },
-  }), [isSpiraxTemplate, locale]);
+  }), [initialTemplateKind, locale]);
 
-  return <div ref={containerRef} className="canvas-document-editor" data-document-template={isSpiraxTemplate ? "spirax-quotation" : undefined} />;
+  return <div ref={containerRef} className="canvas-document-editor" data-document-template={templateRef.current !== "document" ? templateRef.current : undefined} />;
 });

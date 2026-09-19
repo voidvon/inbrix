@@ -36,7 +36,7 @@ try {
   const number = original.html.match(/SP-\d{8}-[A-F0-9]{8}/)[0];
   await editor.getByRole('button', { name: '导出', exact: true }).click();
   const downloadReady = page.waitForEvent('download', { timeout: 30000 });
-  await page.getByRole('menuitem', { name: '下载 Word（DOCX）', exact: true }).click();
+  await page.getByRole('menuitem', { name: '下载 docx', exact: true }).click();
   const download = await downloadReady;
   assert.equal(download.suggestedFilename(), 'Word round trip.docx');
   const path = join(artifacts, download.suggestedFilename());

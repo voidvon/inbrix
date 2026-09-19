@@ -9,12 +9,14 @@ export function spiraxQuotationTemplate(date: string) {
   return `<div data-spirax-quotation="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
 }
 
+export function spiraxContractTemplate(date: string) {
+  return `<div data-spirax-contract="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
+}
+
 export function documentTemplateHTML(type: DocumentTemplate, copy: Copy) {
   const date = new Date().toLocaleDateString(copy === en ? "en-US" : "zh-CN");
   if (type === "contract") {
-    return copy === en
-      ? `<h1 style="text-align:center">CONTRACT</h1><p><strong>Contract No.:</strong> [Contract number]</p><p><strong>Effective date:</strong> ${date}</p><p><strong>Party A:</strong> [Company / individual]</p><p><strong>Party B:</strong> [Company / individual]</p><h2>1. Scope</h2><p>[Describe the products, services, or cooperation covered by this contract.]</p><h2>2. Price and payment</h2><p>[Specify the contract value, payment method, and payment schedule.]</p><h2>3. Delivery and acceptance</h2><p>[Specify delivery milestones and acceptance criteria.]</p><h2>4. Rights and obligations</h2><p>[Specify the rights and obligations of each party.]</p><h2>5. Confidentiality and breach</h2><p>[Specify confidentiality obligations and liability for breach.]</p><h2>6. Term and termination</h2><p>[Specify the contract term and termination conditions.]</p><p><br></p><table><tbody><tr><td><strong>Party A (signature)</strong><p><br></p><p>Date:</p></td><td><strong>Party B (signature)</strong><p><br></p><p>Date:</p></td></tr></tbody></table>`
-      : `<h1 style="text-align:center">合同</h1><p><strong>合同编号：</strong>[合同编号]</p><p><strong>生效日期：</strong>${date}</p><p><strong>甲方：</strong>[公司或个人名称]</p><p><strong>乙方：</strong>[公司或个人名称]</p><h2>一、合同范围</h2><p>[填写本合同涉及的产品、服务或合作内容。]</p><h2>二、价款与支付</h2><p>[填写合同金额、支付方式和付款节点。]</p><h2>三、交付与验收</h2><p>[填写交付时间、阶段目标和验收标准。]</p><h2>四、双方权利与义务</h2><p>[填写甲乙双方的权利与义务。]</p><h2>五、保密与违约责任</h2><p>[填写保密义务与违约责任。]</p><h2>六、期限与终止</h2><p>[填写合同期限和终止条件。]</p><p><br></p><table><tbody><tr><td><strong>甲方（签章）</strong><p><br></p><p>日期：</p></td><td><strong>乙方（签章）</strong><p><br></p><p>日期：</p></td></tr></tbody></table>`;
+    return spiraxContractTemplate(date);
   }
   return spiraxQuotationTemplate(date);
 }
@@ -23,6 +25,7 @@ export type StoredDocument = {
   id: string;
   type: DocumentTemplate;
   name: string;
+  company?: string;
   html: string;
   updatedAt: string;
 };
@@ -96,6 +99,7 @@ export function readStoredTemplates(copy: Copy): StoredTemplate[] {
   const defaults = defaultDocumentTemplates(copy).map((template) => {
     const storedTemplate = storedById.get(template.id);
     if (template.id === "default-quotation" && !storedTemplate?.html.includes('data-spirax-quotation="reference-v1"')) return template;
+    if (template.id === "default-contract" && !storedTemplate?.html.includes('data-spirax-contract="reference-v1"')) return template;
     return storedTemplate || template;
   });
   return [...defaults.filter((template) => !deletedIds.has(template.id)), ...stored.filter((template) => !template.id.startsWith("default-") && !deletedIds.has(template.id))];

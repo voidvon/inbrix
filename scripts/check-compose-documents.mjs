@@ -88,7 +88,7 @@ try {
   await editor.getByRole('combobox').click();
   await page.getByRole('option', { name: '标准合同模板', exact: true }).click();
   await editor.getByRole('button', { name: '保存', exact: true }).click();
-  const contractNumber = await page.evaluate(() => localStorage.getItem('inbrix-documents').match(/CT-\d{8}-[A-F0-9]{8}/)?.[0]);
+  const contractNumber = await page.evaluate(() => localStorage.getItem('inbrix-documents').match(/(?:CT\d{10}|CT-\d{8}-[A-F0-9]{8})/)?.[0]);
   assert.ok(contractNumber, 'New contract must save an automatically generated contract number');
   await editor.getByRole('combobox').click();
   await page.getByRole('option', { name: '标准报价单模板', exact: true }).click();
