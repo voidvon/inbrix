@@ -554,11 +554,11 @@ func TestListMessageUIDsMissingBodyAndBatchAttachments(t *testing.T) {
 	// Batch update attachments for 2 and 3
 	err = s.BatchUpdateAttachmentMetadata(ctx, account.ID, "INBOX", []AttachmentMetadataUpdate{
 		{
-			UID: "2",
+			UID:         "2",
 			Attachments: []models.Attachment{{ID: "att-2", PartID: "1", Filename: "file2.txt", Size: 100}},
 		},
 		{
-			UID: "3",
+			UID:         "3",
 			Attachments: []models.Attachment{{ID: "att-3", PartID: "1", Filename: "file3.txt", Size: 200}},
 		},
 	})
