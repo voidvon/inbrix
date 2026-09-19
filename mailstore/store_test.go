@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"inbrix/handlers/api"
 	"inbrix/models"
 )
 
@@ -577,5 +578,61 @@ func TestListMessageUIDsMissingBodyAndBatchAttachments(t *testing.T) {
 	// Verify Store.DB() is non-nil
 	if s.DB() == nil {
 		t.Fatal("expected Store.DB() to return non-nil *sql.DB")
+	}
+}
+
+func TestGetFolderAndBatchSyncFlags(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "flags@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "flags@example.com", true)
+
+	// Upsert Folder
+	folder := Folder{
+		AccountID:    account.ID,
+		Name:         "INBOX",
+		UnreadCount:  5,
+		MessageCount: 10,
+		SyncComplete: true,
+	}
+	if err := s.UpsertFolder(ctx, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	gotFolder, err := s.GetFolder(ctx, account.ID, "INBOX")
+	if err != nil {
+		t.Fatalf("GetFolder failed: %v", err)
+	}
+	if gotFolder.Name != "INBOX" || gotFolder.MessageCount != 10 || gotFolder.UnreadCount != 5 {
+		t.Fatalf("unexpected folder: %+v", gotFolder)
+	}
+
+	// Upsert messages with unread flag
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{ID: "1", Flags: []string{}},
+		{ID: "2", Flags: []string{}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Batch sync flags: mark 1 as Seen, 2 as Flagged
+	err = s.BatchSyncFlags(ctx, account.ID, "INBOX", []api.MessageFlagItem{
+		{UID: 1, Flags: []string{`\Seen`}},
+		{UID: 2, Flags: []string{`\Flagged`}},
+	})
+	if err != nil {
+		t.Fatalf("BatchSyncFlags: %v", err)
+	}
+
+	msg1, err := s.GetMessage(ctx, account.ID, "INBOX", "1")
+	if err != nil || len(msg1.Flags) != 1 || msg1.Flags[0] != `\Seen` {
+		t.Fatalf("msg1 flags not updated: %+v, err=%v", msg1, err)
+	}
+	msg2, err := s.GetMessage(ctx, account.ID, "INBOX", "2")
+	if err != nil || len(msg2.Flags) != 1 || msg2.Flags[0] != `\Flagged` {
+		t.Fatalf("msg2 flags not updated: %+v, err=%v", msg2, err)
 	}
 }

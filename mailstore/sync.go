@@ -554,69 +554,101 @@ func needsInitialFolderSync(state SyncState, stateErr error) bool {
 	return stateErr != nil || state.LastError != "" || state.LastSyncAt.IsZero()
 }
 
-// syncFolderIncremental refreshes the newest metadata window (so read/unread
-// changes appear locally) and then walks every UID after the local high-water
-// mark. Walking pages from the oldest unseen UID prevents a burst larger than
-// batch_size from being skipped permanently.
+// syncFolderIncremental queries remote mailbox metadata first (UidNext, Messages)
+// to short-circuit sync when nothing has changed. It pulls only new messages
+// (UID > lastUID), refreshes flags using lightweight UID+FLAGS (without heavy
+// headers), and skips full remote UID scans unless message counts prove deletions.
 func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Client, accountID, folderName string) error {
 	batch := uint32(m.config.BatchSize)
+
+	// Step 1: Open remote mailbox to inspect server status (UidNext, Messages, Unseen)
+	mbox, err := client.Select(folderName, true)
+	if err != nil {
+		return fmt.Errorf("select folder %s: %w", folderName, err)
+	}
+
+	// Step 2: Read local high-water mark and folder metadata
 	lastUID, err := m.store.MaxMessageUID(ctx, accountID, folderName)
 	if err != nil {
 		return err
 	}
-
-	latest, err := client.FetchMessagesPaged(folderName, batch, 0)
-	if err != nil {
-		return fmt.Errorf("refresh latest messages: %w", err)
-	}
-	if len(latest) > 0 {
-		if err := m.store.UpsertMessages(ctx, accountID, folderName, latest); err != nil {
-			return err
-		}
-		if err := m.syncBodies(ctx, client, accountID, folderName, latest); err != nil {
-			return err
-		}
+	localFolder, err := m.store.GetFolder(ctx, accountID, folderName)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
 	}
 
-	cursor := lastUID
-	var newMessages []models.Email
-	for {
-		page, err := client.FetchMessagesSinceUID(folderName, cursor, batch)
-		if err != nil {
-			return fmt.Errorf("fetch new messages after UID %d: %w", cursor, err)
+	// Step 3: Check if new messages might exist on the server.
+	// If mbox.UidNext > 0 and lastUID >= mbox.UidNext - 1, no new message can have arrived.
+	hasPotentialNewMessages := true
+	if mbox.UidNext > 0 && lastUID > 0 && lastUID >= mbox.UidNext-1 {
+		hasPotentialNewMessages = false
+	}
+
+	// Step 4: Refresh flags on the newest messages window using lightweight UID+FLAGS only (no headers)
+	if mbox.Messages > 0 {
+		flagBatch := batch
+		if flagBatch > 100 {
+			flagBatch = 100
 		}
-		if len(page) == 0 {
-			break
-		}
-		if err := m.store.UpsertMessages(ctx, accountID, folderName, page); err != nil {
-			return err
-		}
-		if err := m.syncBodies(ctx, client, accountID, folderName, page); err != nil {
-			return err
-		}
-		newMessages = append(newMessages, page...)
-		maxUID := cursor
-		for _, email := range page {
-			if uid, parseErr := parseUIDString(email.ID); parseErr == nil && uint32(uid) > maxUID {
-				maxUID = uint32(uid)
+		flagItems, flagErr := client.FetchMessageFlagsPaged(folderName, flagBatch, 0)
+		if flagErr != nil {
+			log.Printf("mail sync: refresh flags %s: %v", folderName, flagErr)
+		} else if len(flagItems) > 0 {
+			if err := m.store.BatchSyncFlags(ctx, accountID, folderName, flagItems); err != nil {
+				return err
 			}
 		}
-		if maxUID <= cursor {
-			break
-		}
-		cursor = maxUID
-		if len(page) < int(batch) {
-			break
+	}
+
+	// Step 5: Pull new messages (only when hasPotentialNewMessages is true)
+	cursor := lastUID
+	var newMessages []models.Email
+	if hasPotentialNewMessages {
+		for {
+			page, err := client.FetchMessagesSinceUID(folderName, cursor, batch)
+			if err != nil {
+				return fmt.Errorf("fetch new messages after UID %d: %w", cursor, err)
+			}
+			if len(page) == 0 {
+				break
+			}
+			if err := m.store.UpsertMessages(ctx, accountID, folderName, page); err != nil {
+				return err
+			}
+			if err := m.syncBodies(ctx, client, accountID, folderName, page); err != nil {
+				return err
+			}
+			newMessages = append(newMessages, page...)
+			maxUID := cursor
+			for _, email := range page {
+				if uid, parseErr := parseUIDString(email.ID); parseErr == nil && uint32(uid) > maxUID {
+					maxUID = uint32(uid)
+				}
+			}
+			if maxUID <= cursor {
+				break
+			}
+			cursor = maxUID
+			if len(page) < int(batch) {
+				break
+			}
 		}
 	}
 
-	remoteUIDs, err := client.FetchMessageUIDs(folderName)
-	if err != nil {
-		return fmt.Errorf("reconcile remote UIDs: %w", err)
+	// Step 6: Prune deleted messages ONLY IF remote message count indicates deletions!
+	// If remote message count equals (localMessageCount + newlyAddedCount), no message was deleted.
+	expectedCount := uint32(localFolder.MessageCount) + uint32(len(newMessages))
+	needsPrune := mbox.Messages < expectedCount || (mbox.Messages == 0 && localFolder.MessageCount > 0)
+	if needsPrune {
+		remoteUIDs, err := client.FetchMessageUIDs(folderName)
+		if err != nil {
+			return fmt.Errorf("reconcile remote UIDs: %w", err)
+		}
+		if err := m.store.PruneFolder(ctx, accountID, folderName, remoteUIDs); err != nil {
+			return fmt.Errorf("prune deleted messages: %w", err)
+		}
 	}
-	if err := m.store.PruneFolder(ctx, accountID, folderName, remoteUIDs); err != nil {
-		return fmt.Errorf("prune deleted messages: %w", err)
-	}
+
 	if err := m.store.UpdateFolderStats(ctx, accountID, folderName); err != nil {
 		return err
 	}

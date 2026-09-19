@@ -4,6 +4,7 @@ package api
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	stdhtml "html"
 	"inbrix/models"
@@ -50,6 +51,67 @@ var listHeadersSection = &imap.BodySectionName{
 // FetchMessages retrieves the newest `limit` messages from a specified folder.
 func (c *Client) FetchMessages(folderName string, limit uint32) ([]models.Email, error) {
 	return c.FetchMessagesPaged(folderName, limit, 0)
+}
+
+// Select opens the named mailbox and returns its status, including UidNext,
+// Messages count, and Unseen count.
+func (c *Client) Select(folderName string, readOnly bool) (*imap.MailboxStatus, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("client is nil")
+	}
+	return c.client.Select(folderName, readOnly)
+}
+
+type MessageFlagItem struct {
+	UID   uint32
+	Flags []string
+}
+
+// FetchMessageFlagsPaged retrieves only UID and Flags for messages in folderName,
+// skipping message headers and bodies to minimize network and disk overhead.
+func (c *Client) FetchMessageFlagsPaged(folderName string, limit, offset uint32) ([]MessageFlagItem, error) {
+	mbox, err := c.client.Select(folderName, true)
+	if err != nil {
+		return nil, fmt.Errorf("error selecting folder %s: %v", folderName, err)
+	}
+
+	if mbox.Messages == 0 || offset >= mbox.Messages {
+		return []MessageFlagItem{}, nil
+	}
+
+	end := mbox.Messages - offset
+	from := uint32(1)
+	if end > limit {
+		from = end - limit + 1
+	}
+
+	seqSet := new(imap.SeqSet)
+	seqSet.AddRange(from, end)
+
+	messages := make(chan *imap.Message, limit)
+	items := []imap.FetchItem{
+		imap.FetchFlags,
+		imap.FetchUid,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.Fetch(seqSet, items, messages)
+	}()
+
+	var itemsOut []MessageFlagItem
+	for msg := range messages {
+		itemsOut = append(itemsOut, MessageFlagItem{
+			UID:   msg.Uid,
+			Flags: msg.Flags,
+		})
+	}
+
+	if err := <-done; err != nil {
+		return itemsOut, fmt.Errorf("error during flags fetch: %v", err)
+	}
+
+	return itemsOut, nil
 }
 
 // FetchMessagesPaged retrieves up to `limit` messages from folderName, skipping

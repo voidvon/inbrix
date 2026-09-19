@@ -567,6 +567,57 @@ func (s *Store) UpdateFlags(ctx context.Context, accountID, folderName, uid stri
 	return err
 }
 
+// BatchSyncFlags updates flags for locally cached messages. It respects
+// pending flag updates, and uses a WHERE clause to avoid dirtying pages
+// when flags are already identical.
+func (s *Store) BatchSyncFlags(ctx context.Context, accountID, folderName string, items []api.MessageFlagItem) error {
+	if len(items) == 0 || accountID == "" || folderName == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mailstore: begin flag sync: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	pendingSeen := make(map[int64]int)
+	seenRows, err := tx.QueryContext(ctx, `SELECT uid, add_flag FROM pending_flag_updates WHERE account_id = ? AND folder_name = ? AND flag = ?`, accountID, folderName, seenFlag)
+	if err != nil {
+		return fmt.Errorf("mailstore: query pending seen flags: %w", err)
+	}
+	for seenRows.Next() {
+		var uid int64
+		var addFlag int
+		if err := seenRows.Scan(&uid, &addFlag); err == nil {
+			pendingSeen[uid] = addFlag
+		}
+	}
+	seenRows.Close()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE messages
+		SET flags_json = ?, updated_at = ?
+		WHERE account_id = ? AND folder_name = ? AND uid = ? AND flags_json <> ?`)
+	if err != nil {
+		return fmt.Errorf("mailstore: prepare flag update: %w", err)
+	}
+	defer stmt.Close()
+
+	now := time.Now().Unix()
+	for _, item := range items {
+		flags := item.Flags
+		if addFlag, exists := pendingSeen[int64(item.UID)]; exists {
+			flags, _ = flagsWithState(flags, seenFlag, intBool(addFlag))
+		}
+		marshaled := marshalJSON(flags, "[]")
+		if _, err := stmt.ExecContext(ctx, marshaled, now, accountID, folderName, item.UID, marshaled); err != nil {
+			return fmt.Errorf("mailstore: update flag for %s/%s/%d: %w", accountID, folderName, item.UID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *Store) DeleteMessage(ctx context.Context, accountID, folderName, uid string) error {
 	n, err := parseUIDString(uid)
 	if err != nil {

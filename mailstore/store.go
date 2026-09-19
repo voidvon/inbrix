@@ -1174,6 +1174,28 @@ func (s *Store) ListFolders(ctx context.Context, accountID string) ([]Folder, er
 	return out, rows.Err()
 }
 
+func (s *Store) GetFolder(ctx context.Context, accountID, folderName string) (Folder, error) {
+	if accountID == "" || folderName == "" {
+		return Folder{}, fmt.Errorf("mailstore: folder account and name are required")
+	}
+	var f Folder
+	var attrs string
+	var complete int
+	var lastSync int64
+	err := s.db.QueryRowContext(ctx, `SELECT account_id, name, delimiter, attributes_json, unread_count, message_count, sync_complete, last_sync_at, last_error FROM folders WHERE account_id = ? AND name = ?`, accountID, folderName).
+		Scan(&f.AccountID, &f.Name, &f.Delimiter, &attrs, &f.UnreadCount, &f.MessageCount, &complete, &lastSync, &f.LastError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return Folder{}, fmt.Errorf("mailstore: get folder: %w", err)
+	}
+	unmarshalJSON(attrs, "[]", &f.Attributes)
+	f.SyncComplete = intBool(complete)
+	f.LastSyncAt = timeFromUnix(lastSync)
+	return f, nil
+}
+
 func (s *Store) GetSyncState(ctx context.Context, accountID, folderName string) (SyncState, error) {
 	var state SyncState
 	var complete, lastSync int
