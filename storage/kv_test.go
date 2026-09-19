@@ -69,3 +69,36 @@ func TestOpenDefaultsToSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOpenWithDBReusesConnectionPool(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared.db")
+	kv1, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kv1.Close()
+
+	sqlKV, ok := kv1.(*sqliteKV)
+	if !ok {
+		t.Fatal("expected *sqliteKV")
+	}
+
+	cfg := &config.Config{}
+	kv2, err := OpenWithDB(cfg, path, sqlKV.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Closing unowned kv2 must not close shared DB
+	if err := kv2.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// kv1 should still be completely functional
+	if err := kv1.Set("shared_ns", "key", []byte("value")); err != nil {
+		t.Fatalf("kv1 after kv2 close failed: %v", err)
+	}
+	val, err := kv1.Get("shared_ns", "key")
+	if err != nil || string(val) != "value" {
+		t.Fatalf("get shared: %q %v", val, err)
+	}
+}

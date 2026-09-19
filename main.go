@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"flag"
 	"fmt"
@@ -240,7 +241,11 @@ func main() {
 	// One durable store is shared by scheduled sends, thread metadata, recent
 	// recipients, Web Push, and legacy account compatibility. Standalone mode
 	// stores these namespaces in mail.db; Postgres remains opt-in.
-	durableKV, kvErr := storage.Open(config, config.MailSync.Database)
+	var durableDB *sql.DB
+	if mailMirror != nil {
+		durableDB = mailMirror.DB()
+	}
+	durableKV, kvErr := storage.OpenWithDB(config, config.MailSync.Database, durableDB)
 	if kvErr != nil {
 		log.Printf("durable storage unavailable: %v", kvErr)
 	} else {

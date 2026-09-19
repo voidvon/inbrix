@@ -12,7 +12,8 @@ import (
 )
 
 type sqliteKV struct {
-	db *sql.DB
+	db    *sql.DB
+	owned bool
 }
 
 // OpenSQLite stores namespaced values in the same SQLite file as the mail
@@ -27,23 +28,42 @@ func OpenSQLite(path string) (KV, error) {
 			return nil, fmt.Errorf("storage: create sqlite directory: %w", err)
 		}
 	}
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: open sqlite %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
+	if err := initSQLiteKV(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &sqliteKV{db: db, owned: true}, nil
+}
+
+// OpenSQLiteFromDB initializes the inbrix_kv schema on an existing DB pool,
+// sharing the connection pool and locks with the mail mirror.
+func OpenSQLiteFromDB(db *sql.DB) (KV, error) {
+	if db == nil {
+		return nil, fmt.Errorf("storage: sqlite db is nil")
+	}
+	if err := initSQLiteKV(db); err != nil {
+		return nil, err
+	}
+	return &sqliteKV{db: db, owned: false}, nil
+}
+
+func initSQLiteKV(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS inbrix_kv (
 		ns TEXT NOT NULL,
 		key TEXT NOT NULL,
 		val BLOB NOT NULL,
 		PRIMARY KEY (ns, key)
 	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("storage: initialize sqlite kv: %w", err)
+		return fmt.Errorf("storage: initialize sqlite kv: %w", err)
 	}
-	return &sqliteKV{db: db}, nil
+	return nil
 }
 
 func (s *sqliteKV) Get(ns, key string) ([]byte, error) {
@@ -86,4 +106,9 @@ func (s *sqliteKV) List(ns, prefix string) (map[string][]byte, error) {
 	return out, rows.Err()
 }
 
-func (s *sqliteKV) Close() error { return s.db.Close() }
+func (s *sqliteKV) Close() error {
+	if s.owned && s.db != nil {
+		return s.db.Close()
+	}
+	return nil
+}

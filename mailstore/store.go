@@ -166,7 +166,7 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
+	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: open %s: %w", path, err)
@@ -190,6 +190,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Path() string { return s.path }
+
+func (s *Store) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	statements := []string{

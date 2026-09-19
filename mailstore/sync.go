@@ -196,14 +196,23 @@ func (m *SyncManager) SyncNewMessagesNow(ctx context.Context, accountID, folderN
 			return err
 		}
 		maxUID := cursor
-		for _, email := range page {
-			if m.config.SyncBodies {
+		if m.config.SyncBodies {
+			var fullMessages []models.Email
+			for _, email := range page {
 				if full, fetchErr := client.FetchSingleMessage(folderName, email.ID); fetchErr != nil {
 					log.Printf("mail sync: immediate body fetch %s/%s: %v", folderName, email.ID, fetchErr)
-				} else if err := m.store.UpsertMessages(ctx, accountID, folderName, []models.Email{full}); err != nil {
+				} else {
+					full.AttachmentMetadataCached = true
+					fullMessages = append(fullMessages, full)
+				}
+			}
+			if len(fullMessages) > 0 {
+				if err := m.store.UpsertMessages(ctx, accountID, folderName, fullMessages); err != nil {
 					return err
 				}
 			}
+		}
+		for _, email := range page {
 			if uid, parseErr := parseUIDString(email.ID); parseErr == nil && uint32(uid) > maxUID {
 				maxUID = uint32(uid)
 			}
@@ -629,65 +638,88 @@ func (m *SyncManager) syncBodies(ctx context.Context, client *api.Client, accoun
 	// fetch. The local query adds every older row whose attachment metadata
 	// predates the marker, so an incremental sync also repairs the historical
 	// mailbox instead of only the newest batch.
-	pending := make([]string, 0, len(page))
-	pageIDs := make(map[string]struct{}, len(page))
-	seen := make(map[string]struct{}, len(page))
-	for _, email := range page {
-		if email.ID == "" {
-			continue
+	var bodyNeeded []string
+	if m.config.SyncBodies && len(page) > 0 {
+		var pageUIDs []string
+		for _, email := range page {
+			if email.ID != "" {
+				pageUIDs = append(pageUIDs, email.ID)
+			}
 		}
-		pending = append(pending, email.ID)
-		pageIDs[email.ID] = struct{}{}
-		seen[email.ID] = struct{}{}
+		var err error
+		bodyNeeded, err = m.store.ListMessageUIDsMissingBody(ctx, accountID, folderName, pageUIDs)
+		if err != nil {
+			return err
+		}
 	}
-	missing, err := m.store.ListMessageUIDsMissingAttachmentMetadata(ctx, accountID, folderName)
+
+	missingMeta, err := m.store.ListMessageUIDsMissingAttachmentMetadata(ctx, accountID, folderName)
 	if err != nil {
 		return err
 	}
-	for _, uid := range missing {
-		if _, ok := seen[uid]; ok {
-			continue
-		}
-		pending = append(pending, uid)
+
+	if len(bodyNeeded) == 0 && len(missingMeta) == 0 {
+		return nil
 	}
 
-	for _, uid := range pending {
-		cached, err := m.store.GetMessage(ctx, accountID, folderName, uid)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return fmt.Errorf("check body cache %s/%s: %w", folderName, uid, err)
-		}
-		_, isPageMessage := pageIDs[uid]
-		if isPageMessage && m.config.SyncBodies && !cached.BodyCached {
+	fetchedBodyUIDs := make(map[string]struct{}, len(bodyNeeded))
+	if len(bodyNeeded) > 0 {
+		var fullMessages []models.Email
+		for _, uid := range bodyNeeded {
 			fullMessage, fetchErr := client.FetchSingleMessage(folderName, uid)
 			if fetchErr != nil {
 				// Header synchronization remains useful when one body is malformed or
 				// unavailable, so body failures are logged and do not abort the batch.
 				log.Printf("mail sync: fetch body %s/%s: %v", folderName, uid, fetchErr)
-			} else {
-				if err := m.store.UpsertMessages(ctx, accountID, folderName, []models.Email{fullMessage}); err != nil {
-					return err
-				}
 				continue
 			}
+			fullMessage.AttachmentMetadataCached = true
+			fetchedBodyUIDs[uid] = struct{}{}
+			fullMessages = append(fullMessages, fullMessage)
+			if len(fullMessages) >= 20 {
+				if err := m.store.UpsertMessages(ctx, accountID, folderName, fullMessages); err != nil {
+					return err
+				}
+				fullMessages = fullMessages[:0]
+			}
 		}
-		if cached.AttachmentMetadataCached {
-			// The body may be intentionally uncached when sync_bodies=false, but
-			// there is no metadata work left for this message.
-			continue
-		}
-		attachments, fetchErr := client.FetchAttachmentMetadata(folderName, uid)
-		if fetchErr != nil {
-			// Header synchronization remains useful when one MIME structure is
-			// malformed or unavailable, so metadata failures do not abort the batch.
-			log.Printf("mail sync: fetch attachment metadata %s/%s: %v", folderName, uid, fetchErr)
-			continue
-		}
-		if err := m.store.UpdateAttachmentMetadata(ctx, accountID, folderName, uid, attachments); err != nil {
-			return err
+		if len(fullMessages) > 0 {
+			if err := m.store.UpsertMessages(ctx, accountID, folderName, fullMessages); err != nil {
+				return err
+			}
 		}
 	}
+
+	if len(missingMeta) > 0 {
+		var attachmentUpdates []AttachmentMetadataUpdate
+		for _, uid := range missingMeta {
+			if _, alreadyFetched := fetchedBodyUIDs[uid]; alreadyFetched {
+				continue
+			}
+			attachments, fetchErr := client.FetchAttachmentMetadata(folderName, uid)
+			if fetchErr != nil {
+				// Header synchronization remains useful when one MIME structure is
+				// malformed or unavailable, so metadata failures do not abort the batch.
+				log.Printf("mail sync: fetch attachment metadata %s/%s: %v", folderName, uid, fetchErr)
+				continue
+			}
+			attachmentUpdates = append(attachmentUpdates, AttachmentMetadataUpdate{
+				UID:         uid,
+				Attachments: attachments,
+			})
+			if len(attachmentUpdates) >= 50 {
+				if err := m.store.BatchUpdateAttachmentMetadata(ctx, accountID, folderName, attachmentUpdates); err != nil {
+					return err
+				}
+				attachmentUpdates = attachmentUpdates[:0]
+			}
+		}
+		if len(attachmentUpdates) > 0 {
+			if err := m.store.BatchUpdateAttachmentMetadata(ctx, accountID, folderName, attachmentUpdates); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }

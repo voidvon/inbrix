@@ -523,3 +523,59 @@ func TestRegistrationSettingDefaultsOpenAndPersists(t *testing.T) {
 		t.Fatalf("updated registration setting = %t, err=%v", open, err)
 	}
 }
+
+func TestListMessageUIDsMissingBodyAndBatchAttachments(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "batch@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "batch@example.com", true)
+
+	// Upsert 3 messages: msg 1 has body, msg 2 has no body, msg 3 has no body
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{ID: "1", Subject: "One", Body: "body 1", BodyCached: true},
+		{ID: "2", Subject: "Two", Body: ""},
+		{ID: "3", Subject: "Three", Body: ""},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	missingBody, err := s.ListMessageUIDsMissingBody(ctx, account.ID, "INBOX", []string{"1", "2", "3", "99"})
+	if err != nil {
+		t.Fatalf("ListMessageUIDsMissingBody: %v", err)
+	}
+	if len(missingBody) != 2 || missingBody[0] != "2" || missingBody[1] != "3" {
+		t.Fatalf("unexpected missing body UIDs: %v", missingBody)
+	}
+
+	// Batch update attachments for 2 and 3
+	err = s.BatchUpdateAttachmentMetadata(ctx, account.ID, "INBOX", []AttachmentMetadataUpdate{
+		{
+			UID: "2",
+			Attachments: []models.Attachment{{ID: "att-2", PartID: "1", Filename: "file2.txt", Size: 100}},
+		},
+		{
+			UID: "3",
+			Attachments: []models.Attachment{{ID: "att-3", PartID: "1", Filename: "file3.txt", Size: 200}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BatchUpdateAttachmentMetadata: %v", err)
+	}
+
+	msg2, err := s.GetMessage(ctx, account.ID, "INBOX", "2")
+	if err != nil || !msg2.AttachmentMetadataCached || len(msg2.Attachments) != 1 {
+		t.Fatalf("msg2 attachment metadata not updated: %+v, err=%v", msg2, err)
+	}
+	msg3, err := s.GetMessage(ctx, account.ID, "INBOX", "3")
+	if err != nil || !msg3.AttachmentMetadataCached || len(msg3.Attachments) != 1 {
+		t.Fatalf("msg3 attachment metadata not updated: %+v, err=%v", msg3, err)
+	}
+
+	// Verify Store.DB() is non-nil
+	if s.DB() == nil {
+		t.Fatal("expected Store.DB() to return non-nil *sql.DB")
+	}
+}

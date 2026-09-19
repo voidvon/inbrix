@@ -9,6 +9,7 @@
 package storage
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -38,8 +39,17 @@ type KV interface {
 // Open constructs the KV backend selected by cfg.Storage. sqlitePath is ignored
 // by Postgres. An omitted backend selects SQLite.
 func Open(cfg *config.Config, sqlitePath string) (KV, error) {
+	return OpenWithDB(cfg, sqlitePath, nil)
+}
+
+// OpenWithDB constructs the KV backend, reusing existingDB when selecting SQLite
+// so both subsystems share a single SQLite connection pool and locks.
+func OpenWithDB(cfg *config.Config, sqlitePath string, existingDB *sql.DB) (KV, error) {
 	switch cfg.Storage.Backend {
 	case "", "sqlite":
+		if existingDB != nil {
+			return OpenSQLiteFromDB(existingDB)
+		}
 		return OpenSQLite(sqlitePath)
 	case "postgres":
 		if cfg.Storage.PostgresDSN == "" {

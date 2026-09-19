@@ -20,6 +20,9 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 	if accountID == "" || folderName == "" {
 		return fmt.Errorf("mailstore: message account and folder are required")
 	}
+	if len(emails) == 0 {
+		return nil
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -49,22 +52,56 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 			body=CASE WHEN excluded.body_cached = 1 THEN excluded.body ELSE messages.body END,
 			html=CASE WHEN excluded.body_cached = 1 THEN excluded.html ELSE messages.html END,
 			body_cached=MAX(messages.body_cached, excluded.body_cached),
-			attachment_metadata_cached=MAX(messages.attachment_metadata_cached, excluded.attachment_metadata_cached), updated_at=excluded.updated_at`
+			attachment_metadata_cached=MAX(messages.attachment_metadata_cached, excluded.attachment_metadata_cached),
+			updated_at=excluded.updated_at
+		WHERE excluded.flags_json <> messages.flags_json
+			OR (excluded.body_cached = 1 AND (messages.body_cached = 0 OR excluded.body <> messages.body OR excluded.html <> messages.html))
+			OR (excluded.attachment_metadata_cached = 1 AND (messages.attachment_metadata_cached = 0 OR excluded.attachments_json <> messages.attachments_json))
+			OR excluded.subject <> messages.subject
+			OR excluded.preview <> messages.preview
+			OR excluded.date_unix <> messages.date_unix
+			OR excluded.from_addr <> messages.from_addr
+			OR excluded.from_name <> messages.from_name
+			OR excluded.to_addrs <> messages.to_addrs
+			OR excluded.to_names_json <> messages.to_names_json
+			OR excluded.cc <> messages.cc
+			OR (excluded.auth_json <> '' AND excluded.auth_json <> messages.auth_json)
+			OR (excluded.unsubscribe_json <> '' AND excluded.unsubscribe_json <> messages.unsubscribe_json)
+			OR (excluded.invite_json <> '' AND excluded.invite_json <> messages.invite_json)
+			OR (excluded.brand_json <> '' AND excluded.brand_json <> messages.brand_json)`
 	stmt, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("mailstore: prepare message upsert: %w", err)
 	}
 	defer stmt.Close()
-	pendingSeenStmt, err := tx.PrepareContext(ctx, `SELECT add_flag FROM pending_flag_updates WHERE account_id = ? AND folder_name = ? AND uid = ? AND flag = ?`)
+
+	// Prefetch pending moves and flags in batch to avoid 2 queries per email.
+	pendingMoves := make(map[int64]struct{})
+	moveRows, err := tx.QueryContext(ctx, `SELECT uid FROM pending_message_moves WHERE account_id = ? AND folder_name = ?`, accountID, folderName)
 	if err != nil {
-		return fmt.Errorf("mailstore: prepare pending flag lookup: %w", err)
+		return fmt.Errorf("mailstore: query pending moves: %w", err)
 	}
-	defer pendingSeenStmt.Close()
-	pendingMoveStmt, err := tx.PrepareContext(ctx, `SELECT 1 FROM pending_message_moves WHERE account_id = ? AND folder_name = ? AND uid = ?`)
+	for moveRows.Next() {
+		var uid int64
+		if err := moveRows.Scan(&uid); err == nil {
+			pendingMoves[uid] = struct{}{}
+		}
+	}
+	moveRows.Close()
+
+	pendingSeen := make(map[int64]int)
+	seenRows, err := tx.QueryContext(ctx, `SELECT uid, add_flag FROM pending_flag_updates WHERE account_id = ? AND folder_name = ? AND flag = ?`, accountID, folderName, seenFlag)
 	if err != nil {
-		return fmt.Errorf("mailstore: prepare pending move lookup: %w", err)
+		return fmt.Errorf("mailstore: query pending seen flags: %w", err)
 	}
-	defer pendingMoveStmt.Close()
+	for seenRows.Next() {
+		var uid int64
+		var addFlag int
+		if err := seenRows.Scan(&uid, &addFlag); err == nil {
+			pendingSeen[uid] = addFlag
+		}
+	}
+	seenRows.Close()
 
 	now := time.Now().Unix()
 	for _, email := range emails {
@@ -72,23 +109,17 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		if err != nil {
 			continue
 		}
-		var pendingMove int
-		if lookupErr := pendingMoveStmt.QueryRowContext(ctx, accountID, folderName, uid).Scan(&pendingMove); lookupErr == nil {
+		if _, exists := pendingMoves[uid]; exists {
 			continue
-		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
-			return fmt.Errorf("mailstore: read pending move check for %s/%s/%s: %w", accountID, folderName, email.ID, lookupErr)
 		}
-		var pendingSeen int
-		if lookupErr := pendingSeenStmt.QueryRowContext(ctx, accountID, folderName, uid, seenFlag).Scan(&pendingSeen); lookupErr == nil {
-			email.Flags, _ = flagsWithState(email.Flags, seenFlag, intBool(pendingSeen))
-		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
-			return fmt.Errorf("mailstore: read pending flag override for %s/%s/%s: %w", accountID, folderName, email.ID, lookupErr)
+		if addFlag, exists := pendingSeen[uid]; exists {
+			email.Flags, _ = flagsWithState(email.Flags, seenFlag, intBool(addFlag))
 		}
 		email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
 		bodyCached := email.BodyCached || email.Body != "" || email.HTML != ""
 		attachmentMetadataCached := email.AttachmentMetadataCached || len(email.Attachments) > 0
 		hasAttachments := email.HasAttachments || hasRegularAttachment(email.Attachments)
-		_, err = stmt.ExecContext(ctx,
+		res, err := stmt.ExecContext(ctx,
 			accountID, folderName, uid, unixOrZero(email.Date), email.From, email.FromName,
 			email.To, marshalJSON(email.ToNames, "[]"), email.Cc, email.Subject, email.Preview,
 			email.Body, email.HTML, marshalJSON(email.Flags, "[]"), marshalJSON(email.Attachments, "[]"),
@@ -99,7 +130,8 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		if err != nil {
 			return fmt.Errorf("mailstore: upsert message %s/%s/%s: %w", accountID, folderName, email.ID, err)
 		}
-		if attachmentMetadataCached {
+		rowsAffected, _ := res.RowsAffected()
+		if attachmentMetadataCached && rowsAffected > 0 {
 			if err := replaceMessageAttachments(ctx, tx, accountID, folderName, uid, email.Attachments); err != nil {
 				return err
 			}
@@ -112,43 +144,75 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 	return nil
 }
 
+type AttachmentMetadataUpdate struct {
+	UID         string
+	Attachments []models.Attachment
+}
+
+// BatchUpdateAttachmentMetadata updates MIME attachment metadata for multiple
+// messages in a single transaction to minimize write amplification and fsyncs.
+func (s *Store) BatchUpdateAttachmentMetadata(ctx context.Context, accountID, folderName string, updates []AttachmentMetadataUpdate) error {
+	if accountID == "" || folderName == "" {
+		return fmt.Errorf("mailstore: message account and folder are required")
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mailstore: begin batch attachment metadata update: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	selectHTMLStmt, err := tx.PrepareContext(ctx, `SELECT html FROM messages WHERE account_id = ? AND folder_name = ? AND uid = ?`)
+	if err != nil {
+		return fmt.Errorf("mailstore: prepare batch attachment html select: %w", err)
+	}
+	defer selectHTMLStmt.Close()
+
+	updateMsgStmt, err := tx.PrepareContext(ctx, `
+		UPDATE messages
+		SET attachments_json = ?, has_attachments = ?, attachment_metadata_cached = 1, updated_at = ?
+		WHERE account_id = ? AND folder_name = ? AND uid = ?`)
+	if err != nil {
+		return fmt.Errorf("mailstore: prepare batch attachment message update: %w", err)
+	}
+	defer updateMsgStmt.Close()
+
+	now := time.Now().Unix()
+	for _, update := range updates {
+		n, err := parseUIDString(update.UID)
+		if err != nil {
+			continue
+		}
+		var htmlBody string
+		if err := selectHTMLStmt.QueryRowContext(ctx, accountID, folderName, n).Scan(&htmlBody); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("mailstore: read message HTML for attachment metadata %s/%s/%s: %w", accountID, folderName, update.UID, err)
+		}
+		attachments := api.MarkInlineAttachmentsFromHTML(htmlBody, update.Attachments)
+		_, err = updateMsgStmt.ExecContext(ctx,
+			marshalJSON(attachments, "[]"), boolInt(hasRegularAttachment(attachments)), now, accountID, folderName, n)
+		if err != nil {
+			return fmt.Errorf("mailstore: update attachment metadata %s/%s/%s: %w", accountID, folderName, update.UID, err)
+		}
+		if err := replaceMessageAttachments(ctx, tx, accountID, folderName, n, attachments); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mailstore: commit batch attachment metadata update: %w", err)
+	}
+	return nil
+}
+
 // UpdateAttachmentMetadata updates only MIME attachment metadata. This is
 // intentionally separate from UpsertMessages because a BODYSTRUCTURE-only
 // IMAP fetch does not contain the message headers or body and must not erase
 // either from the local mirror.
 func (s *Store) UpdateAttachmentMetadata(ctx context.Context, accountID, folderName, uid string, attachments []models.Attachment) error {
-	if accountID == "" || folderName == "" {
-		return fmt.Errorf("mailstore: message account and folder are required")
-	}
-	n, err := parseUIDString(uid)
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("mailstore: begin attachment metadata update: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-	var htmlBody string
-	if err := tx.QueryRowContext(ctx, `SELECT html FROM messages WHERE account_id = ? AND folder_name = ? AND uid = ?`, accountID, folderName, n).Scan(&htmlBody); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("mailstore: read message HTML for attachment metadata %s/%s/%s: %w", accountID, folderName, uid, err)
-	}
-	attachments = api.MarkInlineAttachmentsFromHTML(htmlBody, attachments)
-	_, err = tx.ExecContext(ctx, `
-		UPDATE messages
-		SET attachments_json = ?, has_attachments = ?, attachment_metadata_cached = 1, updated_at = ?
-		WHERE account_id = ? AND folder_name = ? AND uid = ?`,
-		marshalJSON(attachments, "[]"), boolInt(hasRegularAttachment(attachments)), time.Now().Unix(), accountID, folderName, n)
-	if err != nil {
-		return fmt.Errorf("mailstore: update attachment metadata %s/%s/%s: %w", accountID, folderName, uid, err)
-	}
-	if err := replaceMessageAttachments(ctx, tx, accountID, folderName, n, attachments); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("mailstore: commit attachment metadata update: %w", err)
-	}
-	return nil
+	return s.BatchUpdateAttachmentMetadata(ctx, accountID, folderName, []AttachmentMetadataUpdate{
+		{UID: uid, Attachments: attachments},
+	})
 }
 
 type messageAttachmentExecer interface {
@@ -397,6 +461,59 @@ func (s *Store) ListMessageUIDsMissingAttachmentMetadata(ctx context.Context, ac
 	return uids, nil
 }
 
+// ListMessageUIDsMissingBody returns the subset of given UIDs that do not have
+// their full body cached locally.
+func (s *Store) ListMessageUIDsMissingBody(ctx context.Context, accountID, folderName string, uids []string) ([]string, error) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+	intUIDs := make([]any, 0, len(uids))
+	for _, uid := range uids {
+		if n, err := parseUIDString(uid); err == nil {
+			intUIDs = append(intUIDs, n)
+		}
+	}
+	if len(intUIDs) == 0 {
+		return nil, nil
+	}
+
+	const chunkSize = 200
+	var missing []string
+	for i := 0; i < len(intUIDs); i += chunkSize {
+		end := i + chunkSize
+		if end > len(intUIDs) {
+			end = len(intUIDs)
+		}
+		chunk := intUIDs[i:end]
+		placeholders := strings.Repeat("?,", len(chunk))
+		placeholders = placeholders[:len(placeholders)-1]
+
+		query := `SELECT uid FROM messages WHERE account_id = ? AND folder_name = ? AND body_cached = 0 AND uid IN (` + placeholders + `) ORDER BY uid ASC`
+		args := make([]any, 0, 2+len(chunk))
+		args = append(args, accountID, folderName)
+		args = append(args, chunk...)
+
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("mailstore: list messages missing body: %w", err)
+		}
+		for rows.Next() {
+			var uid int64
+			if err := rows.Scan(&uid); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("mailstore: scan message UID missing body: %w", err)
+			}
+			missing = append(missing, fmt.Sprintf("%d", uid))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("mailstore: list messages missing body: %w", err)
+		}
+		rows.Close()
+	}
+	return missing, nil
+}
+
 // ResetAttachmentMetadata marks all mirrored messages for an account as
 // pending. It is used by the explicit repair action so a user can request a
 // fresh MIME-structure scan even when the previous attempt was interrupted.
@@ -422,7 +539,7 @@ func (s *Store) UpdateFolderStats(ctx context.Context, accountID, folderName str
 	if err != nil {
 		return fmt.Errorf("mailstore: folder stats: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE folders SET message_count = ?, unread_count = ? WHERE account_id = ? AND name = ?`, messageCount, unreadCount, accountID, folderName)
+	_, err = s.db.ExecContext(ctx, `UPDATE folders SET message_count = ?, unread_count = ? WHERE account_id = ? AND name = ? AND (message_count <> ? OR unread_count <> ?)`, messageCount, unreadCount, accountID, folderName, messageCount, unreadCount)
 	return err
 }
 
