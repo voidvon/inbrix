@@ -109,9 +109,9 @@ E_NO_TOOL=10
 E_ATTEST=11
 E_INSECURE=12
 
-if [ -t 2 ] && command -v tput >/dev/null 2>&1; then
-  RED="$(tput setaf 1)"; GRN="$(tput setaf 2)"; YEL="$(tput setaf 3)"
-  BLD="$(tput bold)"; RST="$(tput sgr0)"
+if [ -t 2 ] && [ "${TERM:-}" != "dumb" ] && command -v tput >/dev/null 2>&1 && tput setaf 1 >/dev/null 2>&1; then
+  RED="$(tput setaf 1 2>/dev/null || true)"; GRN="$(tput setaf 2 2>/dev/null || true)"; YEL="$(tput setaf 3 2>/dev/null || true)"
+  BLD="$(tput bold 2>/dev/null || true)"; RST="$(tput sgr0 2>/dev/null || true)"
 else
   RED=''; GRN=''; YEL=''; BLD=''; RST=''
 fi

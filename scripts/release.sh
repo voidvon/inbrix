@@ -90,7 +90,7 @@ echo "==> 运行 $tag 完整发布检查"
 if ! make check; then
   git tag -d "$tag" >/dev/null 2>&1 || true
   git reset --hard HEAD~1 >/dev/null 2>&1 || true
-  die "make check 检查未通过（请查看上方具体报错日志）。已自动回滚本地生成的发布提交与标签 $tag，请修复问题后再试。"
+  die "make check 检查未通过（请查看上方具体报错日志）。已自动回滚本地生成的发布提交与标签 ${tag}，请修复问题后再试。"
 fi
 [[ -z $(git status --porcelain) ]] || die "发布检查修改了已跟踪文件，请检查并提交后再发布"
 
