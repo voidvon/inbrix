@@ -82,7 +82,20 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
             else if (label.includes("Payment Terms")) values.payment_terms = val;
             else if (label.includes("Notes")) values.notes = val;
           }
-          if (tr.tdList.length === 5) {
+          if (tr.tdList.length === 6) {
+            const first = extractPlainText(tr.tdList[0].value);
+            if (first && !first.includes("MODEL")) {
+              values.item_model = first;
+              const imgEl = tr.tdList[1].value?.find((el) => el.type === ElementType.IMAGE);
+              if (imgEl?.value) {
+                values.item_picture = imgEl.value;
+              }
+              values.item_description = extractPlainText(tr.tdList[2].value);
+              values.item_qty = extractPlainText(tr.tdList[3].value);
+              values.item_price = extractPlainText(tr.tdList[4].value);
+              values.item_amount = extractPlainText(tr.tdList[5].value);
+            }
+          } else if (tr.tdList.length === 5) {
             const first = extractPlainText(tr.tdList[0].value);
             if (first && !first.includes("MODEL")) {
               values.item_model = first;
@@ -106,6 +119,7 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
   while (`item_model_${index}` in values) {
     extractedItems.push({
       model: values[`item_model_${index}`] || "",
+      picture: values[`item_picture_${index}`],
       description: values[`item_description_${index}`] || "",
       qty: values[`item_qty_${index}`] || "",
       price: values[`item_price_${index}`] || "",
@@ -119,6 +133,7 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
     values.items = [
       {
         model: values.item_model,
+        picture: values.item_picture,
         description: values.item_description || "",
         qty: values.item_qty || "",
         price: values.item_price || "",
@@ -141,7 +156,7 @@ function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]): Stored
   };
 }
 
-function readFileAsDataURL(file: File) {
+function readFileAsDataURL(file: Blob | File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
@@ -159,7 +174,7 @@ function loadBrowserImage(source: string) {
   });
 }
 
-async function prepareEmbeddedImage(file: File) {
+async function prepareEmbeddedImage(file: File | Blob, inTable = false) {
   const original = await readFileAsDataURL(file);
   const image = await loadBrowserImage(original);
   const naturalWidth = image.naturalWidth || image.width || 640;
@@ -173,11 +188,13 @@ async function prepareEmbeddedImage(file: File) {
     canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
     value = canvas.toDataURL(file.type === "image/png" && file.size <= 1_500_000 ? "image/png" : "image/webp", 0.86);
   }
-  const displayScale = Math.min(1, 560 / naturalWidth, 680 / naturalHeight);
+  const maxW = inTable ? 96 : 560;
+  const maxH = inTable ? 90 : 680;
+  const displayScale = Math.min(1, maxW / naturalWidth, maxH / naturalHeight);
   return {
     value,
-    width: Math.max(24, Math.round(naturalWidth * displayScale)),
-    height: Math.max(24, Math.round(naturalHeight * displayScale)),
+    width: Math.max(20, Math.round(naturalWidth * displayScale)),
+    height: Math.max(20, Math.round(naturalHeight * displayScale)),
   };
 }
 
@@ -341,6 +358,22 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       background: templateOptions.background?.image ? templateOptions.background : undefined,
       placeholder: { data: "" },
     });
+    editor.override.pasteImage = (file: File | Blob) => {
+      const positionContext = (editor as unknown as { draw?: { getPosition?: () => { getPositionContext?: () => { isTable?: boolean } } } })
+        .draw?.getPosition?.()?.getPositionContext?.();
+      const inTable = Boolean(positionContext?.isTable);
+      void prepareEmbeddedImage(file, inTable).then((embedded) => {
+        editor.command.executeInsertElementList([
+          {
+            type: ElementType.IMAGE,
+            value: embedded.value,
+            width: embedded.width,
+            height: embedded.height,
+          },
+        ]);
+      });
+      return { preventDefault: true };
+    };
     editorRef.current = editor;
     templateRef.current = initialTemplateKind;
     if (storedDocument) {
@@ -396,7 +429,10 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (!editor) return;
       if (file.size > MAX_DOCUMENT_ATTACHMENT_BYTES) throw new Error("Attachment exceeds the 3 MB document limit");
       if (file.type.startsWith("image/") || /\.svg$/i.test(file.name)) {
-        const image = await prepareEmbeddedImage(file);
+        const positionContext = (editor as unknown as { draw?: { getPosition?: () => { getPositionContext?: () => { isTable?: boolean } } } })
+          .draw?.getPosition?.()?.getPositionContext?.();
+        const inTable = Boolean(positionContext?.isTable);
+        const image = await prepareEmbeddedImage(file, inTable);
         editor.command.executeFocus();
         const imageId = editor.command.executeImage({ ...image, imgDisplay: ImageDisplay.INLINE, extension: { attachmentName: file.name, attachmentType: file.type, attachmentSize: file.size } });
         if (!imageId) throw new Error("Unable to insert image at the current cursor position");

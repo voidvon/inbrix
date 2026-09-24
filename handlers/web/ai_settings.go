@@ -677,45 +677,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusPreconditionRequired, "AI model API key is not configured")
 	}
 	if input.Mode == "variables" || len(input.Variables) > 0 {
-		instructions := `You are a professional business document assistant.
-The user wants to update a structured business document based on their instructions or a customer inquiry.
-Extract or calculate the updated values for the document fields and any product/line items.
-
-CRITICAL INSTRUCTIONS:
-1. Output format: Return ONLY a valid, parseable JSON object with the following structure:
-{
-  "values": {
-    "customer_company": "...",
-    "customer_contact": "...",
-    "customer_phone": "...",
-    "customer_email": "...",
-    "customer_address": "...",
-    "payment_terms": "...",
-    "lead_time": "...",
-    "notes": "...",
-    "remarks": "...",
-    "total_amount": "..."
-  },
-  "items": [
-    {
-      "model": "model number or part code (e.g. CLIN001 Part # 67980 PC20)",
-      "description": "product description",
-      "qty": "quantity (e.g. 18)",
-      "price": "unit price (e.g. 450.00)",
-      "amount": "line total amount = qty * price (e.g. 8,100.00)"
-    }
-  ]
-}
-2. Extract ALL product/line items into the "items" array. Dynamically output as many item entries as there are products in the request (e.g. 1, 4, 8, 15, or any count). Never omit, truncate, or merge items into a single entry. If the user asks to add or modify items, output the complete list of items.
-3. Calculate line amounts (qty * price) and total_amount accurately. Format numbers with commas (e.g. 24,326.00).
-4. If customer information (company, contact, phone, email, address) is provided in the prompt, extract them into "values".
-5. If payment terms, lead times, delivery instructions, or notes are provided, extract them into "values".
-6. Keep internal reasoning to the absolute minimum (1-2 sentences). Do not include markdown code fences, commentary, or thoughts. Only return pure JSON.`
-
-		prompt := fmt.Sprintf("Document Title: %s (%s)\nUser Instruction:\n%s\n\nAvailable Document Variables:\n", input.Title, input.DocumentType, input.Instruction)
-		for _, v := range input.Variables {
-			prompt += fmt.Sprintf("- ID: %s | Description: %s | Current Value: %s\n", v.ConceptID, v.Label, v.CurrentValue)
-		}
+		instructions, prompt := buildDocumentVariablesPrompt(input)
 
 		body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 4096)
 		if err != nil {
@@ -752,6 +714,51 @@ CRITICAL INSTRUCTIONS:
 	return c.JSON(fiber.Map{"html": body})
 }
 
+
+// buildDocumentVariablesPrompt constructs the system instructions and user prompt
+// for "variables" mode document updates.
+//
+// Two properties matter here:
+//  1. The JSON schema in the instructions is generated dynamically from the
+//     document's real variable IDs. The model must use exactly those IDs as
+//     "values" keys, so its updates map onto actual document variables instead
+//     of invented keys the editor cannot apply (which were silently dropped).
+//  2. The full (lightened) document HTML is included as global context, so the
+//     model sees the whole document — not just the variable list — when deciding
+//     which parts the user's instruction refers to.
+func buildDocumentVariablesPrompt(input aiDocumentInput) (instructions, prompt string) {
+	var idList strings.Builder
+	for _, v := range input.Variables {
+		id := strings.TrimSpace(v.ConceptID)
+		if id == "" {
+			continue
+		}
+		fmt.Fprintf(&idList, "- %q (%s; current value: %s)\n", id, v.Label, v.CurrentValue)
+	}
+
+	instructions = `You are a professional business document assistant.
+The user wants to update a structured business document based on their instructions.
+Extract or calculate the updated values for the document fields and any product/line items.
+
+CRITICAL INSTRUCTIONS:
+1. Output format: Return ONLY a valid, parseable JSON object with exactly this shape:
+{"values": {"<variable-id>": "<new value>"}, "items": [{"model": "...", "description": "...", "qty": "...", "price": "...", "amount": "..."}]}
+Every key inside "values" MUST be one of the ALLOWED VARIABLE IDS listed in the user message, copied exactly. Do NOT invent keys. Do NOT use generic names such as "customer_company" unless that exact id is in the allowed list. Map the user's wording onto the closest allowed id (for example a request about the buyer maps to a "buyer_*" id, a request about notes maps to an "order_note_*" id).
+2. Only include variables whose values actually change according to the user's instruction. Do not echo unchanged variables.
+3. When the instruction touches products or prices, extract ALL product/line items into the "items" array — as many entries as there are products. Never omit, truncate, or merge items. Calculate each line amount as qty * price and format numbers with commas (e.g. 24,326.00).
+4. A "Full Document Content" section is provided as GLOBAL CONTEXT so you can see the whole document and understand which parts the instruction refers to. Read it, but do NOT rewrite the document and do NOT return HTML — return only the JSON update object.
+5. Keep internal reasoning to the absolute minimum (1-2 sentences). Do not include markdown code fences, commentary, or thoughts. Only return pure JSON.`
+
+	var promptBuilder strings.Builder
+	fmt.Fprintf(&promptBuilder, "Document Title: %s (%s)\nUser Instruction:\n%s\n\nAllowed Variable IDs (use ONLY these as \"values\" keys):\n%s",
+		input.Title, input.DocumentType, input.Instruction, idList.String())
+	if html := stripHeavyHTMLForAI(strings.TrimSpace(input.CurrentHTML)); html != "" {
+		promptBuilder.WriteString("\nFull Document Content (global context only \u2014 read it, do not rewrite it):\n")
+		promptBuilder.WriteString(html)
+	}
+	return instructions, promptBuilder.String()
+}
+
 var (
 	reDataURI = regexp.MustCompile(`data:[^;]+;base64,[a-zA-Z0-9/+=]+`)
 	reSVG     = regexp.MustCompile(`(?s)<svg[^>]*>.*?</svg>`)
@@ -770,7 +777,6 @@ type AIDocumentItem struct {
 	Price       string `json:"price"`
 	Amount      string `json:"amount"`
 }
-
 func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocumentItem, error) {
 	clean := cleanJSONResponse(body)
 	var rawMap map[string]interface{}

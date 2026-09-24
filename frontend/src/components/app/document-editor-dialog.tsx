@@ -24,7 +24,6 @@ import type { CanvasDocumentEditorHandle } from "./canvas-document-editor";
 import { DocumentStampManager } from "./document-stamps";
 import { createDocumentPDF, exportDocumentPages } from "./document-export";
 import { generateDocument } from "../../lib/api";
-import { escapeHTML } from "../../lib/email-format";
 import { createDocumentNumber, extractDocumentCompany, extractDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
 import { type Copy, zh } from "../../lib/locale";
 import {
@@ -49,6 +48,17 @@ import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 
 const CanvasDocumentEditor = lazy(() => import("./canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
+
+// 与 canvas-document-editor.tsx 中 applyDocumentUpdates 的别名归一化保持一致：
+// AI 有时返回旧别名 key（如 customer_company），实际控件是 buyer_company，归一化后仍可应用。
+const DOCUMENT_VARIABLE_ALIASES: Array<[string, string]> = [
+  ["customer_company", "buyer_company"],
+  ["customer_contact", "buyer_contact"],
+  ["customer_email", "buyer_email"],
+  ["customer_address", "buyer_address"],
+  ["quote_number", "contract_number"],
+  ["issue_date", "contract_date"],
+];
 
 export function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; disabled: boolean }) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +104,11 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
 
   const mutation = useMutation({
     mutationFn: () => {
+      // 全文轻量化后作为全局上下文：variables 模式同样需要它，否则 AI 看不到文档整体，只能盲改变量。
+      const rawHTML = editor?.getHTML() || "";
+      const currentHTML = rawHTML
+        .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
+        .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
       const activeControls = editor?.getControls() || [];
       if (activeControls.length > 0) {
         return generateDocument({
@@ -102,6 +117,7 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
           documentType: type,
           title,
           instruction,
+          currentHTML,
           variables: activeControls.map((c) => ({
             conceptId: c.conceptId,
             label: c.placeholder || c.conceptId,
@@ -109,28 +125,38 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
           })),
         });
       }
-      const rawHTML = editor?.getHTML() || "";
-      const currentHTML = rawHTML
-        .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
-        .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
       return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction, currentHTML });
     },
     onSuccess: (value) => {
       if (value.mode === "variables" && (value.values || value.items)) {
-        const hasValues = value.values && Object.keys(value.values).length > 0;
+        // 只保留文档中真实存在的变量 ID：AI 偶尔返回臆造的 key，这些 key 无法应用到任何控件，
+        // 必须过滤掉，否则会出现“显示更新成功、实际什么都没改”的假象。
+        const activeControls = editor?.getControls() || [];
+        const knownIds = new Set(activeControls.map((c) => c.conceptId));
+        for (const [a, b] of DOCUMENT_VARIABLE_ALIASES) {
+          if (knownIds.has(a) || knownIds.has(b)) {
+            knownIds.add(a);
+            knownIds.add(b);
+          }
+        }
+        const values: Record<string, string> = {};
+        for (const [key, val] of Object.entries(value.values || {})) {
+          if (knownIds.has(key)) values[key] = val;
+        }
+        const hasValues = Object.keys(values).length > 0;
         const hasItems = value.items && value.items.length > 0;
         if (!hasValues && !hasItems) {
           toast.info(copy === zh ? "AI 未发现需要变更的变量" : "No variable updates detected");
           return;
         }
         const applied = editor?.applyDocumentUpdates({
-          values: value.values,
+          values,
           items: value.items,
         });
         editor?.focus();
         if (applied) {
           const itemCount = value.items?.length || 0;
-          const varCount = Object.keys(value.values || {}).length;
+          const varCount = Object.keys(values).length;
           toast.success(
             copy === zh
               ? `已智能更新 ${itemCount > 0 ? `${itemCount} 项产品及 ` : ""}${varCount} 处文档变量`

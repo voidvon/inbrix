@@ -333,6 +333,7 @@ export type GenerateDocumentInput = {
 
 export type QuotationItem = {
   model: string;
+  picture?: string;
   description: string;
   qty: string;
   price: string;

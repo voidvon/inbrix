@@ -148,6 +148,7 @@ function partyPanel(title: string, rows: Array<[string, string, string?]>, width
 
 export type QuotationItem = {
   model: string;
+  picture?: string;
   description: string;
   qty: string;
   price: string;
@@ -159,10 +160,10 @@ export type SpiraxQuotationValues = Record<string, string> & {
 };
 
 function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
-  const widths = [136, 222, 115, 122, 123];
+  const widths = [110, 108, 200, 80, 110, 110];
   const itemRowHeight = 32;
   const centered = { rowFlex: RowFlex.CENTER, bold: true, size: 10, color: "#ffffff" } as const;
-  const header = ["MODEL", "DESCRIPTION", "QTY", "UNIT PRICE", "AMOUNT"].map((value) => cell([text(value, centered)], NAVY));
+  const header = ["MODEL", "PICTURE", "DESCRIPTION", "QTY", "UNIT PRICE", "AMOUNT"].map((value) => cell([text(value, centered)], NAVY));
 
   const activeItems: QuotationItem[] = (items && items.length > 0)
     ? items
@@ -171,6 +172,7 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     : [
         {
           model: values?.item_model || "SP400",
+          picture: values?.item_picture,
           description: values?.item_description || "Spirax Sarco SP400",
           qty: values?.item_qty || "1",
           price: values?.item_price || "1,634.47",
@@ -186,10 +188,15 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     const priceId = isSingle ? "item_price" : `item_price_${index}`;
     const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
 
+    const pictureCellContent: IElement[] = item.picture
+      ? [{ type: ElementType.IMAGE, value: item.picture, width: 80, height: 60 }]
+      : [text(" ", { size: 10 })];
+
     return {
-      height: itemRowHeight,
+      height: item.picture ? Math.max(itemRowHeight, 68) : itemRowHeight,
       cells: [
         cell([controlText(modelId, item.model, "Model", { size: 10 })]),
+        cell(pictureCellContent),
         cell([controlText(descId, item.description, "Description", { size: 10 })]),
         cell([controlText(qtyId, item.qty, "Quantity", { size: 10 })]),
         cell([controlText(priceId, item.price, "Unit Price", { size: 10 })]),
@@ -211,7 +218,7 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     {
       height: 32,
       cells: [
-        { ...cell([text("TOTAL", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE), colspan: 4 },
+        { ...cell([text("TOTAL", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE), colspan: 5 },
         cell([controlText("total_amount", values?.total_amount || "1,634.47", "Total Amount", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
       ],
     },

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"inbrix/mailstore"
@@ -371,5 +372,71 @@ func TestStripHeavyHTMLForAI(t *testing.T) {
 	got := stripHeavyHTMLForAI(input)
 	if got != expected {
 		t.Errorf("stripHeavyHTMLForAI() = %q, want %q", got, expected)
+	}
+}
+
+func TestBuildDocumentVariablesPrompt(t *testing.T) {
+	input := aiDocumentInput{
+		DocumentType: "contract",
+		Title:        "Sales Contract",
+		Instruction:  "Change buyer company to Huawei and set total to 24,326",
+		CurrentHTML:  `<div><p>Contract body</p><img src="data:image/png;base64,AAAA"><svg><path d="M0 0h1v1H0z"/></svg></div>`,
+		Variables: []aiVariableItem{
+			{ConceptID: "buyer_company", Label: "Buyer Company", CurrentValue: "Acme"},
+			{ConceptID: "order_note_1", Label: "Note 1", CurrentValue: ""},
+		},
+	}
+	instructions, prompt := buildDocumentVariablesPrompt(input)
+
+	// 1. 提示词列出文档真实变量 ID（动态生成，而非固定 schema）
+	for _, id := range []string{`"buyer_company"`, `"order_note_1"`} {
+		if !strings.Contains(prompt, id) {
+			t.Errorf("prompt missing allowed variable id %s", id)
+		}
+	}
+	// 2. 旧的固定示例 schema 已移除
+	for _, legacy := range []string{"Available Document Variables", `"customer_company": "..."`, `"total_amount": "..."`} {
+		if strings.Contains(instructions, legacy) || strings.Contains(prompt, legacy) {
+			t.Errorf("prompt still contains legacy fixed schema %q", legacy)
+		}
+	}
+	// 3. 全文作为全局上下文下发
+	if !strings.Contains(prompt, "Full Document Content") {
+		t.Error("prompt missing Full Document Content section")
+	}
+	if !strings.Contains(prompt, "Contract body") {
+		t.Error("prompt missing document HTML content")
+	}
+	// 4. 全文中的图片 / SVG 已被轻量化
+	if strings.Contains(prompt, "data:image/png;base64") {
+		t.Error("prompt still contains data URI")
+	}
+	if strings.Contains(prompt, "<svg") {
+		t.Error("prompt still contains svg markup")
+	}
+	if !strings.Contains(prompt, "[image]") || !strings.Contains(prompt, "[svg-graphic]") {
+		t.Error("prompt missing lightened placeholders")
+	}
+	// 5. instructions 要求 values 的 key 只能来自允许列表
+	if !strings.Contains(instructions, "ALLOWED VARIABLE IDS") {
+		t.Error("instructions missing allowed-ids requirement")
+	}
+}
+
+func TestBuildDocumentVariablesPromptNoHTML(t *testing.T) {
+	input := aiDocumentInput{
+		DocumentType: "quotation",
+		Title:        "Quote",
+		Instruction:  "update price",
+		Variables: []aiVariableItem{
+			{ConceptID: "total_amount", Label: "Total", CurrentValue: "100"},
+		},
+	}
+	_, prompt := buildDocumentVariablesPrompt(input)
+	if strings.Contains(prompt, "Full Document Content") {
+		t.Error("prompt should not contain Full Document Content when CurrentHTML is empty")
+	}
+	if !strings.Contains(prompt, `"total_amount"`) {
+		t.Error("prompt missing allowed variable id total_amount")
 	}
 }
