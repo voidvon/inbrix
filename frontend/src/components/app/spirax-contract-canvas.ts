@@ -278,6 +278,8 @@ export function createSpiraxContractCanvasDocument(
   const effectiveDate = initialValues?.contract_date || (date && date !== "[Effective date]" ? date.replaceAll("/", "-") : todayFormatted);
   const sellerDate = initialValues?.seller_sign_date || effectiveDate;
   const contractNo = initialValues?.contract_number || number;
+  const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "ORA Trading Co.";
+  const buyerContact = initialValues?.buyer_contact || initialValues?.customer_contact || "Engr. Muhammad Daood";
 
   // Left Hero (Seller Brand & Identity)
   const leftHero: IElement[] = [
@@ -331,8 +333,8 @@ export function createSpiraxContractCanvasDocument(
   const deliveryBadge = makeBadge('<rect x="1" y="3" width="14" height="10" rx="1"/><path d="M1 7h14"/><path d="M5 3v10"/>');
 
   const buyerRows: Array<[string, string, string, boolean]> = [
-    ["Company:", initialValues?.buyer_company || initialValues?.customer_company || "ORA Trading Co.", "buyer_company", true],
-    ["Attn:", initialValues?.buyer_contact || initialValues?.customer_contact || "Engr. Muhammad Daood", "buyer_contact", false],
+    ["Company:", buyerCompany, "buyer_company", true],
+    ["Attn:", buyerContact, "buyer_contact", false],
     ["Email:", initialValues?.buyer_email || initialValues?.customer_email || "info@oratrading.com.sa", "buyer_email", false],
     ["Address:", initialValues?.buyer_address || initialValues?.customer_address || "Saudi Arabia", "buyer_address", false],
   ];
@@ -344,56 +346,67 @@ export function createSpiraxContractCanvasDocument(
     ["Port of Loading:", initialValues?.port_of_loading || "Shanghai, China", "port_of_loading"],
   ];
 
-  const buyerTable = table([74, 270], buyerRows.map(([label, value, conceptId, isBold]) => ({
+  const buyerTableRows = buyerRows.map(([label, value, conceptId, isBold]) => ({
     height: 27,
     cells: [
       cell([text(label, { bold: true, size: 10.5, color: "#475569" })]),
       cell([controlText(conceptId, value, label, { bold: isBold, size: isBold ? 11.5 : 10.5, color: "#0f172a" })]),
     ],
-  })), { borderType: TableBorder.EMPTY });
+  }));
 
-  const deliveryTable = table([96, 248], deliveryRows.map(([label, value, conceptId]) => ({
+  const deliveryTableRows = deliveryRows.map(([label, value, conceptId]) => ({
     height: 27,
     cells: [
       cell([text(label, { bold: true, size: 10.5, color: "#475569" })]),
       cell([controlText(conceptId, value, label, { size: 10.5, color: "#0f172a" })]),
     ],
-  })), { borderType: TableBorder.EMPTY });
+  }));
 
-  const buyerPanel: IElement[] = [
-    table([26, 318], [{
+  const parties = table([74, 270, 10, 96, 268], [
+    {
       height: 24,
-      cells: [cell(buyerUserBadge), cell([text("Bill To / Buyer Information", { bold: true, size: 11.5, color: BLUE })])],
-    }], { borderType: TableBorder.EMPTY }),
-    { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
-    lineBreak({ size: 1, rowMargin: 0.25 }),
-    buyerTable,
-  ];
-
-  const deliveryPanel: IElement[] = [
-    table([26, 318], [{
-      height: 24,
-      cells: [cell(deliveryBadge), cell([text("Delivery & Shipment Terms", { bold: true, size: 11.5, color: BLUE })])],
-    }], { borderType: TableBorder.EMPTY }),
-    { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
-    lineBreak({ size: 1, rowMargin: 0.25 }),
-    deliveryTable,
-  ];
-
-  const parties = table([354, 10, 354], [{
-    height: 145,
-    cells: [
-      { ...cell(buyerPanel, PALE), verticalAlign: VerticalAlign.TOP },
-      cell([text(" ", { size: 1 })], undefined, []),
-      { ...cell(deliveryPanel, PALE), verticalAlign: VerticalAlign.TOP },
-    ],
-  }], { borderType: TableBorder.EMPTY });
+      cells: [
+        {
+          ...cell([
+            table([26, 318], [{
+              height: 24,
+              cells: [cell(buyerUserBadge), cell([text("Bill To / Buyer Information", { bold: true, size: 11.5, color: BLUE })])],
+            }], { borderType: TableBorder.EMPTY }),
+            { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
+            lineBreak({ size: 1, rowMargin: 0.25 }),
+          ], PALE),
+          colspan: 2,
+        },
+        cell([text(" ", { size: 1 })], undefined, []),
+        {
+          ...cell([
+            table([26, 338], [{
+              height: 24,
+              cells: [cell(deliveryBadge), cell([text("Delivery & Shipment Terms", { bold: true, size: 11.5, color: BLUE })])],
+            }], { borderType: TableBorder.EMPTY }),
+            { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
+            lineBreak({ size: 1, rowMargin: 0.25 }),
+          ], PALE),
+          colspan: 2,
+        },
+      ],
+    },
+    ...buyerTableRows.map((buyerRow, idx) => ({
+      height: 27,
+      cells: [
+        { ...buyerRow.cells[0], backgroundColor: PALE },
+        { ...buyerRow.cells[1], backgroundColor: PALE },
+        cell([text(" ", { size: 1 })], undefined, []),
+        { ...deliveryTableRows[idx].cells[0], backgroundColor: PALE },
+        { ...deliveryTableRows[idx].cells[1], backgroundColor: PALE },
+      ],
+    })),
+  ], { borderType: TableBorder.EMPTY });
 
   // Bank details & Order Notes
   const bankBadge = makeBadge('<rect x="1" y="2" width="14" height="11" rx="1.5"/><path d="M1 6h14"/><circle cx="4" cy="10" r="1"/>');
   const notesBadge = makeBadge('<path d="M3 2h8l3 3v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M10 2v4h4"/>');
 
-  const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "ORA Trading Co.";
   const productModel = initialValues?.item_model || (items && items[0]?.model) || "APT14HC";
   const defaultMemo = `${buyerCompany} / ${contractNo} / ${productModel}`;
   const paymentMemo = initialValues?.payment_memo
@@ -414,10 +427,10 @@ export function createSpiraxContractCanvasDocument(
     ["Payment Memo / Note:", paymentMemo, "payment_memo", true],
   ];
 
-  const bankInnerTable = table([136, 290], bankRows.map(([label, value, conceptId, isHighlight]) => ({
+  const bankTableRows = bankRows.map(([label, value, conceptId, isHighlight]) => ({
     height: 24,
     cells: [
-      cell([text(label, { size: 9.5, color: "#64748b", bold: true })], PALE),
+      cell([text(label, { size: 9.5, color: "#64748b", bold: true })], PALE, [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]),
       cell(
         [
           controlText(conceptId, value, label, {
@@ -426,22 +439,13 @@ export function createSpiraxContractCanvasDocument(
             color: isHighlight ? HIGHLIGHT_TEXT : "#0f172a",
           }),
         ],
-        isHighlight ? HIGHLIGHT_BG : undefined
+        isHighlight ? HIGHLIGHT_BG : undefined,
+        [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]
       ),
     ],
-  })), { borderType: TableBorder.ALL, borderColor: LINE });
+  }));
 
-  const bankPanel: IElement[] = [
-    table([26, 400], [{
-      height: 24,
-      cells: [cell(bankBadge), cell([text("Official Bank Payment Details (SWIFT / Wire TT)", { bold: true, size: 11, color: BLUE })])],
-    }], { borderType: TableBorder.EMPTY }),
-    { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
-    lineBreak({ size: 1, rowMargin: 0.25 }),
-    bankInnerTable,
-  ];
-
-  const notesPanel: IElement[] = [
+  const notesPanelContent: IElement[] = [
     table([26, 252], [{
       height: 24,
       cells: [cell(notesBadge), cell([text("Order Notes & Terms", { bold: true, size: 11, color: BLUE })])],
@@ -465,14 +469,38 @@ export function createSpiraxContractCanvasDocument(
     controlText("order_note_4", initialValues?.order_note_4 || "100% Brand New & Genuine Spirax Sarco equipment with standard warranty.", "Note 4", { size: 9.5, color: "#475569" }),
   ];
 
-  const bottomSection = table([426, 10, 282], [{
-    height: 255,
-    cells: [
-      { ...cell(bankPanel), verticalAlign: VerticalAlign.TOP },
-      cell([text(" ", { size: 1 })], undefined, []),
-      { ...cell(notesPanel, PALE), verticalAlign: VerticalAlign.TOP },
-    ],
-  }], { borderType: TableBorder.EMPTY });
+  const bottomSection = table([136, 290, 10, 282], [
+    {
+      height: 24,
+      cells: [
+        {
+          ...cell([
+            table([26, 400], [{
+              height: 24,
+              cells: [cell(bankBadge), cell([text("Official Bank Payment Details (SWIFT / Wire TT)", { bold: true, size: 11, color: BLUE })])],
+            }], { borderType: TableBorder.EMPTY }),
+            { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
+            lineBreak({ size: 1, rowMargin: 0.25 }),
+          ]),
+          colspan: 2,
+        },
+        cell([text(" ", { size: 1 })], undefined, []),
+        {
+          ...cell(notesPanelContent, PALE),
+          rowspan: 1 + bankTableRows.length,
+          verticalAlign: VerticalAlign.TOP,
+        },
+      ],
+    },
+    ...bankTableRows.map((bankRow) => ({
+      height: 24,
+      cells: [
+        bankRow.cells[0],
+        bankRow.cells[1],
+        cell([text(" ", { size: 1 })], undefined, []),
+      ],
+    })),
+  ], { borderType: TableBorder.EMPTY, borderColor: LINE });
 
   // Signature Block
   const signatureSection = table([340, 38, 340], [{
@@ -497,7 +525,7 @@ export function createSpiraxContractCanvasDocument(
           lineBreak({ size: 4, rowMargin: 0.25 }),
           text("Accepted & Confirmed By (Buyer):", { bold: true, size: 10.5, color: "#475569" }),
           lineBreak({ size: 1, rowMargin: 0.2 }),
-          controlText("buyer_sign_name", initialValues?.buyer_sign_name || "Engr. Muhammad Daood / ORA Trading Co.", "Buyer Signature", { bold: true, size: 11, color: "#1e293b" }),
+          controlText("buyer_company", buyerCompany, "Buyer Company", { bold: true, size: 11, color: "#1e293b" }),
           lineBreak({ size: 1, rowMargin: 2 }),
           text("Date: ____________________       Authorized Sign: ____________________", { size: 9.5, color: "#64748b" }),
         ], undefined, [TdBorder.TOP]),

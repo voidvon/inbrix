@@ -388,3 +388,10 @@ export function isValidRecipient(value: string) {
   const match = value.trim().match(/^(?:[^<>]*<)?([^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+)>?$/);
   return Boolean(match);
 }
+
+export function canReplyAll(message?: { to?: string; cc?: string } | null) {
+  if (!message) return false;
+  if (message.cc?.trim()) return true;
+  return splitRecipientValues(message.to || "").length > 1;
+}
+

@@ -273,8 +273,9 @@ export function InboxPage() {
     const originalCc = splitRecipientValues(source.cc || "");
     const to = source.outgoing
       ? uniqueRecipients(originalTo, [self])
-      : uniqueRecipients([source.from], [self]);
-    const cc = uniqueRecipients([...originalTo, ...originalCc], [self, ...to]);
+      : uniqueRecipients([source.from, ...originalTo], [self]);
+    const finalTo = to.length > 0 ? to : uniqueRecipients([source.outgoing ? source.to : source.from || conversation.peerEmail || ""]);
+    const cc = uniqueRecipients(originalCc, [self, ...finalTo]);
     const sender = source.fromName && source.from ? `${source.fromName} <${source.from}>` : source.from || conversation.peerEmail || "";
     const quoteLead = `On ${new Date(source.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
     const originalBody = source.body || source.preview || "";
@@ -282,7 +283,7 @@ export function InboxPage() {
     if (source.messageId && !references.includes(source.messageId)) references.push(source.messageId);
     openCompose({
       accountEmail: conversation.accountEmail,
-      to: to.join(", "),
+      to: finalTo.join(", "),
       cc: cc.join(", "),
       subject: replySubject,
       html: `${suggestedBody?.trim() ? generatedEmailHTML(suggestedBody) : "<p><br></p>"}<p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,

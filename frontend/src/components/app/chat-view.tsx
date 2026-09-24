@@ -37,6 +37,7 @@ import {
 } from "../../lib/api";
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
 import {
+  canReplyAll,
   copyToClipboard,
   htmlToPlainText,
   extractEmailAddress,
@@ -525,7 +526,7 @@ export function ChatView({
                 <Send className="size-3.5" />
                 <span className="hidden sm:inline">{copy.reply}</span>
               </Button>
-              {Boolean(detail.messages.at(-1)?.cc?.trim()) && (
+              {canReplyAll(detail.messages.at(-1)) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -685,7 +686,7 @@ export function SuggestedReplyBubble({
         </ContextMenuTrigger>
         {body && (
           <ContextMenuContent className="w-40">
-            {message.cc?.trim() ? (
+            {canReplyAll(message) ? (
               <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReplyAll(body)}>
                 <ReplyAll className="size-4" />
                 {copy.replyAll}
@@ -901,7 +902,7 @@ export function MessageBubble({
           </ContextMenuItem>
         ) : (
           <>
-            {message.cc?.trim() ? (
+            {canReplyAll(message) ? (
               <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}>
                 <ReplyAll className="size-4" />
                 {copy.replyAll}
