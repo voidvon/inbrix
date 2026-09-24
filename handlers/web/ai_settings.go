@@ -714,7 +714,6 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"html": body})
 }
 
-
 // buildDocumentVariablesPrompt constructs the system instructions and user prompt
 // for "variables" mode document updates.
 //
@@ -777,6 +776,7 @@ type AIDocumentItem struct {
 	Price       string `json:"price"`
 	Amount      string `json:"amount"`
 }
+
 func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocumentItem, error) {
 	clean := cleanJSONResponse(body)
 	var rawMap map[string]interface{}
