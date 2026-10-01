@@ -1,25 +1,54 @@
 import { useRef, useState } from "react";
-import { Stamp, Upload, Trash2 } from "lucide-react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { Stamp, Upload, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
-export type DocumentStamp = { id: string; name: string; value: string; width: number; height: number };
+export type DocumentStamp = {
+  id: string;
+  name: string;
+  value: string;
+  width: number;
+  height: number;
+  insertWidth?: number; // width in mm, default 40
+};
+
 const STORAGE_KEY = "inbrix-document-stamps";
+const DEFAULT_STAMP_WIDTH_MM = 40;
 
 function readStamps(): DocumentStamp[] {
-  const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  if (!Array.isArray(stored)) throw new Error("Invalid stamp library");
-  return stored.filter((item: unknown): item is DocumentStamp => {
-    if (!item || typeof item !== "object") return false;
-    const stamp = item as Partial<DocumentStamp>;
-    return typeof stamp.id === "string" && typeof stamp.name === "string" &&
-      typeof stamp.value === "string" && stamp.value.startsWith("data:image/png;base64,") &&
-      typeof stamp.width === "number" && Number.isFinite(stamp.width) && stamp.width > 0 &&
-      typeof stamp.height === "number" && Number.isFinite(stamp.height) && stamp.height > 0;
-  });
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored
+      .filter((item: unknown): item is DocumentStamp => {
+        if (!item || typeof item !== "object") return false;
+        const stamp = item as Partial<DocumentStamp>;
+        return (
+          typeof stamp.id === "string" &&
+          typeof stamp.name === "string" &&
+          typeof stamp.value === "string" &&
+          stamp.value.startsWith("data:image/png;base64,") &&
+          typeof stamp.width === "number" &&
+          Number.isFinite(stamp.width) &&
+          stamp.width > 0 &&
+          typeof stamp.height === "number" &&
+          Number.isFinite(stamp.height) &&
+          stamp.height > 0
+        );
+      })
+      .map((s) => ({
+        ...s,
+        insertWidth:
+          typeof s.insertWidth === "number" && Number.isFinite(s.insertWidth) && s.insertWidth > 0
+            ? s.insertWidth
+            : DEFAULT_STAMP_WIDTH_MM,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 async function prepareStamp(file: File): Promise<DocumentStamp> {
@@ -32,57 +61,37 @@ async function prepareStamp(file: File): Promise<DocumentStamp> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas unavailable");
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ""), value: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
+    return {
+      id: crypto.randomUUID(),
+      name: file.name.replace(/\.[^.]+$/, ""),
+      value: canvas.toDataURL("image/png"),
+      width: canvas.width,
+      height: canvas.height,
+      insertWidth: DEFAULT_STAMP_WIDTH_MM,
+    };
   } finally {
     bitmap.close();
   }
 }
 
-function loadStampImage(source: string): Promise<HTMLImageElement> {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Unable to decode stamp image"));
-    image.src = source;
-  });
-}
-
-async function transformStamp(stamp: DocumentStamp, rotation: number, opacity: number): Promise<DocumentStamp> {
-  if (rotation === 0 && opacity === 100) return stamp;
-  const source = await loadStampImage(stamp.value);
-  const naturalWidth = source.naturalWidth || source.width || stamp.width;
-  const naturalHeight = source.naturalHeight || source.height || stamp.height;
-  const radians = rotation * Math.PI / 180;
-  const cosine = Math.abs(Math.cos(radians));
-  const sine = Math.abs(Math.sin(radians));
-  const width = Math.max(1, Math.ceil(naturalWidth * cosine + naturalHeight * sine));
-  const height = Math.max(1, Math.ceil(naturalWidth * sine + naturalHeight * cosine));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas unavailable");
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
-  context.globalAlpha = opacity / 100;
-  context.translate(width / 2, height / 2);
-  context.rotate(radians);
-  context.drawImage(source, -naturalWidth / 2, -naturalHeight / 2);
-  return { ...stamp, value: canvas.toDataURL("image/png"), width, height };
-}
-
-export function DocumentStampManager({ chinese, disabled, onInsert }: {
-  chinese: boolean; disabled?: boolean; onInsert?: (stamp: DocumentStamp, width: number) => void;
+export function DocumentStampManager({
+  chinese,
+  disabled,
+  onInsert,
+}: {
+  chinese: boolean;
+  disabled?: boolean;
+  onInsert?: (stamp: DocumentStamp, width: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [stamps, setStamps] = useState<DocumentStamp[]>([]);
   const [busy, setBusy] = useState(false);
-  const [width, setWidth] = useState(40);
-  const [rotation, setRotation] = useState(0);
-  const [opacity, setOpacity] = useState(100);
   const inputRef = useRef<HTMLInputElement>(null);
   const label = chinese ? "印章管理" : "Stamp library";
-  const storageError = chinese ? "印章库保存失败，请检查浏览器存储空间或权限。" : "Could not save stamps. Check browser storage space and permissions.";
+  const storageError = chinese
+    ? "印章库保存失败，请检查浏览器存储空间或权限。"
+    : "Could not save stamps. Check browser storage space and permissions.";
+
   const persist = (next: DocumentStamp[]) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -93,6 +102,7 @@ export function DocumentStampManager({ chinese, disabled, onInsert }: {
       return false;
     }
   };
+
   const upload = async (file?: File) => {
     if (!file) return;
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 3 * 1024 * 1024) {
@@ -105,56 +115,176 @@ export function DocumentStampManager({ chinese, disabled, onInsert }: {
       if (persist([...stamps, stamp])) toast.success(chinese ? "印章已添加" : "Stamp added");
     } catch {
       toast.error(chinese ? "图片无法读取，请选择有效的印章图片。" : "Unable to read this image. Choose a valid stamp image.");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
-  const insert = async (stamp: DocumentStamp) => {
-    setBusy(true);
-    try {
-      const transformed = await transformStamp(stamp, rotation, opacity);
-      onInsert?.(transformed, width * 794 / 210);
-      setOpen(false);
-    } catch {
-      toast.error(chinese ? "印章处理或插入失败，请重新选择盖章位置。" : "Could not process or insert the stamp. Select a position and try again.");
-    } finally { setBusy(false); }
+
+  const insert = (stamp: DocumentStamp) => {
+    const widthMm =
+      typeof stamp.insertWidth === "number" && Number.isFinite(stamp.insertWidth) && stamp.insertWidth > 0
+        ? stamp.insertWidth
+        : DEFAULT_STAMP_WIDTH_MM;
+    const pxWidth = (widthMm * 794) / 210;
+    onInsert?.(stamp, pxWidth);
+    setOpen(false);
   };
-  return <>
-    <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => {
-      try { setStamps(readStamps()); setOpen(true); }
-      catch { toast.error(chinese ? "无法读取印章库，请检查浏览器存储。" : "Unable to read the stamp library. Check browser storage."); }
-    }}><Stamp />{label}</Button>
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader><DialogTitle>{label}</DialogTitle><DialogDescription>{chinese
-          ? "印章保存在当前浏览器，供报价单与合同共用。推荐上传透明背景 PNG；删除印章不会影响已保存的文档。"
-          : "Stamps are stored in this browser and shared by quotations and contracts. Transparent PNG is recommended. Deleting a stamp does not change saved documents."}</DialogDescription></DialogHeader>
-        <div className="flex flex-wrap items-end gap-3">
-          <input ref={inputRef} type="file" className="sr-only" accept="image/png,image/jpeg,image/webp" aria-label={chinese ? "上传印章图片" : "Upload stamp image"} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void upload(file); }} />
-          <Button type="button" variant="outline" disabled={busy} onClick={() => inputRef.current?.click()}><Upload />{busy ? (chinese ? "上传中…" : "Uploading…") : (chinese ? "上传印章" : "Upload stamp")}</Button>
-          {onInsert && <Label className="grid gap-1">{chinese ? "插入宽度（毫米）" : "Insert width (mm)"}<Input type="number" min={10} max={100} value={width || ""} onChange={(event) => setWidth(Number(event.target.value))} className="w-32" /></Label>}
-          {onInsert && <Label className="grid gap-1">{chinese ? "旋转角度（度）" : "Rotation (degrees)"}<Input type="number" min={-180} max={180} value={rotation} onChange={(event) => setRotation(Number(event.target.value))} className="w-32" /></Label>}
-          {onInsert && <Label className="grid gap-1">{chinese ? "透明度（%）" : "Opacity (%)"}<Input type="number" min={10} max={100} value={opacity || ""} onChange={(event) => setOpacity(Number(event.target.value))} className="w-32" /></Label>}
-        </div>
-        {onInsert && <p className="text-sm text-muted-foreground">{chinese ? "插入前先点击盖章位置；插入后可拖动印章、拖拽边框调整大小。" : "Click the stamping position first. After insertion, drag the stamp to move it or drag its handles to resize."}</p>}
-        {!stamps.length && <p className="py-8 text-center text-sm text-muted-foreground">{chinese ? "暂无印章，上传后即可在文档中使用。" : "Upload your first stamp to use it in documents."}</p>}
-        <div className="grid gap-3">{stamps.map((stamp) => <div key={stamp.id} className="flex items-center gap-3 rounded-lg border p-3">
-          <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded bg-white p-1">
-            <img src={stamp.value} alt={stamp.name} className="max-h-full max-w-full object-contain" style={onInsert ? { opacity: opacity / 100, transform: `rotate(${rotation}deg)` } : undefined} />
-          </div>
-          <div className="grid min-w-0 flex-1 gap-2">
-            <Input aria-label={chinese ? "印章名称" : "Stamp name"} defaultValue={stamp.name} maxLength={80} disabled={busy} onBlur={(event) => {
-              const name = event.target.value.trim() || stamp.name;
-              if (name !== stamp.name && !persist(stamps.map((item) => item.id === stamp.id ? { ...item, name } : item))) event.target.value = stamp.name;
-              else event.target.value = name;
-            }} />
-            <div className="flex gap-2">
-              {onInsert && <Button type="button" size="sm" disabled={busy || !Number.isFinite(width) || width < 10 || width > 100 || !Number.isFinite(rotation) || rotation < -180 || rotation > 180 || !Number.isFinite(opacity) || opacity < 10 || opacity > 100} onClick={() => void insert(stamp)}>{chinese ? "插入文档" : "Insert into document"}</Button>}
-              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => {
-                if (window.confirm(chinese ? `删除印章“${stamp.name}”？` : `Delete stamp “${stamp.name}”?`)) persist(stamps.filter((item) => item.id !== stamp.id));
-              }}><Trash2 />{chinese ? "删除" : "Delete"}</Button>
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        onClick={() => {
+          try {
+            setStamps(readStamps());
+            setOpen(true);
+          } catch {
+            toast.error(chinese ? "无法读取印章库，请检查浏览器存储。" : "Unable to read the stamp library. Check browser storage.");
+          }
+        }}
+      >
+        <Stamp />
+        <span>{label}</span>
+      </Button>
+      <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+        <DialogPrimitive.Portal>
+          {/* Modal backdrop overlay: forceRender ensures it displays even when nested inside document dialog */}
+          <DialogPrimitive.Backdrop
+            forceRender
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+          />
+          <DialogPrimitive.Popup
+            data-slot="dialog-content"
+            className="fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] sm:max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-5 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/10 duration-150 outline-none max-h-[85vh] overflow-y-auto data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+          >
+            <div className="flex items-center justify-between">
+              <DialogPrimitive.Title className="text-base font-semibold text-foreground">
+                {label}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Close render={<Button variant="ghost" size="icon" className="size-8" />}>
+                <X className="size-4" />
+                <span className="sr-only">Close</span>
+              </DialogPrimitive.Close>
             </div>
-          </div>
-        </div>)}</div>
-      </DialogContent>
-    </Dialog>
-  </>;
+
+            {/* Upload Button: simplified without outer border and padding */}
+            <div className="flex items-center">
+              <input
+                ref={inputRef}
+                type="file"
+                className="sr-only"
+                accept="image/png,image/jpeg,image/webp"
+                aria-label={chinese ? "上传印章图片" : "Upload stamp image"}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void upload(file);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => inputRef.current?.click()}
+                className="gap-1.5"
+              >
+                <Upload className="size-4" />
+                <span>{busy ? (chinese ? "上传中…" : "Uploading…") : (chinese ? "上传印章" : "Upload stamp")}</span>
+              </Button>
+            </div>
+
+            {!stamps.length && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                {chinese ? "暂无印章，上传后即可在文档中使用。" : "Upload your first stamp to use it in documents."}
+              </p>
+            )}
+
+            {/* Stamp List: All controls on a single row */}
+            <div className="grid gap-2.5">
+              {stamps.map((stamp) => (
+                <div
+                  key={stamp.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border p-2.5 bg-card shadow-2xs"
+                >
+                  {/* Left: Stamp thumbnail preview & width configuration */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded bg-white p-1 border">
+                      <img src={stamp.value} alt={stamp.name || "stamp"} className="max-h-full max-w-full object-contain" />
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Label className="text-xs text-muted-foreground whitespace-nowrap">
+                        {chinese ? "宽度：" : "Width:"}
+                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={10}
+                          max={150}
+                          defaultValue={stamp.insertWidth ?? DEFAULT_STAMP_WIDTH_MM}
+                          disabled={busy}
+                          aria-label={chinese ? "印章宽度（毫米）" : "Stamp width (mm)"}
+                          className="h-8 w-18 text-xs text-center"
+                          onChange={(event) => {
+                            const val = Number(event.target.value);
+                            if (Number.isFinite(val) && val >= 10 && val <= 150) {
+                              persist(stamps.map((item) => (item.id === stamp.id ? { ...item, insertWidth: val } : item)));
+                            }
+                          }}
+                          onBlur={(event) => {
+                            const val = Number(event.target.value);
+                            const safeVal =
+                              Number.isFinite(val) && val >= 10 && val <= 150
+                                ? val
+                                : (stamp.insertWidth ?? DEFAULT_STAMP_WIDTH_MM);
+                            event.target.value = String(safeVal);
+                            persist(stamps.map((item) => (item.id === stamp.id ? { ...item, insertWidth: safeVal } : item)));
+                          }}
+                        />
+                        <span className="text-xs text-muted-foreground">mm</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Insert button & Delete icon button */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {onInsert && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 px-3 text-xs font-medium"
+                        disabled={busy}
+                        onClick={() => insert(stamp)}
+                      >
+                        {chinese ? "插入文档" : "Insert into document"}
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                      disabled={busy}
+                      aria-label={chinese ? "删除印章" : "Delete stamp"}
+                      title={chinese ? "删除印章" : "Delete stamp"}
+                      onClick={() => {
+                        if (window.confirm(chinese ? "确认删除该印章？" : "Delete this stamp?")) {
+                          persist(stamps.filter((item) => item.id !== stamp.id));
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </DialogPrimitive.Popup>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
+    </>
+  );
 }

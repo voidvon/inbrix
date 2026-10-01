@@ -56,6 +56,8 @@ import type {
   MailSummary,
 } from "../../types";
 import type { Copy } from "../../lib/locale";
+import { zh } from "../../lib/locale";
+import { readAIDocumentSessions } from "../../lib/ai-document-storage";
 
 export function ConversationList({
   copy,
@@ -90,6 +92,15 @@ export function ConversationList({
 }) {
   const rows = data?.conversations || [];
   const hasData = Boolean(data);
+  const isAISearchMatch = Boolean(
+    search &&
+      (["ai", "文档", "助手", "合同", "报价", "document", "assistant", "quote", "contract"].some(
+        (kw) => kw.includes(search.toLowerCase()) || search.toLowerCase().includes(kw)
+      ) ||
+        readAIDocumentSessions(copy).some((s) => s.title.toLowerCase().includes(search.toLowerCase())))
+  );
+  const showAIDocument = !search || isAISearchMatch;
+
   return (
     <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
       <div className="border-b bg-card px-3 py-3">
@@ -117,9 +128,16 @@ export function ConversationList({
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
+        {showAIDocument && (
+          <AIDocumentConversationRow
+            copy={copy}
+            selected={Boolean(selectedId === "ai-document" || selectedId?.startsWith("ai-document:"))}
+            onClick={() => onSelect("ai-document")}
+          />
+        )}
         {!hasData && (loading || !error) && <ListSkeleton />}
         {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
-        {hasData && rows.length === 0 && <EmptyState icon={<MessageCircle />} text={search ? copy.noConversations : copy.noConversations} />}
+        {hasData && rows.length === 0 && !showAIDocument && <EmptyState icon={<MessageCircle />} text={search ? copy.noConversations : copy.noConversations} />}
         {hasData &&
           rows.map((conversation) => (
             <ConversationRow
@@ -134,6 +152,56 @@ export function ConversationList({
           ))}
       </ScrollArea>
     </section>
+  );
+}
+
+export function AIDocumentConversationRow({
+  copy,
+  selected,
+  onClick,
+}: {
+  copy: Copy;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const sessions = readAIDocumentSessions(copy);
+  const latestSession = sessions[0];
+  const lastMsg = latestSession?.messages[latestSession.messages.length - 1];
+  const preview = lastMsg
+    ? lastMsg.content.slice(0, 50).replace(/\n/g, " ")
+    : (copy === zh ? "智能起草与修改报价单、合同" : "Draft and modify quotations & contracts");
+  const time = latestSession?.updatedAt || latestSession?.createdAt;
+
+  return (
+    <article
+      data-testid="ai-document-conversation-row"
+      className={cn(
+        "relative w-full max-w-full overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted cursor-pointer",
+        selected && "border-l-2 border-l-primary bg-muted pl-[0.875rem]"
+      )}
+    >
+      <button
+        className="flex w-full min-w-0 max-w-full items-center gap-3 overflow-hidden text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        onClick={onClick}
+        type="button"
+      >
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-xs">
+          <Sparkles className="size-4" />
+        </div>
+        <span className="min-w-0 max-w-full flex-1 overflow-hidden">
+          <span className="flex min-w-0 max-w-full items-baseline justify-between gap-2 overflow-hidden">
+            <span className="flex items-center gap-1.5 min-w-0 flex-1 truncate">
+              <strong className="truncate text-sm font-semibold">{copy.aiDocument}</strong>
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal shrink-0">
+                {copy.aiDocumentTag}
+              </Badge>
+            </span>
+            {time && <time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(time)}</time>}
+          </span>
+          <span className="mt-1 block max-w-full truncate text-xs text-muted-foreground/80">{preview}</span>
+        </span>
+      </button>
+    </article>
   );
 }
 
@@ -381,6 +449,7 @@ export function ChatPanel({
     <ChatView
       copy={copy}
       detail={detail}
+      className={className}
       onBack={onBack}
       onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
       onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
@@ -402,6 +471,7 @@ export function ChatView({
   onRetrySend,
   onReEdit,
   onConversationEmpty,
+  className,
 }: {
   copy: Copy;
   detail: ConversationDetail;
@@ -412,6 +482,7 @@ export function ChatView({
   onRetrySend?: (message: ConversationMessage) => void;
   onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
+  className?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -498,11 +569,19 @@ export function ChatView({
   }, [detail.id, detail.messages.length]);
 
   return (
-    <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col">
+    <section data-testid="conversation-detail" className={cn("flex min-w-0 flex-1 flex-col bg-surface", className)}>
       <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
         <div className="flex min-w-0 items-center justify-start">
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label={copy.cancel} title={copy.cancel}>
-            <ArrowLeft />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs lg:hidden"
+            onClick={onBack}
+            aria-label={copy.back}
+            title={copy.back}
+          >
+            <ArrowLeft className="size-4" />
+            <span className="text-xs">{copy.back}</span>
           </Button>
         </div>
         <div className="min-w-0 text-center">

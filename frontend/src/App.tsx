@@ -21,6 +21,7 @@ export function App() {
       const url = new URL(anchor.href, window.location.href);
       const isMailRoute =
         url.pathname === "/inbox" ||
+        url.pathname === "/ai-document" ||
         url.pathname === "/attachments" ||
         url.pathname === "/documents" ||
         url.pathname.startsWith("/documents/") ||
@@ -45,6 +46,8 @@ export function App() {
 
   let content: ReactNode;
   if (path === "/settings") {
+    content = <InboxPage />;
+  } else if (path === "/ai-document") {
     content = <InboxPage />;
   } else if (path === "/attachments") {
     content = <AttachmentsPage />;

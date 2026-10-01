@@ -555,6 +555,7 @@ func main() {
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)
+	apiRoutes.Post("/ai/agent-chat", userAIHandler.HandleAgentChat)
 	// Build the completion backend before registering. With [ai] enabled = false
 	// this builds nothing at all; with mode = "embedded" it constructs the
 	// in-process llmux gateway and fails startup on a configuration that could

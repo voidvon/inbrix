@@ -115,37 +115,6 @@ function sectionTitleCells(title: string, iconIndex: number) {
   return [cell(iconBadge(iconIndex)), cell([text(title, { bold: true, size: 13 })])];
 }
 
-function sectionTitle(title: string, iconIndex: number, width: number): IElement[] {
-  return [table([31, width - 31], [{
-    height: 24,
-    cells: sectionTitleCells(title, iconIndex),
-  }], { borderType: TableBorder.EMPTY })];
-}
-
-function infoTable(rows: Array<[string, string, string?]>, width = 345) {
-  return table([70, width - 70], rows.map(([label, value, conceptId]) => ({
-    height: 32,
-    cells: [
-      cell([text(label, { bold: true, size: 11 })]),
-      cell([conceptId ? controlText(conceptId, value, label, { size: 11 }) : text(value, { size: 11 })]),
-    ],
-  })), { borderType: TableBorder.EMPTY });
-}
-
-function partyPanel(title: string, rows: Array<[string, string, string?]>, width: number, iconIndex: number): IElement[] {
-  return [
-    ...sectionTitle(title, iconIndex, width),
-    {
-      type: ElementType.SEPARATOR,
-      value: "",
-      color: BLUE,
-      lineWidth: 2,
-    },
-    lineBreak({ size: 1, rowMargin: 1 }),
-    infoTable(rows, width),
-  ];
-}
-
 export type QuotationItem = {
   model: string;
   picture?: string;
@@ -171,12 +140,12 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     ? values.items
     : [
         {
-          model: values?.item_model || "SP400",
+          model: values?.item_model || "",
           picture: values?.item_picture,
-          description: values?.item_description || "Spirax Sarco SP400",
-          qty: values?.item_qty || "1",
-          price: values?.item_price || "1,634.47",
-          amount: values?.item_amount || "1,634.47",
+          description: values?.item_description || "",
+          qty: values?.item_qty || "",
+          price: values?.item_price || "",
+          amount: values?.item_amount || "",
         },
       ];
 
@@ -219,7 +188,7 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
       height: 32,
       cells: [
         { ...cell([text("TOTAL", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE), colspan: 5 },
-        cell([controlText("total_amount", values?.total_amount || "1,634.47", "Total Amount", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
+        cell([controlText("total_amount", values?.total_amount || "", "Total Amount", { bold: true, size: 11, rowFlex: RowFlex.RIGHT })], PALE),
       ],
     },
   ]);
@@ -251,28 +220,33 @@ export function createSpiraxQuotationCanvasDocument(
     ["Validity", initialValues?.validity || "Valid for 30 days", "validity"],
   ];
   const metaIcons = [tagIcon, calendarDaysIcon, circleDollarSignIcon, clock3Icon];
-  const meta = table([26, 89, 135], [
-    { height: 10, cells: [cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })]), cell([text(" ", { size: 1 })])] },
+
+  const hero = table([430, 26, 88, 174], [
+    {
+      height: 10,
+      cells: [
+        { ...cell(leftHero, undefined, [TdBorder.RIGHT]), rowspan: 5, verticalAlign: VerticalAlign.TOP },
+        cell([text(" ", { size: 1 })]),
+        cell([text(" ", { size: 1 })]),
+        cell([text(" ", { size: 1 })]),
+      ],
+    },
     ...metaRows.map(([label, value, conceptId], index) => ({
-      height: 27,
+      height: 35,
       cells: [
         cell(inlineLucideIcon(metaIcons[index])),
         cell([text(label, { bold: true, color: index === 0 ? BLUE : NAVY, size: 12 })]),
         cell([controlText(conceptId, value, label, { bold: true, rowFlex: RowFlex.RIGHT, size: index === 0 ? 10 : 11 })]),
       ],
     })),
-  ], { borderType: TableBorder.EMPTY });
-  const hero = table([430, 288], [{
-    height: 178,
-    cells: [cell(leftHero, undefined, [TdBorder.RIGHT]), { ...cell([meta]), verticalAlign: VerticalAlign.TOP }],
-  }], { borderType: TableBorder.EMPTY, borderColor: LINE });
+  ], { borderType: TableBorder.EMPTY, borderColor: LINE });
 
   const customer: Array<[string, string, string]> = [
-    ["Company", initialValues?.customer_company || 'LLC "Bocco"', "customer_company"],
-    ["Contact", initialValues?.customer_contact || "Mariia Savostian, Manager of Supply and Foreign Economic Activity", "customer_contact"],
-    ["Phone", initialValues?.customer_phone || "+38 067 826 09 10 (Viber, Telegram, WhatsApp)", "customer_phone"],
-    ["Email", initialValues?.customer_email || "–", "customer_email"],
-    ["Address", initialValues?.customer_address || "25006 Kropyvnytskyi, Ukraine", "customer_address"],
+    ["Company", initialValues?.customer_company || "", "customer_company"],
+    ["Contact", initialValues?.customer_contact || "", "customer_contact"],
+    ["Phone", initialValues?.customer_phone || "", "customer_phone"],
+    ["Email", initialValues?.customer_email || "", "customer_email"],
+    ["Address", initialValues?.customer_address || "", "customer_address"],
   ];
   const seller: Array<[string, string, string]> = [
     ["Company", initialValues?.seller_company || "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD", "seller_company"],
@@ -281,24 +255,59 @@ export function createSpiraxQuotationCanvasDocument(
     ["Email", initialValues?.seller_email || "sales@spiraxsteam.com", "seller_email"],
     ["Address", initialValues?.seller_address || "–", "seller_address"],
   ];
-  const parties = table([354, 354], [{
-    height: 184,
-    cells: [cell(partyPanel("Customer Information", customer, 340, 0)), cell(partyPanel("Seller Information", seller, 340, 1))],
-  }], { borderType: TableBorder.EMPTY });
+  const parties = table([75, 269, 20, 75, 279], [
+    {
+      height: 28,
+      cells: [
+        {
+          ...cell([
+            ...iconBadge(0),
+            text("  Customer Information", { bold: true, size: 12 }),
+            lineBreak({ size: 1, rowMargin: 0.2 }),
+            { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 2 },
+          ]),
+          colspan: 2,
+        },
+        cell([text(" ", { size: 1 })]),
+        {
+          ...cell([
+            ...iconBadge(1),
+            text("  Seller Information", { bold: true, size: 12 }),
+            lineBreak({ size: 1, rowMargin: 0.2 }),
+            { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 2 },
+          ]),
+          colspan: 2,
+        },
+      ],
+    },
+    ...customer.map(([cLabel, cVal, cConcept], idx) => {
+      const [sLabel, sVal, sConcept] = seller[idx] || ["", "", ""];
+      return {
+        height: 32,
+        cells: [
+          cell([text(cLabel, { bold: true, size: 11 })]),
+          cell([controlText(cConcept, cVal, cLabel, { size: 11 })]),
+          cell([text(" ", { size: 1 })]),
+          cell([text(sLabel, { bold: true, size: 11 })]),
+          cell([controlText(sConcept, sVal, sLabel, { size: 11 })]),
+        ],
+      };
+    }),
+  ], { borderType: TableBorder.EMPTY });
 
   const terms: Array<[string, string, string]> = [
-    ["Lead Time", initialValues?.lead_time || "In stock; available for prompt shipment.", "lead_time"],
-    ["Payment Terms", initialValues?.payment_terms || "30% advance payment, 70% before shipment", "payment_terms"],
+    ["Lead Time", initialValues?.lead_time || "", "lead_time"],
+    ["Payment Terms", initialValues?.payment_terms || "", "payment_terms"],
     ["Validity", initialValues?.commercial_validity || "Valid for 30 days", "commercial_validity"],
-    ["Notes", initialValues?.notes || "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY.", "notes"],
+    ["Notes", initialValues?.notes || "", "notes"],
   ];
-  const remarks = initialValues?.remarks || "Price converted from CNY 11,000 at an exchange rate of 1 USD = 6.73 CNY. Shipping cost to 25006 Kropyvnytskyi, Ukraine is not included and will be quoted separately.";
+  const remarks = initialValues?.remarks || "";
   const bottomRows: Array<{ height: number; cells: ReturnType<typeof cell>[] }> = [
     {
       height: 30,
       cells: [
-        { ...cell(sectionTitle("Commercial Terms", 3, 346), undefined, [TdBorder.BOTTOM]), colspan: 2 },
-        cell(sectionTitle("Remarks", 4, 346), undefined, [TdBorder.BOTTOM]),
+        { ...cell([...iconBadge(3), text("  Commercial Terms", { bold: true, size: 12 })], undefined, [TdBorder.BOTTOM]), colspan: 2 },
+        cell([...iconBadge(4), text("  Remarks", { bold: true, size: 12 })], undefined, [TdBorder.BOTTOM]),
       ],
     },
     {

@@ -199,11 +199,11 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     ? values.items
     : [
         {
-          model: values?.item_model || "APT14HC",
-          description: values?.item_description || "Spirax Sarco Automatic Pump Trap\nModel: APT14HC\nAutomatic Pump Trap for Condensate Recovery\nBrand: Spirax Sarco (100% Brand New & Original)",
-          qty: values?.item_qty || "1 PC",
-          price: values?.item_price || "$5,500.00",
-          amount: values?.item_amount || "$5,500.00",
+          model: values?.item_model || "",
+          description: values?.item_description || "",
+          qty: values?.item_qty || "",
+          price: values?.item_price || "",
+          amount: values?.item_amount || "",
         },
       ];
 
@@ -214,24 +214,24 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     const priceId = isSingle ? "item_price" : `item_price_${index}`;
     const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
 
-    const descValue = item.description || (item.model ? `Spirax Sarco Steam Equipment\nModel: ${item.model}` : "Spirax Sarco Steam Equipment");
+    const descValue = item.description || (item.model ? `Equipment\nModel: ${item.model}` : "");
 
     return {
       height: itemRowHeight,
       cells: [
         cell([text(String(index + 1), { bold: true, size: 11, rowFlex: RowFlex.CENTER })]),
         cell([controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 })]),
-        cell([controlText(qtyId, item.qty || "1 PC", "Qty", { size: 11, rowFlex: RowFlex.CENTER })]),
-        cell([controlText(priceId, item.price || "$0.00", "Unit Price", { size: 11, rowFlex: RowFlex.RIGHT })]),
-        cell([controlText(amountId, item.amount || "$0.00", "Amount", { bold: true, size: 11.5, rowFlex: RowFlex.RIGHT })]),
+        cell([controlText(qtyId, item.qty || "", "Qty", { size: 11, rowFlex: RowFlex.CENTER })]),
+        cell([controlText(priceId, item.price || "", "Unit Price", { size: 11, rowFlex: RowFlex.RIGHT })]),
+        cell([controlText(amountId, item.amount || "", "Amount", { bold: true, size: 11.5, rowFlex: RowFlex.RIGHT })]),
       ],
     };
   });
 
-  const subtotalVal = values?.subtotal || (activeItems.length === 1 ? activeItems[0].amount : "$5,500.00");
-  const freightVal = values?.inland_freight || "FREE";
-  const totalVal = values?.total_amount || (activeItems.length === 1 ? `USD ${activeItems[0].amount.replace(/^\$/, "")}` : "USD 5,500.00");
-  const sayTotalVal = values?.say_total || "Say Total: US Dollars Five Thousand Five Hundred Only.";
+  const subtotalVal = values?.subtotal || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
+  const freightVal = values?.inland_freight || "";
+  const totalVal = values?.total_amount || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
+  const sayTotalVal = values?.say_total || "";
 
   return table(widths, [
     { height: 32, cells: header, repeat: true },
@@ -278,10 +278,10 @@ export function createSpiraxContractCanvasDocument(
   const effectiveDate = initialValues?.contract_date || (date && date !== "[Effective date]" ? date.replaceAll("/", "-") : todayFormatted);
   const sellerDate = initialValues?.seller_sign_date || effectiveDate;
   const contractNo = initialValues?.contract_number || number;
-  const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "ORA Trading Co.";
-  const buyerContact = initialValues?.buyer_contact || initialValues?.customer_contact || "Engr. Muhammad Daood";
+  const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "";
+  const buyerContact = initialValues?.buyer_contact || initialValues?.customer_contact || "";
 
-  // Left Hero (Seller Brand & Identity)
+  // Left Hero (Seller Brand & Identity - PRESERVED)
   const leftHero: IElement[] = [
     ...(logo ? [{ type: ElementType.IMAGE, value: logo, width: 175, height: 50 } as IElement] : [text("SPIRAX SARCO", { bold: true, color: BLUE, size: 22, letterSpacing: 0.8 })]),
     lineBreak({ size: 1, rowMargin: 0.35 }),
@@ -298,12 +298,24 @@ export function createSpiraxContractCanvasDocument(
   const metaRows: Array<[string, string, string]> = [
     ["PI Number:", contractNo, "contract_number"],
     ["Date:", effectiveDate, "contract_date"],
-    ["Customer PO:", initialValues?.customer_po || "OTRP-2026-2366", "customer_po"],
-    ["Payment Terms:", initialValues?.payment_terms || "100% T/T Advance", "payment_terms"],
+    ["Customer PO:", initialValues?.customer_po || "", "customer_po"],
+    ["Payment Terms:", initialValues?.payment_terms || "", "payment_terms"],
   ];
   const metaIcons = [tagIcon, calendarDaysIcon, circleDollarSignIcon, clock3Icon];
 
-  const metaTable = table([24, 110, 174], [
+  const hero = table([410, 24, 110, 174], [
+    {
+      height: 38,
+      cells: [
+        { ...cell(leftHero, undefined, [TdBorder.RIGHT]), rowspan: 5, verticalAlign: VerticalAlign.TOP },
+        {
+          ...cell([
+            controlText("contract_title", initialValues?.contract_title || "PROFORMA INVOICE", "Document Title", { bold: true, size: 22, color: BLUE, rowFlex: RowFlex.RIGHT }),
+          ]),
+          colspan: 3,
+        },
+      ],
+    },
     ...metaRows.map(([label, value, conceptId], idx) => ({
       height: 27,
       cells: [
@@ -312,21 +324,7 @@ export function createSpiraxContractCanvasDocument(
         cell([controlText(conceptId, value, label, { bold: idx === 0, rowFlex: RowFlex.RIGHT, size: idx === 0 ? 11.5 : 11, color: idx === 0 ? BLUE : NAVY })]),
       ],
     })),
-  ], { borderType: TableBorder.EMPTY });
-
-  const rightHero: IElement[] = [
-    controlText("contract_title", initialValues?.contract_title || "PROFORMA INVOICE", "Document Title", { bold: true, size: 22, color: BLUE, rowFlex: RowFlex.RIGHT }),
-    lineBreak({ size: 1, rowMargin: 0.4 }),
-    metaTable,
-  ];
-
-  const hero = table([410, 308], [{
-    height: 148,
-    cells: [
-      { ...cell(leftHero, undefined, [TdBorder.RIGHT]), verticalAlign: VerticalAlign.TOP },
-      { ...cell(rightHero), verticalAlign: VerticalAlign.TOP },
-    ],
-  }], { borderType: TableBorder.EMPTY, borderColor: LINE });
+  ], { borderType: TableBorder.EMPTY, borderColor: LINE });
 
   // Parties Panels (Bill To Buyer & Delivery Terms)
   const buyerUserBadge = makeBadge('<path d="M12 14c0-2.2-1.8-4-4-4s-4 1.8-4 4"/><circle cx="8" cy="5" r="3"/>');
@@ -335,15 +333,15 @@ export function createSpiraxContractCanvasDocument(
   const buyerRows: Array<[string, string, string, boolean]> = [
     ["Company:", buyerCompany, "buyer_company", true],
     ["Attn:", buyerContact, "buyer_contact", false],
-    ["Email:", initialValues?.buyer_email || initialValues?.customer_email || "info@oratrading.com.sa", "buyer_email", false],
-    ["Address:", initialValues?.buyer_address || initialValues?.customer_address || "Saudi Arabia", "buyer_address", false],
+    ["Email:", initialValues?.buyer_email || initialValues?.customer_email || "", "buyer_email", false],
+    ["Address:", initialValues?.buyer_address || initialValues?.customer_address || "", "buyer_address", false],
   ];
 
   const deliveryRows = [
-    ["Trade Term:", initialValues?.trade_term || "FCA China (Free delivery to forwarder warehouse)", "trade_term"],
-    ["Lead Time:", initialValues?.lead_time || "Approx. 2 Weeks upon receipt of payment", "lead_time"],
-    ["Origin:", initialValues?.origin || "China", "origin"],
-    ["Port of Loading:", initialValues?.port_of_loading || "Shanghai, China", "port_of_loading"],
+    ["Trade Term:", initialValues?.trade_term || "", "trade_term"],
+    ["Lead Time:", initialValues?.lead_time || "", "lead_time"],
+    ["Origin:", initialValues?.origin || "", "origin"],
+    ["Port of Loading:", initialValues?.port_of_loading || "", "port_of_loading"],
   ];
 
   const buyerTableRows = buyerRows.map(([label, value, conceptId, isBold]) => ({
@@ -364,14 +362,13 @@ export function createSpiraxContractCanvasDocument(
 
   const parties = table([74, 270, 10, 96, 268], [
     {
-      height: 24,
+      height: 28,
       cells: [
         {
           ...cell([
-            table([26, 318], [{
-              height: 24,
-              cells: [cell(buyerUserBadge), cell([text("Bill To / Buyer Information", { bold: true, size: 11.5, color: BLUE })])],
-            }], { borderType: TableBorder.EMPTY }),
+            ...buyerUserBadge,
+            text("  Bill To / Buyer Information", { bold: true, size: 11.5, color: BLUE }),
+            lineBreak({ size: 1, rowMargin: 0.25 }),
             { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
             lineBreak({ size: 1, rowMargin: 0.25 }),
           ], PALE),
@@ -380,10 +377,9 @@ export function createSpiraxContractCanvasDocument(
         cell([text(" ", { size: 1 })], undefined, []),
         {
           ...cell([
-            table([26, 338], [{
-              height: 24,
-              cells: [cell(deliveryBadge), cell([text("Delivery & Shipment Terms", { bold: true, size: 11.5, color: BLUE })])],
-            }], { borderType: TableBorder.EMPTY }),
+            ...deliveryBadge,
+            text("  Delivery & Shipment Terms", { bold: true, size: 11.5, color: BLUE }),
+            lineBreak({ size: 1, rowMargin: 0.25 }),
             { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
             lineBreak({ size: 1, rowMargin: 0.25 }),
           ], PALE),
@@ -407,8 +403,8 @@ export function createSpiraxContractCanvasDocument(
   const bankBadge = makeBadge('<rect x="1" y="2" width="14" height="11" rx="1.5"/><path d="M1 6h14"/><circle cx="4" cy="10" r="1"/>');
   const notesBadge = makeBadge('<path d="M3 2h8l3 3v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M10 2v4h4"/>');
 
-  const productModel = initialValues?.item_model || (items && items[0]?.model) || "APT14HC";
-  const defaultMemo = `${buyerCompany} / ${contractNo} / ${productModel}`;
+  const productModel = initialValues?.item_model || (items && items[0]?.model) || "";
+  const defaultMemo = buyerCompany ? `${buyerCompany} / ${contractNo}${productModel ? ` / ${productModel}` : ""}` : contractNo;
   const paymentMemo = initialValues?.payment_memo
     ? initialValues.payment_memo
         .replace(/\bPI-20260919-01\b/g, contractNo)
@@ -446,39 +442,37 @@ export function createSpiraxContractCanvasDocument(
   }));
 
   const notesPanelContent: IElement[] = [
-    table([26, 252], [{
-      height: 24,
-      cells: [cell(notesBadge), cell([text("Order Notes & Terms", { bold: true, size: 11, color: BLUE })])],
-    }], { borderType: TableBorder.EMPTY }),
+    ...notesBadge,
+    text("  Order Notes & Terms", { bold: true, size: 11, color: BLUE }),
+    lineBreak({ size: 1, rowMargin: 0.25 }),
     { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
     lineBreak({ size: 1, rowMargin: 0.25 }),
     text("1. Production & Dispatch Schedule:", { bold: true, size: 10, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.1 }),
-    controlText("order_note_1", initialValues?.order_note_1 || "Goods prepared within approx. 2 weeks upon receiving bank confirmation.", "Note 1", { size: 9.5, color: "#475569" }),
+    controlText("order_note_1", initialValues?.order_note_1 || "", "Note 1", { size: 9.5, color: "#475569" }),
     lineBreak({ size: 1, rowMargin: 0.25 }),
     text("2. Bank Remittance Slip (MT103):", { bold: true, size: 10, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.1 }),
-    controlText("order_note_2", initialValues?.order_note_2 || "Kindly provide official bank SWIFT MT103 copy once remittance is executed.", "Note 2", { size: 9.5, color: "#475569" }),
+    controlText("order_note_2", initialValues?.order_note_2 || "", "Note 2", { size: 9.5, color: "#475569" }),
     lineBreak({ size: 1, rowMargin: 0.25 }),
     text("3. Delivery & Forwarder Handover:", { bold: true, size: 10, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.1 }),
-    controlText("order_note_3", initialValues?.order_note_3 || "Commercial invoice & packing list provided ahead of forwarder collection.", "Note 3", { size: 9.5, color: "#475569" }),
+    controlText("order_note_3", initialValues?.order_note_3 || "", "Note 3", { size: 9.5, color: "#475569" }),
     lineBreak({ size: 1, rowMargin: 0.25 }),
     text("4. Quality & Warranty Commitment:", { bold: true, size: 10, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.1 }),
-    controlText("order_note_4", initialValues?.order_note_4 || "100% Brand New & Genuine Spirax Sarco equipment with standard warranty.", "Note 4", { size: 9.5, color: "#475569" }),
+    controlText("order_note_4", initialValues?.order_note_4 || "", "Note 4", { size: 9.5, color: "#475569" }),
   ];
 
   const bottomSection = table([136, 290, 10, 282], [
     {
-      height: 24,
+      height: 28,
       cells: [
         {
           ...cell([
-            table([26, 400], [{
-              height: 24,
-              cells: [cell(bankBadge), cell([text("Official Bank Payment Details (SWIFT / Wire TT)", { bold: true, size: 11, color: BLUE })])],
-            }], { borderType: TableBorder.EMPTY }),
+            ...bankBadge,
+            text("  Official Bank Payment Details (SWIFT / Wire TT)", { bold: true, size: 11, color: BLUE }),
+            lineBreak({ size: 1, rowMargin: 0.25 }),
             { type: ElementType.SEPARATOR, value: "", color: BLUE, lineWidth: 1.5 },
             lineBreak({ size: 1, rowMargin: 0.25 }),
           ]),

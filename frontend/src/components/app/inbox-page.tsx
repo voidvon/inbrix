@@ -39,9 +39,18 @@ import { LoginScreen } from "./auth-screens";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
+import { AIDocumentChatPanel } from "./ai-document-chat-panel";
+import { DocumentEditorDialog } from "./document-editor-dialog";
+import {
+  type DocumentEditorTarget,
+  readStoredDocuments,
+  readStoredTemplates,
+  writeStoredDocuments,
+} from "../../lib/document-storage";
 
 export function conversationIdFromURL() {
   if (typeof window === "undefined") return null;
+  if (window.location.pathname === "/ai-document") return "ai-document";
   return new URL(window.location.href).searchParams.get("conversation");
 }
 
@@ -75,6 +84,10 @@ export function InboxPage() {
     return () => window.removeEventListener("popstate", restoreConversationFromURL);
   }, []);
 
+  const isAIDocument = selectedId === "ai-document" || selectedId?.startsWith("ai-document:");
+  const [editorTarget, setEditorTarget] = useState<DocumentEditorTarget | null>(null);
+  const [templates] = useState(() => readStoredTemplates(locale));
+
   const conversations = useQuery({
     queryKey: ["conversations", debouncedSearch],
     queryFn: () => getConversations(debouncedSearch),
@@ -86,11 +99,11 @@ export function InboxPage() {
   const detail = useQuery({
     queryKey: ["conversation", selectedId],
     queryFn: () => getConversation(selectedId!),
-    enabled: Boolean(selectedId),
+    enabled: Boolean(selectedId) && !isAIDocument,
     retry: 1,
   });
 
-  const optimisticMessages = useOptimisticMessages(selectedId);
+  const optimisticMessages = useOptimisticMessages(isAIDocument ? null : selectedId);
 
   useEffect(() => {
     if (selectedId && detail.data?.conversation?.messages) {
@@ -330,6 +343,12 @@ export function InboxPage() {
     });
   };
 
+  const closeChat = () => {
+    setChatOpen(false);
+    setSelectedId(null);
+    setConversationURL(null, "replace");
+  };
+
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
   if (authenticated) return <LoginScreen copy={locale} />;
 
@@ -358,25 +377,48 @@ export function InboxPage() {
           className={chatOpen ? "hidden lg:flex" : "flex"}
         />
         {chatOpen && <ResizeHandle label="Resize conversation list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
-        <ChatPanel
-          copy={locale}
-          detail={mergedConversation}
-          loading={detail.isPending && Boolean(selectedId)}
-          error={detail.error}
-          onBack={() => setChatOpen(false)}
-          onReply={openReply}
-          onReplyAll={openReplyAll}
-          onNewMail={openNewMailForMessage}
-          onRetrySend={(message) => { void handleRetrySend(message); }}
-          onReEdit={handleReEditMessage}
-          onConversationEmpty={() => {
-            setSelectedId(null);
-            setChatOpen(false);
-            setConversationURL(null, "replace");
-          }}
-          className={chatOpen ? "flex" : "hidden lg:flex"}
-        />
+        {isAIDocument ? (
+          <AIDocumentChatPanel
+            copy={locale}
+            accountEmail={conversations.data?.accountEmail || ""}
+            onBack={closeChat}
+            onOpenDocument={(doc) => setEditorTarget({ kind: "document", record: doc })}
+            className={chatOpen ? "flex" : "hidden lg:flex"}
+          />
+        ) : (
+          <ChatPanel
+            copy={locale}
+            detail={mergedConversation}
+            loading={detail.isPending && Boolean(selectedId)}
+            error={detail.error}
+            onBack={closeChat}
+            onReply={openReply}
+            onReplyAll={openReplyAll}
+            onNewMail={openNewMailForMessage}
+            onRetrySend={(message) => { void handleRetrySend(message); }}
+            onReEdit={handleReEditMessage}
+            onConversationEmpty={closeChat}
+            className={chatOpen ? "flex" : "hidden lg:flex"}
+          />
+        )}
       </main>
+      {editorTarget && (
+        <DocumentEditorDialog
+          copy={locale}
+          accountEmail={conversations.data?.accountEmail || ""}
+          target={editorTarget}
+          templates={templates}
+          onOpenChange={(open) => {
+            if (!open) setEditorTarget(null);
+          }}
+          onSave={(_kind, record) => {
+            const stored = readStoredDocuments();
+            writeStoredDocuments([record, ...stored.filter((d) => d.id !== record.id)]);
+            toast.success(locale.documentSaved);
+            setEditorTarget(null);
+          }}
+        />
+      )}
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

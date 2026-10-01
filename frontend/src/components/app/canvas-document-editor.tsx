@@ -145,14 +145,41 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
   return values;
 }
 
+function hasNestedTables(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): boolean {
+  for (const el of elements) {
+    if (el.type === ElementType.TABLE && el.trList) {
+      for (const tr of el.trList) {
+        if (!tr.tdList) continue;
+        for (const td of tr.tdList) {
+          if (td.value && td.value.some((child) => child.type === ElementType.TABLE)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
-  if (hasControls(data.main)) {
+  if (hasControls(data.main) && !hasNestedTables(data.main)) {
     return data;
   }
   const extracted = extractLegacySpiraxValues(data.main);
   return {
     ...data,
     main: createSpiraxQuotationCanvasDocument("", "", extracted),
+  };
+}
+
+function migrateLegacySpiraxContractDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
+  if (hasControls(data.main) && !hasNestedTables(data.main)) {
+    return data;
+  }
+  const extracted = extractLegacySpiraxContractValues(data.main);
+  return {
+    ...data,
+    main: createSpiraxContractCanvasDocument("", "", extracted),
   };
 }
 
@@ -198,6 +225,13 @@ async function prepareEmbeddedImage(file: File | Blob, inTable = false) {
   };
 }
 
+export type DocumentDataPayload = {
+  template: DocumentTemplateKind;
+  values: Record<string, string>;
+  items: QuotationItem[];
+  controls: Array<{ conceptId: string; placeholder?: string; value?: string }>;
+};
+
 export type CanvasDocumentEditorHandle = {
   getHTML: () => string;
   getDocument: () => string;
@@ -221,6 +255,7 @@ export type CanvasDocumentEditorHandle = {
   getControls: () => Array<{ conceptId: string; placeholder?: string; value?: string }>;
   setControlValues: (values: Array<{ conceptId: string; value: string }>) => boolean;
   applyDocumentUpdates: (payload: { values?: Record<string, string>; items?: QuotationItem[] }) => boolean;
+  getDocumentData: () => DocumentDataPayload;
 };
 
 type CanvasDocumentEditorProps = {
@@ -381,6 +416,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.command.executeSetValue(
         initialTemplateKind === "spirax-quotation"
           ? migrateLegacySpiraxDocument(storedDocument.data)
+          : initialTemplateKind === "spirax-contract"
+          ? migrateLegacySpiraxContractDocument(storedDocument.data)
           : storedDocument.data
       );
     } else if (initialTemplateKind === "spirax-contract") {
@@ -501,6 +538,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         editor.command.executeSetValue(
           nextTemplate === "spirax-quotation"
             ? migrateLegacySpiraxDocument(stored.data)
+            : nextTemplate === "spirax-contract"
+            ? migrateLegacySpiraxContractDocument(stored.data)
             : stored.data
         );
       } else if (nextTemplate === "spirax-contract" && isContractPlaceholder) {
@@ -776,6 +815,106 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       }
 
       return applied;
+    },
+    getDocumentData: () => {
+      const editor = editorRef.current;
+      const currentTemplate: DocumentTemplateKind = templateRef.current || "document";
+      const controls: Array<{ conceptId: string; placeholder?: string; value?: string }> = [];
+      const map = new Map<string, { conceptId: string; placeholder?: string; value?: string }>();
+
+      try {
+        const snapshot = editor?.command.getValue();
+        const traverse = (elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>) => {
+          for (const el of elements) {
+            if (el.type === ElementType.CONTROL && el.control?.conceptId) {
+              const id = el.control.conceptId;
+              let textVal = "";
+              if (el.control.value && Array.isArray(el.control.value)) {
+                textVal = el.control.value.map((v) => v.value || "").join("").trim();
+              }
+              if (!map.has(id)) {
+                map.set(id, {
+                  conceptId: id,
+                  placeholder: el.control.placeholder || id,
+                  value: textVal,
+                });
+              }
+            } else if (el.value && typeof el.value === "string") {
+              const matches = el.value.matchAll(/\[([^\]\n]{2,30})\]/g);
+              for (const m of matches) {
+                const fullTag = m[0];
+                const label = m[1];
+                if (!map.has(fullTag)) {
+                  map.set(fullTag, {
+                    conceptId: fullTag,
+                    placeholder: label,
+                    value: fullTag,
+                  });
+                }
+              }
+            }
+            if (el.trList) {
+              for (const tr of el.trList) {
+                for (const td of tr.tdList || []) {
+                  if (td.value) traverse(td.value);
+                }
+              }
+            }
+            if (el.valueList) {
+              traverse(el.valueList);
+            }
+          }
+        };
+        if (snapshot?.data?.main) traverse(snapshot.data.main);
+      } catch {
+        // ignore
+      }
+      controls.push(...Array.from(map.values()));
+
+      let values: Record<string, string> = {};
+      let items: QuotationItem[] = [];
+
+      try {
+        const snapshot = editor?.command.getValue();
+        if (snapshot?.data?.main) {
+          if (currentTemplate === "spirax-quotation") {
+            const quotationValues = extractLegacySpiraxValues(snapshot.data.main);
+            values = { ...quotationValues };
+            if (quotationValues.items && quotationValues.items.length > 0) {
+              items = quotationValues.items;
+              delete (values as { items?: unknown }).items;
+            }
+          } else if (currentTemplate === "spirax-contract") {
+            const contractValues = extractLegacySpiraxContractValues(snapshot.data.main);
+            values = { ...contractValues };
+            if (contractValues.items && contractValues.items.length > 0) {
+              items = contractValues.items.map((it) => ({
+                model: it.model,
+                description: it.description,
+                qty: it.qty,
+                price: it.price,
+                amount: it.amount,
+              }));
+              delete (values as { items?: unknown }).items;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("getDocumentData extraction error", err);
+      }
+
+      for (const c of controls) {
+        if (c.conceptId && !(c.conceptId in values)) {
+          values[c.conceptId] = c.value || "";
+        }
+      }
+
+      return {
+        template: currentTemplate,
+        values,
+        items,
+        controls,
+      };
     },
   }), [initialTemplateKind, locale]);
 

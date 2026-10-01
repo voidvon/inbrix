@@ -302,8 +302,9 @@ export function FolderPage({ folder }: { folder: string }) {
           {detailOpen && (
             <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
               <div>
-                <Button variant="ghost" size="icon" className="lg:hidden" onClick={closeDetail} aria-label={locale.back}>
-                  <ArrowLeft />
+                <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs lg:hidden" onClick={closeDetail} aria-label={locale.back}>
+                  <ArrowLeft className="size-4" />
+                  <span className="text-xs">{locale.back}</span>
                 </Button>
               </div>
               <h2 className="truncate text-center text-sm font-semibold">{detail.data?.subject || folderTitle}</h2>

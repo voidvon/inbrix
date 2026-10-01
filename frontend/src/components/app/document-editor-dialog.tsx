@@ -1,9 +1,11 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   Bold,
   Check,
   Download,
+  Eye,
   FileText,
   Italic,
   Link,
@@ -12,26 +14,32 @@ import {
   Paperclip,
   Printer,
   Redo2,
+  SlidersHorizontal,
   Sparkles,
   Table2,
   Underline,
   Undo2,
   Upload,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { CanvasDocumentEditorHandle } from "./canvas-document-editor";
+import { DocumentVariableForm } from "./document-variable-form";
 import { DocumentStampManager } from "./document-stamps";
 import { createDocumentPDF, exportDocumentPages } from "./document-export";
 import { generateDocument } from "../../lib/api";
 import { createDocumentNumber, extractDocumentCompany, extractDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
 import { type Copy, zh } from "../../lib/locale";
+import { cn, formatTime } from "../../lib/utils";
 import {
   type StoredDocument,
   type StoredTemplate,
   type DocumentEditorTarget,
   type DocumentTemplate,
   documentTemplateHTML,
+  isSellerConcept,
   readStoredDocuments,
   writeStoredDocuments,
   readStoredTemplates,
@@ -97,14 +105,65 @@ export function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; 
   );
 }
 
-export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; accountEmail: string; type: DocumentTemplate; title: string; disabled: boolean }) {
-  const [open, setOpen] = useState(false);
+function sanitizeResult(html: string) {
+  let clean = html.trim();
+  const match = clean.match(/```(?:html)?\s*([\s\S]*?)```/i);
+  if (match) {
+    clean = match[1].trim();
+  }
+  const parsed = new DOMParser().parseFromString(clean, "text/html");
+  parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
+  parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name);
+    });
+  });
+  return parsed.body.innerHTML;
+}
+
+export function DocumentAISidebar({
+  copy,
+  editor,
+  accountEmail,
+  type,
+  title,
+  onClose,
+  isMobile = false,
+  onPreviewDocument,
+}: {
+  copy: Copy;
+  editor: CanvasDocumentEditorHandle | null;
+  accountEmail: string;
+  type: DocumentTemplate;
+  title: string;
+  onClose?: () => void;
+  isMobile?: boolean;
+  onPreviewDocument?: () => void;
+}) {
+  const isZh = copy === zh;
+  const [messages, setMessages] = useState<
+    Array<{ id: string; role: "user" | "assistant"; content: string; time: string; error?: boolean; hasUpdate?: boolean }>
+  >(() => [
+    {
+      id: "initial-msg",
+      role: "assistant",
+      content: isZh
+        ? "我是您的 AI 文档助手。请输入您对当前文档的修改要求（如更改客户名称、调整产品单价、交货期、补充特别条款等），我将直接为您精准更新文档变量并保留排版。"
+        : "I am your AI Document Assistant. Tell me what to update (customer name, prices, delivery dates, special clauses), and I will update the document variables while keeping formatting.",
+      time: new Date().toISOString(),
+    },
+  ]);
   const [instruction, setInstruction] = useState("");
-  const controls = open && editor ? editor.getControls() : [];
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+  }, [messages.length]);
 
   const mutation = useMutation({
-    mutationFn: () => {
-      // 全文轻量化后作为全局上下文：variables 模式同样需要它，否则 AI 看不到文档整体，只能盲改变量。
+    mutationFn: async (text: string) => {
       const rawHTML = editor?.getHTML() || "";
       const currentHTML = rawHTML
         .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
@@ -116,21 +175,24 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
           mode: "variables",
           documentType: type,
           title,
-          instruction,
+          instruction: text,
           currentHTML,
-          variables: activeControls.map((c) => ({
-            conceptId: c.conceptId,
-            label: c.placeholder || c.conceptId,
-            currentValue: c.value || "",
-          })),
+          variables: activeControls.map((c) => {
+            const isStart = messages.length <= 1;
+            const isSeller = isSellerConcept(c.conceptId);
+            const val = isStart && !isSeller ? "" : (c.value || "");
+            return {
+              conceptId: c.conceptId,
+              label: c.placeholder || c.conceptId,
+              currentValue: val,
+            };
+          }),
         });
       }
-      return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction, currentHTML });
+      return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction: text, currentHTML });
     },
     onSuccess: (value) => {
       if (value.mode === "variables" && (value.values || value.items)) {
-        // 只保留文档中真实存在的变量 ID：AI 偶尔返回臆造的 key，这些 key 无法应用到任何控件，
-        // 必须过滤掉，否则会出现“显示更新成功、实际什么都没改”的假象。
         const activeControls = editor?.getControls() || [];
         const knownIds = new Set(activeControls.map((c) => c.conceptId));
         for (const [a, b] of DOCUMENT_VARIABLE_ALIASES) {
@@ -146,7 +208,15 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
         const hasValues = Object.keys(values).length > 0;
         const hasItems = value.items && value.items.length > 0;
         if (!hasValues && !hasItems) {
-          toast.info(copy === zh ? "AI 未发现需要变更的变量" : "No variable updates detected");
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `asst-${Date.now()}`,
+              role: "assistant",
+              content: isZh ? "AI 未发现需要变更的变量。请提供更明确的修改指示。" : "No variable updates detected.",
+              time: new Date().toISOString(),
+            },
+          ]);
           return;
         }
         const applied = editor?.applyDocumentUpdates({
@@ -154,19 +224,22 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
           items: value.items,
         });
         editor?.focus();
-        if (applied) {
-          const itemCount = value.items?.length || 0;
-          const varCount = Object.keys(values).length;
-          toast.success(
-            copy === zh
-              ? `已智能更新 ${itemCount > 0 ? `${itemCount} 项产品及 ` : ""}${varCount} 处文档变量`
-              : `Updated ${itemCount > 0 ? `${itemCount} items and ` : ""}${varCount} variables`
-          );
-        } else {
-          toast.info(copy === zh ? "变量已识别但未能应用到文档" : "Variables recognized but could not be applied");
-        }
-        setInstruction("");
-        setOpen(false);
+        const itemCount = value.items?.length || 0;
+        const varCount = Object.keys(values).length;
+        const replyText = isZh
+          ? `已成功为您应用修改：\n${itemCount > 0 ? `• 更新了 ${itemCount} 项产品明细\n` : ""}• 更新了 ${varCount} 处文档变量`
+          : `Applied updates: ${itemCount} items, ${varCount} variables`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `asst-${Date.now()}`,
+            role: "assistant",
+            content: replyText,
+            time: new Date().toISOString(),
+            hasUpdate: true,
+          },
+        ]);
+        toast.success(isZh ? "文档已智能更新" : "Document updated");
         return;
       }
       if (value.html) {
@@ -177,76 +250,166 @@ export function DocumentAIAssistant({ copy, editor, accountEmail, type, title, d
         }
         editor?.setHTML(nextHTML);
         editor?.focus();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `asst-${Date.now()}`,
+            role: "assistant",
+            content: isZh ? "已根据要求完成文档改写并应用至编辑器。" : "Document rewritten and applied.",
+            time: new Date().toISOString(),
+            hasUpdate: true,
+          },
+        ]);
         toast.success(copy.aiDocumentRewritten);
-        setInstruction("");
-        setOpen(false);
         return;
       }
       toast.error(copy.aiDocumentFailed);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : copy.aiDocumentFailed);
+      const errMsg = error instanceof Error ? error.message : copy.aiDocumentFailed;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `asst-err-${Date.now()}`,
+          role: "assistant",
+          content: isZh ? `生成失败：${errMsg}` : `Failed: ${errMsg}`,
+          time: new Date().toISOString(),
+          error: true,
+        },
+      ]);
+      toast.error(errMsg);
     },
   });
 
-  const sanitizeResult = (html: string) => {
-    let clean = html.trim();
-    const match = clean.match(/```(?:html)?\s*([\s\S]*?)```/i);
-    if (match) {
-      clean = match[1].trim();
-    }
-    const parsed = new DOMParser().parseFromString(clean, "text/html");
-    parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
-    parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => {
-      Array.from(element.attributes).forEach((attribute) => {
-        if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name);
-      });
-    });
-    return parsed.body.innerHTML;
+  const handleSend = () => {
+    const trimmed = instruction.trim();
+    if (!trimmed || mutation.isPending) return;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+        time: new Date().toISOString(),
+      },
+    ]);
+    setInstruction("");
+    mutation.mutate(trimmed);
   };
 
   return (
-    <Popover open={open} onOpenChange={(value) => { setOpen(value); if (!value) { mutation.reset(); } }}>
-      <PopoverTrigger render={<Button type="button" variant={open ? "secondary" : "ghost"} size="sm" disabled={disabled || !accountEmail} />}><Sparkles />{copy.aiDocument}</PopoverTrigger>
-      <PopoverContent side="bottom" align="end" sideOffset={8} className="w-[min(32rem,calc(100vw-2rem))] gap-0 p-4">
-        <PopoverTitle className="text-sm font-semibold">{copy.aiDocument}</PopoverTitle>
-        <PopoverDescription className="mt-1 text-xs">
-          {controls.length > 0
-            ? (copy === zh ? `已检测到 ${controls.length} 个模板变量，AI 将精准赋值不破坏排版` : `${controls.length} template variables detected for precise update`)
-            : copy.aiRewriteDocument}
-        </PopoverDescription>
-        <Label className="mt-3 grid gap-1.5 text-xs">
-          <span>{copy.aiDocumentInstruction}</span>
+    <aside
+      className={cn(
+        "flex flex-col bg-card",
+        isMobile
+          ? "flex-1 w-full h-full border-0"
+          : "w-80 lg:w-96 border-l shrink-0 shadow-lg"
+      )}
+    >
+      <div className="flex h-11 items-center justify-between border-b px-3.5 bg-muted/20 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="size-4 text-primary" />
+          <span className="text-sm font-semibold">{copy.aiDocument}</span>
+          {!isMobile && (
+            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-normal">
+              {isZh ? "常驻助手" : "Resident"}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {isMobile && onPreviewDocument && (
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 text-xs gap-1 shadow-2xs"
+              onClick={onPreviewDocument}
+            >
+              <Eye className="size-3.5" />
+              <span>{isZh ? "预览文档" : "Preview"}</span>
+            </Button>
+          )}
+          {!isMobile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onClose}
+              aria-label={copy.cancel}
+              title={isZh ? "隐藏助手" : "Hide assistant"}
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
+        {messages.map((m) => (
+          <div key={m.id} className={cn("flex flex-col text-xs", m.role === "user" ? "items-end" : "items-start")}>
+            <div
+              className={cn(
+                "rounded-lg px-3 py-2 leading-relaxed max-w-[90%]",
+                m.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : m.error
+                  ? "border border-destructive/30 bg-destructive/10 text-destructive"
+                  : "border bg-muted/50 text-foreground"
+              )}
+            >
+              <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.hasUpdate && onPreviewDocument && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2.5 h-7 gap-1.5 text-xs bg-background text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                  onClick={onPreviewDocument}
+                >
+                  <Eye className="size-3.5" />
+                  <span>{isZh ? "点击预览最新文档" : "Preview Document"}</span>
+                </Button>
+              )}
+            </div>
+            <span className="mt-1 text-[9px] text-muted-foreground">{formatTime(m.time)}</span>
+          </div>
+        ))}
+        {mutation.isPending && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Sparkles className="size-3 animate-spin text-primary" />
+            <span>{copy.aiDocumentDrafting}</span>
+          </div>
+        )}
+      </div>
+      <div className="border-t p-2.5 bg-background shrink-0">
+        <div className="relative flex flex-col rounded-lg border bg-background focus-within:ring-1 focus-within:ring-primary shadow-2xs">
           <Textarea
             value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            rows={4}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            rows={2}
+            placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
+            className="min-h-12 max-h-28 overflow-y-auto resize-none border-0 bg-transparent px-2.5 py-1.5 text-xs leading-5 shadow-none focus-visible:ring-0"
             disabled={mutation.isPending}
-            placeholder={
-              controls.length > 0
-                ? (copy === zh
-                    ? "例如：客户名称改成华为技术，单价改成 1800，交货期改为 45 天，付款方式改为全款发货"
-                    : "e.g. Change customer to Huawei, unit price to 1800, lead time to 45 days, 100% advance payment")
-                : (type === "quotation"
-                    ? (copy === zh ? "例如：修改产品单价、增加折扣条款、更新交货期…" : "e.g. Adjust unit prices, add discount terms, update delivery time...")
-                    : (copy === zh ? "例如：调整合同金额、修改违约责任条款、补充付款节点…" : "e.g. Adjust contract amount, revise breach terms, update payment schedule..."))
-            }
           />
-        </Label>
-        {mutation.error && <p className="mt-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.aiDocumentFailed}</p>}
-        <div className="mt-3 flex justify-end gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={mutation.isPending || !instruction.trim()}
-            onClick={() => mutation.mutate()}
-          >
-            <Sparkles className={mutation.isPending ? "animate-spin" : ""} />
-            {mutation.isPending ? copy.aiRewritingDocument : copy.aiRewriteDocument}
-          </Button>
+          <div className="flex items-center justify-between border-t px-2 py-1 bg-muted/10 shrink-0">
+            <span className="text-[10px] text-muted-foreground">{isZh ? "Enter 发送" : "Enter to send"}</span>
+            <Button
+              type="button"
+              size="sm"
+              className="size-7 rounded p-0"
+              disabled={mutation.isPending || !instruction.trim()}
+              onClick={handleSend}
+            >
+              <Sparkles className={mutation.isPending ? "size-3.5 animate-spin" : "size-3.5"} />
+            </Button>
+          </div>
         </div>
-      </PopoverContent>
-    </Popover>
+      </div>
+    </aside>
   );
 }
 
@@ -269,6 +432,69 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const [editorReady, setEditorReady] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [open, setOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false));
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  const [aiSidebarOpen, setAiSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<"chat" | "document" | "variables">(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) return "chat";
+    return "document";
+  });
+  useEffect(() => {
+    if (!isMobile && activeTab === "chat") {
+      setActiveTab("document");
+    }
+  }, [isMobile, activeTab]);
+  const [fitToScreen, setFitToScreen] = useState(true);
+  const [containerWidth, setContainerWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth - 16 : 374));
+  const [canvasHeight, setCanvasHeight] = useState(1123);
+  const canvasInnerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = editorScrollRef.current;
+    if (!el) return;
+    const updateWidth = () => {
+      if (el.clientWidth > 0) {
+        const available = Math.max(200, el.clientWidth - 16);
+        setContainerWidth(available);
+      } else if (typeof window !== "undefined") {
+        setContainerWidth(Math.max(200, window.innerWidth - 16));
+      }
+    };
+    updateWidth();
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      }
+    });
+    observer.observe(el);
+    window.addEventListener("resize", updateWidth);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    const el = canvasInnerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.height > 0) {
+          setCanvasHeight(entry.contentRect.height);
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [editorReady]);
+
+  const previewScale = Math.min(1, Math.max(0.2, containerWidth / 794));
   const prepareTemplate = (html: string, documentType: DocumentTemplate) => {
     if (target?.kind !== "document") return html;
     const number = numbersRef.current[documentType] ??= createDocumentNumber(documentType);
@@ -387,32 +613,355 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
       >
         <DialogTitle className="sr-only">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle>
         <DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription>
-        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 sm:px-4">
-          {target.kind === "template" && <div className="flex rounded-md bg-muted p-0.5" role="group" aria-label={copy.documentType}><Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("quotation")}>{copy.quotation}</Button><Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" onClick={() => selectType("contract")}>{copy.contract}</Button></div>}
-          <Input className="h-8 min-w-40 flex-1 sm:max-w-72" value={name} onChange={(event) => setName(event.target.value)} placeholder={target.kind === "template" ? copy.templateName : copy.documentName} aria-label={target.kind === "template" ? copy.templateName : copy.documentName} />
-          <div className="flex items-center gap-1 overflow-x-auto"><DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} /><Separator orientation="vertical" className="mx-1 h-5" /><DocumentAIAssistant copy={copy} editor={editorRef.current} accountEmail={accountEmail} type={type} title={name} disabled={!editorReady} /></div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <input ref={docxInputRef} type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" data-testid="document-docx-input" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importDocx(file); }} />
-            <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => docxInputRef.current?.click()}><Upload />{copy === zh ? "导入 Word" : "Import Word"}</Button>
-            <DocumentStampManager chinese={copy === zh} disabled={!editorReady || exporting} onInsert={(stamp, width) => editorRef.current?.insertStamp(stamp, width)} />
-            <Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}><Printer />{copy.printDocument}</Button>
+        {/* Top Header Bar: Document Title, View Mode Tabs, and Action Buttons */}
+        <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-2 sm:px-4 py-1.5 sm:py-2 overflow-x-auto whitespace-nowrap scrollbar-none touch-pan-x shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {isMobile && activeTab === "document" && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs shrink-0 gap-1 text-primary font-medium"
+                onClick={() => setActiveTab("chat")}
+              >
+                <ArrowLeft className="size-4" />
+                <span>{copy === zh ? "AI 对话" : "Chat"}</span>
+              </Button>
+            )}
+            {target.kind === "template" && (
+              <div className="flex rounded-md bg-muted p-0.5 shrink-0" role="group" aria-label={copy.documentType}>
+                <Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" className="h-7 text-xs px-2" onClick={() => selectType("quotation")}>
+                  {copy.quotation}
+                </Button>
+                <Button type="button" variant={type === "contract" ? "secondary" : "ghost"} size="sm" className="h-7 text-xs px-2" onClick={() => selectType("contract")}>
+                  {copy.contract}
+                </Button>
+              </div>
+            )}
+            <Input
+              className="h-8 min-w-28 max-w-40 sm:min-w-36 sm:max-w-64 text-xs sm:text-sm font-medium shrink-0"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={target.kind === "template" ? copy.templateName : copy.documentName}
+              aria-label={target.kind === "template" ? copy.templateName : copy.documentName}
+            />
+          </div>
+
+          {/* View Switcher Tabs - Located in the header */}
+          <div className="flex items-center rounded-lg bg-muted p-0.5 border shadow-2xs shrink-0" role="tablist">
+            {isMobile ? (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "chat"}
+                  onClick={() => setActiveTab("chat")}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+                    activeTab === "chat"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span>{copy === zh ? "AI 对话" : "Chat"}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "document"}
+                  onClick={() => setActiveTab("document")}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+                    activeTab === "document"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Eye className="size-3.5" />
+                  <span>{copy === zh ? "预览文档" : "Preview"}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "variables"}
+                  onClick={() => setActiveTab("variables")}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+                    activeTab === "variables"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <SlidersHorizontal className="size-3.5" />
+                  <span>{copy === zh ? "变量表单" : "Variables"}</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "document"}
+                  onClick={() => setActiveTab("document")}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all",
+                    activeTab === "document"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <FileText className="size-3.5" />
+                  <span>{copy === zh ? "文档排版" : "Document"}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "variables"}
+                  onClick={() => setActiveTab("variables")}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all",
+                    activeTab === "variables"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <SlidersHorizontal className="size-3.5" />
+                  <span>{copy === zh ? "变量列表" : "Variables"}</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <input
+              ref={docxInputRef}
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              data-testid="document-docx-input"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void importDocx(file);
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs shrink-0"
+              disabled={!editorReady || exporting}
+              onClick={() => docxInputRef.current?.click()}
+            >
+              <Upload />
+              <span className="hidden sm:inline">{copy === zh ? "导入 Word" : "Import Word"}</span>
+              <span className="sm:hidden">{copy === zh ? "导入" : "Word"}</span>
+            </Button>
+            <DocumentStampManager
+              chinese={copy === zh}
+              disabled={!editorReady || exporting}
+              onInsert={(stamp, width) => editorRef.current?.insertStamp(stamp, width)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs shrink-0"
+              disabled={!editorReady || exporting}
+              onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}
+            >
+              <Printer />
+              <span className="hidden sm:inline">{copy.printDocument}</span>
+            </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={!editorReady || exporting} />}><Download />{exporting ? (copy === zh ? "导出中…" : "Exporting…") : (copy === zh ? "导出" : "Export")}</DropdownMenuTrigger>
+              <DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting} />}>
+                <Download />
+                {exporting ? (copy === zh ? "导出中…" : "Exporting…") : (copy === zh ? "导出" : "Export")}
+              </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto min-w-44 whitespace-nowrap">
-                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("docx")}>{copy === zh ? "下载 docx" : "Download docx"}</DropdownMenuItem>
-                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("pdf")}>{copy === zh ? "下载 PDF" : "Download PDF"}</DropdownMenuItem>
-                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("image-pdf")}>{copy === zh ? "下载 PDF（图片）" : "Download PDF (Image)"}</DropdownMenuItem>
-                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("jpg")}>{copy === zh ? "下载图片" : "Download Image"}</DropdownMenuItem>
-                <DropdownMenuItem className="whitespace-nowrap" onClick={downloadDocument}>{copy.downloadHTML}</DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("docx")}>
+                  {copy === zh ? "下载 docx" : "Download docx"}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("pdf")}>
+                  {copy === zh ? "下载 PDF" : "Download PDF"}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("image-pdf")}>
+                  {copy === zh ? "下载 PDF（图片）" : "Download PDF (Image)"}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("jpg")}>
+                  {copy === zh ? "下载图片" : "Download Image"}
+                </DropdownMenuItem>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={downloadDocument}>
+                  {copy.downloadHTML}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={save}><Check />{copy.saveDocument}</Button>
-            {onAttach && <Button type="button" size="sm" disabled={!editorReady || exporting} onClick={() => void attachPDF()}><Paperclip />{exporting ? (copy === zh ? "正在生成 PDF…" : "Generating PDF…") : (copy === zh ? "作为 PDF 添加到邮件" : "Attach PDF to email")}</Button>}
-            <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => setOpen(false)}><X />{copy === zh ? "关闭" : "Close"}</Button>
+            <Button type="button" size="sm" className="h-8 text-xs shrink-0 font-medium" disabled={!editorReady || exporting} onClick={save}>
+              <Check />
+              {copy.saveDocument}
+            </Button>
+            {onAttach && (
+              <Button type="button" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting} onClick={() => void attachPDF()}>
+                <Paperclip />
+                <span className="hidden sm:inline">{exporting ? (copy === zh ? "正在生成 PDF…" : "Generating PDF…") : (copy === zh ? "作为 PDF 添加到邮件" : "Attach PDF to email")}</span>
+                <span className="sm:hidden">{copy === zh ? "添加附件" : "Attach"}</span>
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" disabled={exporting} onClick={() => setOpen(false)}>
+              <X />
+              <span className="hidden sm:inline">{copy === zh ? "关闭" : "Close"}</span>
+            </Button>
           </div>
         </div>
-        <div ref={editorScrollRef} className="canvas-document-scroll min-h-0 flex-1 overflow-auto bg-muted/30 p-3 sm:p-6">
-          <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-muted-foreground">{copy.loadingEditor}</div>}><CanvasDocumentEditor ref={editorRef} initialHTML={initialHTML} locale={copy === zh ? "zh-CN" : "en"} onReady={() => { setEditorReady(true); editorScrollRef.current?.scrollTo({ top: 0, left: 0 }); }} /></Suspense>
+
+        <div className="flex min-h-0 flex-1 overflow-hidden relative">
+          {/* Mobile AI Chat View */}
+          {isMobile && activeTab === "chat" ? (
+            <DocumentAISidebar
+              copy={copy}
+              editor={editorRef.current}
+              accountEmail={accountEmail}
+              type={type}
+              title={name}
+              isMobile={true}
+              onPreviewDocument={() => setActiveTab("document")}
+            />
+          ) : (
+            <>
+              {/* Left Content Column: Document Editor (+ Toolbar) or Variable Form */}
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                {/* Formatting Toolbar: Positioned only in the left content column, shown in document view */}
+                {activeTab === "document" && (
+                  <div className="flex h-11 items-center gap-1 overflow-x-auto whitespace-nowrap border-b bg-muted/20 px-2 sm:px-4 py-1.5 scrollbar-none touch-pan-x shrink-0">
+                    {isMobile && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs px-2 shrink-0 gap-1 text-primary font-medium"
+                          onClick={() => setActiveTab("chat")}
+                        >
+                          <ArrowLeft className="size-3.5" />
+                          <span>{copy === zh ? "返回 AI 对话" : "Back to Chat"}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={fitToScreen ? "secondary" : "ghost"}
+                          size="sm"
+                          className="h-7 text-xs px-2 shrink-0 gap-1"
+                          onClick={() => setFitToScreen((prev) => !prev)}
+                        >
+                          {fitToScreen ? <ZoomIn className="size-3.5" /> : <ZoomOut className="size-3.5" />}
+                          <span>{fitToScreen ? (copy === zh ? "适应手机" : "Fit") : (copy === zh ? "100% 原始" : "100%")}</span>
+                        </Button>
+                        <Separator orientation="vertical" className="mx-1 h-4 shrink-0" />
+                      </>
+                    )}
+                    <DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} />
+                    <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+                    <Button
+                      type="button"
+                      variant={aiSidebarOpen ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 text-xs shrink-0 gap-1"
+                      disabled={!editorReady || !accountEmail}
+                      onClick={() => {
+                        if (isMobile) {
+                          setActiveTab("chat");
+                        } else {
+                          setAiSidebarOpen((prev) => !prev);
+                        }
+                      }}
+                    >
+                      <Sparkles className="size-3.5 text-primary" />
+                      <span>{copy.aiDocument}</span>
+                    </Button>
+                  </div>
+                )}
+
+                {/* Document Editor Area (kept mounted with hidden class to preserve state) */}
+                <div
+                  ref={editorScrollRef}
+                  className={cn(
+                    "canvas-document-scroll min-h-0 flex-1 bg-muted/30 p-2 sm:p-6",
+                    isMobile && fitToScreen ? "overflow-y-auto overflow-x-hidden" : "overflow-auto",
+                    activeTab !== "document" && "hidden"
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "relative transition-transform",
+                      isMobile && fitToScreen ? "mx-auto overflow-hidden" : "flex justify-center"
+                    )}
+                    style={
+                      isMobile && fitToScreen
+                        ? {
+                            width: `${Math.round(794 * previewScale)}px`,
+                            height: canvasHeight > 0 ? `${Math.round(canvasHeight * previewScale)}px` : undefined,
+                          }
+                        : undefined
+                    }
+                  >
+                    <div
+                      ref={canvasInnerRef}
+                      style={
+                        isMobile && fitToScreen
+                          ? {
+                              width: "794px",
+                              transform: `scale(${previewScale})`,
+                              transformOrigin: "top left",
+                            }
+                          : undefined
+                      }
+                    >
+                      <Suspense fallback={<div className="grid h-64 place-items-center text-sm text-muted-foreground">{copy.loadingEditor}</div>}>
+                        <CanvasDocumentEditor
+                          ref={editorRef}
+                          initialHTML={initialHTML}
+                          locale={copy === zh ? "zh-CN" : "en"}
+                          onReady={() => {
+                            setEditorReady(true);
+                            editorScrollRef.current?.scrollTo({ top: 0, left: 0 });
+                          }}
+                        />
+                      </Suspense>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Variable Form View */}
+                {activeTab === "variables" && (
+                  <div className="min-h-0 flex-1 overflow-hidden flex flex-col bg-background">
+                    <DocumentVariableForm
+                      copy={copy}
+                      editor={editorRef.current}
+                      aiSidebarOpen={aiSidebarOpen}
+                      onToggleAi={() => setAiSidebarOpen((prev) => !prev)}
+                      onApplyComplete={(switchToDoc) => {
+                        if (switchToDoc) {
+                          setActiveTab("document");
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Right Content Column: AI Document Assistant on Desktop */}
+              {!isMobile && aiSidebarOpen && (
+                <DocumentAISidebar
+                  copy={copy}
+                  editor={editorRef.current}
+                  accountEmail={accountEmail}
+                  type={type}
+                  title={name}
+                  onClose={() => setAiSidebarOpen(false)}
+                />
+              )}
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

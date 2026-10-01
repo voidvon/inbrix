@@ -354,6 +354,65 @@ export function generateDocument(input: GenerateDocumentInput) {
   });
 }
 
+export type AIToolCall = {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  summary?: string;
+  status?: "success" | "error";
+};
+
+export type AIAgentDocumentCard = {
+  id?: string;
+  type: "quotation" | "contract";
+  title: string;
+  counterparty: string;
+  contact?: string;
+  currency?: string;
+  items?: QuotationItem[];
+  terms?: string[];
+  notes?: string;
+  subtotal?: string;
+  taxRate?: string;
+  taxAmount?: string;
+  total?: string;
+  values?: Record<string, string>;
+  html?: string;
+};
+
+export type AIAgentChatRequest = {
+  accountEmail: string;
+  agentId?: string;
+  modelId?: string;
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    toolCalls?: AIToolCall[];
+    document?: AIAgentDocumentCard;
+  }>;
+  activeDocument?: {
+    type: string;
+    title: string;
+    counterparty: string;
+    items?: QuotationItem[];
+    values?: Record<string, string>;
+  };
+};
+
+export type AIAgentChatResponse = {
+  content: string;
+  toolCalls: AIToolCall[];
+  document?: AIAgentDocumentCard;
+};
+
+export function chatWithAIAgent(payload: AIAgentChatRequest) {
+  return apiFetch<AIAgentChatResponse>("/api/ai/agent-chat", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export type MailSummaryResult = {
   summary: string;
   status: "ready";

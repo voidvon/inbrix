@@ -21,6 +21,42 @@ export function documentTemplateHTML(type: DocumentTemplate, copy: Copy) {
   return spiraxQuotationTemplate(date);
 }
 
+export function isSellerConcept(conceptId: string): boolean {
+  const lower = conceptId.toLowerCase();
+  return (
+    lower.startsWith("seller_") ||
+    lower.startsWith("vendor_") ||
+    lower.startsWith("supplier_") ||
+    lower.startsWith("bank_") ||
+    lower.startsWith("beneficiary_") ||
+    lower.includes("seller") ||
+    lower === "swift_code" ||
+    lower === "iban"
+  );
+}
+
+export function cleanDocumentVariablesForConversation<T extends { values?: Record<string, string>; items?: any[]; company?: string; terms?: string[]; notes?: string; subtotal?: string; taxAmount?: string; total?: string }>(doc: T): T {
+  const cleanedValues: Record<string, string> = {};
+  if (doc.values) {
+    for (const [key, val] of Object.entries(doc.values)) {
+      if (isSellerConcept(key)) {
+        cleanedValues[key] = val;
+      }
+    }
+  }
+  return {
+    ...doc,
+    company: undefined,
+    items: [],
+    values: cleanedValues,
+    terms: undefined,
+    notes: undefined,
+    subtotal: undefined,
+    taxAmount: undefined,
+    total: undefined,
+  };
+}
+
 export type StoredDocument = {
   id: string;
   type: DocumentTemplate;
