@@ -17,9 +17,9 @@ import (
 )
 
 type AIAgentChatMessage struct {
-	Role      string         `json:"role"` // "user", "assistant"
-	Content   string         `json:"content"`
-	ToolCalls []AIToolCall   `json:"toolCalls,omitempty"`
+	Role      string          `json:"role"` // "user", "assistant"
+	Content   string          `json:"content"`
+	ToolCalls []AIToolCall    `json:"toolCalls,omitempty"`
 	Document  *AIDocumentCard `json:"document,omitempty"`
 }
 
