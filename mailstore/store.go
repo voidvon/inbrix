@@ -454,6 +454,43 @@ func (s *Store) migrate(ctx context.Context) error {
 			created_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_error_logs_owner_created ON ai_error_logs(owner_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS documents (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			type TEXT NOT NULL CHECK(type IN ('quotation', 'contract')),
+			name TEXT NOT NULL,
+			company TEXT NOT NULL DEFAULT '',
+			html TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_owner_updated ON documents(owner_id, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_owner_type ON documents(owner_id, type, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS document_templates (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			type TEXT NOT NULL CHECK(type IN ('quotation', 'contract')),
+			name TEXT NOT NULL,
+			html TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_doc_templates_owner ON document_templates(owner_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS document_stamps (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			image_data TEXT NOT NULL,
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
+			aspect_ratio REAL NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_doc_stamps_owner ON document_stamps(owner_id, created_at DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

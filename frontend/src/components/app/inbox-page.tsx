@@ -43,9 +43,8 @@ import { AIDocumentChatPanel } from "./ai-document-chat-panel";
 import { DocumentEditorDialog } from "./document-editor-dialog";
 import {
   type DocumentEditorTarget,
-  readStoredDocuments,
   readStoredTemplates,
-  writeStoredDocuments,
+  persistServerDocument,
 } from "../../lib/document-storage";
 
 export function conversationIdFromURL() {
@@ -411,11 +410,14 @@ export function InboxPage() {
           onOpenChange={(open) => {
             if (!open) setEditorTarget(null);
           }}
-          onSave={(_kind, record) => {
-            const stored = readStoredDocuments();
-            writeStoredDocuments([record, ...stored.filter((d) => d.id !== record.id)]);
-            toast.success(locale.documentSaved);
-            setEditorTarget(null);
+          onSave={async (_kind, record) => {
+            try {
+              await persistServerDocument(record);
+              toast.success(locale.documentSaved);
+              setEditorTarget(null);
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : locale.loadFailed);
+            }
           }}
         />
       )}

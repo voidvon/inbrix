@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { listDocumentStamps, saveDocumentStamp, deleteDocumentStamp } from "../../lib/api";
 
 export type DocumentStamp = {
   id: string;
@@ -88,19 +89,42 @@ export function DocumentStampManager({
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const label = chinese ? "印章管理" : "Stamp library";
-  const storageError = chinese
-    ? "印章库保存失败，请检查浏览器存储空间或权限。"
-    : "Could not save stamps. Check browser storage space and permissions.";
 
-  const persist = (next: DocumentStamp[]) => {
+  const persist = (next: DocumentStamp[], deletedId?: string) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setStamps(next);
-      return true;
     } catch {
-      toast.error(storageError);
-      return false;
+      // Ignore local storage quota errors
     }
+    setStamps(next);
+    if (deletedId) {
+      void deleteDocumentStamp(deletedId).catch((err) => console.warn("Failed to delete stamp from server", err));
+    }
+    return true;
+  };
+
+  const loadStamps = async () => {
+    try {
+      const res = await listDocumentStamps();
+      if (Array.isArray(res.stamps)) {
+        const converted: DocumentStamp[] = res.stamps.map((s) => ({
+          id: s.id,
+          name: s.name,
+          value: s.value || s.dataUrl || "",
+          width: s.width || 100,
+          height: s.height || 100,
+          insertWidth: s.insertWidth || DEFAULT_STAMP_WIDTH_MM,
+        }));
+        setStamps(converted);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(converted));
+        } catch {}
+        return;
+      }
+    } catch (err) {
+      console.warn("Could not load stamps from server, falling back to local storage", err);
+    }
+    setStamps(readStamps());
   };
 
   const upload = async (file?: File) => {
@@ -112,9 +136,21 @@ export function DocumentStampManager({
     setBusy(true);
     try {
       const stamp = await prepareStamp(file);
-      if (persist([...stamps, stamp])) toast.success(chinese ? "印章已添加" : "Stamp added");
-    } catch {
-      toast.error(chinese ? "图片无法读取，请选择有效的印章图片。" : "Unable to read this image. Choose a valid stamp image.");
+      await saveDocumentStamp({
+        id: stamp.id,
+        name: stamp.name,
+        value: stamp.value,
+        width: stamp.width,
+        height: stamp.height,
+        insertWidth: stamp.insertWidth,
+        aspectRatio: stamp.width / stamp.height,
+      });
+      const next = [...stamps, stamp];
+      persist(next);
+      toast.success(chinese ? "印章已添加" : "Stamp added");
+    } catch (err) {
+      console.error("Stamp upload/save failed", err);
+      toast.error(chinese ? "印章保存失败，请检查网络或服务端连接。" : "Failed to save stamp.");
     } finally {
       setBusy(false);
     }
@@ -138,12 +174,8 @@ export function DocumentStampManager({
         size="sm"
         disabled={disabled}
         onClick={() => {
-          try {
-            setStamps(readStamps());
-            setOpen(true);
-          } catch {
-            toast.error(chinese ? "无法读取印章库，请检查浏览器存储。" : "Unable to read the stamp library. Check browser storage.");
-          }
+          void loadStamps();
+          setOpen(true);
         }}
       >
         <Stamp />
@@ -232,6 +264,14 @@ export function DocumentStampManager({
                             const val = Number(event.target.value);
                             if (Number.isFinite(val) && val >= 10 && val <= 150) {
                               persist(stamps.map((item) => (item.id === stamp.id ? { ...item, insertWidth: val } : item)));
+                              void saveDocumentStamp({
+                                id: stamp.id,
+                                name: stamp.name,
+                                value: stamp.value,
+                                width: stamp.width,
+                                height: stamp.height,
+                                insertWidth: val,
+                              }).catch(() => {});
                             }
                           }}
                           onBlur={(event) => {
@@ -242,6 +282,14 @@ export function DocumentStampManager({
                                 : (stamp.insertWidth ?? DEFAULT_STAMP_WIDTH_MM);
                             event.target.value = String(safeVal);
                             persist(stamps.map((item) => (item.id === stamp.id ? { ...item, insertWidth: safeVal } : item)));
+                            void saveDocumentStamp({
+                              id: stamp.id,
+                              name: stamp.name,
+                              value: stamp.value,
+                              width: stamp.width,
+                              height: stamp.height,
+                              insertWidth: safeVal,
+                            }).catch(() => {});
                           }}
                         />
                         <span className="text-xs text-muted-foreground">mm</span>
@@ -272,7 +320,7 @@ export function DocumentStampManager({
                       title={chinese ? "删除印章" : "Delete stamp"}
                       onClick={() => {
                         if (window.confirm(chinese ? "确认删除该印章？" : "Delete this stamp?")) {
-                          persist(stamps.filter((item) => item.id !== stamp.id));
+                          persist(stamps.filter((item) => item.id !== stamp.id), stamp.id);
                         }
                       }}
                     >

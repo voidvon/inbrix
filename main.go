@@ -256,6 +256,7 @@ func main() {
 	if mailMirror != nil {
 		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
 	}
+	webDocumentsHandler := web.NewDocumentsHandler(store, mailMirror)
 	updateHandler := web.NewUpdateHandler(Version, func() error {
 		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 			return fmt.Errorf("automatic restart is unsupported on %s", runtime.GOOS)
@@ -418,7 +419,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -508,6 +509,24 @@ func main() {
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)
 
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
+
+		// Document management routes
+		apiRoutes.Get("/documents", webDocumentsHandler.HandleListDocuments)
+		apiRoutes.Post("/documents", webDocumentsHandler.HandleSaveDocument)
+		apiRoutes.Post("/documents/batch-delete", webDocumentsHandler.HandleBatchDeleteDocuments)
+		apiRoutes.Get("/documents/:id", webDocumentsHandler.HandleGetDocument)
+		apiRoutes.Delete("/documents/:id", webDocumentsHandler.HandleDeleteDocument)
+
+		// Document templates
+		apiRoutes.Get("/document-templates", webDocumentsHandler.HandleListTemplates)
+		apiRoutes.Post("/document-templates", webDocumentsHandler.HandleSaveTemplate)
+		apiRoutes.Delete("/document-templates/:id", webDocumentsHandler.HandleDeleteTemplate)
+
+		// Document stamps
+		apiRoutes.Get("/document-stamps", webDocumentsHandler.HandleListStamps)
+		apiRoutes.Post("/document-stamps", webDocumentsHandler.HandleSaveStamp)
+		apiRoutes.Delete("/document-stamps/:id", webDocumentsHandler.HandleDeleteStamp)
+
 		if systemSettings != nil {
 			apiRoutes.Patch("/account/profile", systemSettings.HandleUpdateProfile)
 			apiRoutes.Patch("/account/password", systemSettings.HandleUpdatePassword)

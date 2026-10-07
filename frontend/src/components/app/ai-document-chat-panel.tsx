@@ -50,8 +50,7 @@ import {
   cleanDocumentVariablesForConversation,
   documentTemplateHTML,
   isSellerConcept,
-  readStoredDocuments,
-  writeStoredDocuments,
+  persistServerDocument,
   type DocumentTemplate,
   type StoredDocument,
 } from "../../lib/document-storage";
@@ -306,12 +305,14 @@ export function AIDocumentChatPanel({
     mutation.mutate(trimmed);
   };
 
-  const handleSaveToDocs = (doc: AIDocumentGeneratedData) => {
+  const handleSaveToDocs = async (doc: AIDocumentGeneratedData) => {
     const storedDoc = convertGeneratedToStoredDocument(doc);
-    const existing = readStoredDocuments();
-    const next = [storedDoc, ...existing.filter((d) => d.id !== storedDoc.id)];
-    writeStoredDocuments(next);
-    toast.success(copy.aiDocumentSavedToDocuments);
+    try {
+      await persistServerDocument(storedDoc);
+      toast.success(copy.aiDocumentSavedToDocuments);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.loadFailed);
+    }
   };
 
   const handleOpenInEditor = (doc: AIDocumentGeneratedData) => {
@@ -658,7 +659,7 @@ export function AIDocumentChatPanel({
                         variant="outline"
                         size="sm"
                         className="h-7 gap-1 px-2.5 text-xs shadow-none cursor-pointer"
-                        onClick={() => handleSaveToDocs(msg.document!)}
+                        onClick={() => void handleSaveToDocs(msg.document!)}
                       >
                         <BookmarkCheck className="size-3" />
                         {copy.aiDocumentSaveToDocuments}

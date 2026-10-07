@@ -41,10 +41,9 @@ import {
   documentTemplateHTML,
   isSellerConcept,
   readStoredDocuments,
-  writeStoredDocuments,
   readStoredTemplates,
-  writeStoredTemplates,
-  setStoredTemplateDeleted,
+  persistServerDocument,
+  persistServerTemplate,
 } from "../../lib/document-storage";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -413,7 +412,7 @@ export function DocumentAISidebar({
   );
 }
 
-export function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave, onAttach, onBusyChange }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void; onAttach?: (file: File) => void; onBusyChange?: (busy: boolean) => void }) {
+export function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave, onAttach, onBusyChange }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void | Promise<void>; onAttach?: (file: File) => void; onBusyChange?: (busy: boolean) => void }) {
   const initialTemplate = target?.initialTemplate || templates.find((template) => template.type === target?.record?.type) || templates[0];
   const initialType = target?.record?.type || initialTemplate?.type || "quotation";
   const editorRef = useRef<CanvasDocumentEditorHandle>(null);
@@ -431,6 +430,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   const [type, setType] = useState<DocumentTemplate>(initialType);
   const [editorReady, setEditorReady] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false));
   useEffect(() => {
@@ -565,12 +565,13 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
       toast.error(copy === zh ? "导出失败，请重试或使用打印功能另存为 PDF。" : "Export failed. Try again or use Print to save as PDF.");
     } finally { setExporting(false); }
   };
-  const save = () => {
+  const save = async () => {
     const html = editorRef.current?.getDocument();
-    if (!html) return;
+    if (!html || saving) return;
     const company = extractDocumentCompany(editorRef.current) || extractDocumentCompany(html);
+    setSaving(true);
     try {
-      onSave(target.kind, {
+      await onSave(target.kind, {
         id: target.record?.id || crypto.randomUUID(),
         type,
         name: name.trim() || defaultDocNumber || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
@@ -578,8 +579,12 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
         html,
         updatedAt: new Date().toISOString(),
       });
-    } catch {
-      toast.error(copy === zh ? "保存失败，请检查浏览器存储空间。可先导出 PDF 或图片保留副本。" : "Save failed. Check browser storage space. Export a PDF or image to keep a copy.");
+    } catch (error) {
+      console.error("Document save failed", error);
+      const msg = error instanceof Error ? error.message : (copy === zh ? "保存失败，请检查网络或服务端连接。" : "Save failed. Check network or server connection.");
+      toast.error(msg);
+    } finally {
+      setSaving(false);
     }
   };
   const attachPDF = async () => {
@@ -797,9 +802,9 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button type="button" size="sm" className="h-8 text-xs shrink-0 font-medium" disabled={!editorReady || exporting} onClick={save}>
+            <Button type="button" size="sm" className="h-8 text-xs shrink-0 font-medium" disabled={!editorReady || exporting || saving} onClick={() => void save()}>
               <Check />
-              {copy.saveDocument}
+              {saving ? (copy === zh ? "正在保存…" : "Saving…") : copy.saveDocument}
             </Button>
             {onAttach && (
               <Button type="button" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting} onClick={() => void attachPDF()}>
@@ -1011,12 +1016,14 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
 
   if (action === "create") return <DocumentEditorDialog copy={copy} accountEmail={accountEmail} target={target} templates={templates}
     onOpenChange={(open) => { if (!open) onClose(); }} onAttach={onAttach} onBusyChange={onBusyChange}
-    onSave={(kind, record) => {
+    onSave={async (kind, record) => {
       if (kind === "template") {
+        await persistServerTemplate(record, copy);
         const next = [record, ...readStoredTemplates(copy).filter((item) => item.id !== record.id)];
-        setStoredTemplateDeleted(record.id, false);
-        writeStoredTemplates(next); setTemplates(next);
-      } else writeStoredDocuments([record, ...readStoredDocuments().filter((item) => item.id !== record.id)]);
+        setTemplates(next);
+      } else {
+        await persistServerDocument(record);
+      }
       setTarget({ kind, record });
       toast.success(copy.documentSaved);
     }} />;

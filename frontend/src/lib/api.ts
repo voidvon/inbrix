@@ -648,3 +648,106 @@ export function removePushSubscription(endpoint: string) {
     body: JSON.stringify({ endpoint }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Documents, Templates & Stamps Server APIs
+// ---------------------------------------------------------------------------
+
+export type ServerDocument = {
+  id: string;
+  type: "quotation" | "contract";
+  name: string;
+  company?: string;
+  html: string;
+  updatedAt: string;
+  createdAt?: string;
+};
+
+export type ServerDocumentTemplate = ServerDocument;
+
+export type ServerDocumentStamp = {
+  id: string;
+  name: string;
+  dataUrl?: string;
+  value?: string;
+  width?: number;
+  height?: number;
+  insertWidth?: number;
+  aspectRatio?: number;
+  createdAt?: number;
+};
+
+export function listDocuments(type?: "all" | "quotation" | "contract") {
+  const query = type && type !== "all" ? `?type=${encodeURIComponent(type)}` : "";
+  return apiFetch<{ documents: ServerDocument[] }>(`/api/documents${query}`);
+}
+
+export function getDocument(id: string) {
+  return apiFetch<{ document: ServerDocument }>(`/api/documents/${encodeURIComponent(id)}`);
+}
+
+export function saveDocument(document: {
+  id?: string;
+  type: "quotation" | "contract";
+  name: string;
+  company?: string;
+  html: string;
+}) {
+  return apiFetch<{ ok: boolean; document: ServerDocument }>("/api/documents", {
+    method: "POST",
+    body: JSON.stringify(document),
+  });
+}
+
+export function deleteDocument(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/documents/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function batchDeleteDocuments(ids: string[]) {
+  return apiFetch<{ ok: boolean; count: number }>("/api/documents/batch-delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function listDocumentTemplates() {
+  return apiFetch<{ templates: ServerDocumentTemplate[] }>("/api/document-templates");
+}
+
+export function saveDocumentTemplate(template: {
+  id?: string;
+  type: "quotation" | "contract";
+  name: string;
+  html: string;
+}) {
+  return apiFetch<{ ok: boolean; template: ServerDocumentTemplate }>("/api/document-templates", {
+    method: "POST",
+    body: JSON.stringify(template),
+  });
+}
+
+export function deleteDocumentTemplate(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/document-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function listDocumentStamps() {
+  return apiFetch<{ stamps: ServerDocumentStamp[] }>("/api/document-stamps");
+}
+
+export function saveDocumentStamp(stamp: ServerDocumentStamp) {
+  return apiFetch<{ ok: boolean; stamp: ServerDocumentStamp }>("/api/document-stamps", {
+    method: "POST",
+    body: JSON.stringify(stamp),
+  });
+}
+
+export function deleteDocumentStamp(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/document-stamps/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+

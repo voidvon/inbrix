@@ -47,10 +47,13 @@ import {
   type DocumentListFilter,
   DOCUMENT_PAGE_SIZE,
   readStoredDocuments,
-  writeStoredDocuments,
   readStoredTemplates,
-  writeStoredTemplates,
-  setStoredTemplateDeleted,
+  fetchServerDocuments,
+  fetchServerTemplates,
+  persistServerDocument,
+  persistServerTemplate,
+  deleteServerDocuments,
+  deleteServerTemplate,
 } from "../../lib/document-storage";
 import { cn, paginationPageItems } from "../../lib/utils";
 import { extractDocumentCompany } from "../../lib/document-number";
@@ -88,6 +91,31 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
   const someDocumentsSelected = pageDocuments.some((document) => selectedDocumentIds.has(document.id)) && !allDocumentsSelected;
 
   useEffect(() => {
+    let mounted = true;
+    void fetchServerDocuments("all").then((docs) => {
+      if (mounted) setDocuments(docs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    });
+    void fetchServerTemplates(copy).then((tpls) => {
+      if (mounted) setTemplates(tpls);
+    });
+    return () => { mounted = false; };
+  }, [copy]);
+
+  useEffect(() => {
+    if (documentId && !editorTarget?.record) {
+      void import("../../lib/api").then(({ getDocument }) => {
+        void getDocument(documentId)
+          .then((res) => {
+            if (res.document) {
+              setEditorTarget({ kind: "document", record: res.document });
+            }
+          })
+          .catch(() => {});
+      });
+    }
+  }, [documentId, editorTarget?.record]);
+
+  useEffect(() => {
     if (selectAllDocumentsRef.current) selectAllDocumentsRef.current.indeterminate = someDocumentsSelected;
   }, [someDocumentsSelected]);
 
@@ -99,16 +127,15 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
     setEditorTarget(null);
     if (window.location.pathname !== "/documents") window.history.replaceState(window.history.state, "", "/documents");
   };
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
     if (deleteTarget.kind === "template") {
       const { record } = deleteTarget;
       const next = templates.filter((item) => item.id !== record.id);
       try {
-        writeStoredTemplates(next);
-        setStoredTemplateDeleted(record.id, true);
-      } catch {
-        toast.error(copy.loadFailed);
+        await deleteServerTemplate(record.id, copy);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : copy.loadFailed);
         setDeleteTarget(null);
         return;
       }
@@ -120,18 +147,19 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
     }
 
     const { records } = deleteTarget;
-    const ids = new Set(records.map((document) => document.id));
-    const next = documents.filter((document) => !ids.has(document.id));
+    const ids = records.map((document) => document.id);
+    const idSet = new Set(ids);
+    const next = documents.filter((document) => !idSet.has(document.id));
     try {
-      writeStoredDocuments(next);
-    } catch {
-      toast.error(copy.loadFailed);
+      await deleteServerDocuments(ids);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.loadFailed);
       setDeleteTarget(null);
       return;
     }
     setDocuments(next);
-    setSelectedDocumentIds((current) => new Set([...current].filter((id) => !ids.has(id))));
-    if (editorTarget?.kind === "document" && editorTarget.record && ids.has(editorTarget.record.id)) closeEditor();
+    setSelectedDocumentIds((current) => new Set([...current].filter((id) => !idSet.has(id))));
+    if (editorTarget?.kind === "document" && editorTarget.record && idSet.has(editorTarget.record.id)) closeEditor();
     toast.success(records.length === 1 ? copy.documentDeleted : copy.documentsDeleted);
     setDeleteTarget(null);
   };
@@ -160,22 +188,31 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
     setSelectedDocumentIds(new Set());
     documentTableScrollRef.current?.scrollTo({ top: 0 });
   };
-  const saveEditorRecord = (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
+  const saveEditorRecord = async (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
     if (kind === "template") {
-      const next = [record, ...templates.filter((template) => template.id !== record.id)];
-      setStoredTemplateDeleted(record.id, false);
-      writeStoredTemplates(next);
-      setTemplates(next);
-      setEditorTarget({ kind, record });
-      toast.success(copy.templateSaved);
+      try {
+        const saved = await persistServerTemplate(record, copy);
+        const next = [saved, ...templates.filter((template) => template.id !== saved.id)];
+        setTemplates(next);
+        setEditorTarget({ kind, record: saved });
+        toast.success(copy.templateSaved);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : copy.loadFailed);
+        throw err;
+      }
       return;
     }
-    const next = [record, ...documents.filter((document) => document.id !== record.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    writeStoredDocuments(next);
-    setDocuments(next);
-    setEditorTarget({ kind, record });
-    window.history.replaceState(window.history.state, "", `/documents/${encodeURIComponent(record.id)}`);
-    toast.success(copy.documentSaved);
+    try {
+      const saved = await persistServerDocument(record);
+      const next = [saved, ...documents.filter((document) => document.id !== saved.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      setDocuments(next);
+      setEditorTarget({ kind, record: saved });
+      window.history.replaceState(window.history.state, "", `/documents/${encodeURIComponent(saved.id)}`);
+      toast.success(copy.documentSaved);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.loadFailed);
+      throw err;
+    }
   };
 
   return (
@@ -306,7 +343,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
             <Button type="button" variant="ghost" onClick={() => setDeleteTarget(null)}>
               {copy.cancel}
             </Button>
-            <Button type="button" variant="destructive" onClick={confirmDelete}>
+            <Button type="button" variant="destructive" onClick={() => void confirmDelete()}>
               <Trash2 />
               {deleteTarget?.kind === "template"
                 ? copy.deleteTemplate
