@@ -323,7 +323,9 @@
   max-width: none !important;
   border-radius: 0 !important;
   transform: none !important;
-  translate: none !important;
+  --tw-translate-x: 0 !important;
+  --tw-translate-y: 0 !important;
+  translate: 0 0 !important;
 }
 
 /* Ensure default popups/dialogs do not overflow the viewport on small mobile screens */

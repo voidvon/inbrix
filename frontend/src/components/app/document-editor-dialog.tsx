@@ -1,7 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   Bold,
   Check,
   Download,
@@ -50,7 +49,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
-import { Textarea } from "../ui/textarea";
+import { AIChatInput } from "./ai-chat-input";
 
 const CanvasDocumentEditor = lazy(() => import("./canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
 
@@ -303,29 +302,16 @@ export function DocumentAISidebar({
           : "w-80 lg:w-96 border-l shrink-0 shadow-lg"
       )}
     >
-      <div className="flex h-11 items-center justify-between border-b px-3.5 bg-muted/20 shrink-0">
-        <div className="flex items-center gap-1.5">
-          <Sparkles className="size-4 text-primary" />
-          <span className="text-sm font-semibold">{copy.aiDocument}</span>
-          {!isMobile && (
+      {!isMobile && (
+        <div className="flex h-11 items-center justify-between border-b px-3.5 bg-muted/20 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="size-4 text-primary" />
+            <span className="text-sm font-semibold">{copy.aiDocument}</span>
             <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-normal">
               {isZh ? "常驻助手" : "Resident"}
             </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {isMobile && onPreviewDocument && (
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 text-xs gap-1 shadow-2xs"
-              onClick={onPreviewDocument}
-            >
-              <Eye className="size-3.5" />
-              <span>{isZh ? "预览文档" : "Preview"}</span>
-            </Button>
-          )}
-          {!isMobile && (
+          </div>
+          <div className="flex items-center gap-1.5">
             <Button
               variant="ghost"
               size="icon"
@@ -336,9 +322,9 @@ export function DocumentAISidebar({
             >
               <X className="size-4" />
             </Button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
         {messages.map((m) => (
           <div key={m.id} className={cn("flex flex-col text-xs", m.role === "user" ? "items-end" : "items-start")}>
@@ -377,35 +363,16 @@ export function DocumentAISidebar({
         )}
       </div>
       <div className="border-t p-2.5 bg-background shrink-0 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-        <div className="relative flex flex-col rounded-lg border bg-background focus-within:ring-1 focus-within:ring-primary shadow-2xs">
-          <Textarea
-            value={instruction}
-            onChange={(e) => setInstruction(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            rows={2}
-            placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
-            className="min-h-11 max-h-24 overflow-y-auto resize-none border-0 bg-transparent px-2.5 py-1.5 text-xs leading-5 shadow-none focus-visible:ring-0"
-            disabled={mutation.isPending}
-          />
-          <div className="flex items-center justify-between border-t px-2 py-1 bg-muted/10 shrink-0">
-            <span className="text-[10px] text-muted-foreground">{isZh ? "Enter 发送" : "Enter to send"}</span>
-            <Button
-              type="button"
-              size="sm"
-              className="size-7 rounded p-0"
-              disabled={mutation.isPending || !instruction.trim()}
-              onClick={handleSend}
-              aria-label={isZh ? "发送" : "Send"}
-            >
-              <Sparkles className={mutation.isPending ? "size-3.5 animate-spin" : "size-3.5"} />
-            </Button>
-          </div>
-        </div>
+        <AIChatInput
+          value={instruction}
+          onChange={setInstruction}
+          onSend={handleSend}
+          placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
+          disabled={mutation.isPending}
+          isPending={mutation.isPending}
+          sendLabel={isZh ? "发送" : "Send"}
+          hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
+        />
       </div>
     </aside>
   );
@@ -613,25 +580,13 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
         data-testid="document-editor-dialog"
         data-editor-kind={target.kind}
         showCloseButton={false}
-        className="canvas-document-dialog fixed inset-0 flex h-screen h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+        className="canvas-document-dialog fixed inset-0 top-0 left-0 right-0 bottom-0 translate-x-0 translate-y-0 flex h-screen h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
       >
         <DialogTitle className="sr-only">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle>
         <DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription>
         {/* Top Header Bar: Document Title, View Mode Tabs, and Action Buttons */}
         <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-2 sm:px-4 py-1.5 sm:py-2 overflow-x-auto whitespace-nowrap scrollbar-none touch-pan-x shrink-0">
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {isMobile && activeTab === "document" && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2 text-xs shrink-0 gap-1 text-primary font-medium"
-                onClick={() => setActiveTab("chat")}
-              >
-                <ArrowLeft className="size-4" />
-                <span>{copy === zh ? "AI 对话" : "Chat"}</span>
-              </Button>
-            )}
             {target.kind === "template" && (
               <div className="flex rounded-md bg-muted p-0.5 shrink-0" role="group" aria-label={copy.documentType}>
                 <Button type="button" variant={type === "quotation" ? "secondary" : "ghost"} size="sm" className="h-7 text-xs px-2" onClick={() => selectType("quotation")}>
@@ -842,16 +797,6 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
                       <>
                         <Button
                           type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs px-2 shrink-0 gap-1 text-primary font-medium"
-                          onClick={() => setActiveTab("chat")}
-                        >
-                          <ArrowLeft className="size-3.5" />
-                          <span>{copy === zh ? "返回 AI 对话" : "Back to Chat"}</span>
-                        </Button>
-                        <Button
-                          type="button"
                           variant={fitToScreen ? "secondary" : "ghost"}
                           size="sm"
                           className="h-7 text-xs px-2 shrink-0 gap-1"
@@ -864,24 +809,22 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
                       </>
                     )}
                     <DocumentEditorButtons copy={copy} editor={editorRef.current} disabled={!editorReady} />
-                    <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-                    <Button
-                      type="button"
-                      variant={aiSidebarOpen ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-7 text-xs shrink-0 gap-1"
-                      disabled={!editorReady || !accountEmail}
-                      onClick={() => {
-                        if (isMobile) {
-                          setActiveTab("chat");
-                        } else {
-                          setAiSidebarOpen((prev) => !prev);
-                        }
-                      }}
-                    >
-                      <Sparkles className="size-3.5 text-primary" />
-                      <span>{copy.aiDocument}</span>
-                    </Button>
+                    {!isMobile && (
+                      <>
+                        <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+                        <Button
+                          type="button"
+                          variant={aiSidebarOpen ? "secondary" : "ghost"}
+                          size="sm"
+                          className="h-7 text-xs shrink-0 gap-1"
+                          disabled={!editorReady || !accountEmail}
+                          onClick={() => setAiSidebarOpen((prev) => !prev)}
+                        >
+                          <Sparkles className="size-3.5 text-primary" />
+                          <span>{copy.aiDocument}</span>
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -967,16 +910,6 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
             </>
           )}
         </div>
-        {isMobile && activeTab === "document" && (
-          <Button
-            type="button"
-            className="fixed bottom-6 right-5 z-30 shadow-lg rounded-full h-9 px-3.5 gap-1.5 bg-primary text-primary-foreground font-medium text-xs border border-primary/20"
-            onClick={() => setActiveTab("chat")}
-          >
-            <Sparkles className="size-3.5" />
-            <span>{copy === zh ? "AI 对话修改" : "AI Assistant"}</span>
-          </Button>
-        )}
       </DialogContent>
     </Dialog>
   );

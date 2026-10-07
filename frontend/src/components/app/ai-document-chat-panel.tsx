@@ -16,7 +16,6 @@ import {
   Mail,
   Plus,
   Search,
-  Send,
   Sparkles,
   Trash2,
   Wrench,
@@ -60,7 +59,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { Textarea } from "../ui/textarea";
+import { AIChatInput } from "./ai-chat-input";
 
 export function AIDocumentChatPanel({
   copy,
@@ -724,39 +723,17 @@ export function AIDocumentChatPanel({
           </div>
 
           {/* Input Box */}
-          <div className="relative flex flex-col rounded-xl border bg-background shadow-xs focus-within:ring-2 focus-within:ring-primary/20">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              rows={1}
-              placeholder={copy.aiDocumentPromptPlaceholder}
-              className="min-h-10 sm:min-h-12 max-h-24 sm:max-h-28 overflow-y-auto resize-none border-0 bg-transparent px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm leading-5 shadow-none focus-visible:ring-0"
-              disabled={mutation.isPending}
-            />
-            <div className="flex items-center justify-between border-t px-2 sm:px-2.5 py-1 sm:py-1.5 shrink-0 bg-muted/10">
-              <span className="text-[10px] sm:text-[11px] text-muted-foreground">
-                {isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                className="size-7.5 sm:size-7 rounded-lg p-0"
-                disabled={mutation.isPending || !input.trim()}
-                onClick={handleSend}
-                aria-label={copy.send}
-                title={copy.send}
-              >
-                {mutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-              </Button>
-            </div>
-          </div>
+          <AIChatInput
+            textareaRef={textareaRef}
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            placeholder={copy.aiDocumentPromptPlaceholder}
+            disabled={mutation.isPending}
+            isPending={mutation.isPending}
+            sendLabel={copy.send}
+            hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
+          />
         </div>
       </footer>
     </section>
