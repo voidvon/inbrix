@@ -48,7 +48,7 @@ export function App() {
   if (path === "/settings") {
     content = <InboxPage />;
   } else if (path === "/ai-document") {
-    content = <InboxPage />;
+    content = <DocumentListPage />;
   } else if (path === "/attachments") {
     content = <AttachmentsPage />;
   } else if (path === "/documents") {

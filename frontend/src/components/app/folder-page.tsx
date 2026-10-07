@@ -276,7 +276,7 @@ export function FolderPage({ folder }: { folder: string }) {
               </div>
             </div>
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
             {!list.data && !list.error && <ListSkeleton />}
             {!list.data && list.error && <ErrorState copy={locale} onRetry={() => void list.refetch()} />}
             {list.data && messages.length === 0 && <EmptyState icon={<Mail />} text={locale.noConversations} />}
@@ -302,9 +302,8 @@ export function FolderPage({ folder }: { folder: string }) {
           {detailOpen && (
             <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
               <div>
-                <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs lg:hidden" onClick={closeDetail} aria-label={locale.back}>
+                <Button variant="ghost" size="icon" className="size-8 shrink-0 lg:hidden" onClick={closeDetail} aria-label={locale.back} title={locale.back}>
                   <ArrowLeft className="size-4" />
-                  <span className="text-xs">{locale.back}</span>
                 </Button>
               </div>
               <h2 className="truncate text-center text-sm font-semibold">{detail.data?.subject || folderTitle}</h2>
@@ -323,7 +322,7 @@ export function FolderPage({ folder }: { folder: string }) {
               </div>
             </header>
           )}
-          <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 py-6 sm:px-[5vw] sm:py-8">
+          <ScrollArea className="min-h-0 flex-1" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8">
             {detail.isPending && !detail.data && selected ? (
               <div className="grid h-full place-items-center text-sm text-muted-foreground">{locale.loading}</div>
             ) : detail.error && !detail.data ? (

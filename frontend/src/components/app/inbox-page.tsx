@@ -39,17 +39,9 @@ import { LoginScreen } from "./auth-screens";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
-import { AIDocumentChatPanel } from "./ai-document-chat-panel";
-import { DocumentEditorDialog } from "./document-editor-dialog";
-import {
-  type DocumentEditorTarget,
-  readStoredTemplates,
-  persistServerDocument,
-} from "../../lib/document-storage";
 
 export function conversationIdFromURL() {
   if (typeof window === "undefined") return null;
-  if (window.location.pathname === "/ai-document") return "ai-document";
   return new URL(window.location.href).searchParams.get("conversation");
 }
 
@@ -83,10 +75,6 @@ export function InboxPage() {
     return () => window.removeEventListener("popstate", restoreConversationFromURL);
   }, []);
 
-  const isAIDocument = selectedId === "ai-document" || selectedId?.startsWith("ai-document:");
-  const [editorTarget, setEditorTarget] = useState<DocumentEditorTarget | null>(null);
-  const [templates] = useState(() => readStoredTemplates(locale));
-
   const conversations = useQuery({
     queryKey: ["conversations", debouncedSearch],
     queryFn: () => getConversations(debouncedSearch),
@@ -98,11 +86,11 @@ export function InboxPage() {
   const detail = useQuery({
     queryKey: ["conversation", selectedId],
     queryFn: () => getConversation(selectedId!),
-    enabled: Boolean(selectedId) && !isAIDocument,
+    enabled: Boolean(selectedId),
     retry: 1,
   });
 
-  const optimisticMessages = useOptimisticMessages(isAIDocument ? null : selectedId);
+  const optimisticMessages = useOptimisticMessages(selectedId);
 
   useEffect(() => {
     if (selectedId && detail.data?.conversation?.messages) {
@@ -376,51 +364,21 @@ export function InboxPage() {
           className={chatOpen ? "hidden lg:flex" : "flex"}
         />
         {chatOpen && <ResizeHandle label="Resize conversation list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
-        {isAIDocument ? (
-          <AIDocumentChatPanel
-            copy={locale}
-            accountEmail={conversations.data?.accountEmail || ""}
-            onBack={closeChat}
-            onOpenDocument={(doc) => setEditorTarget({ kind: "document", record: doc })}
-            className={chatOpen ? "flex" : "hidden lg:flex"}
-          />
-        ) : (
-          <ChatPanel
-            copy={locale}
-            detail={mergedConversation}
-            loading={detail.isPending && Boolean(selectedId)}
-            error={detail.error}
-            onBack={closeChat}
-            onReply={openReply}
-            onReplyAll={openReplyAll}
-            onNewMail={openNewMailForMessage}
-            onRetrySend={(message) => { void handleRetrySend(message); }}
-            onReEdit={handleReEditMessage}
-            onConversationEmpty={closeChat}
-            className={chatOpen ? "flex" : "hidden lg:flex"}
-          />
-        )}
-      </main>
-      {editorTarget && (
-        <DocumentEditorDialog
+        <ChatPanel
           copy={locale}
-          accountEmail={conversations.data?.accountEmail || ""}
-          target={editorTarget}
-          templates={templates}
-          onOpenChange={(open) => {
-            if (!open) setEditorTarget(null);
-          }}
-          onSave={async (_kind, record) => {
-            try {
-              await persistServerDocument(record);
-              toast.success(locale.documentSaved);
-              setEditorTarget(null);
-            } catch (err) {
-              toast.error(err instanceof Error ? err.message : locale.loadFailed);
-            }
-          }}
+          detail={mergedConversation}
+          loading={detail.isPending && Boolean(selectedId)}
+          error={detail.error}
+          onBack={closeChat}
+          onReply={openReply}
+          onReplyAll={openReplyAll}
+          onNewMail={openNewMailForMessage}
+          onRetrySend={(message) => { void handleRetrySend(message); }}
+          onReEdit={handleReEditMessage}
+          onConversationEmpty={closeChat}
+          className={chatOpen ? "flex" : "hidden lg:flex"}
         />
-      )}
+      </main>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
