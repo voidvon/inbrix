@@ -15,12 +15,16 @@ const listeners = new Set<Listener>();
 
 const STORAGE_KEY = "inbrix-optimistic-messages";
 function loadStore(): OptimisticMessage[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]") as OptimisticMessage[]; } catch { return []; }
 }
 let optimisticStore: OptimisticMessage[] = typeof window === "undefined" ? [] : loadStore();
 function persist() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(optimisticStore.map(({ form, ...message }) => message)));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(optimisticStore.map((item) => {
+    const copy = { ...item };
+    delete copy.form;
+    return copy;
+  })));
 }
 
 function notify() {

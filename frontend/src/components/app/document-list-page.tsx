@@ -273,7 +273,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
             {Boolean(selectedDocumentIds.size) && <span className="text-xs text-muted-foreground">{selectedDocumentIds.size} {copy.selectedDocuments}</span>}
           </div>
         </div>
-        <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+        <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto touch-pan-x touch-pan-y [&_[data-slot=table-container]]:overflow-visible">
           <Table className="min-w-[760px] table-fixed">
             <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent">
               <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>

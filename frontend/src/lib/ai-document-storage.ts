@@ -239,8 +239,8 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
         : (generated.values?.contract_number || "SC-" + Date.now().toString().slice(-6));
       try {
         const main = isQuotation
-          ? createSpiraxQuotationCanvasDocument(date, docNum, generated.values as any, generated.items)
-          : createSpiraxContractCanvasDocument(date, docNum, generated.values as any, generated.items);
+          ? createSpiraxQuotationCanvasDocument(date, docNum, generated.values, generated.items)
+          : createSpiraxContractCanvasDocument(date, docNum, generated.values, generated.items);
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : "spirax-contract",
           data: { main },

@@ -265,10 +265,10 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   return (
     <ShellContext.Provider value={contextValue}>
-      <div className="flex h-screen min-h-[32.5rem] overflow-hidden bg-background">
+      <div className="flex h-screen h-[100dvh] md:min-h-[32.5rem] overflow-hidden bg-background">
         {sidebarOpen && (
           <button
-            className="fixed inset-0 z-30 bg-black/10 supports-backdrop-filter:backdrop-blur-xs lg:hidden"
+            className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs lg:hidden"
             aria-label={copy.cancel}
             onClick={() => setSidebarOpen(false)}
           />

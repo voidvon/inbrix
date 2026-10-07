@@ -3,7 +3,6 @@ import {
   Building2,
   Calendar,
   Check,
-  CircleDollarSign,
   FileSpreadsheet,
   FileText,
   Landmark,
@@ -24,7 +23,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Badge } from "../ui/badge";
-import { Separator } from "../ui/separator";
 import { type Copy, zh } from "../../lib/locale";
 import { cn } from "../../lib/utils";
 

@@ -647,7 +647,7 @@ export function ComposeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="compose-dialog" className="flex h-[80vh] w-[80vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
+      <DialogContent data-testid="compose-dialog" className="flex h-[calc(100dvh-1.5rem)] sm:h-[80vh] w-[calc(100%-1rem)] sm:w-[80vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
           <DialogHeader className="border-b px-5 py-4 pr-12 text-left">
             <DialogTitle className="truncate text-base">{subject || copy.writeMessage}</DialogTitle>

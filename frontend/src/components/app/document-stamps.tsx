@@ -190,7 +190,7 @@ export function DocumentStampManager({
           />
           <DialogPrimitive.Popup
             data-slot="dialog-content"
-            className="fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] sm:max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-5 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/10 duration-150 outline-none max-h-[85vh] overflow-y-auto data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+            className="fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1.5rem)] sm:max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 sm:p-5 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/10 duration-150 outline-none max-h-[calc(100dvh-2rem)] overflow-y-auto data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
           >
             <div className="flex items-center justify-between">
               <DialogPrimitive.Title className="text-base font-semibold text-foreground">
@@ -240,7 +240,7 @@ export function DocumentStampManager({
               {stamps.map((stamp) => (
                 <div
                   key={stamp.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border p-2.5 bg-card shadow-2xs"
+                  className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 rounded-lg border p-2.5 bg-card shadow-2xs"
                 >
                   {/* Left: Stamp thumbnail preview & width configuration */}
                   <div className="flex items-center gap-3 min-w-0">

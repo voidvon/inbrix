@@ -318,10 +318,20 @@
   right: 0 !important;
   bottom: 0 !important;
   width: 100vw !important;
-  height: 100vh !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
   max-width: none !important;
   border-radius: 0 !important;
+  transform: none !important;
   translate: none !important;
+}
+
+/* Ensure default popups/dialogs do not overflow the viewport on small mobile screens */
+@media (max-width: 640px) {
+  [data-slot="dialog-content"]:not(.canvas-document-dialog) {
+    max-height: calc(100dvh - 2rem);
+    width: calc(100% - 1.5rem);
+  }
 }
 
 .canvas-document-scroll {

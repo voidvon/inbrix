@@ -5,7 +5,6 @@ import {
   BookmarkCheck,
   Bot,
   Calculator,
-  Check,
   ChevronDown,
   ChevronRight,
   Copy as CopyIcon,
@@ -26,10 +25,7 @@ import { toast } from "sonner";
 import {
   chatWithAIAgent,
   getAIAgents,
-  type AIAgent,
   type AIAgentChatRequest,
-  type AIToolCall,
-  type QuotationItem,
 } from "../../lib/api";
 import { copyToClipboard } from "../../lib/email-format";
 import {
@@ -44,7 +40,6 @@ import {
   saveMessageToSession,
   setActiveSessionId,
   updateSessionAgent,
-  writeAIDocumentSessions,
 } from "../../lib/ai-document-storage";
 import {
   cleanDocumentVariablesForConversation,
@@ -709,10 +704,10 @@ export function AIDocumentChatPanel({
       </div>
 
       {/* Bottom Area: Suggestions + Text Input */}
-      <footer className="border-t bg-card p-3 sm:p-4">
+      <footer className="shrink-0 border-t bg-card p-2.5 sm:p-4 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-3xl">
           {/* Quick Suggestion Chips */}
-          <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+          <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none touch-pan-x">
             {quickPrompts.map((p, idx) => (
               <button
                 key={idx}
@@ -740,19 +735,19 @@ export function AIDocumentChatPanel({
                   handleSend();
                 }
               }}
-              rows={2}
+              rows={1}
               placeholder={copy.aiDocumentPromptPlaceholder}
-              className="min-h-12 max-h-28 overflow-y-auto resize-none border-0 bg-transparent px-3 py-2 text-xs sm:text-sm leading-5 shadow-none focus-visible:ring-0"
+              className="min-h-10 sm:min-h-12 max-h-24 sm:max-h-28 overflow-y-auto resize-none border-0 bg-transparent px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm leading-5 shadow-none focus-visible:ring-0"
               disabled={mutation.isPending}
             />
-            <div className="flex items-center justify-between border-t px-2.5 py-1.5 shrink-0">
-              <span className="text-[11px] text-muted-foreground">
-                {isZh ? "按 Enter 发送，Shift+Enter 换行" : "Press Enter to send, Shift+Enter for new line"}
+            <div className="flex items-center justify-between border-t px-2 sm:px-2.5 py-1 sm:py-1.5 shrink-0 bg-muted/10">
+              <span className="text-[10px] sm:text-[11px] text-muted-foreground">
+                {isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
               </span>
               <Button
                 type="button"
                 size="sm"
-                className="size-7 rounded-lg p-0"
+                className="size-7.5 sm:size-7 rounded-lg p-0"
                 disabled={mutation.isPending || !input.trim()}
                 onClick={handleSend}
                 aria-label={copy.send}

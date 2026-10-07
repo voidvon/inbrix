@@ -49,8 +49,6 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Separator } from "../ui/separator";
 import { Textarea } from "../ui/textarea";
 
@@ -218,7 +216,7 @@ export function DocumentAISidebar({
           ]);
           return;
         }
-        const applied = editor?.applyDocumentUpdates({
+        editor?.applyDocumentUpdates({
           values,
           items: value.items,
         });
@@ -378,7 +376,7 @@ export function DocumentAISidebar({
           </div>
         )}
       </div>
-      <div className="border-t p-2.5 bg-background shrink-0">
+      <div className="border-t p-2.5 bg-background shrink-0 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
         <div className="relative flex flex-col rounded-lg border bg-background focus-within:ring-1 focus-within:ring-primary shadow-2xs">
           <Textarea
             value={instruction}
@@ -391,7 +389,7 @@ export function DocumentAISidebar({
             }}
             rows={2}
             placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
-            className="min-h-12 max-h-28 overflow-y-auto resize-none border-0 bg-transparent px-2.5 py-1.5 text-xs leading-5 shadow-none focus-visible:ring-0"
+            className="min-h-11 max-h-24 overflow-y-auto resize-none border-0 bg-transparent px-2.5 py-1.5 text-xs leading-5 shadow-none focus-visible:ring-0"
             disabled={mutation.isPending}
           />
           <div className="flex items-center justify-between border-t px-2 py-1 bg-muted/10 shrink-0">
@@ -402,6 +400,7 @@ export function DocumentAISidebar({
               className="size-7 rounded p-0"
               disabled={mutation.isPending || !instruction.trim()}
               onClick={handleSend}
+              aria-label={isZh ? "发送" : "Send"}
             >
               <Sparkles className={mutation.isPending ? "size-3.5 animate-spin" : "size-3.5"} />
             </Button>
@@ -614,7 +613,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
         data-testid="document-editor-dialog"
         data-editor-kind={target.kind}
         showCloseButton={false}
-        className="canvas-document-dialog fixed inset-0 flex h-screen w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+        className="canvas-document-dialog fixed inset-0 flex h-screen h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 p-0 ring-0 sm:max-w-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
       >
         <DialogTitle className="sr-only">{target.record ? (target.kind === "template" ? copy.editTemplate : copy.editDocument) : (target.kind === "template" ? copy.newTemplate : copy.newDocument)}</DialogTitle>
         <DialogDescription className="sr-only">{copy.documentEditor}</DialogDescription>
@@ -968,6 +967,16 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
             </>
           )}
         </div>
+        {isMobile && activeTab === "document" && (
+          <Button
+            type="button"
+            className="fixed bottom-6 right-5 z-30 shadow-lg rounded-full h-9 px-3.5 gap-1.5 bg-primary text-primary-foreground font-medium text-xs border border-primary/20"
+            onClick={() => setActiveTab("chat")}
+          >
+            <Sparkles className="size-3.5" />
+            <span>{copy === zh ? "AI 对话修改" : "AI Assistant"}</span>
+          </Button>
+        )}
       </DialogContent>
     </Dialog>
   );

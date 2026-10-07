@@ -81,7 +81,6 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Separator } from "../ui/separator";
 import { Skeleton } from "../ui/skeleton";
@@ -106,14 +105,14 @@ export function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open:
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="settings-dialog" className="flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-3rem)] sm:max-w-5xl">
-          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12 text-left">
+        <DialogContent data-testid="settings-dialog" className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-4 py-3.5 sm:px-5 sm:py-4 pr-12 text-left">
             <DialogTitle>{copy.settings}</DialogTitle>
             <DialogDescription className="sr-only">{copy.settings}</DialogDescription>
           </DialogHeader>
-          <ScrollArea className="min-h-0 flex-1" contentClassName="p-5 sm:p-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 touch-pan-y">
             <SettingsContent copy={copy} section={section} onSectionChange={setSection} onManageAccount={manageAccount} />
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
       <AccountDialog copy={copy} open={accountEditor !== undefined} account={accountEditor || null} onOpenChange={(value) => { if (!value) closeAccountEditor(); }} />
@@ -125,8 +124,8 @@ export function SettingsContent({ copy, section, onSectionChange, onManageAccoun
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
   const isSuperAdmin = capabilities.data?.role === "super_admin";
   return (
-    <div className="grid min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
-      <nav className="flex gap-1 overflow-x-auto border-b pb-4 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4" aria-label={copy.settings}>
+    <div className="grid md:min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
+      <nav className="flex gap-1 overflow-x-auto border-b pb-3 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4 shrink-0 scrollbar-none touch-pan-x" aria-label={copy.settings}>
         <Button className="shrink-0 justify-start" variant={section === "account" ? "secondary" : "ghost"} onClick={() => onSectionChange("account")}><UserRound />{copy.accountInfo}</Button>
         <Button className="shrink-0 justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => onSectionChange("general")}><Settings />{copy.generalSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => onSectionChange("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
@@ -354,10 +353,10 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
       </div>
       {(signatures.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (signatures.error instanceof Error ? signatures.error.message : copy.loadFailed)}</p>}
       <Dialog open={open} onOpenChange={(next) => { if (!persist.isPending) setOpen(next); }}>
-        <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogContent className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-auto flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editSignature : copy.addSignature}</DialogTitle><DialogDescription>{copy.signatureSettingsDescription}</DialogDescription></DialogHeader>
           <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
-            <ScrollArea className="min-h-0 flex-1" contentClassName="grid gap-4 p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y">
               <div className="grid gap-2"><Label htmlFor="signature-name">{copy.signatureName}</Label><Input id="signature-name" value={name} onChange={(event) => setName(event.target.value)} disabled={persist.isPending} required /></div>
               <div className="grid gap-2">
                 <Label>{copy.signatureContent}</Label>
@@ -370,7 +369,7 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
               </div>
               <label className="flex items-center gap-2 text-sm"><input className="size-4 accent-primary" type="checkbox" checked={isDefault} disabled={persist.isPending} onChange={(event) => setIsDefault(event.target.checked)} />{copy.defaultSignature}</label>
               {error && <p className="text-xs text-destructive">{error}</p>}
-            </ScrollArea>
+            </div>
             <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending || !name.trim() || contentEmpty}>{persist.isPending ? copy.savingSignature : copy.save}</Button></DialogFooter>
           </form>
         </DialogContent>
@@ -498,14 +497,14 @@ export function AgentSettings({ copy }: { copy: Copy }) {
       </div>
       {(agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (agents.error instanceof Error ? agents.error.message : copy.loadFailed)}</p>}
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
-          <form className="grid gap-4" onSubmit={submit}>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
+          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" onSubmit={submit}>
             <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} required /></div>
             <div className="grid gap-2"><div><Label>{copy.agentOutputLabels}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.agentOutputLabelsDescription}</p></div><AgentOutputLabelInput copy={copy} labels={outputLabels} onChange={setOutputLabels} draftRef={outputLabelDraftRef} disabled={pending} /></div>
-            <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-64 resize-y" value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={pending} required /></div>
+            <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-36 sm:min-h-48 resize-y" value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={pending} required /></div>
             {(create.isError || update.isError) && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
+            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -671,8 +670,8 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
       </div>
 
       <Dialog open={Boolean(detailLog)} onOpenChange={(next) => !next && setDetailLog(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-lg flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12">
             <DialogTitle className="flex items-center gap-2 text-destructive">
               <AlertCircle className="size-5" />
               {copy.errorLogDetails}
@@ -682,7 +681,7 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
             </DialogDescription>
           </DialogHeader>
           {detailLog && (
-            <div className="grid gap-3 text-sm">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-3 text-sm touch-pan-y">
               <div className="grid grid-cols-3 gap-2 rounded-md bg-muted/50 p-3 text-xs">
                 <div>
                   <span className="text-muted-foreground block">{copy.errorLogTask}</span>
@@ -705,7 +704,7 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-5 py-3">
             <Button variant="ghost" onClick={() => setDetailLog(null)}>
               {copy.cancel}
             </Button>
@@ -833,16 +832,16 @@ export function AISettings({ copy }: { copy: Copy }) {
       </div>
       {(models.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (models.error instanceof Error ? models.error.message : copy.loadFailed)}</p>}
       <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setEditingModel(null); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle><DialogDescription>{copy.aiSettingsDescription}</DialogDescription></DialogHeader>
-          <form className="grid gap-4" onSubmit={submit}>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-md flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle><DialogDescription>{copy.aiSettingsDescription}</DialogDescription></DialogHeader>
+          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" onSubmit={submit}>
             <div className="grid gap-2"><Label htmlFor="add-ai-provider">{copy.aiProvider}</Label><Select value={provider} onValueChange={(val) => handleProviderChange(val as "openai" | "gemini" | "deepseek")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="openai">OpenAI</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem><SelectItem value="deepseek">DeepSeek</SelectItem></SelectContent></Select></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setBaseURL(event.target.value)} placeholder={provider === "gemini" ? "https://generativelanguage.googleapis.com" : provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com/v1"} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setModel(event.target.value)} placeholder={provider === "gemini" ? "gemini-3.8-flash" : provider === "deepseek" ? "deepseek-chat" : "gpt-5.6-sol"} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem></SelectContent></Select></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setAPIKey(event.target.value)} placeholder={editingModel ? copy.aiAPIKeyKeep : (provider === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
             {(add.isError || update.isError || test.isError) && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
+            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -1025,10 +1024,10 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
   };
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <DialogContent className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-auto flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{account ? copy.editAccount : copy.addAccount}</DialogTitle><DialogDescription>{copy.mailboxDescription}</DialogDescription></DialogHeader>
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); setError(""); persist.mutate(); }}>
-          <ScrollArea className="min-h-0 flex-1" contentClassName="grid gap-5 p-5">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-5 touch-pan-y">
             <div className="grid gap-3 sm:grid-cols-2">
               <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={field("email")} autoComplete="email" disabled={Boolean(account)} required /></Label>
               <Label className="grid gap-1.5">{copy.password}{account && <span className="text-xs font-normal text-muted-foreground">{copy.passwordKeep}</span>}<Input type="password" value={form.password} onChange={field("password")} autoComplete="new-password" required={!account} /></Label>
@@ -1072,7 +1071,7 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
               <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={(enabled) => { const url = webhook.data?.url || ""; if (enabled && !url) { setError(copy.feishuWebhookURLRequired); return; } saveWebhook.mutate({ enabled, url }); }} /></div><Input type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhook.data?.url || ""} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value })} onBlur={() => webhook.data && saveWebhook.mutate(webhook.data)} /></div>
             </div>}
             {error && <p className="text-xs text-destructive">{error}</p>}
-          </ScrollArea>
+          </div>
           <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>
         </form>
       </DialogContent>
