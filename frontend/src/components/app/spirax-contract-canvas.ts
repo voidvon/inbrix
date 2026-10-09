@@ -12,6 +12,7 @@ const PALE = "#f8fafc";
 const HIGHLIGHT_BG = "#fef08a";
 const HIGHLIGHT_TEXT = "#854d0e";
 const FONT = "Arial";
+export const SPIRAX_CONTRACT_SELLER_COMPANY = "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD";
 
 export function createSpiraxContractCanvasBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="794" height="1123" viewBox="0 0 794 1123">
@@ -280,6 +281,7 @@ export function createSpiraxContractCanvasDocument(
   const contractNo = initialValues?.contract_number || number;
   const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "";
   const buyerContact = initialValues?.buyer_contact || initialValues?.customer_contact || "";
+  const sellerCompany = initialValues?.seller_company || SPIRAX_CONTRACT_SELLER_COMPANY;
 
   // Left Hero (Seller Brand & Identity - PRESERVED)
   const leftHero: IElement[] = [
@@ -287,7 +289,7 @@ export function createSpiraxContractCanvasDocument(
     lineBreak({ size: 1, rowMargin: 0.35 }),
     text("First for Steam Solutions", { italic: true, size: 10.5, color: "#64748b" }),
     lineBreak({ size: 1, rowMargin: 0.35 }),
-    text("SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD.", { bold: true, size: 11, color: "#1e293b" }),
+    controlText("seller_company", sellerCompany, "Seller Company", { bold: true, size: 11, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.35 }),
     text("Tel: +86 157 9019 6438 / +1 781 334 8391", { size: 10, color: "#475569" }),
     lineBreak({ size: 1, rowMargin: 0.35 }),
@@ -412,14 +414,14 @@ export function createSpiraxContractCanvasDocument(
     : defaultMemo;
 
   const bankRows: Array<[string, string, string, boolean]> = [
-    ["Beneficiary Name:", initialValues?.bank_account_name || "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD", "bank_account_name", true],
+    ["Beneficiary Name:", initialValues?.bank_account_name || SPIRAX_CONTRACT_SELLER_COMPANY, "bank_account_name", true],
     ["Account Number:", initialValues?.bank_account_no || "LU024080000056414710", "bank_account_no", true],
     ["SWIFT / BIC Code:", initialValues?.bank_swift || "BCIRLULL (or BCIRLULLXXX)", "bank_swift", true],
-    ["Bank Name:", initialValues?.bank_name || "Banking Circle S.A.", "bank_name", false],
+    ["Bank Name:", initialValues?.bank_name || "Banking Circle S.A", "bank_name", false],
     ["Bank Address:", initialValues?.bank_address || "2 Boulevard de la Foire L-1528 Luxembourg", "bank_address", false],
     ["Country / Region:", initialValues?.bank_country || "Luxembourg", "bank_country", false],
     ["Account Type:", initialValues?.bank_account_type || "Business Account", "bank_account_type", false],
-    ["Payment Method:", initialValues?.payment_method || "SWIFT (Wire/TT) · Multi-Currency (USD, EUR, SAR)", "payment_method", false],
+    ["Payment Method:", initialValues?.payment_method || "For the payment of goods, please make a SWIFT(Wire/TT) Payment", "payment_method", false],
     ["Payment Memo / Note:", paymentMemo, "payment_memo", true],
   ];
 
@@ -505,7 +507,7 @@ export function createSpiraxContractCanvasDocument(
           lineBreak({ size: 4, rowMargin: 0.25 }),
           text("Authorized Signature & Corporate Stamp (Seller):", { bold: true, size: 10.5, color: "#475569" }),
           lineBreak({ size: 1, rowMargin: 0.2 }),
-          controlText("seller_sign_company", initialValues?.seller_sign_company || "Shanghai Spiraxsarco Fluid Equipment Co., Ltd.", "Seller Company", { bold: true, size: 11, color: "#1e293b" }),
+          controlText("seller_sign_company", initialValues?.seller_sign_company || sellerCompany, "Seller Company", { bold: true, size: 11, color: "#1e293b" }),
           lineBreak({ size: 1, rowMargin: 2 }),
           text("Date: ", { bold: true, size: 9.5, color: "#475569" }),
           controlText("seller_sign_date", sellerDate, "Date", { bold: true, size: 9.5, color: "#0f172a" }),

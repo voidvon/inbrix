@@ -78,3 +78,18 @@ func TestMailTranslationPersistsAndStripsQuotes(t *testing.T) {
 		t.Fatalf("unexpected summary in list: %+v", listed)
 	}
 }
+
+func TestCleanTranslationText(t *testing.T) {
+	input := "  尊敬的客户：  \r\n\r\n\r\n\r\n   您好！关于您咨询的报价，   我们已经完成核对。  \r\n相关文件已上传。   \r\n\r\n\r\n  祝好！  "
+	expected := "尊敬的客户：\n\n您好！关于您咨询的报价， 我们已经完成核对。\n相关文件已上传。\n\n祝好！"
+	got := CleanTranslationText(input)
+	if got != expected {
+		t.Fatalf("CleanTranslationText:\nexpected: %q\ngot:      %q", expected, got)
+	}
+
+	// Empty input
+	if got := CleanTranslationText("   \r\n  \n  "); got != "" {
+		t.Fatalf("expected empty string, got %q", got)
+	}
+}
+

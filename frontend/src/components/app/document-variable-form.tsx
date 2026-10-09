@@ -205,7 +205,7 @@ export function DocumentVariableForm({
     if (templateKind === "spirax-quotation") {
       ["quote_number", "issue_date", "currency", "validity", "customer_company", "customer_contact", "customer_phone", "customer_email", "customer_address", "seller_company", "seller_contact", "seller_phone", "seller_email", "seller_address", "lead_time", "payment_terms", "commercial_validity", "notes", "remarks"].forEach((k) => allKeys.add(k));
     } else if (templateKind === "spirax-contract") {
-      ["contract_number", "contract_date", "contract_title", "customer_po", "buyer_company", "buyer_contact", "buyer_email", "buyer_address", "trade_term", "lead_time", "origin", "port_of_loading", "payment_terms", "bank_account_name", "bank_account_no", "bank_swift", "bank_name", "bank_address", "bank_country", "payment_memo", "order_note_1", "order_note_2", "order_note_3", "order_note_4"].forEach((k) => allKeys.add(k));
+      ["contract_number", "contract_date", "contract_title", "customer_po", "buyer_company", "buyer_contact", "buyer_email", "buyer_address", "seller_company", "seller_sign_company", "seller_sign_date", "trade_term", "lead_time", "origin", "port_of_loading", "payment_terms", "bank_account_name", "bank_account_no", "bank_swift", "bank_name", "bank_address", "bank_country", "bank_account_type", "payment_method", "payment_memo", "order_note_1", "order_note_2", "order_note_3", "order_note_4"].forEach((k) => allKeys.add(k));
     }
 
     for (const key of allKeys) {

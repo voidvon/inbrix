@@ -556,7 +556,7 @@ func (h *AISettingsHandler) HandleTranslateMail(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	return c.JSON(fiber.Map{
-		"translation": result.Record.Summary,
+		"translation": mailstore.CleanTranslationText(result.Record.Summary),
 		"status":      result.Record.Status,
 		"cached":      result.Cached,
 		"updatedAt":   result.Record.UpdatedAt.UTC().Format(time.RFC3339),

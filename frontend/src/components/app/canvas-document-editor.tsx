@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
-import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, type SpiraxContractValues } from "./spirax-contract-canvas";
+import { controlText, createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, SPIRAX_CONTRACT_SELLER_COMPANY, type SpiraxContractValues } from "./spirax-contract-canvas";
 
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
@@ -174,6 +174,30 @@ function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]): Stored
 
 function migrateLegacySpiraxContractDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
   if (hasControls(data.main) && !hasNestedTables(data.main)) {
+    const migrated = structuredClone(data);
+    const heroElements = migrated.main[0]?.trList?.[0]?.tdList?.[0]?.value;
+    if (!heroElements || heroElements.some((element) => element.control?.conceptId === "seller_company")) return data;
+    for (let start = 0; start < heroElements.length; start++) {
+      if (!heroElements[start].value.trim()) continue;
+      let company = "";
+      for (let end = start; end < heroElements.length; end++) {
+        const element = heroElements[end];
+        if (element.type && element.type !== ElementType.TEXT) break;
+        company += element.value;
+        if (company.trim().replace(/\.$/, "") === SPIRAX_CONTRACT_SELLER_COMPANY) {
+          const first = heroElements[start];
+          heroElements.splice(start, end - start + 1, controlText("seller_company", SPIRAX_CONTRACT_SELLER_COMPANY, "Seller Company", {
+            bold: first.bold,
+            size: first.size,
+            color: first.color,
+            font: first.font,
+          }));
+          if (heroElements[start + 1]?.value === ".") heroElements.splice(start + 1, 1);
+          return migrated;
+        }
+        if (company.trim().length > SPIRAX_CONTRACT_SELLER_COMPANY.length + 1) break;
+      }
+    }
     return data;
   }
   const extracted = extractLegacySpiraxContractValues(data.main);

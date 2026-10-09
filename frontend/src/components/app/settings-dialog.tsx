@@ -105,7 +105,7 @@ export function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open:
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="settings-dialog" className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+        <DialogContent data-testid="settings-dialog" className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-5xl sm:max-w-5xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-4 py-3.5 sm:px-5 sm:py-4 pr-12 text-left">
             <DialogTitle>{copy.settings}</DialogTitle>
             <DialogDescription className="sr-only">{copy.settings}</DialogDescription>

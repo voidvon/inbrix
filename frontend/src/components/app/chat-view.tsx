@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -942,6 +942,22 @@ export function MessageBubble({
   );
 }
 
+function formatTranslationParagraphs(text: string): string[] {
+  if (!text) return [];
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) return [];
+  return normalized
+    .split(/\n{2,}/)
+    .map((paragraph) =>
+      paragraph
+        .split("\n")
+        .map((line) => line.replace(/[ \t]+/g, " ").trim())
+        .join("\n")
+        .trim()
+    )
+    .filter(Boolean);
+}
+
 export function MailMessageSummary({
   copy,
   accountEmail,
@@ -964,7 +980,13 @@ export function MailMessageSummary({
   const queryClient = useQueryClient();
   const [savedSummary, setSavedSummary] = useState(initialSummary);
   const [savedTranslation, setSavedTranslation] = useState(initialTranslation);
+  const [showTranslation, setShowTranslation] = useState(false);
   const [copiedTranslation, setCopiedTranslation] = useState(false);
+
+  const translationParagraphs = useMemo(
+    () => formatTranslationParagraphs(savedTranslation?.text || ""),
+    [savedTranslation?.text]
+  );
 
   const summaryMutation = useMutation({
     mutationFn: (regenerate: boolean) => summarizeMailMessage(accountEmail || "", folder, messageId, regenerate),
@@ -990,6 +1012,7 @@ export function MailMessageSummary({
     onSuccess: (result) => {
       const translation: MailTranslation = { text: result.translation, status: result.status, updatedAt: result.updatedAt };
       setSavedTranslation(translation);
+      setShowTranslation(true);
       queryClient.setQueryData<MailMessage>(["message", folder, messageId], (current) => (current ? { ...current, mailTranslation: translation } : current));
       queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
         if (!current || (accountEmail && current.conversation.accountEmail !== accountEmail)) return current;
@@ -1011,11 +1034,13 @@ export function MailMessageSummary({
 
   useEffect(() => {
     setSavedTranslation(initialTranslation);
+    setShowTranslation(false);
     translationMutation.reset();
   }, [accountEmail, folder, messageId, initialTranslation]);
 
   const copyTranslationText = async (text: string) => {
-    const success = await copyToClipboard(text);
+    const formatted = formatTranslationParagraphs(text).join("\n\n");
+    const success = await copyToClipboard(formatted || text);
     if (success) {
       setCopiedTranslation(true);
       toast.success(copy.copiedTranslation);
@@ -1023,52 +1048,74 @@ export function MailMessageSummary({
     }
   };
 
-  const hasActionButtons = !savedSummary || !savedTranslation || onGenerateReply;
+  const handleTranslateClick = () => {
+    if (savedTranslation) {
+      setShowTranslation((prev) => !prev);
+    } else {
+      translationMutation.mutate(false);
+    }
+  };
 
   return (
     <div className={cn("mt-1.5 max-w-[80%]", outgoing && "ml-auto")}>
-      {hasActionButtons && (
-        <div className="flex min-h-7 flex-wrap items-center gap-1">
-          {!savedSummary && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs text-muted-foreground"
-              disabled={summaryMutation.isPending || !accountEmail}
-              onClick={() => summaryMutation.mutate(false)}
-            >
-              <Sparkles className="size-3.5" />
-              {summaryMutation.isPending ? copy.summarizing : copy.summarize}
-            </Button>
-          )}
-          {!savedTranslation && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs text-muted-foreground"
-              disabled={translationMutation.isPending || !accountEmail}
-              onClick={() => translationMutation.mutate(false)}
-            >
-              <Languages className="size-3.5" />
-              {translationMutation.isPending ? copy.translating : copy.translate}
-            </Button>
-          )}
-          {onGenerateReply && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs text-muted-foreground"
-              onClick={onGenerateReply}
-            >
-              <MessageCircle className="size-3.5" />
-              {copy.generateSuggestedReply}
-            </Button>
-          )}
-        </div>
-      )}
+      <div className="flex min-h-7 flex-wrap items-center gap-1">
+        {!savedSummary && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground"
+            disabled={summaryMutation.isPending || !accountEmail}
+            onClick={() => summaryMutation.mutate(false)}
+          >
+            <Sparkles className="size-3.5" />
+            {summaryMutation.isPending ? copy.summarizing : copy.summarize}
+          </Button>
+        )}
+        {savedTranslation ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-7 px-2 text-xs font-medium transition-colors",
+              showTranslation
+                ? "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:hover:bg-emerald-500/30"
+                : "text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-300"
+            )}
+            disabled={translationMutation.isPending || !accountEmail}
+            onClick={handleTranslateClick}
+            title={showTranslation ? copy.hideTranslation : copy.showTranslation}
+          >
+            <Languages className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            {translationMutation.isPending ? copy.translating : copy.translate}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground"
+            disabled={translationMutation.isPending || !accountEmail}
+            onClick={handleTranslateClick}
+          >
+            <Languages className="size-3.5" />
+            {translationMutation.isPending ? copy.translating : copy.translate}
+          </Button>
+        )}
+        {onGenerateReply && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground"
+            onClick={onGenerateReply}
+          >
+            <MessageCircle className="size-3.5" />
+            {copy.generateSuggestedReply}
+          </Button>
+        )}
+      </div>
       {savedSummary && (
         <div className="mt-1 border-l-2 border-primary/40 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
           <div className="mb-1 flex items-center justify-between gap-2">
@@ -1092,7 +1139,7 @@ export function MailMessageSummary({
           <p className="whitespace-pre-wrap">{savedSummary.text}</p>
         </div>
       )}
-      {savedTranslation && (
+      {savedTranslation && showTranslation && (
         <div className="mt-1 border-l-2 border-emerald-500/60 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
           <div className="mb-1 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -1122,9 +1169,26 @@ export function MailMessageSummary({
               >
                 <RotateCcw className={cn("size-3.5", translationMutation.isPending && "animate-spin")} />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowTranslation(false)}
+                aria-label={copy.hideTranslation}
+                title={copy.hideTranslation}
+              >
+                <X className="size-3.5" />
+              </Button>
             </div>
           </div>
-          <p className="whitespace-pre-wrap">{savedTranslation.text}</p>
+          <div className="space-y-2">
+            {translationParagraphs.map((paragraph, index) => (
+              <p key={index} className="whitespace-pre-wrap leading-relaxed">
+                {paragraph}
+              </p>
+            ))}
+          </div>
         </div>
       )}
       {summaryMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{summaryMutation.error instanceof Error ? summaryMutation.error.message : copy.loadFailed}</p>}

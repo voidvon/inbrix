@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,17 +13,22 @@ import (
 )
 
 const (
-	mailTranslationPipelineVersion = 1
+	mailTranslationPipelineVersion = 2
 	mailTranslationGenerationLease = 2 * time.Minute
 )
 
 const mailTranslationSystemPrompt = `你是一个专业的商务多语言邮件翻译引擎。
 请将输入邮件的正文内容进行专业、准确、通顺的翻译。
 翻译规则：
-1. 若原文主要为外语（如英语、日语、俄语、德语等），请翻译为简体中文；若原文主要为中文，请翻译为地道流利的英文。
-2. 极其重要：只翻译当前邮件的正文内容本身，绝对不要翻译任何历史引用内容、原邮件引用（如 "On ... wrote:"、">" 引用等）、往来邮件链或邮件头元信息。
-3. 严格保留原文的段落排版格式，不要添加多余的解释、客套话或前言后语。
-4. 直接输出翻译后的正文文本。`
+1. 语言转换：若原文主要为外语（如英语、日语、俄语、德语等），请翻译为简体中文；若原文主要为中文，请翻译为地道流利的英文。
+2. 过滤引用：极其重要！只翻译当前邮件的正文内容本身，绝对不要翻译任何历史引用内容、原邮件引用（如 "On ... wrote:"、">" 引用等）、往来邮件链或邮件头元信息。
+3. 排版与段落规范：
+   - 将邮件正文整理为自然连贯、结构合理的文字段落。
+   - 切勿机械保留原邮件中由于排版、客户端折行产生的硬换行、断行、多余空格或连续空行。
+   - 同一语义段落内的文字应当连贯成段，不要随意断行；段落与段落之间保持正常的自然分段（空一行即可）。
+   - 列表项（如序号或项目符号列表）可单独成行。
+   - 去除行首缩进空格、行尾空格以及段落中不自然的连续空格。
+4. 纯净输出：直接输出翻译后的正文文本，不要包含任何前言、后记、说明、解释或多余的客套话。`
 
 type MailTranslationResult struct {
 	Record MessageSummaryRecord
@@ -71,8 +77,36 @@ func resolveMailTranslationConfig(ctx context.Context, store *Store, encryptionK
 	return mailTranslationConfig{agent: agent, model: model, apiKey: apiKey, effort: effort, configHash: configHash}, nil
 }
 
+var multiHorizontalSpaceRe = regexp.MustCompile(`[ \t]+`)
+
+// CleanTranslationText normalizes translated text into natural paragraphs,
+// eliminating unwanted extra spaces, repeated blank lines, and fragmented lines.
+func CleanTranslationText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	var cleanedLines []string
+	consecutiveEmpty := 0
+
+	for _, rawLine := range lines {
+		line := multiHorizontalSpaceRe.ReplaceAllString(rawLine, " ")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			consecutiveEmpty++
+			if consecutiveEmpty <= 1 && len(cleanedLines) > 0 {
+				cleanedLines = append(cleanedLines, "")
+			}
+			continue
+		}
+		consecutiveEmpty = 0
+		cleanedLines = append(cleanedLines, trimmed)
+	}
+
+	return strings.TrimSpace(strings.Join(cleanedLines, "\n"))
+}
+
 func mailTranslationInput(message models.Email) string {
-	return strings.TrimSpace(currentMessageText(message.Body, message.HTML))
+	return CleanTranslationText(currentMessageText(message.Body, message.HTML))
 }
 
 func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email, regenerate bool) (MailTranslationResult, error) {
@@ -182,7 +216,7 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 		return MailTranslationResult{}, generationErr
 	}
 
-	completed, err := store.CompleteMessageTranslationGeneration(ctx, claim, current.GenerationToken, strings.TrimSpace(translation))
+	completed, err := store.CompleteMessageTranslationGeneration(ctx, claim, current.GenerationToken, CleanTranslationText(translation))
 	if err != nil {
 		return MailTranslationResult{}, err
 	}

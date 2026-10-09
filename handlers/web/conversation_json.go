@@ -90,7 +90,7 @@ func mailTranslationJSON(record mailstore.MessageSummaryRecord) *MailTranslation
 	if record.Status != "ready" || strings.TrimSpace(record.Summary) == "" {
 		return nil
 	}
-	return &MailTranslationJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
+	return &MailTranslationJSON{Text: mailstore.CleanTranslationText(record.Summary), Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
 }
 
 type ConversationDetailJSON struct {
