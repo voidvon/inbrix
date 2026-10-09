@@ -504,6 +504,65 @@ func (h *AISettingsHandler) HandleSummarizeMail(c *fiber.Ctx) error {
 	})
 }
 
+type mailTranslationInput struct {
+	AccountEmail string `json:"accountEmail"`
+	Folder       string `json:"folder"`
+	MessageID    string `json:"messageId"`
+	Regenerate   bool   `json:"regenerate"`
+}
+
+func (h *AISettingsHandler) HandleTranslateMail(c *fiber.Ctx) error {
+	owner, err := h.ready(c)
+	if err != nil {
+		return err
+	}
+	var input mailTranslationInput
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	input.AccountEmail = strings.TrimSpace(input.AccountEmail)
+	input.Folder = strings.TrimSpace(input.Folder)
+	input.MessageID = strings.TrimSpace(input.MessageID)
+	if input.AccountEmail == "" || input.Folder == "" || input.MessageID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "accountEmail, folder, and messageId are required")
+	}
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, input.AccountEmail)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", errors.New("mail account not found"))
+		return fiber.NewError(fiber.StatusNotFound, "mail account not found")
+	}
+	if err != nil {
+		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", err)
+		return fiber.ErrInternalServerError
+	}
+	message, err := h.mailDB.GetMessage(c.UserContext(), account.ID, input.Folder, input.MessageID)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", errors.New("mail message not found"))
+		return fiber.NewError(fiber.StatusNotFound, "mail message not found")
+	}
+	if err != nil {
+		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", err)
+		return fiber.ErrInternalServerError
+	}
+	if !message.BodyCached && strings.TrimSpace(message.Body) == "" && strings.TrimSpace(message.HTML) == "" {
+		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", errors.New("mail body is still synchronizing"))
+		return fiber.NewError(fiber.StatusConflict, "mail body is still synchronizing")
+	}
+	result, err := mailstore.GetOrCreateMailTranslation(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
+	}
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+	}
+	return c.JSON(fiber.Map{
+		"translation": result.Record.Summary,
+		"status":      result.Record.Status,
+		"cached":      result.Cached,
+		"updatedAt":   result.Record.UpdatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
 func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 	owner, err := h.ready(c)
 	if err != nil {

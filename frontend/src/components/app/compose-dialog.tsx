@@ -185,7 +185,7 @@ export function AIAssistantButton({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="size-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={() => void copyMessage(message.content, index)}
                     aria-label={copy.copyAIContent}
                     title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}
@@ -200,7 +200,7 @@ export function AIAssistantButton({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-7 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="size-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={() => void copyMessage(message.content, index)}
                     aria-label={copy.copyAIContent}
                     title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}

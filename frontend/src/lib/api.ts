@@ -428,6 +428,20 @@ export function summarizeMailMessage(accountEmail: string, folder: string, messa
   });
 }
 
+export type MailTranslationResult = {
+  translation: string;
+  status: "ready" | "generating" | "failed";
+  cached: boolean;
+  updatedAt: string;
+};
+
+export function translateMailMessage(accountEmail: string, folder: string, messageId: string, regenerate = false) {
+  return apiFetch<MailTranslationResult>("/api/ai/mail-translation", {
+    method: "POST",
+    body: JSON.stringify({ accountEmail, folder, messageId, regenerate }),
+  });
+}
+
 export type AIAgent = {
   id: string;
   name: string;

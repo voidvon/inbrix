@@ -572,6 +572,7 @@ func main() {
 	protected.Get("/api/settings/ai/error-logs", userAIHandler.HandleListAIErrorLogs)
 	protected.Delete("/api/settings/ai/error-logs", userAIHandler.HandleClearAIErrorLogs)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)
+	apiRoutes.Post("/ai/mail-translation", userAIHandler.HandleTranslateMail)
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)
 	apiRoutes.Post("/ai/agent-chat", userAIHandler.HandleAgentChat)

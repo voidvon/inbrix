@@ -2,8 +2,10 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
   Copy as CopyIcon,
+  Languages,
   Loader2,
   Mail,
   MessageCircle,
@@ -34,6 +36,7 @@ import {
   saveConversationNote,
   saveConversationStatus,
   summarizeMailMessage,
+  translateMailMessage,
 } from "../../lib/api";
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
 import {
@@ -54,6 +57,7 @@ import type {
   ConversationSummary,
   MailMessage,
   MailSummary,
+  MailTranslation,
 } from "../../types";
 import type { Copy } from "../../lib/locale";
 
@@ -881,7 +885,7 @@ export function MessageBubble({
             </div>
           )}
           {!message.id.startsWith("optimistic-") && (
-            <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} outgoing={outgoing} onGenerateReply={onGenerateReply} />
+            <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} outgoing={outgoing} onGenerateReply={onGenerateReply} />
           )}
         </article>
       </ContextMenuTrigger>
@@ -944,6 +948,7 @@ export function MailMessageSummary({
   folder,
   messageId,
   initialSummary,
+  initialTranslation,
   outgoing = false,
   onGenerateReply,
 }: {
@@ -952,12 +957,16 @@ export function MailMessageSummary({
   folder: string;
   messageId: string;
   initialSummary?: ConversationMessage["mailSummary"];
+  initialTranslation?: ConversationMessage["mailTranslation"];
   outgoing?: boolean;
   onGenerateReply?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [savedSummary, setSavedSummary] = useState(initialSummary);
-  const mutation = useMutation({
+  const [savedTranslation, setSavedTranslation] = useState(initialTranslation);
+  const [copiedTranslation, setCopiedTranslation] = useState(false);
+
+  const summaryMutation = useMutation({
     mutationFn: (regenerate: boolean) => summarizeMailMessage(accountEmail || "", folder, messageId, regenerate),
     onSuccess: (result) => {
       const summary: MailSummary = { text: result.summary, status: result.status, stale: result.stale, updatedAt: result.updatedAt };
@@ -976,21 +985,84 @@ export function MailMessageSummary({
     },
   });
 
+  const translationMutation = useMutation({
+    mutationFn: (regenerate: boolean) => translateMailMessage(accountEmail || "", folder, messageId, regenerate),
+    onSuccess: (result) => {
+      const translation: MailTranslation = { text: result.translation, status: result.status, updatedAt: result.updatedAt };
+      setSavedTranslation(translation);
+      queryClient.setQueryData<MailMessage>(["message", folder, messageId], (current) => (current ? { ...current, mailTranslation: translation } : current));
+      queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
+        if (!current || (accountEmail && current.conversation.accountEmail !== accountEmail)) return current;
+        let changed = false;
+        const messages = current.conversation.messages.map((message) => {
+          if (message.id !== messageId || (message.folder || "INBOX") !== folder) return message;
+          changed = true;
+          return { ...message, mailTranslation: translation };
+        });
+        return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
+      });
+    },
+  });
+
   useEffect(() => {
     setSavedSummary(initialSummary);
-    mutation.reset();
+    summaryMutation.reset();
   }, [accountEmail, folder, messageId, initialSummary]);
+
+  useEffect(() => {
+    setSavedTranslation(initialTranslation);
+    translationMutation.reset();
+  }, [accountEmail, folder, messageId, initialTranslation]);
+
+  const copyTranslationText = async (text: string) => {
+    const success = await copyToClipboard(text);
+    if (success) {
+      setCopiedTranslation(true);
+      toast.success(copy.copiedTranslation);
+      window.setTimeout(() => setCopiedTranslation(false), 1600);
+    }
+  };
+
+  const hasActionButtons = !savedSummary || !savedTranslation || onGenerateReply;
 
   return (
     <div className={cn("mt-1.5 max-w-[80%]", outgoing && "ml-auto")}>
-      {!savedSummary && (
-        <div className="flex min-h-7 items-center gap-1">
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={mutation.isPending || !accountEmail} onClick={() => mutation.mutate(false)}>
-            <Sparkles className="size-3.5" />
-            {mutation.isPending ? copy.summarizing : copy.summarize}
-          </Button>
+      {hasActionButtons && (
+        <div className="flex min-h-7 flex-wrap items-center gap-1">
+          {!savedSummary && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              disabled={summaryMutation.isPending || !accountEmail}
+              onClick={() => summaryMutation.mutate(false)}
+            >
+              <Sparkles className="size-3.5" />
+              {summaryMutation.isPending ? copy.summarizing : copy.summarize}
+            </Button>
+          )}
+          {!savedTranslation && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              disabled={translationMutation.isPending || !accountEmail}
+              onClick={() => translationMutation.mutate(false)}
+            >
+              <Languages className="size-3.5" />
+              {translationMutation.isPending ? copy.translating : copy.translate}
+            </Button>
+          )}
           {onGenerateReply && (
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onGenerateReply}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={onGenerateReply}
+            >
               <MessageCircle className="size-3.5" />
               {copy.generateSuggestedReply}
             </Button>
@@ -1009,24 +1081,54 @@ export function MailMessageSummary({
               variant="ghost"
               size="icon"
               className="size-6 shrink-0"
-              disabled={mutation.isPending || !accountEmail}
-              onClick={() => mutation.mutate(true)}
+              disabled={summaryMutation.isPending || !accountEmail}
+              onClick={() => summaryMutation.mutate(true)}
               aria-label={copy.regenerateSummary}
               title={copy.regenerateSummary}
             >
-              <RotateCcw className={cn("size-3.5", mutation.isPending && "animate-spin")} />
+              <RotateCcw className={cn("size-3.5", summaryMutation.isPending && "animate-spin")} />
             </Button>
           </div>
           <p className="whitespace-pre-wrap">{savedSummary.text}</p>
         </div>
       )}
-      {savedSummary && onGenerateReply && (
-        <Button type="button" variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs text-muted-foreground" onClick={onGenerateReply}>
-          <MessageCircle className="size-3.5" />
-          {copy.generateSuggestedReply}
-        </Button>
+      {savedTranslation && (
+        <div className="mt-1 border-l-2 border-emerald-500/60 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <strong className="text-xs font-medium text-muted-foreground">{copy.mailTranslationTitle}</strong>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                onClick={() => void copyTranslationText(savedTranslation.text)}
+                aria-label={copy.copyTranslation}
+                title={copiedTranslation ? copy.copiedTranslation : copy.copyTranslation}
+              >
+                {copiedTranslation ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                disabled={translationMutation.isPending || !accountEmail}
+                onClick={() => translationMutation.mutate(true)}
+                aria-label={copy.regenerateTranslation}
+                title={copy.regenerateTranslation}
+              >
+                <RotateCcw className={cn("size-3.5", translationMutation.isPending && "animate-spin")} />
+              </Button>
+            </div>
+          </div>
+          <p className="whitespace-pre-wrap">{savedTranslation.text}</p>
+        </div>
       )}
-      {mutation.error && <p className="mt-1 px-2 text-xs text-destructive">{mutation.error instanceof Error ? mutation.error.message : copy.loadFailed}</p>}
+      {summaryMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{summaryMutation.error instanceof Error ? summaryMutation.error.message : copy.loadFailed}</p>}
+      {translationMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{translationMutation.error instanceof Error ? translationMutation.error.message : copy.translateFailed}</p>}
     </div>
   );
 }
@@ -1247,7 +1349,7 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
           </>
         ) : null}
       </div>
-      <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} />
+      <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} />
     </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">

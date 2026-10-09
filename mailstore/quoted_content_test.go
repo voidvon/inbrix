@@ -29,6 +29,22 @@ func TestCurrentMessageTextPreservesUnquotedBody(t *testing.T) {
 	}
 }
 
+func TestCurrentMessageTextStripsOutlookHeaders(t *testing.T) {
+	input := "Current answer\r\n\r\nFrom: Alice <alice@example.com>\r\nSent: Monday, October 5, 2026\r\nTo: Bob <bob@example.com>\r\nSubject: Old subject\r\n\r\nPrevious content"
+	if got := currentMessageText(input, ""); got != "Current answer" {
+		t.Fatalf("currentMessageText = %q", got)
+	}
+}
+
+func TestCurrentMessageTextPrefersCleanHTMLWhenPlainHasQuotes(t *testing.T) {
+	plain := "Current answer\n\nSome unformatted quote lines from older email"
+	html := `<div>Current answer</div><div data-inbrix-reply-quote="true">Some unformatted quote lines from older email</div>`
+	got := currentMessageText(plain, html)
+	if strings.Contains(got, "Some unformatted quote lines") || !strings.Contains(got, "Current answer") {
+		t.Fatalf("currentMessageText should prefer stripped HTML, got %q", got)
+	}
+}
+
 func TestDirectParentMessageIDExtractsLastToken(t *testing.T) {
 	message := models.Email{InReplyTo: "replying to <older@example.com> <parent@example.com>"}
 	if got := directParentMessageID(message); got != "<parent@example.com>" {

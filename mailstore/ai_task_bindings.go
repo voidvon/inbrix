@@ -13,6 +13,7 @@ const (
 	MailSummaryTask     = "mail_summary"
 	EmailDraftTask      = "email_draft"
 	ReplySuggestionTask = "reply_suggestion"
+	MailTranslationTask = "mail_translation"
 )
 
 func scanAITaskBinding(scanner interface{ Scan(...any) error }) (AITaskBindingRecord, error) {

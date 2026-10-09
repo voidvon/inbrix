@@ -30,6 +30,12 @@ export type MailSummary = {
   updatedAt?: string;
 };
 
+export type MailTranslation = {
+  text: string;
+  status: "ready" | "generating" | "failed";
+  updatedAt?: string;
+};
+
 export type SuggestedReply = {
   text: string;
   status: "ready";
@@ -73,6 +79,7 @@ export type ConversationMessage = {
   references?: string[];
   outgoing: boolean;
   mailSummary?: MailSummary;
+  mailTranslation?: MailTranslation;
   suggestedReply?: SuggestedReply;
   sendStatus?: "sending" | "failed" | "sent";
   sendError?: string;

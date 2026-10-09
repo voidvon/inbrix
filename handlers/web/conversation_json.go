@@ -55,14 +55,21 @@ type ConversationMessageJSON struct {
 	InReplyTo      string              `json:"inReplyTo,omitempty"`
 	References     []string            `json:"references,omitempty"`
 	Outgoing       bool                `json:"outgoing"`
-	MailSummary    *MailSummaryJSON    `json:"mailSummary,omitempty"`
-	SuggestedReply *SuggestedReplyJSON `json:"suggestedReply,omitempty"`
+	MailSummary     *MailSummaryJSON     `json:"mailSummary,omitempty"`
+	SuggestedReply  *SuggestedReplyJSON  `json:"suggestedReply,omitempty"`
+	MailTranslation *MailTranslationJSON `json:"mailTranslation,omitempty"`
 }
 
 type MailSummaryJSON struct {
 	Text      string `json:"text"`
 	Status    string `json:"status"`
 	Stale     bool   `json:"stale"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+type MailTranslationJSON struct {
+	Text      string `json:"text"`
+	Status    string `json:"status"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
@@ -77,6 +84,13 @@ func mailSummaryJSON(record mailstore.MessageSummaryRecord, stale bool) *MailSum
 		return nil
 	}
 	return &MailSummaryJSON{Text: record.Summary, Status: record.Status, Stale: stale, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
+}
+
+func mailTranslationJSON(record mailstore.MessageSummaryRecord) *MailTranslationJSON {
+	if record.Status != "ready" || strings.TrimSpace(record.Summary) == "" {
+		return nil
+	}
+	return &MailTranslationJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
 }
 
 type ConversationDetailJSON struct {
@@ -426,6 +440,10 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 		if suggestionErr != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved reply suggestions"})
 		}
+		translations, translationErr := h.mailDB.ListMessageTranslations(c.UserContext(), account.ID, keys)
+		if translationErr != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail translations"})
+		}
 		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account)
 		for index, message := range selected.Messages {
 			lookupKey := mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)
@@ -436,6 +454,9 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 			}
 			if record, exists := replySuggestions[lookupKey]; exists && record.Status == "ready" && strings.TrimSpace(record.Summary) != "" {
 				response.Messages[index].SuggestedReply = &SuggestedReplyJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
+			}
+			if record, exists := translations[lookupKey]; exists {
+				response.Messages[index].MailTranslation = mailTranslationJSON(record)
 			}
 		}
 	}
