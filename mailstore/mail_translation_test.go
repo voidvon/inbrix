@@ -92,4 +92,3 @@ func TestCleanTranslationText(t *testing.T) {
 		t.Fatalf("expected empty string, got %q", got)
 	}
 }
-

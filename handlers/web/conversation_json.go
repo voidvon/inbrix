@@ -37,24 +37,24 @@ type ConversationSummaryJSON struct {
 // prepared for a script-free sandbox iframe and has local cid: references
 // rewritten to authenticated attachment URLs before it reaches the client.
 type ConversationMessageJSON struct {
-	ID             string              `json:"id"`
-	Folder         string              `json:"folder,omitempty"`
-	From           string              `json:"from"`
-	FromName       string              `json:"fromName,omitempty"`
-	To             string              `json:"to"`
-	Cc             string              `json:"cc,omitempty"`
-	Subject        string              `json:"subject"`
-	Preview        string              `json:"preview"`
-	Body           string              `json:"body"`
-	HTML           string              `json:"html,omitempty"`
-	Date           string              `json:"date"`
-	HasAttachments bool                `json:"hasAttachments"`
-	Flags          []string            `json:"flags,omitempty"`
-	Attachments    []models.Attachment `json:"attachments,omitempty"`
-	MessageID      string              `json:"messageId,omitempty"`
-	InReplyTo      string              `json:"inReplyTo,omitempty"`
-	References     []string            `json:"references,omitempty"`
-	Outgoing       bool                `json:"outgoing"`
+	ID              string               `json:"id"`
+	Folder          string               `json:"folder,omitempty"`
+	From            string               `json:"from"`
+	FromName        string               `json:"fromName,omitempty"`
+	To              string               `json:"to"`
+	Cc              string               `json:"cc,omitempty"`
+	Subject         string               `json:"subject"`
+	Preview         string               `json:"preview"`
+	Body            string               `json:"body"`
+	HTML            string               `json:"html,omitempty"`
+	Date            string               `json:"date"`
+	HasAttachments  bool                 `json:"hasAttachments"`
+	Flags           []string             `json:"flags,omitempty"`
+	Attachments     []models.Attachment  `json:"attachments,omitempty"`
+	MessageID       string               `json:"messageId,omitempty"`
+	InReplyTo       string               `json:"inReplyTo,omitempty"`
+	References      []string             `json:"references,omitempty"`
+	Outgoing        bool                 `json:"outgoing"`
 	MailSummary     *MailSummaryJSON     `json:"mailSummary,omitempty"`
 	SuggestedReply  *SuggestedReplyJSON  `json:"suggestedReply,omitempty"`
 	MailTranslation *MailTranslationJSON `json:"mailTranslation,omitempty"`
