@@ -61,7 +61,9 @@ import type {
   MailSummary,
   MailTranslation,
 } from "../../types";
-import type { Copy } from "../../lib/locale";
+import { type Copy, zh } from "../../lib/locale";
+import { AIStatusIndicator } from "./ai-status-indicator";
+import { useAIStateMachine } from "../../lib/ai-state-machine";
 
 export function ConversationList({
   copy,
@@ -688,18 +690,26 @@ export function SuggestedReplyBubble({
 }) {
   const queryClient = useQueryClient();
   const [body, setBody] = useState(message.suggestedReply?.text.trim() || "");
+  const isZh = copy === zh;
   const previousGenerationRef = useRef(generation > 0 ? generation - 1 : generation);
+  const replyAI = useAIStateMachine({
+    taskType: "reply",
+    locale: isZh ? "zh" : "en",
+  });
+
   const suggestion = useMutation({
     mutationFn: () =>
-      generateEmail({
-        accountEmail: detail.accountEmail || "",
-        taskType: "reply_suggestion",
-        folder: message.folder || "INBOX",
-        messageId: message.id,
-        instruction: "Generate a persisted reply suggestion for this received email.",
-        subject: message.subject || detail.subject,
-        recipients: message.from || detail.peerEmail || "",
-      }),
+      replyAI.run(() =>
+        generateEmail({
+          accountEmail: detail.accountEmail || "",
+          taskType: "reply_suggestion",
+          folder: message.folder || "INBOX",
+          messageId: message.id,
+          instruction: "Generate a persisted reply suggestion for this received email.",
+          subject: message.subject || detail.subject,
+          recipients: message.from || detail.peerEmail || "",
+        })
+      ),
     onSuccess: (result) => {
       const text = result.body.trim();
       setBody(text);
@@ -732,10 +742,13 @@ export function SuggestedReplyBubble({
           <div className="flex justify-end">
             <div className="min-w-0 max-w-[80%] rounded-xl border border-dashed bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">
               {suggestion.isPending && !body && (
-                <p className="flex items-center gap-2 text-muted-foreground">
-                  <Sparkles className="size-4 animate-pulse" />
-                  {copy.suggestedReplyGenerating}
-                </p>
+                <div className="py-1">
+                  <AIStatusIndicator
+                    snapshot={replyAI.snapshot}
+                    variant="inline"
+                    showTimer
+                  />
+                </div>
               )}
               {body && <p className="whitespace-pre-wrap">{body}</p>}
               {suggestion.error && <p className="text-destructive">{suggestion.error instanceof Error ? suggestion.error.message : copy.suggestedReplyFailed}</p>}
@@ -1034,8 +1047,21 @@ export function MailMessageSummary({
     [savedTranslation?.text]
   );
 
+  const isZh = copy === zh;
+  const summaryAI = useAIStateMachine({
+    taskType: "summary",
+    locale: isZh ? "zh" : "en",
+  });
+  const translationAI = useAIStateMachine({
+    taskType: "translation",
+    locale: isZh ? "zh" : "en",
+  });
+
   const summaryMutation = useMutation({
-    mutationFn: (regenerate: boolean) => summarizeMailMessage(accountEmail || "", folder, messageId, regenerate),
+    mutationFn: (regenerate: boolean) =>
+      summaryAI.run(() =>
+        summarizeMailMessage(accountEmail || "", folder, messageId, regenerate)
+      ),
     onSuccess: (result) => {
       const summary: MailSummary = { text: result.summary, status: result.status, stale: result.stale, updatedAt: result.updatedAt };
       setSavedSummary(summary);
@@ -1054,7 +1080,10 @@ export function MailMessageSummary({
   });
 
   const translationMutation = useMutation({
-    mutationFn: (regenerate: boolean) => translateMailMessage(accountEmail || "", folder, messageId, regenerate),
+    mutationFn: (regenerate: boolean) =>
+      translationAI.run(() =>
+        translateMailMessage(accountEmail || "", folder, messageId, regenerate)
+      ),
     onSuccess: (result) => {
       const translation: MailTranslation = { text: result.translation, status: result.status, updatedAt: result.updatedAt };
       setSavedTranslation(translation);
@@ -1178,7 +1207,12 @@ export function MailMessageSummary({
           </Button>
         )}
       </div>
-      {savedSummary && (
+      {summaryMutation.isPending && (
+        <div className="mt-1.5">
+          <AIStatusIndicator snapshot={summaryAI.snapshot} variant="card" showTimer showSteps />
+        </div>
+      )}
+      {savedSummary && !summaryMutation.isPending && (
         <div className="mt-1 border-l-2 border-primary/40 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
           <div className="mb-1 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -1201,7 +1235,12 @@ export function MailMessageSummary({
           <p className="whitespace-pre-wrap">{savedSummary.text}</p>
         </div>
       )}
-      {savedTranslation && showTranslation && (
+      {translationMutation.isPending && (
+        <div className="mt-1.5">
+          <AIStatusIndicator snapshot={translationAI.snapshot} variant="card" showTimer showSteps />
+        </div>
+      )}
+      {savedTranslation && showTranslation && !translationMutation.isPending && (
         <div className="mt-1 border-l-2 border-emerald-500/60 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
           <div className="mb-1 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">

@@ -50,7 +50,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import { AIChatInput } from "./ai-chat-input";
+import { AIStatusIndicator } from "./ai-status-indicator";
 import { MarkdownContent } from "./markdown-content";
+import { useAIStateMachine } from "../../lib/ai-state-machine";
 
 const CanvasDocumentEditor = lazy(() => import("./canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
 
@@ -159,34 +161,41 @@ export function DocumentAISidebar({
     });
   }, [messages.length]);
 
+  const aiState = useAIStateMachine({
+    taskType: "document",
+    locale: isZh ? "zh" : "en",
+  });
+
   const mutation = useMutation({
     mutationFn: async (text: string) => {
-      const rawHTML = editor?.getHTML() || "";
-      const currentHTML = rawHTML
-        .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
-        .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
-      const activeControls = editor?.getControls() || [];
-      if (activeControls.length > 0) {
-        return generateDocument({
-          accountEmail,
-          mode: "variables",
-          documentType: type,
-          title,
-          instruction: text,
-          currentHTML,
-          variables: activeControls.map((c) => {
-            const isStart = messages.length <= 1;
-            const isSeller = isSellerConcept(c.conceptId);
-            const val = isStart && !isSeller ? "" : (c.value || "");
-            return {
-              conceptId: c.conceptId,
-              label: c.placeholder || c.conceptId,
-              currentValue: val,
-            };
-          }),
-        });
-      }
-      return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction: text, currentHTML });
+      return await aiState.run(async () => {
+        const rawHTML = editor?.getHTML() || "";
+        const currentHTML = rawHTML
+          .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
+          .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
+        const activeControls = editor?.getControls() || [];
+        if (activeControls.length > 0) {
+          return generateDocument({
+            accountEmail,
+            mode: "variables",
+            documentType: type,
+            title,
+            instruction: text,
+            currentHTML,
+            variables: activeControls.map((c) => {
+              const isStart = messages.length <= 1;
+              const isSeller = isSellerConcept(c.conceptId);
+              const val = isStart && !isSeller ? "" : (c.value || "");
+              return {
+                conceptId: c.conceptId,
+                label: c.placeholder || c.conceptId,
+                currentValue: val,
+              };
+            }),
+          });
+        }
+        return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction: text, currentHTML });
+      });
     },
     onSuccess: (value) => {
       if (value.mode === "variables" && (value.values || value.items)) {
@@ -361,9 +370,13 @@ export function DocumentAISidebar({
           </div>
         ))}
         {mutation.isPending && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Sparkles className="size-3 animate-spin text-primary" />
-            <span>{copy.aiDocumentDrafting}</span>
+          <div className="pt-1">
+            <AIStatusIndicator
+              snapshot={aiState.snapshot}
+              variant="bubble"
+              agentName={isZh ? "文档助手" : "Document Assistant"}
+              showTimer
+            />
           </div>
         )}
       </div>

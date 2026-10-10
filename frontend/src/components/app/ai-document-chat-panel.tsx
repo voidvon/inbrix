@@ -12,7 +12,6 @@ import {
   FileSpreadsheet,
   FileText,
   History,
-  Loader2,
   Mail,
   Plus,
   Search,
@@ -60,7 +59,9 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
+import { AIStatusIndicator } from "./ai-status-indicator";
 import { MarkdownContent } from "./markdown-content";
+import { useAIStateMachine } from "../../lib/ai-state-machine";
 
 export function AIDocumentChatPanel({
   copy,
@@ -139,6 +140,11 @@ export function AIDocumentChatPanel({
     setExpandedTools((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
   };
 
+  const aiState = useAIStateMachine({
+    taskType: "document",
+    locale: isZh ? "zh" : "en",
+  });
+
   // Agent Chat Mutation with Tool Calling support
   const mutation = useMutation({
     mutationFn: async (instructionText: string) => {
@@ -185,22 +191,29 @@ export function AIDocumentChatPanel({
       // Append current user message
       apiMessages.push({ role: "user", content: text });
 
-      const res = await chatWithAIAgent({
-        accountEmail,
-        agentId: currentSession.agentId,
-        messages: apiMessages,
-        activeDocument: activeDocForAgent
-          ? {
-              type: activeDocForAgent.type,
-              title: activeDocForAgent.name,
-              counterparty: activeDocForAgent.company || "",
-              items: activeDocForAgent.items,
-              values: activeDocForAgent.values,
-            }
-          : undefined,
-      });
+      return await aiState.run(async () => {
+        const res = await chatWithAIAgent({
+          accountEmail,
+          agentId: currentSession.agentId,
+          messages: apiMessages,
+          activeDocument: activeDocForAgent
+            ? {
+                type: activeDocForAgent.type,
+                title: activeDocForAgent.name,
+                counterparty: activeDocForAgent.company || "",
+                items: activeDocForAgent.items,
+                values: activeDocForAgent.values,
+              }
+            : undefined,
+        });
 
-      return { res, text, prevDoc };
+        if (res.toolCalls && res.toolCalls.length > 0) {
+          const first = res.toolCalls[0];
+          aiState.setToolCall(first.name, first.summary);
+        }
+
+        return { res, text, prevDoc };
+      });
     },
     onSuccess: ({ res, prevDoc }) => {
       let generatedDoc: AIDocumentGeneratedData | undefined = undefined;
@@ -698,17 +711,12 @@ export function AIDocumentChatPanel({
 
           {/* AI Drafting State */}
           {mutation.isPending && (
-            <div className="flex gap-3">
-              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-xs">
-                <Sparkles className="size-3.5 animate-spin" />
-              </div>
-              <div className="flex max-w-[85%] flex-col">
-                <div className="flex items-center gap-2 rounded-2xl rounded-tl-xs border bg-card px-4 py-3 text-sm text-muted-foreground shadow-2xs">
-                  <Loader2 className="size-4 animate-spin text-primary" />
-                  <span>{isZh ? "AI Agent 正在分析需求、调取工具并处理文档..." : "AI Agent is reasoning and drafting..."}</span>
-                </div>
-              </div>
-            </div>
+            <AIStatusIndicator
+              snapshot={aiState.snapshot}
+              variant="bubble"
+              agentName={currentAgent?.name || (isZh ? "商务文档助手" : "Document Assistant")}
+              showTimer
+            />
           )}
         </div>
       </div>

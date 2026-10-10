@@ -24,8 +24,8 @@ import {
   buildConversationAIContext,
   copyToClipboard,
 } from "../../lib/email-format";
+import { type Copy, zh } from "../../lib/locale";
 import { cn, formatTime } from "../../lib/utils";
-import { type Copy } from "../../lib/locale";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,
@@ -35,7 +35,9 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
+import { AIStatusIndicator } from "./ai-status-indicator";
 import { MarkdownContent } from "./markdown-content";
+import { useAIStateMachine } from "../../lib/ai-state-machine";
 import type { ConversationAIChatMessage, ConversationDetail } from "../../types";
 
 export function ConversationAIChatPanel({
@@ -94,6 +96,12 @@ export function ConversationAIChatPanel({
   // Build context from email messages with quotes filtered out
   const emailContext = useMemo(() => buildConversationAIContext(detail), [detail]);
 
+  const isZh = copy === zh;
+  const aiState = useAIStateMachine({
+    taskType: "chat",
+    locale: isZh ? "zh" : "en",
+  });
+
   const mutation = useMutation({
     mutationFn: async (userQuestion: string) => {
       const text = userQuestion.trim();
@@ -101,7 +109,7 @@ export function ConversationAIChatPanel({
 
       const accountEmail = detail.accountEmail;
       if (!accountEmail) {
-        throw new Error("当前邮件会话缺少关联账户邮箱");
+        throw new Error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
       }
 
       // Build message payload for backend
@@ -125,13 +133,20 @@ export function ConversationAIChatPanel({
         apiMessages.push({ role: "user", content: text });
       }
 
-      const res = await chatWithAIAgent({
-        accountEmail,
-        agentId: selectedAgentId,
-        messages: apiMessages,
-      });
+      return await aiState.run(async () => {
+        const res = await chatWithAIAgent({
+          accountEmail,
+          agentId: selectedAgentId,
+          messages: apiMessages,
+        });
 
-      return { res, text };
+        if (res.toolCalls && res.toolCalls.length > 0) {
+          const first = res.toolCalls[0];
+          aiState.setToolCall(first.name, first.summary);
+        }
+
+        return { res, text };
+      });
     },
     onSuccess: async (data) => {
       if (!data?.res) return;
@@ -407,20 +422,14 @@ export function ConversationAIChatPanel({
           })
         )}
 
-        {/* Pending Indicator */}
+        {/* State Machine Status Feedback Indicator */}
         {mutation.isPending && (
-          <div className="flex flex-col items-start gap-1">
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1">
-              <div className="flex size-4 items-center justify-center rounded-full bg-primary/15 text-primary">
-                <Bot className="size-2.5" />
-              </div>
-              <span>{currentAgent?.name || copy.aiChatDefaultAgent}</span>
-            </div>
-            <div className="flex items-center gap-2 rounded-2xl rounded-tl-xs bg-secondary/80 px-3.5 py-2.5 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin text-primary" />
-              <span>{copy.aiChatThinking}</span>
-            </div>
-          </div>
+          <AIStatusIndicator
+            snapshot={aiState.snapshot}
+            variant="bubble"
+            agentName={currentAgent?.name || copy.aiChatDefaultAgent}
+            showTimer
+          />
         )}
       </div>
 

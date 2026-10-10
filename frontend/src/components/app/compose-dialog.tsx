@@ -48,6 +48,8 @@ import {
   replaceEditorDraft,
 } from "../../lib/email-format";
 import { type Copy, zh } from "../../lib/locale";
+import { AIStatusIndicator } from "./ai-status-indicator";
+import { useAIStateMachine } from "../../lib/ai-state-machine";
 import { addOptimisticMessage, updateOptimisticStatus, type OptimisticMessage } from "../../lib/optimistic-messages";
 import type { ConversationListResponse, ConversationMessage } from "../../types";
 import { Button } from "../ui/button";
@@ -89,16 +91,24 @@ export function AIAssistantButton({
   const chatRef = useRef<HTMLDivElement>(null);
   const messages = conversation || [];
   const hasConversation = messages.length > 0;
+  const isZh = copy === zh;
+  const aiState = useAIStateMachine({
+    taskType: "reply",
+    locale: isZh ? "zh" : "en",
+  });
+
   const mutation = useMutation({
     mutationFn: ({ prompt, draft }: { prompt: string; draft?: string }) =>
-      generateEmail({
-        accountEmail,
-        instruction: prompt,
-        subject,
-        recipients,
-        context: includeConversation ? aiConversationContext(messages) : undefined,
-        draft,
-      }),
+      aiState.run(() =>
+        generateEmail({
+          accountEmail,
+          instruction: prompt,
+          subject,
+          recipients,
+          context: includeConversation ? aiConversationContext(messages) : undefined,
+          draft,
+        })
+      ),
     onSuccess: ({ body }) => {
       setGeneratedBody(body);
       setChatMessages((current) => [...current, { role: "assistant", content: body }]);
@@ -211,9 +221,13 @@ export function AIAssistantButton({
               )
             )}
             {mutation.isPending && (
-              <div className="mr-5 flex w-fit items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                <Sparkles className="size-4 animate-pulse" />
-                {copy.generating}
+              <div className="mr-5 my-1">
+                <AIStatusIndicator
+                  snapshot={aiState.snapshot}
+                  variant="card"
+                  showTimer
+                  showSteps
+                />
               </div>
             )}
           </div>
