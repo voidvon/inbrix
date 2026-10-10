@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Bot,
   Check,
   ChevronDown,
   Copy as CopyIcon,
@@ -20,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
 import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
 import { Badge } from "../ui/badge";
@@ -426,6 +428,7 @@ export function ChatView({
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const latestConversationMessage = detail.messages.at(-1);
   const persistedSuggestionMessage =
     latestConversationMessage &&
@@ -506,125 +509,165 @@ export function ChatView({
   }, [detail.id, detail.messages.length]);
 
   return (
-    <section data-testid="conversation-detail" className={cn("flex min-w-0 flex-1 flex-col bg-surface", className)}>
-      <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
-        <div className="flex min-w-0 items-center justify-start">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0 lg:hidden"
-            onClick={onBack}
-            aria-label={copy.back}
-            title={copy.back}
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
-        </div>
-        <div className="min-w-0 text-center">
-          <h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {detail.subject || copy.noSubject}
-            <span className="px-1.5">·</span>
-            {detail.count} {copy.messages}
-          </p>
-        </div>
-        <div className="flex min-w-0 items-center justify-end gap-1.5">
-          {detail.messages.length > 0 && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => onReply(detail.messages.at(-1)!)}
-                title={copy.reply}
-              >
-                <Send className="size-3.5" />
-                <span className="hidden sm:inline">{copy.reply}</span>
-              </Button>
-              {canReplyAll(detail.messages.at(-1)) && (
+    <div className={cn("relative flex min-w-0 flex-1 overflow-hidden", className)}>
+      <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col bg-surface">
+        <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
+          <div className="flex min-w-0 items-center justify-start">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0 lg:hidden"
+              onClick={onBack}
+              aria-label={copy.back}
+              title={copy.back}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+          </div>
+          <div className="min-w-0 text-center">
+            <h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {detail.subject || copy.noSubject}
+              <span className="px-1.5">·</span>
+              {detail.count} {copy.messages}
+            </p>
+          </div>
+          <div className="flex min-w-0 items-center justify-end gap-1.5">
+            {detail.messages.length > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "h-8 gap-1.5 text-xs transition-colors",
+                    isAIChatOpen
+                      ? "bg-primary/10 text-primary font-medium hover:bg-primary/15 dark:bg-primary/20"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  onClick={() => setIsAIChatOpen((prev) => !prev)}
+                  title={copy.openAIChat}
+                >
+                  <Bot className="size-3.5" />
+                  <span className="hidden sm:inline">{copy.openAIChat}</span>
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => onReplyAll(detail.messages.at(-1)!)}
-                  title={copy.replyAll}
+                  onClick={() => onReply(detail.messages.at(-1)!)}
+                  title={copy.reply}
                 >
-                  <ReplyAll className="size-3.5" />
-                  <span className="hidden sm:inline">{copy.replyAll}</span>
+                  <Send className="size-3.5" />
+                  <span className="hidden sm:inline">{copy.reply}</span>
                 </Button>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8" viewportRef={scrollRef}>
-        <div ref={contentRef}>
-          {detail.messages.map((message, index) => {
-            const messageKey = `${message.folder || "INBOX"}\u0000${message.id}`;
-            const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
-            return (
-              <Fragment key={messageKey}>
-                <MessageBubble
-                  copy={copy}
-                  message={message}
-                  senderFallback={detail.peerEmail || detail.title}
-                  accountEmail={detail.accountEmail}
-                  rootRef={scrollRef}
-                  eager={index >= detail.messages.length - 3}
-                  onReply={() => onReply(message)}
-                  onReplyAll={() => onReplyAll(message)}
-                  onNewMail={() => onNewMail(message)}
-                  onDelete={() => {
-                    setDeleteError("");
-                    setDeleteTarget(message);
-                  }}
-                  onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
-                  onRetrySend={onRetrySend ? () => onRetrySend(message) : undefined}
-                  onReEdit={onReEdit ? () => onReEdit(message) : undefined}
-                />
-                {!message.outgoing && suggestionTargetKey === messageKey ? (
-                  <SuggestedReplyBubble
-                    key={messageKey}
+                {canReplyAll(detail.messages.at(-1)) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => onReplyAll(detail.messages.at(-1)!)}
+                    title={copy.replyAll}
+                  >
+                    <ReplyAll className="size-3.5" />
+                    <span className="hidden sm:inline">{copy.replyAll}</span>
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </header>
+        <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8" viewportRef={scrollRef}>
+          <div ref={contentRef}>
+            {detail.messages.map((message, index) => {
+              const messageKey = `${message.folder || "INBOX"}\u0000${message.id}`;
+              const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
+              return (
+                <Fragment key={messageKey}>
+                  <MessageBubble
                     copy={copy}
-                    detail={detail}
                     message={message}
-                    generation={suggestionGeneration}
-                    onReply={(body) => onReply(message, body)}
-                    onReplyAll={(body) => onReplyAll(message, body)}
+                    senderFallback={detail.peerEmail || detail.title}
+                    accountEmail={detail.accountEmail}
+                    rootRef={scrollRef}
+                    eager={index >= detail.messages.length - 3}
+                    onReply={() => onReply(message)}
+                    onReplyAll={() => onReplyAll(message)}
+                    onNewMail={() => onNewMail(message)}
+                    onDelete={() => {
+                      setDeleteError("");
+                      setDeleteTarget(message);
+                    }}
+                    onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
+                    onRetrySend={onRetrySend ? () => onRetrySend(message) : undefined}
+                    onReEdit={onReEdit ? () => onReEdit(message) : undefined}
                   />
-                ) : null}
-              </Fragment>
-            );
-          })}
+                  {!message.outgoing && suggestionTargetKey === messageKey ? (
+                    <SuggestedReplyBubble
+                      key={messageKey}
+                      copy={copy}
+                      detail={detail}
+                      message={message}
+                      generation={suggestionGeneration}
+                      onReply={(body) => onReply(message, body)}
+                      onReplyAll={(body) => onReplyAll(message, body)}
+                    />
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </div>
+        </ScrollArea>
+        <Dialog
+          open={Boolean(deleteTarget)}
+          onOpenChange={(open) => {
+            if (!open && !deleteMutation.isPending) {
+              setDeleteTarget(null);
+              setDeleteError("");
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{copy.deleteEmailTitle}</DialogTitle>
+              <DialogDescription>{copy.deleteEmailDescription}</DialogDescription>
+            </DialogHeader>
+            {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+            <DialogFooter>
+              <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>
+                {copy.cancel}
+              </Button>
+              <Button variant="destructive" disabled={deleteMutation.isPending || !deleteTarget} onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}>
+                <Trash2 />
+                {deleteMutation.isPending ? copy.deleting : copy.deleteEmail}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </section>
+
+      {/* 桌面端右侧侧边 AI 聊天面板 */}
+      {isAIChatOpen && (
+        <aside className="hidden lg:flex w-88 xl:w-96 shrink-0 flex-col border-l bg-card shadow-xs">
+          <ConversationAIChatPanel
+            copy={copy}
+            detail={detail}
+            onClose={() => setIsAIChatOpen(false)}
+          />
+        </aside>
+      )}
+
+      {/* 移动端全屏 AI 聊天弹出页面 */}
+      {isAIChatOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background lg:hidden">
+          <ConversationAIChatPanel
+            copy={copy}
+            detail={detail}
+            isMobile
+            onClose={() => setIsAIChatOpen(false)}
+          />
         </div>
-      </ScrollArea>
-      <Dialog
-        open={Boolean(deleteTarget)}
-        onOpenChange={(open) => {
-          if (!open && !deleteMutation.isPending) {
-            setDeleteTarget(null);
-            setDeleteError("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{copy.deleteEmailTitle}</DialogTitle>
-            <DialogDescription>{copy.deleteEmailDescription}</DialogDescription>
-          </DialogHeader>
-          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-          <DialogFooter>
-            <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>
-              {copy.cancel}
-            </Button>
-            <Button variant="destructive" disabled={deleteMutation.isPending || !deleteTarget} onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}>
-              <Trash2 />
-              {deleteMutation.isPending ? copy.deleting : copy.deleteEmail}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </section>
+      )}
+    </div>
   );
 }
 
@@ -983,6 +1026,9 @@ export function MailMessageSummary({
   const [showTranslation, setShowTranslation] = useState(false);
   const [copiedTranslation, setCopiedTranslation] = useState(false);
 
+  const messageKey = `${accountEmail || ""}:${folder}:${messageId}`;
+  const previousMessageKeyRef = useRef(messageKey);
+
   const translationParagraphs = useMemo(
     () => formatTranslationParagraphs(savedTranslation?.text || ""),
     [savedTranslation?.text]
@@ -1028,15 +1074,19 @@ export function MailMessageSummary({
   });
 
   useEffect(() => {
-    setSavedSummary(initialSummary);
-    summaryMutation.reset();
-  }, [accountEmail, folder, messageId, initialSummary]);
+    if (previousMessageKeyRef.current !== messageKey) {
+      previousMessageKeyRef.current = messageKey;
+      setSavedSummary(initialSummary);
+      setSavedTranslation(initialTranslation);
+      setShowTranslation(false);
+      summaryMutation.reset();
+      translationMutation.reset();
+      return;
+    }
 
-  useEffect(() => {
+    setSavedSummary(initialSummary);
     setSavedTranslation(initialTranslation);
-    setShowTranslation(false);
-    translationMutation.reset();
-  }, [accountEmail, folder, messageId, initialTranslation]);
+  }, [messageKey, initialSummary, initialTranslation]);
 
   const copyTranslationText = async (text: string) => {
     const formatted = formatTranslationParagraphs(text).join("\n\n");
@@ -1068,7 +1118,11 @@ export function MailMessageSummary({
             disabled={summaryMutation.isPending || !accountEmail}
             onClick={() => summaryMutation.mutate(false)}
           >
-            <Sparkles className="size-3.5" />
+            {summaryMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
             {summaryMutation.isPending ? copy.summarizing : copy.summarize}
           </Button>
         )}
@@ -1087,7 +1141,11 @@ export function MailMessageSummary({
             onClick={handleTranslateClick}
             title={showTranslation ? copy.hideTranslation : copy.showTranslation}
           >
-            <Languages className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            {translationMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Languages className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            )}
             {translationMutation.isPending ? copy.translating : copy.translate}
           </Button>
         ) : (
@@ -1099,7 +1157,11 @@ export function MailMessageSummary({
             disabled={translationMutation.isPending || !accountEmail}
             onClick={handleTranslateClick}
           >
-            <Languages className="size-3.5" />
+            {translationMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Languages className="size-3.5" />
+            )}
             {translationMutation.isPending ? copy.translating : copy.translate}
           </Button>
         )}

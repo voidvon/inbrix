@@ -85,6 +85,13 @@ export type ConversationMessage = {
   sendError?: string;
 };
 
+export type ConversationAIChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
 export type ConversationDetail = {
   id: string;
   title: string;

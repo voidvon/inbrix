@@ -443,6 +443,15 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS conversation_ai_chats (
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			messages TEXT NOT NULL DEFAULT '[]',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, conversation_id),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS ai_error_logs (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,
@@ -623,6 +632,65 @@ func (s *Store) SetConversationNote(ctx context.Context, accountID, conversation
 		accountID, conversationID, note, now, now)
 	if err != nil {
 		return fmt.Errorf("mailstore: set conversation note: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetConversationAIChat(ctx context.Context, accountID, conversationID string) (string, error) {
+	accountID = strings.TrimSpace(accountID)
+	conversationID = strings.TrimSpace(conversationID)
+	if accountID == "" || conversationID == "" {
+		return "[]", nil
+	}
+	var messages string
+	err := s.db.QueryRowContext(ctx, `SELECT messages FROM conversation_ai_chats WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID).Scan(&messages)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "[]", nil
+	}
+	if err != nil {
+		return "[]", fmt.Errorf("mailstore: get conversation ai chat: %w", err)
+	}
+	if strings.TrimSpace(messages) == "" {
+		return "[]", nil
+	}
+	return messages, nil
+}
+
+func (s *Store) SaveConversationAIChat(ctx context.Context, accountID, conversationID, messages string) error {
+	accountID = strings.TrimSpace(accountID)
+	conversationID = strings.TrimSpace(conversationID)
+	if accountID == "" || conversationID == "" {
+		return fmt.Errorf("mailstore: conversation ai chat account and conversation are required")
+	}
+	messages = strings.TrimSpace(messages)
+	if messages == "" || messages == "[]" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM conversation_ai_chats WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID)
+		if err != nil {
+			return fmt.Errorf("mailstore: delete conversation ai chat: %w", err)
+		}
+		return nil
+	}
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO conversation_ai_chats(account_id, conversation_id, messages, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(account_id, conversation_id) DO UPDATE SET messages=excluded.messages, updated_at=excluded.updated_at`,
+		accountID, conversationID, messages, now, now)
+	if err != nil {
+		return fmt.Errorf("mailstore: save conversation ai chat: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DeleteConversationAIChat(ctx context.Context, accountID, conversationID string) error {
+	accountID = strings.TrimSpace(accountID)
+	conversationID = strings.TrimSpace(conversationID)
+	if accountID == "" || conversationID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM conversation_ai_chats WHERE account_id = ? AND conversation_id = ?`, accountID, conversationID)
+	if err != nil {
+		return fmt.Errorf("mailstore: delete conversation ai chat: %w", err)
 	}
 	return nil
 }

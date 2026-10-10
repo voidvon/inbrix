@@ -1,5 +1,5 @@
 import { getCookie } from "./utils";
-import type { CalendarEvent, ConnectedAccount, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, Mailbox } from "../types";
+import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, Mailbox } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -168,6 +168,29 @@ export function saveConversationStatus(id: string, status: "answered" | "unanswe
 		method: "PUT",
 		body: JSON.stringify({ status }),
 	});
+}
+
+export function getConversationAIChat(id: string) {
+  return apiFetch<{ ok: boolean; messages: ConversationAIChatMessage[] }>(
+    `/api/conversations/${encodeURIComponent(id)}/ai-chat`
+  );
+}
+
+export function saveConversationAIChat(id: string, messages: ConversationAIChatMessage[]) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/conversations/${encodeURIComponent(id)}/ai-chat`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ messages }),
+    }
+  );
+}
+
+export function deleteConversationAIChat(id: string) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/conversations/${encodeURIComponent(id)}/ai-chat`,
+    { method: "DELETE" }
+  );
 }
 
 export function markConversationRead(id: string) {

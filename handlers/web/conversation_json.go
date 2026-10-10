@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	stdhtml "html"
 	"inbrix/handlers/api"
 	"inbrix/i18n"
@@ -499,6 +500,105 @@ func (h *EmailHandler) HandleConversationNoteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation note"})
 	}
 	return c.JSON(fiber.Map{"ok": true, "note": body.Note})
+}
+
+func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	conversationID := strings.TrimSpace(c.Params("id"))
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not get user session"})
+	}
+	ownerID, _ := sess.Get("user_id").(string)
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), ownerID, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	rawMessages, err := h.mailDB.GetConversationAIChat(c.UserContext(), account.ID, conversationID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not load conversation AI chat"})
+	}
+	var messages []any
+	if err := json.Unmarshal([]byte(rawMessages), &messages); err != nil {
+		messages = []any{}
+	}
+	return c.JSON(fiber.Map{"ok": true, "messages": messages})
+}
+
+func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	conversationID := strings.TrimSpace(c.Params("id"))
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	var body struct {
+		Messages any `json:"messages"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	bytes, err := json.Marshal(body.Messages)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid messages payload"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation AI chat"})
+	}
+	ownerID, _ := sess.Get("user_id").(string)
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), ownerID, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	if err := h.mailDB.SaveConversationAIChat(c.UserContext(), account.ID, conversationID, string(bytes)); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation AI chat"})
+	}
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *EmailHandler) HandleDeleteConversationAIChatJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
+	}
+	conversationID := strings.TrimSpace(c.Params("id"))
+	data, err := h.conversationPageData(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
+	selected := findConversation(data["Conversations"].([]Conversation), conversationID)
+	if selected == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+	}
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation AI chat"})
+	}
+	ownerID, _ := sess.Get("user_id").(string)
+	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), ownerID, selected.AccountEmail)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	if err := h.mailDB.DeleteConversationAIChat(c.UserContext(), account.ID, conversationID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation AI chat"})
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 func (h *EmailHandler) HandleConversationStatusJSON(c *fiber.Ctx) error {

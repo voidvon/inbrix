@@ -475,6 +475,49 @@ func TestConversationNotesPersistClearAndStayAccountScoped(t *testing.T) {
 	}
 }
 
+func TestConversationAIChatsPersistAndStayAccountScoped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	owner, err := s.CreateUser(ctx, "aichat@example.com", "", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testAccount(t, s, owner.ID, "alice@example.com", true)
+	second := testAccount(t, s, owner.ID, "bob@example.com", false)
+
+	// Default should be empty array
+	chat, err := s.GetConversationAIChat(ctx, first.ID, "conv-1")
+	if err != nil || chat != "[]" {
+		t.Fatalf("expected empty array, got %q, err=%v", chat, err)
+	}
+
+	payload := `[{"id":"1","role":"user","content":"hello"}]`
+	if err := s.SaveConversationAIChat(ctx, first.ID, "conv-1", payload); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err = s.GetConversationAIChat(ctx, first.ID, "conv-1")
+	if err != nil || chat != payload {
+		t.Fatalf("expected %q, got %q, err=%v", payload, chat, err)
+	}
+
+	// Second account has no chat
+	chatSecond, err := s.GetConversationAIChat(ctx, second.ID, "conv-1")
+	if err != nil || chatSecond != "[]" {
+		t.Fatalf("second account should be empty, got %q, err=%v", chatSecond, err)
+	}
+
+	// Delete chat
+	if err := s.DeleteConversationAIChat(ctx, first.ID, "conv-1"); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = s.GetConversationAIChat(ctx, first.ID, "conv-1")
+	if err != nil || chat != "[]" {
+		t.Fatalf("expected empty after delete, got %q, err=%v", chat, err)
+	}
+}
+
 func TestConversationStatusesPersistUpdateAndStayAccountScoped(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
