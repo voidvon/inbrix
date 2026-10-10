@@ -50,6 +50,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import { AIChatInput } from "./ai-chat-input";
+import { MarkdownContent } from "./markdown-content";
 
 const CanvasDocumentEditor = lazy(() => import("./canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
 
@@ -330,15 +331,19 @@ export function DocumentAISidebar({
           <div key={m.id} className={cn("flex flex-col text-xs", m.role === "user" ? "items-end" : "items-start")}>
             <div
               className={cn(
-                "rounded-lg px-3 py-2 leading-relaxed max-w-[90%]",
+                "min-w-0 rounded-lg px-3 py-2 leading-relaxed max-w-[90%] break-words",
                 m.role === "user"
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-primary text-primary-foreground whitespace-pre-wrap"
                   : m.error
-                  ? "border border-destructive/30 bg-destructive/10 text-destructive"
+                  ? "border border-destructive/30 bg-destructive/10 text-destructive whitespace-pre-wrap"
                   : "border bg-muted/50 text-foreground"
               )}
             >
-              <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.role === "assistant" && !m.error ? (
+                <MarkdownContent content={m.content} />
+              ) : (
+                <p className="whitespace-pre-wrap">{m.content}</p>
+              )}
               {m.hasUpdate && onPreviewDocument && (
                 <Button
                   type="button"

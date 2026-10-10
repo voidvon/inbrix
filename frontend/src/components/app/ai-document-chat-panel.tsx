@@ -60,6 +60,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
+import { MarkdownContent } from "./markdown-content";
 
 export function AIDocumentChatPanel({
   copy,
@@ -558,13 +559,23 @@ export function AIDocumentChatPanel({
                 {/* Assistant or User Content Bubble */}
                 <div
                   className={cn(
-                    "rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-2xs",
+                    "min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-2xs break-words",
                     msg.role === "user"
-                      ? "rounded-tr-xs bg-primary text-primary-foreground"
+                      ? "rounded-tr-xs bg-primary text-primary-foreground whitespace-pre-wrap"
                       : "rounded-tl-xs border bg-card text-foreground"
                   )}
                 >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {msg.role === "assistant" ? (
+                    <MarkdownContent
+                      content={msg.content}
+                      copyLabels={{
+                        copy: copy.copyAIContent,
+                        copied: copy.aiChatCopySuccess,
+                      }}
+                    />
+                  ) : (
+                    <p>{msg.content}</p>
+                  )}
                 </div>
 
                 {/* Interactive Document Preview Card */}

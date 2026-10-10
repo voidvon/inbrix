@@ -15,6 +15,7 @@
     "lint": "eslint ."
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
@@ -41,9 +42,11 @@
     "@tiptap/starter-kit": "^3.30.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.16",
     "fflate": "^0.8.3",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.31.0",
+    "marked": "^18.1.0",
     "next-themes": "^0.4.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

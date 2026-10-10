@@ -35,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
+import { MarkdownContent } from "./markdown-content";
 import type { ConversationAIChatMessage, ConversationDetail } from "../../types";
 
 export function ConversationAIChatPanel({
@@ -365,13 +366,23 @@ export function ConversationAIChatPanel({
                 </div>
                 <div
                   className={cn(
-                    "group relative max-w-[88%] sm:max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words shadow-xs",
+                    "group relative min-w-0 max-w-[88%] sm:max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed break-words shadow-xs",
                     isUser
-                      ? "bg-primary text-primary-foreground rounded-tr-xs"
+                      ? "bg-primary text-primary-foreground rounded-tr-xs whitespace-pre-wrap"
                       : "bg-secondary text-secondary-foreground rounded-tl-xs"
                   )}
                 >
-                  {message.content}
+                  {isUser ? (
+                    message.content
+                  ) : (
+                    <MarkdownContent
+                      content={message.content}
+                      copyLabels={{
+                        copy: copy.copyAIContent,
+                        copied: copy.aiChatCopySuccess,
+                      }}
+                    />
+                  )}
                   {!isUser && (
                     <div className="mt-2 flex items-center justify-end gap-1 pt-1 border-t border-border/30 opacity-70 group-hover:opacity-100 transition-opacity">
                       <Button
