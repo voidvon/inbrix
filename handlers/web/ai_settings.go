@@ -509,6 +509,7 @@ type mailTranslationInput struct {
 	Folder       string `json:"folder"`
 	MessageID    string `json:"messageId"`
 	Regenerate   bool   `json:"regenerate"`
+	All          bool   `json:"all"`
 }
 
 func (h *AISettingsHandler) HandleTranslateMail(c *fiber.Ctx) error {
@@ -548,7 +549,12 @@ func (h *AISettingsHandler) HandleTranslateMail(c *fiber.Ctx) error {
 		h.recordError(c.UserContext(), owner, mailstore.MailTranslationTask, input.AccountEmail, "", "", errors.New("mail body is still synchronizing"))
 		return fiber.NewError(fiber.StatusConflict, "mail body is still synchronizing")
 	}
-	result, err := mailstore.GetOrCreateMailTranslation(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
+	var result mailstore.MailTranslationResult
+	if input.All {
+		result, err = mailstore.GetOrCreateMailTranslationAll(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
+	} else {
+		result, err = mailstore.GetOrCreateMailTranslation(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, input.Regenerate)
+	}
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
 	}

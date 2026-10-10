@@ -458,10 +458,10 @@ export type MailTranslationResult = {
   updatedAt: string;
 };
 
-export function translateMailMessage(accountEmail: string, folder: string, messageId: string, regenerate = false) {
+export function translateMailMessage(accountEmail: string, folder: string, messageId: string, regenerate = false, all = false) {
   return apiFetch<MailTranslationResult>("/api/ai/mail-translation", {
     method: "POST",
-    body: JSON.stringify({ accountEmail, folder, messageId, regenerate }),
+    body: JSON.stringify({ accountEmail, folder, messageId, regenerate, all }),
   });
 }
 

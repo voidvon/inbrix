@@ -134,8 +134,9 @@ type LocalFolderMessagesJSON struct {
 
 type FolderMessageDetailJSON struct {
 	models.Email
-	MailSummary     *MailSummaryJSON     `json:"mailSummary,omitempty"`
-	MailTranslation *MailTranslationJSON `json:"mailTranslation,omitempty"`
+	MailSummary        *MailSummaryJSON     `json:"mailSummary,omitempty"`
+	MailTranslation    *MailTranslationJSON `json:"mailTranslation,omitempty"`
+	MailTranslationAll *MailTranslationJSON `json:"mailTranslationAll,omitempty"`
 }
 
 func localFolderPageInt(c *fiber.Ctx, key string, fallback int) int {
@@ -313,6 +314,11 @@ func (h *EmailHandler) HandleLocalFolderMessageJSON(c *fiber.Ctx) error {
 	}
 	if record, transErr := h.mailDB.GetMessageTranslation(c.UserContext(), mailstore.MessageSummaryKey{AccountID: account.ID, FolderName: folder, UID: email.ID}); transErr == nil {
 		response.MailTranslation = mailTranslationJSON(record)
+	} else if !errors.Is(transErr, mailstore.ErrNotFound) {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read saved mail translation"})
+	}
+	if record, transErr := h.mailDB.GetMessageTranslationAll(c.UserContext(), mailstore.MessageSummaryKey{AccountID: account.ID, FolderName: folder, UID: email.ID}); transErr == nil {
+		response.MailTranslationAll = mailTranslationJSON(record)
 	} else if !errors.Is(transErr, mailstore.ErrNotFound) {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read saved mail translation"})
 	}

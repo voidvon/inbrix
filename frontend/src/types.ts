@@ -80,6 +80,7 @@ export type ConversationMessage = {
   outgoing: boolean;
   mailSummary?: MailSummary;
   mailTranslation?: MailTranslation;
+  mailTranslationAll?: MailTranslation;
   suggestedReply?: SuggestedReply;
   sendStatus?: "sending" | "failed" | "sent";
   sendError?: string;

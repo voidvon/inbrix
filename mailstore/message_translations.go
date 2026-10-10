@@ -9,14 +9,17 @@ import (
 	"time"
 )
 
-const mailTranslationSummaryType = "mail_translation"
+const (
+	mailTranslationSummaryType    = "mail_translation"
+	mailTranslationAllSummaryType = "mail_translation_all"
+)
 
-func (s *Store) GetMessageTranslation(ctx context.Context, key MessageSummaryKey) (MessageSummaryRecord, error) {
+func (s *Store) getMessageTranslation(ctx context.Context, key MessageSummaryKey, summaryType string) (MessageSummaryRecord, error) {
 	key, uid, err := normalizeMessageSummaryKey(key)
 	if err != nil {
 		return MessageSummaryRecord{}, err
 	}
-	record, err := scanMessageSummary(s.db.QueryRowContext(ctx, `SELECT `+messageSummaryColumns+` FROM message_summaries WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ?`, key.AccountID, key.FolderName, uid, mailTranslationSummaryType))
+	record, err := scanMessageSummary(s.db.QueryRowContext(ctx, `SELECT `+messageSummaryColumns+` FROM message_summaries WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ?`, key.AccountID, key.FolderName, uid, summaryType))
 	if errors.Is(err, sql.ErrNoRows) {
 		return MessageSummaryRecord{}, ErrNotFound
 	}
@@ -26,14 +29,22 @@ func (s *Store) GetMessageTranslation(ctx context.Context, key MessageSummaryKey
 	return record, nil
 }
 
-func (s *Store) ListMessageTranslations(ctx context.Context, accountID string, keys []MessageSummaryKey) (map[string]MessageSummaryRecord, error) {
+func (s *Store) GetMessageTranslation(ctx context.Context, key MessageSummaryKey) (MessageSummaryRecord, error) {
+	return s.getMessageTranslation(ctx, key, mailTranslationSummaryType)
+}
+
+func (s *Store) GetMessageTranslationAll(ctx context.Context, key MessageSummaryKey) (MessageSummaryRecord, error) {
+	return s.getMessageTranslation(ctx, key, mailTranslationAllSummaryType)
+}
+
+func (s *Store) listMessageTranslations(ctx context.Context, accountID string, keys []MessageSummaryKey, summaryType string) (map[string]MessageSummaryRecord, error) {
 	result := make(map[string]MessageSummaryRecord)
 	accountID = strings.TrimSpace(accountID)
 	if accountID == "" || len(keys) == 0 {
 		return result, nil
 	}
 	clauses := make([]string, 0, len(keys))
-	args := []any{accountID, mailTranslationSummaryType}
+	args := []any{accountID, summaryType}
 	for _, key := range keys {
 		key.AccountID = accountID
 		normalized, uid, err := normalizeMessageSummaryKey(key)
@@ -61,7 +72,15 @@ func (s *Store) ListMessageTranslations(ctx context.Context, accountID string, k
 	return result, rows.Err()
 }
 
-func (s *Store) ClaimMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, regenerate bool, lease time.Duration) (MessageSummaryRecord, bool, error) {
+func (s *Store) ListMessageTranslations(ctx context.Context, accountID string, keys []MessageSummaryKey) (map[string]MessageSummaryRecord, error) {
+	return s.listMessageTranslations(ctx, accountID, keys, mailTranslationSummaryType)
+}
+
+func (s *Store) ListMessageTranslationsAll(ctx context.Context, accountID string, keys []MessageSummaryKey) (map[string]MessageSummaryRecord, error) {
+	return s.listMessageTranslations(ctx, accountID, keys, mailTranslationAllSummaryType)
+}
+
+func (s *Store) claimMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, regenerate bool, lease time.Duration, summaryType string) (MessageSummaryRecord, bool, error) {
 	key, uid, err := normalizeMessageSummaryKey(record.MessageSummaryKey)
 	if err != nil {
 		return MessageSummaryRecord{}, false, err
@@ -82,7 +101,7 @@ func (s *Store) ClaimMessageTranslationGeneration(ctx context.Context, record Me
 			lease_until = excluded.lease_until, error_message = '', updated_at = excluded.updated_at
 		WHERE ` + readyGuard
 	result, err := s.db.ExecContext(ctx, query,
-		key.AccountID, key.FolderName, uid, mailTranslationSummaryType,
+		key.AccountID, key.FolderName, uid, summaryType,
 		record.SourceHash, record.ConfigHash, record.ModelID, record.ModelName, record.AgentID,
 		record.PipelineVersion, token, leaseUntil, now, now, now,
 	)
@@ -90,30 +109,38 @@ func (s *Store) ClaimMessageTranslationGeneration(ctx context.Context, record Me
 		return MessageSummaryRecord{}, false, fmt.Errorf("mailstore: claim message translation: %w", err)
 	}
 	claimed, _ := result.RowsAffected()
-	current, err := s.GetMessageTranslation(ctx, key)
+	current, err := s.getMessageTranslation(ctx, key, summaryType)
 	if err != nil {
 		return MessageSummaryRecord{}, false, err
 	}
 	return current, claimed > 0 && current.GenerationToken == token, nil
 }
 
-func (s *Store) CompleteMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, token, translation string) (MessageSummaryRecord, error) {
+func (s *Store) ClaimMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, regenerate bool, lease time.Duration) (MessageSummaryRecord, bool, error) {
+	return s.claimMessageTranslationGeneration(ctx, record, regenerate, lease, mailTranslationSummaryType)
+}
+
+func (s *Store) completeMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, token, translation string, summaryType string) (MessageSummaryRecord, error) {
 	key, uid, err := normalizeMessageSummaryKey(record.MessageSummaryKey)
 	if err != nil {
 		return MessageSummaryRecord{}, err
 	}
 	now := time.Now().Unix()
-	result, err := s.db.ExecContext(ctx, `UPDATE message_summaries SET summary_text = ?, status = 'ready', source_hash = ?, config_hash = ?, model_id = ?, model_name = ?, agent_id = ?, pipeline_version = ?, generation_token = '', lease_until = 0, error_message = '', updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, translation, record.SourceHash, record.ConfigHash, record.ModelID, record.ModelName, record.AgentID, record.PipelineVersion, now, key.AccountID, key.FolderName, uid, mailTranslationSummaryType, token)
+	result, err := s.db.ExecContext(ctx, `UPDATE message_summaries SET summary_text = ?, status = 'ready', source_hash = ?, config_hash = ?, model_id = ?, model_name = ?, agent_id = ?, pipeline_version = ?, generation_token = '', lease_until = 0, error_message = '', updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, translation, record.SourceHash, record.ConfigHash, record.ModelID, record.ModelName, record.AgentID, record.PipelineVersion, now, key.AccountID, key.FolderName, uid, summaryType, token)
 	if err != nil {
 		return MessageSummaryRecord{}, fmt.Errorf("mailstore: complete message translation: %w", err)
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return MessageSummaryRecord{}, errors.New("mailstore: message translation generation lease was lost")
 	}
-	return s.GetMessageTranslation(ctx, key)
+	return s.getMessageTranslation(ctx, key, summaryType)
 }
 
-func (s *Store) FailMessageTranslationGeneration(ctx context.Context, key MessageSummaryKey, token string, generationErr error) error {
+func (s *Store) CompleteMessageTranslationGeneration(ctx context.Context, record MessageSummaryRecord, token, translation string) (MessageSummaryRecord, error) {
+	return s.completeMessageTranslationGeneration(ctx, record, token, translation, mailTranslationSummaryType)
+}
+
+func (s *Store) failMessageTranslationGeneration(ctx context.Context, key MessageSummaryKey, token string, generationErr error, summaryType string) error {
 	key, uid, err := normalizeMessageSummaryKey(key)
 	if err != nil {
 		return err
@@ -122,6 +149,10 @@ func (s *Store) FailMessageTranslationGeneration(ctx context.Context, key Messag
 	if generationErr != nil {
 		message = generationErr.Error()
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE message_summaries SET status = CASE WHEN summary_text <> '' THEN 'ready' ELSE 'failed' END, generation_token = '', lease_until = 0, error_message = ?, updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, message, time.Now().Unix(), key.AccountID, key.FolderName, uid, mailTranslationSummaryType, token)
+	_, err = s.db.ExecContext(ctx, `UPDATE message_summaries SET status = CASE WHEN summary_text <> '' THEN 'ready' ELSE 'failed' END, generation_token = '', lease_until = 0, error_message = ?, updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, message, time.Now().Unix(), key.AccountID, key.FolderName, uid, summaryType, token)
 	return err
+}
+
+func (s *Store) FailMessageTranslationGeneration(ctx context.Context, key MessageSummaryKey, token string, generationErr error) error {
+	return s.failMessageTranslationGeneration(ctx, key, token, generationErr, mailTranslationSummaryType)
 }

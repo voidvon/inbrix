@@ -941,7 +941,7 @@ export function MessageBubble({
             </div>
           )}
           {!message.id.startsWith("optimistic-") && (
-            <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} outgoing={outgoing} onGenerateReply={onGenerateReply} />
+            <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} initialTranslationAll={message.mailTranslationAll} outgoing={outgoing} onGenerateReply={onGenerateReply} />
           )}
         </article>
       </ContextMenuTrigger>
@@ -1021,6 +1021,7 @@ export function MailMessageSummary({
   messageId,
   initialSummary,
   initialTranslation,
+  initialTranslationAll,
   outgoing = false,
   onGenerateReply,
 }: {
@@ -1030,14 +1031,18 @@ export function MailMessageSummary({
   messageId: string;
   initialSummary?: ConversationMessage["mailSummary"];
   initialTranslation?: ConversationMessage["mailTranslation"];
+  initialTranslationAll?: ConversationMessage["mailTranslationAll"];
   outgoing?: boolean;
   onGenerateReply?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [savedSummary, setSavedSummary] = useState(initialSummary);
   const [savedTranslation, setSavedTranslation] = useState(initialTranslation);
+  const [savedTranslationAll, setSavedTranslationAll] = useState(initialTranslationAll);
   const [showTranslation, setShowTranslation] = useState(false);
+  const [showTranslationAll, setShowTranslationAll] = useState(false);
   const [copiedTranslation, setCopiedTranslation] = useState(false);
+  const [copiedTranslationAll, setCopiedTranslationAll] = useState(false);
 
   const messageKey = `${accountEmail || ""}:${folder}:${messageId}`;
   const previousMessageKeyRef = useRef(messageKey);
@@ -1046,6 +1051,10 @@ export function MailMessageSummary({
     () => formatTranslationParagraphs(savedTranslation?.text || ""),
     [savedTranslation?.text]
   );
+  const translationAllParagraphs = useMemo(
+    () => formatTranslationParagraphs(savedTranslationAll?.text || ""),
+    [savedTranslationAll?.text]
+  );
 
   const isZh = copy === zh;
   const summaryAI = useAIStateMachine({
@@ -1053,6 +1062,10 @@ export function MailMessageSummary({
     locale: isZh ? "zh" : "en",
   });
   const translationAI = useAIStateMachine({
+    taskType: "translation",
+    locale: isZh ? "zh" : "en",
+  });
+  const translationAllAI = useAIStateMachine({
     taskType: "translation",
     locale: isZh ? "zh" : "en",
   });
@@ -1082,12 +1095,13 @@ export function MailMessageSummary({
   const translationMutation = useMutation({
     mutationFn: (regenerate: boolean) =>
       translationAI.run(() =>
-        translateMailMessage(accountEmail || "", folder, messageId, regenerate)
+        translateMailMessage(accountEmail || "", folder, messageId, regenerate, false)
       ),
     onSuccess: (result) => {
       const translation: MailTranslation = { text: result.translation, status: result.status, updatedAt: result.updatedAt };
       setSavedTranslation(translation);
       setShowTranslation(true);
+      setShowTranslationAll(false);
       queryClient.setQueryData<MailMessage>(["message", folder, messageId], (current) => (current ? { ...current, mailTranslation: translation } : current));
       queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
         if (!current || (accountEmail && current.conversation.accountEmail !== accountEmail)) return current;
@@ -1102,20 +1116,48 @@ export function MailMessageSummary({
     },
   });
 
+  const translationAllMutation = useMutation({
+    mutationFn: (regenerate: boolean) =>
+      translationAllAI.run(() =>
+        translateMailMessage(accountEmail || "", folder, messageId, regenerate, true)
+      ),
+    onSuccess: (result) => {
+      const translation: MailTranslation = { text: result.translation, status: result.status, updatedAt: result.updatedAt };
+      setSavedTranslationAll(translation);
+      setShowTranslationAll(true);
+      setShowTranslation(false);
+      queryClient.setQueryData<MailMessage>(["message", folder, messageId], (current) => (current ? { ...current, mailTranslationAll: translation } : current));
+      queryClient.setQueriesData<ConversationDetailResponse>({ queryKey: ["conversation"] }, (current) => {
+        if (!current || (accountEmail && current.conversation.accountEmail !== accountEmail)) return current;
+        let changed = false;
+        const messages = current.conversation.messages.map((message) => {
+          if (message.id !== messageId || (message.folder || "INBOX") !== folder) return message;
+          changed = true;
+          return { ...message, mailTranslationAll: translation };
+        });
+        return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
+      });
+    },
+  });
+
   useEffect(() => {
     if (previousMessageKeyRef.current !== messageKey) {
       previousMessageKeyRef.current = messageKey;
       setSavedSummary(initialSummary);
       setSavedTranslation(initialTranslation);
+      setSavedTranslationAll(initialTranslationAll);
       setShowTranslation(false);
+      setShowTranslationAll(false);
       summaryMutation.reset();
       translationMutation.reset();
+      translationAllMutation.reset();
       return;
     }
 
     setSavedSummary(initialSummary);
     setSavedTranslation(initialTranslation);
-  }, [messageKey, initialSummary, initialTranslation]);
+    setSavedTranslationAll(initialTranslationAll);
+  }, [messageKey, initialSummary, initialTranslation, initialTranslationAll]);
 
   const copyTranslationText = async (text: string) => {
     const formatted = formatTranslationParagraphs(text).join("\n\n");
@@ -1127,11 +1169,39 @@ export function MailMessageSummary({
     }
   };
 
+  const copyTranslationAllText = async (text: string) => {
+    const formatted = formatTranslationParagraphs(text).join("\n\n");
+    const success = await copyToClipboard(formatted || text);
+    if (success) {
+      setCopiedTranslationAll(true);
+      toast.success(copy.copiedTranslationAll);
+      window.setTimeout(() => setCopiedTranslationAll(false), 1600);
+    }
+  };
+
   const handleTranslateClick = () => {
     if (savedTranslation) {
-      setShowTranslation((prev) => !prev);
+      setShowTranslation((prev) => {
+        const next = !prev;
+        if (next) setShowTranslationAll(false);
+        return next;
+      });
     } else {
+      setShowTranslationAll(false);
       translationMutation.mutate(false);
+    }
+  };
+
+  const handleTranslateAllClick = () => {
+    if (savedTranslationAll) {
+      setShowTranslationAll((prev) => {
+        const next = !prev;
+        if (next) setShowTranslation(false);
+        return next;
+      });
+    } else {
+      setShowTranslation(false);
+      translationAllMutation.mutate(false);
     }
   };
 
@@ -1192,6 +1262,45 @@ export function MailMessageSummary({
               <Languages className="size-3.5" />
             )}
             {translationMutation.isPending ? copy.translating : copy.translate}
+          </Button>
+        )}
+        {savedTranslationAll ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-7 px-2 text-xs font-medium transition-colors",
+              showTranslationAll
+                ? "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:hover:bg-emerald-500/30"
+                : "text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-300"
+            )}
+            disabled={translationAllMutation.isPending || !accountEmail}
+            onClick={handleTranslateAllClick}
+            title={showTranslationAll ? copy.hideTranslationAll : copy.showTranslationAll}
+          >
+            {translationAllMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Languages className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            )}
+            {translationAllMutation.isPending ? copy.translatingAll : copy.translateAll}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground"
+            disabled={translationAllMutation.isPending || !accountEmail}
+            onClick={handleTranslateAllClick}
+          >
+            {translationAllMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Languages className="size-3.5" />
+            )}
+            {translationAllMutation.isPending ? copy.translatingAll : copy.translateAll}
           </Button>
         )}
         {onGenerateReply && (
@@ -1292,8 +1401,66 @@ export function MailMessageSummary({
           </div>
         </div>
       )}
+      {translationAllMutation.isPending && (
+        <div className="mt-1.5">
+          <AIStatusIndicator snapshot={translationAllAI.snapshot} variant="card" showTimer showSteps />
+        </div>
+      )}
+      {savedTranslationAll && showTranslationAll && !translationAllMutation.isPending && (
+        <div className="mt-1 border-l-2 border-emerald-500/60 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <strong className="text-xs font-medium text-muted-foreground">{copy.mailTranslationAllTitle}</strong>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                onClick={() => void copyTranslationAllText(savedTranslationAll.text)}
+                aria-label={copy.copyTranslationAll}
+                title={copiedTranslationAll ? copy.copiedTranslationAll : copy.copyTranslationAll}
+              >
+                {copiedTranslationAll ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                disabled={translationAllMutation.isPending || !accountEmail}
+                onClick={() => translationAllMutation.mutate(true)}
+                aria-label={copy.regenerateTranslationAll}
+                title={copy.regenerateTranslationAll}
+              >
+                <RotateCcw className={cn("size-3.5", translationAllMutation.isPending && "animate-spin")} />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowTranslationAll(false)}
+                aria-label={copy.hideTranslationAll}
+                title={copy.hideTranslationAll}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {translationAllParagraphs.map((paragraph, index) => (
+              <p key={index} className="whitespace-pre-wrap leading-relaxed">
+                {paragraph}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       {summaryMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{summaryMutation.error instanceof Error ? summaryMutation.error.message : copy.loadFailed}</p>}
       {translationMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{translationMutation.error instanceof Error ? translationMutation.error.message : copy.translateFailed}</p>}
+      {translationAllMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{translationAllMutation.error instanceof Error ? translationAllMutation.error.message : copy.translateAllFailed}</p>}
     </div>
   );
 }
@@ -1514,7 +1681,7 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
           </>
         ) : null}
       </div>
-      <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} />
+      <MailMessageSummary copy={copy} accountEmail={message.accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} initialTranslationAll={message.mailTranslationAll} />
     </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-40">

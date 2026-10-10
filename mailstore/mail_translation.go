@@ -9,6 +9,7 @@ import (
 	"time"
 
 	mailapi "inbrix/handlers/api"
+	"inbrix/handlers/htmlsafe"
 	"inbrix/models"
 )
 
@@ -30,6 +31,19 @@ const mailTranslationSystemPrompt = `你是一个专业的商务多语言邮件�
    - 去除行首缩进空格、行尾空格以及段落中不自然的连续空格。
 4. 纯净输出：直接输出翻译后的正文文本，不要包含任何前言、后记、说明、解释或多余的客套话。`
 
+const mailTranslationAllSystemPrompt = `你是一个专业的商务多语言邮件翻译引擎。
+请将输入邮件的全部内容（包含正文和引用内容）进行专业、准确、通顺的翻译。
+翻译规则：
+1. 语言转换：若原文主要为外语（如英语、日语、俄语、德语等），请翻译为简体中文；若原文主要为中文，请翻译为地道流利的英文。
+2. 完整翻译：请翻译输入的全部内容，包括正文以及所有历史引用内容、原邮件引用（如 "On ... wrote:"、">" 引用等）和往来邮件链，绝对不要过滤或遗漏引用内容。
+3. 排版与段落规范：
+   - 将译文整理为自然连贯、结构合理的文字段落。
+   - 切勿机械保留原邮件中由于排版、客户端折行产生的硬换行、断行、多余空格或连续空行。
+   - 同一语义段落内的文字应当连贯成段，不要随意断行；段落与段落之间保持正常的自然分段（空一行即可）。
+   - 列表项（如序号或项目符号列表）可单独成行。
+   - 去除行首缩进空格、行尾空格以及段落中不自然的连续空格。
+4. 纯净输出：直接输出翻译后的文本，不要包含任何前言、后记、说明、解释或多余的客套话。`
+
 type MailTranslationResult struct {
 	Record MessageSummaryRecord
 	Cached bool
@@ -43,7 +57,7 @@ type mailTranslationConfig struct {
 	configHash string
 }
 
-func resolveMailTranslationConfig(ctx context.Context, store *Store, encryptionKey string, account Account) (mailTranslationConfig, error) {
+func resolveMailTranslationConfig(ctx context.Context, store *Store, encryptionKey string, account Account, translateAll bool) (mailTranslationConfig, error) {
 	var agent AIAgentRecord
 	var model AIModelRecord
 	binding, err := store.GetAITaskBinding(ctx, account.OwnerID, account.ID, MailTranslationTask)
@@ -70,6 +84,9 @@ func resolveMailTranslationConfig(ctx context.Context, store *Store, encryptionK
 		effort = "low"
 	}
 	instructions := mailTranslationSystemPrompt
+	if translateAll {
+		instructions = mailTranslationAllSystemPrompt
+	}
 	if strings.TrimSpace(agent.Prompt) != "" {
 		instructions += "\n\nAgent instructions:\n" + strings.TrimSpace(agent.Prompt)
 	}
@@ -105,12 +122,49 @@ func CleanTranslationText(text string) string {
 	return strings.TrimSpace(strings.Join(cleanedLines, "\n"))
 }
 
+func fullMessageText(messageBody, messageHTML string) string {
+	plainContent := strings.TrimSpace(messageBody)
+	var htmlContent string
+	if strings.TrimSpace(messageHTML) != "" {
+		htmlContent = strings.TrimSpace(htmlsafe.PlainTextFromHTML(messageHTML))
+	}
+	if plainContent != "" && htmlContent != "" {
+		if len(htmlContent) > len(plainContent) {
+			return htmlContent
+		}
+		return plainContent
+	}
+	if plainContent != "" {
+		return plainContent
+	}
+	return htmlContent
+}
+
 func mailTranslationInput(message models.Email) string {
 	return CleanTranslationText(currentMessageText(message.Body, message.HTML))
 }
 
+func mailTranslationAllInput(message models.Email) string {
+	return CleanTranslationText(fullMessageText(message.Body, message.HTML))
+}
+
 func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email, regenerate bool) (MailTranslationResult, error) {
-	inputText := mailTranslationInput(message)
+	return getOrCreateMailTranslationInternal(ctx, client, store, encryptionKey, account, message, regenerate, false)
+}
+
+func GetOrCreateMailTranslationAll(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email, regenerate bool) (MailTranslationResult, error) {
+	return getOrCreateMailTranslationInternal(ctx, client, store, encryptionKey, account, message, regenerate, true)
+}
+
+func getOrCreateMailTranslationInternal(ctx context.Context, client HTTPClient, store *Store, encryptionKey string, account Account, message models.Email, regenerate bool, translateAll bool) (MailTranslationResult, error) {
+	summaryType := mailTranslationSummaryType
+	var inputText string
+	if translateAll {
+		summaryType = mailTranslationAllSummaryType
+		inputText = mailTranslationAllInput(message)
+	} else {
+		inputText = mailTranslationInput(message)
+	}
 	if inputText == "" {
 		return MailTranslationResult{}, errors.New("邮件正文为空，无需翻译")
 	}
@@ -123,14 +177,14 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 
 	sourceHash := hashMailSummaryValue(inputText)
 	if !regenerate {
-		if existing, err := store.GetMessageTranslation(ctx, key); err == nil && existing.Status == "ready" && strings.TrimSpace(existing.Summary) != "" {
+		if existing, err := store.getMessageTranslation(ctx, key, summaryType); err == nil && existing.Status == "ready" && strings.TrimSpace(existing.Summary) != "" {
 			return MailTranslationResult{Record: existing, Cached: true}, nil
 		} else if err != nil && !errors.Is(err, ErrNotFound) {
 			return MailTranslationResult{}, err
 		}
 	}
 
-	cfg, err := resolveMailTranslationConfig(ctx, store, encryptionKey, account)
+	cfg, err := resolveMailTranslationConfig(ctx, store, encryptionKey, account, translateAll)
 	if err != nil {
 		_ = store.RecordAIError(ctx, AIErrorLogRecord{
 			OwnerID:      account.OwnerID,
@@ -151,7 +205,7 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 		PipelineVersion:   mailTranslationPipelineVersion,
 	}
 
-	current, claimed, err := store.ClaimMessageTranslationGeneration(ctx, claim, regenerate, mailTranslationGenerationLease)
+	current, claimed, err := store.claimMessageTranslationGeneration(ctx, claim, regenerate, mailTranslationGenerationLease, summaryType)
 	if err != nil {
 		_ = store.RecordAIError(ctx, AIErrorLogRecord{
 			OwnerID:      account.OwnerID,
@@ -183,7 +237,7 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 				})
 				return MailTranslationResult{}, ctx.Err()
 			case <-ticker.C:
-				current, err = store.GetMessageTranslation(ctx, key)
+				current, err = store.getMessageTranslation(ctx, key, summaryType)
 				if err != nil {
 					return MailTranslationResult{}, err
 				}
@@ -191,20 +245,23 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 					return MailTranslationResult{Record: current, Cached: true}, nil
 				}
 				if current.Status == "failed" || !current.LeaseUntil.After(time.Now()) {
-					return GetOrCreateMailTranslation(ctx, client, store, encryptionKey, account, message, regenerate)
+					return getOrCreateMailTranslationInternal(ctx, client, store, encryptionKey, account, message, regenerate, translateAll)
 				}
 			}
 		}
 	}
 
 	instructions := mailTranslationSystemPrompt
+	if translateAll {
+		instructions = mailTranslationAllSystemPrompt
+	}
 	if strings.TrimSpace(cfg.agent.Prompt) != "" {
 		instructions += "\n\nAgent instructions:\n" + strings.TrimSpace(cfg.agent.Prompt)
 	}
 
 	translation, generationErr := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, instructions, inputText, cfg.effort)
 	if generationErr != nil {
-		_ = store.FailMessageTranslationGeneration(ctx, key, current.GenerationToken, generationErr)
+		_ = store.failMessageTranslationGeneration(ctx, key, current.GenerationToken, generationErr, summaryType)
 		_ = store.RecordAIError(ctx, AIErrorLogRecord{
 			OwnerID:      account.OwnerID,
 			TaskType:     MailTranslationTask,
@@ -216,7 +273,7 @@ func GetOrCreateMailTranslation(ctx context.Context, client HTTPClient, store *S
 		return MailTranslationResult{}, generationErr
 	}
 
-	completed, err := store.CompleteMessageTranslationGeneration(ctx, claim, current.GenerationToken, CleanTranslationText(translation))
+	completed, err := store.completeMessageTranslationGeneration(ctx, claim, current.GenerationToken, CleanTranslationText(translation), summaryType)
 	if err != nil {
 		return MailTranslationResult{}, err
 	}
