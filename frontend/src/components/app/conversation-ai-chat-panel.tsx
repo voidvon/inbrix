@@ -45,12 +45,18 @@ export function ConversationAIChatPanel({
   detail,
   onClose,
   isMobile = false,
+  focusedMessageIds = [],
+  onRemoveFocusedMessage,
+  onClearFocusedMessages,
   className,
 }: {
   copy: Copy;
   detail: ConversationDetail;
   onClose: () => void;
   isMobile?: boolean;
+  focusedMessageIds?: string[];
+  onRemoveFocusedMessage?: (id: string) => void;
+  onClearFocusedMessages?: () => void;
   className?: string;
 }) {
   const queryClient = useQueryClient();
@@ -94,7 +100,16 @@ export function ConversationAIChatPanel({
   }, [messages.length]);
 
   // Build context from email messages with quotes filtered out
-  const emailContext = useMemo(() => buildConversationAIContext(detail), [detail]);
+  const emailContext = useMemo(
+    () => buildConversationAIContext(detail, focusedMessageIds),
+    [detail, focusedMessageIds]
+  );
+
+  const focusedMessages = useMemo(() => {
+    if (!focusedMessageIds.length) return [];
+    const idSet = new Set(focusedMessageIds);
+    return detail.messages.filter((m) => idSet.has(m.id));
+  }, [detail.messages, focusedMessageIds]);
 
   const isZh = copy === zh;
   const aiState = useAIStateMachine({
@@ -435,11 +450,57 @@ export function ConversationAIChatPanel({
 
       {/* Input Box Footer */}
       <footer className="shrink-0 border-t bg-card/80 p-3 sm:p-4 backdrop-blur-xs">
+        {focusedMessages.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-primary">
+              <Sparkles className="size-3" />
+              {copy.aiChatFocusedContext}:
+            </span>
+            {focusedMessages.map((msg) => {
+              const sender = msg.fromName || msg.from || (msg.outgoing ? copy.me : "-");
+              const preview = msg.subject || msg.body?.slice(0, 18) || copy.noSubject;
+              return (
+                <div
+                  key={msg.id}
+                  className="flex max-w-[200px] items-center gap-1 rounded-md border border-primary/25 bg-primary/10 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-primary/15"
+                  title={`${sender}: ${preview}`}
+                >
+                  <span className="truncate font-medium">{sender}</span>
+                  {onRemoveFocusedMessage && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveFocusedMessage(msg.id)}
+                      className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-primary/20 hover:text-foreground cursor-pointer"
+                      aria-label={copy.cancel}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {onClearFocusedMessages && focusedMessages.length > 1 && (
+              <button
+                type="button"
+                onClick={onClearFocusedMessages}
+                className="text-[11px] text-muted-foreground underline hover:text-foreground cursor-pointer"
+              >
+                {copy.aiChatClearFocus}
+              </button>
+            )}
+          </div>
+        )}
         <AIChatInput
           value={input}
           onChange={setInput}
           onSend={() => handleSend()}
-          placeholder={copy.aiChatPlaceholder}
+          placeholder={
+            focusedMessages.length > 0
+              ? (isZh
+                  ? `针对选中的 ${focusedMessages.length} 封邮件提问… (Enter 发送)`
+                  : `Ask about ${focusedMessages.length} focused email(s)...`)
+              : copy.aiChatPlaceholder
+          }
           disabled={mutation.isPending}
           isPending={mutation.isPending}
           sendLabel={copy.aiChatSend}
@@ -447,7 +508,11 @@ export function ConversationAIChatPanel({
           autoFocus={!isMobile}
           hint={
             <span className="text-[10px] text-muted-foreground">
-              {copy.aiChatSubtitle}
+              {focusedMessages.length > 0
+                ? (isZh
+                    ? `已锁定 ${focusedMessages.length} 封邮件作为重点上下文`
+                    : `Focusing on ${focusedMessages.length} selected email(s)`)
+                : copy.aiChatSubtitle}
             </span>
           }
         />

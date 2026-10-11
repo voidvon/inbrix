@@ -311,13 +311,20 @@ export function extractCleanEmailBody(message: ConversationMessage): string {
 }
 
 /**
- * 将整组邮件会话构建为 AI 讨论用的上下文，已自动剔除冗余的历史引用
+ * 将邮件会话（或用户选中的特定邮件）构建为 AI 讨论用的上下文，已自动剔除冗余的历史引用
  */
-export function buildConversationAIContext(detail: ConversationDetail): string {
-  const messages = detail.messages || [];
-  if (messages.length === 0) return "";
+export function buildConversationAIContext(detail: ConversationDetail, focusedIds?: string[]): string {
+  const allMessages = detail.messages || [];
+  if (allMessages.length === 0) return "";
 
-  const formattedMessages = messages.map((msg, index) => {
+  const isFocused = Boolean(focusedIds && focusedIds.length > 0);
+  const targetMessages = isFocused
+    ? allMessages.filter((m) => focusedIds!.includes(m.id))
+    : allMessages;
+
+  const messagesToFormat = targetMessages.length > 0 ? targetMessages : allMessages;
+
+  const formattedMessages = messagesToFormat.map((msg, index) => {
     const sender = msg.fromName ? `${msg.fromName} <${msg.from}>` : msg.from;
     const cleanBody = extractCleanEmailBody(msg);
     const summary = msg.mailSummary?.status === "ready" && msg.mailSummary.text.trim()
@@ -325,7 +332,7 @@ export function buildConversationAIContext(detail: ConversationDetail): string {
       : "";
 
     return [
-      `--- 第 ${index + 1} 封邮件 ---`,
+      isFocused ? `--- 关注的重点邮件 ${index + 1} ---` : `--- 第 ${index + 1} 封邮件 ---`,
       `发件人: ${sender}`,
       `收件人: ${msg.to || "-"}`,
       msg.cc ? `抄送: ${msg.cc}` : "",
@@ -336,10 +343,20 @@ export function buildConversationAIContext(detail: ConversationDetail): string {
     ].filter(Boolean).join("\n");
   }).join("\n\n");
 
+  if (isFocused) {
+    return [
+      `【会话背景主题】: ${detail.subject || detail.title || "无主题"}`,
+      `【联系人】: ${detail.peerEmail || detail.title || "-"}`,
+      `【注意】: 用户已指定重点针对以下 ${messagesToFormat.length} 封邮件进行定向问答与讨论，请优先围绕以下邮件内容进行深入回答：`,
+      "",
+      formattedMessages,
+    ].join("\n");
+  }
+
   return [
     `【会话主题】: ${detail.subject || detail.title || "无主题"}`,
     `【联系人】: ${detail.peerEmail || detail.title || "-"}`,
-    `【邮件数量】: 共 ${messages.length} 封往来邮件`,
+    `【邮件数量】: 共 ${allMessages.length} 封往来邮件`,
     "",
     "【邮件往来记录（已提前过滤掉历史重复引用内容）】:",
     formattedMessages,

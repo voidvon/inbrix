@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
+import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
 import { Badge } from "../ui/badge";
@@ -101,8 +102,8 @@ export function ConversationList({
 
   return (
     <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
-      <div className="border-b bg-card px-3 py-3">
-        <div className="flex items-center gap-2">
+      <div className="flex h-14 shrink-0 items-center border-b bg-card px-3">
+        <div className="flex w-full items-center gap-2">
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}>
             <MenuIcon />
           </Button>
@@ -431,6 +432,29 @@ export function ChatView({
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+  const [focusedMessageIds, setFocusedMessageIds] = useState<string[]>([]);
+  const [aiPanelWidth, setAiPanelWidth] = usePersistedPaneWidth("inbrix-ai-chat-panel-width", 384, 300, 800);
+
+  useEffect(() => {
+    setFocusedMessageIds([]);
+  }, [detail.id]);
+
+  const handleAddToAIChat = (message: ConversationMessage) => {
+    setIsAIChatOpen(true);
+    setFocusedMessageIds((prev) => {
+      if (prev.includes(message.id)) return prev;
+      return [...prev, message.id];
+    });
+  };
+
+  const handleRemoveFocusedMessage = (id: string) => {
+    setFocusedMessageIds((prev) => prev.filter((mId) => mId !== id));
+  };
+
+  const handleClearFocusedMessages = () => {
+    setFocusedMessageIds([]);
+  };
+
   const latestConversationMessage = detail.messages.at(-1);
   const persistedSuggestionMessage =
     latestConversationMessage &&
@@ -513,7 +537,7 @@ export function ChatView({
   return (
     <div className={cn("relative flex min-w-0 flex-1 overflow-hidden", className)}>
       <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col bg-surface">
-        <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
+        <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 sm:px-5">
           <div className="flex min-w-0 items-center justify-start">
             <Button
               variant="ghost"
@@ -527,8 +551,8 @@ export function ChatView({
             </Button>
           </div>
           <div className="min-w-0 text-center">
-            <h2 className="truncate text-sm font-semibold">{detail.title || copy.conversations}</h2>
-            <p className="mt-1 truncate text-xs text-muted-foreground">
+            <h2 className="truncate text-sm font-semibold leading-tight">{detail.title || copy.conversations}</h2>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
               {detail.subject || copy.noSubject}
               <span className="px-1.5">·</span>
               {detail.count} {copy.messages}
@@ -602,6 +626,8 @@ export function ChatView({
                     onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
                     onRetrySend={onRetrySend ? () => onRetrySend(message) : undefined}
                     onReEdit={onReEdit ? () => onReEdit(message) : undefined}
+                    onAddToAIChat={() => handleAddToAIChat(message)}
+                    isFocused={focusedMessageIds.includes(message.id)}
                   />
                   {!message.outgoing && suggestionTargetKey === messageKey ? (
                     <SuggestedReplyBubble
@@ -649,13 +675,29 @@ export function ChatView({
 
       {/* 桌面端右侧侧边 AI 聊天面板 */}
       {isAIChatOpen && (
-        <aside className="hidden lg:flex w-88 xl:w-96 shrink-0 flex-col border-l bg-card shadow-xs">
-          <ConversationAIChatPanel
-            copy={copy}
-            detail={detail}
-            onClose={() => setIsAIChatOpen(false)}
+        <>
+          <ResizeHandle
+            label="Resize AI chat panel"
+            width={aiPanelWidth}
+            minWidth={300}
+            maxWidth={800}
+            side="right"
+            onResize={setAiPanelWidth}
           />
-        </aside>
+          <aside
+            style={{ width: `${aiPanelWidth}px` }}
+            className="hidden lg:flex shrink-0 flex-col border-l bg-card shadow-xs"
+          >
+            <ConversationAIChatPanel
+              copy={copy}
+              detail={detail}
+              focusedMessageIds={focusedMessageIds}
+              onRemoveFocusedMessage={handleRemoveFocusedMessage}
+              onClearFocusedMessages={handleClearFocusedMessages}
+              onClose={() => setIsAIChatOpen(false)}
+            />
+          </aside>
+        </>
       )}
 
       {/* 移动端全屏 AI 聊天弹出页面 */}
@@ -665,6 +707,9 @@ export function ChatView({
             copy={copy}
             detail={detail}
             isMobile
+            focusedMessageIds={focusedMessageIds}
+            onRemoveFocusedMessage={handleRemoveFocusedMessage}
+            onClearFocusedMessages={handleClearFocusedMessages}
             onClose={() => setIsAIChatOpen(false)}
           />
         </div>
@@ -824,6 +869,8 @@ export function MessageBubble({
   onGenerateReply,
   onRetrySend,
   onReEdit,
+  onAddToAIChat,
+  isFocused,
 }: {
   copy: Copy;
   message: ConversationMessage;
@@ -838,6 +885,8 @@ export function MessageBubble({
   onGenerateReply?: () => void;
   onRetrySend?: () => void;
   onReEdit?: () => void;
+  onAddToAIChat?: () => void;
+  isFocused?: boolean;
 }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
@@ -849,6 +898,12 @@ export function MessageBubble({
     <ContextMenu>
       <ContextMenuTrigger className="mb-5 block select-text">
         <article>
+          {isFocused && (
+            <div className={cn("mb-1.5 flex items-center gap-1 text-[11px] font-medium text-primary", outgoing && "justify-end")}>
+              <Sparkles className="size-3" />
+              <span>{copy.aiChatFocusedBadge}</span>
+            </div>
+          )}
           <div className={cn("mb-1 flex min-w-0 items-start gap-2 text-xs leading-tight text-muted-foreground", outgoing && "justify-end text-right")}>
             <div className="min-w-0">
               <div>
@@ -890,7 +945,7 @@ export function MessageBubble({
                 </button>
               </div>
             )}
-            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : message.sendStatus === "failed" ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full")}>
+            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed transition-all", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : message.sendStatus === "failed" ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full", isFocused && "ring-2 ring-primary/60 border-primary/50 shadow-xs")}>
               {message.html ? (
                 <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} />
               ) : (
@@ -945,8 +1000,7 @@ export function MessageBubble({
           )}
         </article>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-40">
-        <CopyMessageMenuItem copy={copy} message={message} />
+      <ContextMenuContent className="w-44">
         {message.sendStatus === "failed" ? (
           <>
             {onRetrySend && (
@@ -961,6 +1015,7 @@ export function MessageBubble({
                 {copy.reEdit}
               </ContextMenuItem>
             )}
+            <CopyMessageMenuItem copy={copy} message={message} />
             <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
               <Trash2 className="size-4" />
               {copy.deleteEmail}
@@ -987,6 +1042,13 @@ export function MessageBubble({
               <Mail className="size-4" />
               {copy.sendEmail}
             </ContextMenuItem>
+            <CopyMessageMenuItem copy={copy} message={message} />
+            {!message.id.startsWith("optimistic-") && onAddToAIChat && (
+              <ContextMenuItem className="gap-2 px-2 py-2" onClick={onAddToAIChat}>
+                <Sparkles className="size-4 text-primary" />
+                {copy.addToAIChat}
+              </ContextMenuItem>
+            )}
             <ContextMenuItem variant="destructive" className="gap-2 px-2 py-2" onClick={onDelete}>
               <Trash2 className="size-4" />
               {copy.deleteEmail}

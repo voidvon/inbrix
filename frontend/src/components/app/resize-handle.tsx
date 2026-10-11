@@ -6,23 +6,29 @@ type ResizeHandleProps = {
   width: number;
   minWidth: number;
   maxWidth: number;
+  side?: "left" | "right";
 };
 
 export function usePersistedPaneWidth(storageKey: string, initialWidth: number, minWidth: number, maxWidth: number) {
   const [width, setWidth] = useState(() => {
-    const saved = Number(window.localStorage.getItem(storageKey));
+    if (typeof window === "undefined") return initialWidth;
+    const raw = window.localStorage.getItem(storageKey);
+    if (raw === null) return initialWidth;
+    const saved = Number(raw);
     const value = Number.isFinite(saved) ? saved : initialWidth;
     return Math.min(maxWidth, Math.max(minWidth, value));
   });
 
   useEffect(() => {
-    window.localStorage.setItem(storageKey, String(width));
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(storageKey, String(width));
+    }
   }, [storageKey, width]);
 
   return [width, setWidth] as const;
 }
 
-export function ResizeHandle({ label, onResize, width, minWidth, maxWidth }: ResizeHandleProps) {
+export function ResizeHandle({ label, onResize, width, minWidth, maxWidth, side = "left" }: ResizeHandleProps) {
   const resize = (nextWidth: number) => onResize(Math.min(maxWidth, Math.max(minWidth, Math.round(nextWidth))));
 
   const startResize = (event: PointerEvent<HTMLButtonElement>) => {
@@ -32,7 +38,10 @@ export function ResizeHandle({ label, onResize, width, minWidth, maxWidth }: Res
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
 
-    const move = (moveEvent: globalThis.PointerEvent) => resize(startWidth + moveEvent.clientX - startX);
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const delta = side === "right" ? startX - moveEvent.clientX : moveEvent.clientX - startX;
+      resize(startWidth + delta);
+    };
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
@@ -57,10 +66,22 @@ export function ResizeHandle({ label, onResize, width, minWidth, maxWidth }: Res
       role="separator"
       onPointerDown={startResize}
       onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") { event.preventDefault(); resize(width - 16); }
-        if (event.key === "ArrowRight") { event.preventDefault(); resize(width + 16); }
-        if (event.key === "Home") { event.preventDefault(); resize(minWidth); }
-        if (event.key === "End") { event.preventDefault(); resize(maxWidth); }
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          resize(side === "right" ? width + 16 : width - 16);
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          resize(side === "right" ? width - 16 : width + 16);
+        }
+        if (event.key === "Home") {
+          event.preventDefault();
+          resize(minWidth);
+        }
+        if (event.key === "End") {
+          event.preventDefault();
+          resize(maxWidth);
+        }
       }}
     >
       <span className="absolute inset-y-0 left-(--resize-handle-offset) w-3">

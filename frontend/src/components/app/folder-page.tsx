@@ -253,8 +253,8 @@ export function FolderPage({ folder }: { folder: string }) {
     <>
       <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
         <section style={{ "--message-list-width": `${listWidth}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--message-list-width) lg:flex-none", detailOpen ? "hidden lg:flex" : "flex")}>
-          <div className="border-b bg-card px-3 py-3">
-            <div className="flex items-center gap-2">
+          <div className="flex h-14 shrink-0 items-center border-b bg-card px-3">
+            <div className="flex w-full items-center gap-2">
               <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={locale.folders} title={locale.folders}>
                 <Menu />
               </Button>
@@ -300,7 +300,7 @@ export function FolderPage({ folder }: { folder: string }) {
         {detailOpen && <ResizeHandle label="Resize message list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
         <section className={cn("min-w-0 flex-1 flex-col bg-surface", detailOpen ? "flex" : "hidden lg:flex")}>
           {detailOpen && (
-            <header className="grid min-h-[4.5rem] grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 py-3 sm:px-5">
+            <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 sm:px-5">
               <div>
                 <Button variant="ghost" size="icon" className="size-8 shrink-0 lg:hidden" onClick={closeDetail} aria-label={locale.back} title={locale.back}>
                   <ArrowLeft className="size-4" />

@@ -407,6 +407,10 @@ export const zh = {
   aiChatThinking: "AI 正在思考…",
   aiChatCopySuccess: "已复制到剪贴板",
   aiChatSend: "发送",
+  addToAIChat: "添加到 AI 对话",
+  aiChatFocusedContext: "针对特定邮件讨论",
+  aiChatClearFocus: "清除",
+  aiChatFocusedBadge: "定向参考",
 };
 
 export const en = {
@@ -818,6 +822,10 @@ export const en = {
   aiChatThinking: "AI is thinking...",
   aiChatCopySuccess: "Copied to clipboard",
   aiChatSend: "Send",
+  addToAIChat: "Add to AI Chat",
+  aiChatFocusedContext: "Focusing on specific email",
+  aiChatClearFocus: "Clear",
+  aiChatFocusedBadge: "Focused",
 };
 
 export type Copy = typeof zh;
