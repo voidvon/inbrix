@@ -76,6 +76,23 @@ export function ConversationAIChatPanel({
 
   const messages: ConversationAIChatMessage[] = chatQuery.data || [];
 
+  const [pendingUserText, setPendingUserText] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingUserText(null);
+  }, [detail.id]);
+
+  const displayMessages = useMemo(() => {
+    if (!pendingUserText) return messages;
+    const pendingMsg: ConversationAIChatMessage = {
+      id: "pending-user-msg",
+      role: "user",
+      content: pendingUserText,
+      createdAt: new Date().toISOString(),
+    };
+    return [...messages, pendingMsg];
+  }, [messages, pendingUserText]);
+
   // Query available AI agents from backend
   const { data: agentsData } = useQuery({
     queryKey: ["ai-agents"],
@@ -97,7 +114,7 @@ export function ConversationAIChatPanel({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages.length]);
+  }, [displayMessages.length]);
 
   // Build context from email messages with quotes filtered out
   const emailContext = useMemo(
@@ -164,6 +181,7 @@ export function ConversationAIChatPanel({
       });
     },
     onSuccess: async (data) => {
+      setPendingUserText(null);
       if (!data?.res) return;
       const now = new Date().toISOString();
       const userMsg: ConversationAIChatMessage = {
@@ -197,6 +215,7 @@ export function ConversationAIChatPanel({
       window.setTimeout(scrollToBottom, 50);
     },
     onError: (err) => {
+      setPendingUserText(null);
       toast.error(err instanceof Error ? err.message : "AI 回复失败");
     },
   });
@@ -204,6 +223,9 @@ export function ConversationAIChatPanel({
   const handleSend = (textToSend?: string) => {
     const text = (textToSend ?? input).trim();
     if (!text || mutation.isPending) return;
+    setInput("");
+    setPendingUserText(text);
+    window.setTimeout(scrollToBottom, 20);
     mutation.mutate(text);
   };
 
@@ -217,9 +239,10 @@ export function ConversationAIChatPanel({
   };
 
   const handleClear = async () => {
-    if (messages.length === 0) return;
+    if (messages.length === 0 && !pendingUserText) return;
     if (!window.confirm(copy.aiChatClearConfirm)) return;
 
+    setPendingUserText(null);
     queryClient.setQueryData<ConversationAIChatMessage[]>(
       ["conversation-ai-chat", detail.id],
       []
@@ -298,7 +321,7 @@ export function ConversationAIChatPanel({
           )}
 
           {/* Clear Chat */}
-          {messages.length > 0 && (
+          {(messages.length > 0 || Boolean(pendingUserText)) && (
             <Button
               variant="ghost"
               size="icon"
@@ -332,7 +355,7 @@ export function ConversationAIChatPanel({
             <Loader2 className="size-4 animate-spin text-primary" />
             <span>{copy.loading}</span>
           </div>
-        ) : messages.length === 0 ? (
+        ) : displayMessages.length === 0 ? (
           <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center px-4">
             <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <Sparkles className="size-6" />
@@ -377,7 +400,7 @@ export function ConversationAIChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((message) => {
+          displayMessages.map((message) => {
             const isUser = message.role === "user";
             return (
               <div
