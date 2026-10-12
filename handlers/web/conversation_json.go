@@ -38,6 +38,9 @@ type ConversationSummaryJSON struct {
 // prepared for a script-free sandbox iframe and has local cid: references
 // rewritten to authenticated attachment URLs before it reaches the client.
 type ConversationMessageJSON struct {
+	SendStatus         string               `json:"sendStatus,omitempty"`
+	SendError          string               `json:"sendError,omitempty"`
+	SendRetryable      *bool                `json:"sendRetryable,omitempty"`
 	ID                 string               `json:"id"`
 	Folder             string               `json:"folder,omitempty"`
 	From               string               `json:"from"`
@@ -179,8 +182,16 @@ func conversationDetailJSONForLocale(conversation Conversation, locale string) C
 			htmlBody := collapseQuotedHTMLForLocale(email.HTML, locale)
 			preparedHTML, _ = prepareEmailHTML(rewriteInlineCIDReferences(htmlBody, email.Attachments, conversation.AccountEmail))
 		}
+		var retryable *bool
+		if email.Folder == "Outbox" {
+			value := email.HasSendPayload
+			retryable = &value
+		}
 		attachments := regularAttachments(email.Attachments)
 		result.Messages = append(result.Messages, ConversationMessageJSON{
+			SendStatus:     email.SendStatus,
+			SendError:      email.SendError,
+			SendRetryable:  retryable,
 			ID:             email.ID,
 			Folder:         email.Folder,
 			From:           email.From,
@@ -327,7 +338,10 @@ func rewriteInlineCIDReferences(raw string, attachments []models.Attachment, acc
 			return reference
 		}
 		downloadURL := "/api/attachment/" + url.PathEscape(attachment.ID) + "?inline=true"
-		if accountEmail != "" {
+		if strings.HasPrefix(attachment.ID, "outbox_") {
+			downloadURL = outgoingAttachmentURL(attachment.ID)
+		}
+		if accountEmail != "" && !strings.HasPrefix(attachment.ID, "outbox_") {
 			downloadURL += "&amp;account_email=" + url.QueryEscape(accountEmail)
 		}
 		return downloadURL
@@ -432,6 +446,9 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 	if account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail); ok {
 		keys := make([]mailstore.MessageSummaryKey, 0, len(selected.Messages))
 		for _, message := range selected.Messages {
+			if message.Email.Folder == "Outbox" {
+				continue
+			}
 			keys = append(keys, mailstore.MessageSummaryKey{FolderName: message.Email.Folder, UID: message.Email.ID})
 		}
 		summaries, summaryErr := h.mailDB.ListMessageSummaries(c.UserContext(), account.ID, keys)
@@ -739,6 +756,12 @@ func (h *EmailHandler) HandleConversationDeleteJSON(c *fiber.Ctx) error {
 	var deleteKeys []mailstore.MessageMoveKey
 	for _, message := range selected.Messages {
 		email := message.Email
+		if email.Folder == "Outbox" {
+			if err := h.mailDB.DeleteOutgoing(c.UserContext(), account.ID, email.ID); err != nil {
+				return c.Status(409).JSON(fiber.Map{"error": "Cannot delete an email while sending"})
+			}
+			continue
+		}
 		_ = deleteMessageAttachmentCache(c, nil, account.ID, email)
 		if trash != "" && strings.EqualFold(strings.TrimSpace(email.Folder), strings.TrimSpace(trash)) {
 			deleteKeys = append(deleteKeys, mailstore.MessageMoveKey{
@@ -810,6 +833,12 @@ func (h *EmailHandler) HandleConversationMessageDeleteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
 
+	if targetEmail.Folder == "Outbox" {
+		if err := h.mailDB.DeleteOutgoing(c.UserContext(), account.ID, uid); err != nil {
+			return c.SendStatus(409)
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
 	trash, _ := h.mailDB.ResolveTrashFolder(c.UserContext(), account.ID)
 	if trash != "" && strings.EqualFold(strings.TrimSpace(trash), body.Folder) {
 		_ = deleteMessageAttachmentCache(c, nil, account.ID, targetEmail)

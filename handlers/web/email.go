@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -27,12 +28,16 @@ import (
 )
 
 type EmailHandler struct {
-	store     *session.Store
-	config    *config.Config
-	auth      *AuthHandler
-	acctStore *AccountStore // nil when accounts.enabled = false
-	mailDB    *mailstore.Store
-	kv        storage.KV
+	store          *session.Store
+	config         *config.Config
+	auth           *AuthHandler
+	acctStore      *AccountStore // nil when accounts.enabled = false
+	mailDB         *mailstore.Store
+	kv             storage.KV
+	outboxCancel   context.CancelFunc
+	outboxWG       sync.WaitGroup
+	outboxSMTP     func(mailstore.Account) (outboxSender, error)
+	outboxSaveSent func(mailstore.Account, mailstore.OutgoingMessage) error
 }
 
 func NewEmailHandler(store *session.Store, config *config.Config, auth *AuthHandler) *EmailHandler {
@@ -881,6 +886,9 @@ func (h *EmailHandler) HandleFolderEmails(c *fiber.Ctx) error {
 //
 // The form must use enctype="multipart/form-data" when attachments are included.
 func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
+	if c.Path() == "/api/outbox/import" && h.mailDB == nil {
+		return c.Status(501).JSON(fiber.Map{"error": "Server outbox is unavailable"})
+	}
 	// Required fields.
 	to := c.FormValue("to")
 	subject := c.FormValue("subject")
@@ -1035,6 +1043,17 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 	}
 
 	// Create SMTP client — use the specific account when replying from unified view.
+	if h.mailDB != nil {
+		if mimeFile != nil {
+			if _, err = mimeFile.Seek(0, io.SeekStart); err == nil {
+				rawMessage, err = io.ReadAll(mimeFile)
+			}
+			if err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": "Could not preserve the outgoing email"})
+			}
+		}
+		return h.queueOutgoingCompose(c, fromEmail, conversationID, draftUID, to, cc, subject, plainBody, htmlBody, allRcpts, rawMessage)
+	}
 	var smtpClient *api.SMTPClient
 	if replyAccountEmail != "" && replyAccountEmail != h.auth.GetSessionEmail(c) {
 		if account, ok := h.mirrorAccountForEmail(c, replyAccountEmail); ok {

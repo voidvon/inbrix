@@ -263,16 +263,20 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 	}
 
 	type conversationGroup struct {
+		id           string
 		participants []string
 		messages     []models.Email
 	}
 	groups := make(map[string]*conversationGroup)
 	for _, email := range emails {
 		participants := messageParticipants(email, account.Email)
-		key := strings.Join(participants, "\x00")
+		key := conversationID(account.ID, participants)
+		if email.ConversationID != "" {
+			key = email.ConversationID
+		}
 		group := groups[key]
 		if group == nil {
-			group = &conversationGroup{participants: participants}
+			group = &conversationGroup{id: key, participants: participants}
 			groups[key] = group
 		}
 		group.messages = append(group.messages, email)
@@ -300,7 +304,7 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 			preview = subject
 		}
 		conversation := Conversation{
-			ID:           conversationID(account.ID, group.participants),
+			ID:           group.id,
 			Title:        title,
 			PeerEmail:    peerEmail,
 			Subject:      subject,
@@ -325,11 +329,18 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 				conversation.HasAttachments = true
 			}
 		}
-		conversation.StatusMessageKey = latest.Folder + "/" + latest.ID
-		if conversation.Messages[len(conversation.Messages)-1].Outgoing {
-			conversation.Status = "answered"
-		} else {
-			conversation.Status = "unanswered"
+		conversation.Status = "unanswered"
+		for _, message := range conversation.Messages {
+			email := message.Email
+			if email.SendStatus != "" && email.SendStatus != "sent" {
+				continue
+			}
+			conversation.StatusMessageKey = email.Folder + "/" + email.ID
+			if message.Outgoing {
+				conversation.Status = "answered"
+			} else {
+				conversation.Status = "unanswered"
+			}
 		}
 		conversations = append(conversations, conversation)
 	}
@@ -359,6 +370,25 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			result.Err = err
 			results = append(results, result)
 			continue
+		}
+		outgoing, err := h.mailDB.ListOutgoing(c.UserContext(), account.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		metadata, err := h.mailDB.OutgoingThreadMetadata(c.UserContext(), account.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for i := range emails {
+			if saved, ok := metadata[mailstore.OutgoingMirrorMessageID(account.SMTPServer, emails[i].MessageID)]; ok {
+				emails[i].ConversationID = saved.ConversationID
+				if saved.SendStatus == "sent" {
+					emails[i].Date = saved.Date
+				}
+			}
+		}
+		for _, record := range outgoing {
+			emails = append(emails, record.Message)
 		}
 		result.Emails = tagMirrorEmails(emails, account)
 		accountConversations := buildConversations(account, result.Emails)

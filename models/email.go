@@ -5,7 +5,11 @@ import (
 )
 
 type Email struct {
-	ID string `json:"id"`
+	ConversationID string `json:"-"`
+	SendStatus     string `json:"sendStatus,omitempty"`
+	SendError      string `json:"sendError,omitempty"`
+	HasSendPayload bool   `json:"-"`
+	ID             string `json:"id"`
 	// Folder identifies the source IMAP mailbox when a view combines multiple
 	// folders. It is populated by the local mail mirror and is not part of the
 	// message's persisted payload.

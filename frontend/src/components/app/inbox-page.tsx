@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import {
   getConversations,
   markConversationRead,
   markConversationUnread,
+  retryOutgoing,
 } from "../../lib/api";
 import { en } from "../../lib/locale";
 import {
@@ -18,12 +19,7 @@ import {
   structuredQuotedTextToHTML,
   uniqueRecipients,
 } from "../../lib/email-format";
-import {
-  reconcileOptimisticMessages,
-  removeOptimisticMessage,
-  retrySendMessage,
-  useOptimisticMessages,
-} from "../../lib/optimistic-messages";
+import { migrateLegacyOutgoing } from "../../lib/legacy-outbox-migration";
 import { flagsMarkedSeen, flagsMarkedUnread } from "../../lib/mailbox";
 import { useDebouncedValue } from "../../lib/utils";
 import type {
@@ -60,6 +56,8 @@ export function InboxPage() {
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [retryTarget, setRetryTarget] = useState<ConversationMessage | null>(null);
+  const [retryPending, setRetryPending] = useState(false);
   const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
   const autoReadRef = useRef(new Set<string>());
   const manuallyUnreadRef = useRef(new Set<string>());
@@ -87,32 +85,28 @@ export function InboxPage() {
     queryKey: ["conversation", selectedId],
     queryFn: () => getConversation(selectedId!),
     enabled: Boolean(selectedId),
+    refetchInterval: (query) => query.state.data?.conversation.messages.some((message) => message.sendStatus === "sending") ? 2_000 : 30_000,
     retry: 1,
   });
 
-  const optimisticMessages = useOptimisticMessages(selectedId);
-
   useEffect(() => {
-    if (selectedId && detail.data?.conversation?.messages) {
-      reconcileOptimisticMessages(selectedId, detail.data.conversation.messages);
+    if (!conversations.data) return;
+    void migrateLegacyOutgoing(conversations.data.accounts.map((account) => account.email)).then((changed) => {
+      if (changed) {
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversation"] });
+      }
+    }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : locale.sendFailed));
+  }, [conversations.data, queryClient, locale.sendFailed]);
+
+  const serverConversation = detail.data?.conversation;
+  const retrying = useRef(new Set<string>());
+  const sendState = detail.data?.conversation.messages.map((message) => `${message.id}:${message.sendStatus || ""}`).join("|");
+  useEffect(() => {
+    if (sendState?.includes(":sent") || sendState?.includes(":failed") || sendState?.includes(":unknown")) {
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     }
-  }, [selectedId, detail.data?.conversation?.messages]);
-
-  const mergedConversation = useMemo(() => {
-    const conv = detail.data?.conversation;
-    if (!conv) return undefined;
-    if (!optimisticMessages.length) return conv;
-
-    const existingIds = new Set(conv.messages.map((m) => m.id));
-    const extraMessages = optimisticMessages.filter((m) => !existingIds.has(m.id));
-    if (!extraMessages.length) return conv;
-
-    return {
-      ...conv,
-      count: conv.messages.length + extraMessages.length,
-      messages: [...conv.messages, ...extraMessages],
-    };
-  }, [detail.data?.conversation, optimisticMessages]);
+  }, [sendState, queryClient]);
 
   useEffect(() => {
     const isAuthError = conversations.error instanceof ApiError && conversations.error.status === 401;
@@ -300,33 +294,37 @@ export function InboxPage() {
   };
 
   const handleRetrySend = async (message: ConversationMessage) => {
-    await retrySendMessage(
-      message.id,
-      () => {
-        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-        void queryClient.invalidateQueries({ queryKey: ["conversation", selectedId] });
-        void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
-      },
-      (err) => {
-        toast.error(err.message || locale.sendFailedRetry);
-      }
-    );
+    if (retrying.current.has(message.id)) return;
+    retrying.current.add(message.id);
+    setRetryPending(true);
+    try {
+      await retryOutgoing(message.id);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: ["conversation"] }),
+      ]);
+      setRetryTarget(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : locale.sendFailedRetry);
+    } finally { retrying.current.delete(message.id); setRetryPending(false); }
   };
 
   const handleReEditMessage = (message: ConversationMessage) => {
-    const opt = optimisticMessages.find((m) => m.id === message.id);
-    removeOptimisticMessage(message.id);
-    if (!opt || !detail.data?.conversation) return;
+    if (!detail.data?.conversation || message.sendRetryable !== false) return;
+    const document = new DOMParser().parseFromString(message.html || `<p>${escapeHTML(message.body)}</p>`, "text/html");
+    toast.info(locale.sendAttachmentsLost);
+    document.querySelectorAll('img[src^="cid:"], img[src^="blob:"], img[src*="/api/outbox/"]').forEach((image) => image.remove());
     openCompose({
       accountEmail: detail.data.conversation.accountEmail,
-      to: opt.to,
-      cc: opt.cc,
-      subject: opt.subject,
-      html: opt.html || `<p>${escapeHTML(opt.body)}</p>`,
-      inReplyTo: opt.inReplyTo,
-      references: opt.references,
+      to: message.to,
+      cc: message.cc,
+      subject: message.subject,
+      html: document.body.innerHTML,
+      inReplyTo: message.inReplyTo,
+      references: message.references,
       conversation: detail.data.conversation.messages,
-      conversationId: opt.conversationId,
+      conversationId: detail.data.conversation.id,
+      replacesOutboxId: message.id,
     });
   };
 
@@ -366,19 +364,39 @@ export function InboxPage() {
         {chatOpen && <ResizeHandle label="Resize conversation list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
         <ChatPanel
           copy={locale}
-          detail={mergedConversation}
+          detail={serverConversation}
           loading={detail.isPending && Boolean(selectedId)}
           error={detail.error}
           onBack={closeChat}
           onReply={openReply}
           onReplyAll={openReplyAll}
           onNewMail={openNewMailForMessage}
-          onRetrySend={(message) => { void handleRetrySend(message); }}
+          onRetrySend={setRetryTarget}
           onReEdit={handleReEditMessage}
           onConversationEmpty={closeChat}
           className={chatOpen ? "flex" : "hidden lg:flex"}
         />
       </main>
+      <Dialog open={Boolean(retryTarget)} onOpenChange={(open) => { if (!open && !retryPending) setRetryTarget(null); }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!retryPending}>
+          <DialogHeader>
+            <DialogTitle>{locale.resendConfirmTitle}</DialogTitle>
+            <DialogDescription>{locale.resendConfirmDescription}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1 break-words text-sm">
+            <p><span className="text-muted-foreground">{locale.to}：</span>{retryTarget?.to}</p>
+            {retryTarget?.cc && <p><span className="text-muted-foreground">{locale.cc}：</span>{retryTarget.cc}</p>}
+            <p><span className="text-muted-foreground">{locale.subject}：</span>{retryTarget?.subject || locale.noSubject}</p>
+          </div>
+          {retryTarget?.sendStatus === "unknown" && <p className="text-sm text-destructive">{locale.resendUnconfirmedWarning}</p>}
+          <DialogFooter>
+            <Button variant="ghost" disabled={retryPending} onClick={() => setRetryTarget(null)}>{locale.cancel}</Button>
+            <Button disabled={retryPending || !retryTarget} onClick={() => retryTarget && void handleRetrySend(retryTarget)}>
+              {retryPending ? locale.sending : locale.resendConfirmAction}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

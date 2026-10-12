@@ -11,10 +11,11 @@ export class ApiError extends Error {
   }
 }
 
-async function fetchCSRFToken() {
+async function fetchCSRFToken(signal?: AbortSignal | null) {
   const response = await fetch("/csrf", {
     headers: { Accept: "application/json" },
     credentials: "include",
+    signal,
   });
   if (!response.ok) throw new ApiError("Failed to initialize request security", response.status);
   const payload = await response.json() as { token?: string };
@@ -28,7 +29,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   const mutates = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
   let csrf = getCookie("_csrf");
   if (!csrf && mutates) {
-    csrf = await fetchCSRFToken();
+    csrf = await fetchCSRFToken(init.signal);
   }
   if (csrf) headers.set("X-CSRF-Token", csrf);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -44,7 +45,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   // browser can retain a cookie whose server-side token no longer exists. The
   // first rejected mutation expires that stale cookie; refresh and retry once.
   if (response.status === 403 && mutates) {
-    csrf = await fetchCSRFToken();
+    csrf = await fetchCSRFToken(init.signal);
     if (csrf) headers.set("X-CSRF-Token", csrf);
     response = await send();
   }
@@ -544,9 +545,10 @@ export function clearAIErrorLogs() {
 }
 
 export function sendMessage(form: FormData) {
-  return apiFetch<{ success: boolean; message: string }>("/api/compose", {
+  return apiFetch<{ success: boolean; outboxId?: string; conversationId?: string }>("/api/compose", {
     method: "POST",
     body: form,
+    signal: AbortSignal.timeout(3 * 60_000),
     // Sending requires the authenticated session and the CSRF cookie. Keep
     // this explicit at the compose boundary so a future request-wrapper
     // change cannot silently turn this into an unauthenticated request.
@@ -788,3 +790,17 @@ export function deleteDocumentStamp(id: string) {
   });
 }
 
+
+export function retryOutgoing(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/outbox/${encodeURIComponent(id)}/retry`, { method: "POST" });
+}
+export function deleteOutgoing(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/outbox/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+export function importLegacyOutgoing(form: FormData) {
+  return apiFetch<{ outboxId: string }>("/api/outbox/import", { method: "POST", body: form });
+}
+export function outgoingAttachmentURL(id: string) {
+  const dot = id.lastIndexOf(".");
+  return `/api/outbox/${encodeURIComponent(id.slice(0, dot))}/attachments/${encodeURIComponent(id.slice(dot + 1))}`;
+}

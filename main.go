@@ -512,6 +512,10 @@ func main() {
 		apiRoutes.Get("/attachment/:id", webEmailHandler.HandleAttachment)
 
 		apiRoutes.Post("/compose", webEmailHandler.HandleComposeEmail)
+		apiRoutes.Post("/outbox/import", webEmailHandler.HandleComposeEmail)
+		apiRoutes.Post("/outbox/:id/retry", webEmailHandler.HandleRetryOutgoing)
+		apiRoutes.Delete("/outbox/:id", webEmailHandler.HandleDeleteOutgoing)
+		apiRoutes.Get("/outbox/:id/attachments/:part", webEmailHandler.HandleOutgoingAttachment)
 
 		// Document management routes
 		apiRoutes.Get("/documents", webDocumentsHandler.HandleListDocuments)
@@ -670,6 +674,12 @@ func main() {
 
 	// Start server
 	log.Printf("Starting server on port %d...\n", config.Server.Port)
+	if mailMirror != nil {
+		if err := webEmailHandler.StartOutbox(); err != nil {
+			log.Fatal("Failed to start outgoing mail queue:", err)
+		}
+		defer webEmailHandler.StopOutbox()
+	}
 	if err := app.Listen(fmt.Sprintf(":%d", config.Server.Port)); err != nil {
 		log.Fatal("Error starting server: ", err)
 	}

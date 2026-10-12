@@ -82,7 +82,8 @@ export type ConversationMessage = {
   mailTranslation?: MailTranslation;
   mailTranslationAll?: MailTranslation;
   suggestedReply?: SuggestedReply;
-  sendStatus?: "sending" | "failed" | "sent";
+  sendRetryable?: boolean;
+  sendStatus?: "sending" | "failed" | "unknown" | "sent";
   sendError?: string;
 };
 

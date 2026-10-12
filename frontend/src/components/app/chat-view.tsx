@@ -34,6 +34,8 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import {
   deleteConversationMessage,
+  deleteOutgoing,
+  outgoingAttachmentURL,
   generateEmail,
   getAIModels,
   saveConversationNote,
@@ -49,9 +51,6 @@ import {
   extractEmailAddress,
   renderLinkifiedText,
 } from "../../lib/email-format";
-import {
-  removeOptimisticMessage,
-} from "../../lib/optimistic-messages";
 import type {
   ConversationDetail,
   ConversationDetailResponse,
@@ -479,19 +478,12 @@ export function ChatView({
 
   const deleteMutation = useMutation({
     mutationFn: (message: ConversationMessage) => {
-      if (message.id.startsWith("optimistic-")) {
-        removeOptimisticMessage(message.id);
-        return Promise.resolve({ ok: true });
-      }
+      if (message.folder === "Outbox") return deleteOutgoing(message.id);
       return deleteConversationMessage(detail.id, message.id, message.folder || "INBOX");
     },
-    onSuccess: async (_, message) => {
+    onSuccess: async () => {
       setDeleteTarget(null);
       setDeleteError("");
-      if (message.id.startsWith("optimistic-")) {
-        removeOptimisticMessage(message.id);
-        return;
-      }
       if (detail.messages.length === 1) onConversationEmpty();
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["conversations"] }), queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] })]);
       if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
@@ -624,8 +616,8 @@ export function ChatView({
                       setDeleteTarget(message);
                     }}
                     onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
-                    onRetrySend={onRetrySend ? () => onRetrySend(message) : undefined}
-                    onReEdit={onReEdit ? () => onReEdit(message) : undefined}
+                    onRetrySend={onRetrySend && message.sendRetryable ? () => onRetrySend(message) : undefined}
+                    onReEdit={onReEdit && message.sendRetryable === false && (message.sendStatus === "failed" || message.sendStatus === "unknown") ? () => onReEdit(message) : undefined}
                     onAddToAIChat={() => handleAddToAIChat(message)}
                     isFocused={focusedMessageIds.includes(message.id)}
                   />
@@ -892,6 +884,10 @@ export function MessageBubble({
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
   const outgoing = message.outgoing;
+  const sendNeedsAttention = message.sendStatus === "failed" || message.sendStatus === "unknown";
+  const sendNotice = message.sendStatus === "unknown"
+    ? [message.sendError, copy.sendUnconfirmed].filter(Boolean).join(" · ")
+    : message.sendError || copy.sendFailed;
   const formattedDate = formatTime(message.date);
 
   return (
@@ -924,28 +920,23 @@ export function MessageBubble({
             </div>
           </div>
           <div className={cn("flex items-end gap-2", outgoing && "justify-end")}>
-            {outgoing && message.sendStatus === "sending" && (
-              <div className="mb-2 flex shrink-0 items-center justify-center self-center text-muted-foreground" title={copy.sending}>
-                <Loader2 className="size-4 animate-spin text-muted-foreground/80" />
-              </div>
-            )}
-            {outgoing && message.sendStatus === "failed" && (
+            {outgoing && sendNeedsAttention && (
               <div className="mb-2 flex shrink-0 items-center justify-center self-center">
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onRetrySend?.();
+                    (onRetrySend || onReEdit)?.();
                   }}
                   className="group flex size-5 shrink-0 items-center justify-center rounded-full bg-destructive text-destructive-foreground font-bold text-xs leading-none shadow-xs transition-transform hover:scale-110 active:scale-95 focus:outline-hidden cursor-pointer"
-                  title={message.sendError ? `${message.sendError} · ${copy.retrySend}` : copy.sendFailedRetry}
-                  aria-label={copy.sendFailedRetry}
+                  title={onRetrySend ? `${sendNotice} · ${copy.retrySend}` : sendNotice}
+                  aria-label={onRetrySend ? copy.sendFailedRetry : copy.reEdit}
                 >
                   !
                 </button>
               </div>
             )}
-            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed transition-all", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : message.sendStatus === "failed" ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full", isFocused && "ring-2 ring-primary/60 border-primary/50 shadow-xs")}>
+            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed transition-all", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : sendNeedsAttention ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full", isFocused && "ring-2 ring-primary/60 border-primary/50 shadow-xs")}>
               {message.html ? (
                 <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} />
               ) : (
@@ -968,8 +959,8 @@ export function MessageBubble({
                       <a
                         className="flex min-w-0 items-center gap-1.5 text-xs text-primary"
                         key={attachment.id}
-                        href={attachment.id.startsWith("opt-att-") ? "#" : `/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}
-                        onClick={attachment.id.startsWith("opt-att-") ? (e) => e.preventDefault() : undefined}
+                        href={message.folder === "Outbox" ? (message.sendRetryable === false && message.sendStatus !== "sent" ? "#" : outgoingAttachmentURL(attachment.id)) : `/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}
+                        onClick={message.folder === "Outbox" && message.sendRetryable === false && message.sendStatus !== "sent" ? (e) => e.preventDefault() : undefined}
                       >
                         <Paperclip className="size-3.5 shrink-0" />
                         <span className="min-w-0 truncate">{attachment.filename}</span>
@@ -981,9 +972,15 @@ export function MessageBubble({
               ) : null}
             </div>
           </div>
-          {outgoing && message.sendStatus === "failed" && (
+          {outgoing && message.sendStatus === "sending" && (
+            <div className="mt-1 flex items-center justify-end gap-1.5 text-xs text-muted-foreground" role="status" aria-label={copy.sending}>
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              <span>{copy.sending}</span>
+            </div>
+          )}
+          {outgoing && sendNeedsAttention && (
             <div className="mt-1 flex items-center justify-end gap-1.5 text-right text-xs text-destructive">
-              <span>{message.sendError || copy.sendFailed}</span>
+              <span>{sendNotice}</span>
               {onRetrySend && (
                 <button
                   type="button"
@@ -993,15 +990,20 @@ export function MessageBubble({
                   {copy.retry}
                 </button>
               )}
+              {!onRetrySend && onReEdit && (
+                <button type="button" className="font-medium underline hover:opacity-80 cursor-pointer" onClick={onReEdit}>
+                  {copy.reEdit}
+                </button>
+              )}
             </div>
           )}
-          {!message.id.startsWith("optimistic-") && (
+          {message.folder !== "Outbox" && (
             <MailMessageSummary copy={copy} accountEmail={accountEmail} folder={message.folder || "INBOX"} messageId={message.id} initialSummary={message.mailSummary} initialTranslation={message.mailTranslation} initialTranslationAll={message.mailTranslationAll} outgoing={outgoing} onGenerateReply={onGenerateReply} />
           )}
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44">
-        {message.sendStatus === "failed" ? (
+        {sendNeedsAttention ? (
           <>
             {onRetrySend && (
               <ContextMenuItem className="gap-2 px-2 py-2" onClick={onRetrySend}>
@@ -1043,7 +1045,7 @@ export function MessageBubble({
               {copy.sendEmail}
             </ContextMenuItem>
             <CopyMessageMenuItem copy={copy} message={message} />
-            {!message.id.startsWith("optimistic-") && onAddToAIChat && (
+            {message.folder !== "Outbox" && onAddToAIChat && (
               <ContextMenuItem className="gap-2 px-2 py-2" onClick={onAddToAIChat}>
                 <Sparkles className="size-4 text-primary" />
                 {copy.addToAIChat}

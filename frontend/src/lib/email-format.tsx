@@ -25,6 +25,7 @@ export type ComposeDefaults = {
   references?: string[];
   conversation?: ConversationMessage[];
   conversationId?: string;
+  replacesOutboxId?: string;
 };
 
 export function inlineImageDimensions(previewURL: string) {
