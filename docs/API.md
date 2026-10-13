@@ -537,6 +537,22 @@ At most one signature may be `default:true`.
 { "id": "a1b2c3d4", "name": "Work", "html": "<b>Jane Doe</b>", "default": true }
 ```
 
+### Settings — quick reply templates (`/v1/settings/reply-templates`)
+
+Quick reply templates for the compose and reply modals. `PUT` replaces the whole set.
+The server assigns an `id` when omitted. `configured: false` indicates the account has
+never saved templates yet (allowing clients to present localized default templates).
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| `GET` | `/v1/settings/reply-templates` | — | `{ templates: ReplyTemplate[], configured: boolean }` |
+| `PUT` | `/v1/settings/reply-templates` | `{ templates: ReplyTemplate[] }` | `{ templates: ReplyTemplate[], configured: boolean }` |
+
+```jsonc
+// ReplyTemplate
+{ "id": "b2c3d4e5", "name": "Acknowledge receipt", "body": "Thank you for your email..." }
+```
+
 ### System settings and roles (`/api/system`)
 
 Application accounts have role `user` or `super_admin`. New and migrated users

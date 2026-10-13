@@ -25,6 +25,8 @@ func (h *Handler) registerSettings(g fiber.Router) {
 	g.Put("/settings/signatures", h.handlePutSignatures)
 	g.Get("/settings/identities", h.handleGetIdentities)
 	g.Put("/settings/identities", h.handlePutIdentities)
+	g.Get("/settings/reply-templates", h.handleGetReplyTemplates)
+	g.Put("/settings/reply-templates", h.handlePutReplyTemplates)
 }
 
 // settingsStoreOr501 resolves the settings store + the authenticated owner. When
@@ -335,6 +337,79 @@ func validDomain(d string) bool {
 		}
 	}
 	return true
+}
+
+// --- Quick reply templates --------------------------------------------------
+
+// maxReplyTemplates bounds how many quick reply templates an account may store.
+const maxReplyTemplates = 50
+
+// handleGetReplyTemplates returns the account's reply templates.
+// It reports configured: false when the account has never saved templates,
+// enabling clients to present localized default templates without database mutations.
+func (h *Handler) handleGetReplyTemplates(c *fiber.Ctx) error {
+	store, owner, handled, herr := h.settingsStoreOr501(c)
+	if handled {
+		return herr
+	}
+	var tmpls []replyTemplate
+	configured, err := store.getWithFound(owner, kindReplyTemplates, &tmpls)
+	if err != nil {
+		return fail(c, fiber.StatusInternalServerError, "could not load reply templates")
+	}
+	if tmpls == nil {
+		tmpls = []replyTemplate{}
+	}
+	return c.JSON(fiber.Map{
+		"templates":  tmpls,
+		"configured": configured,
+	})
+}
+
+// handlePutReplyTemplates replaces the account's reply templates.
+// It validates names and bodies, trims whitespace, and ensures server-assigned IDs.
+func (h *Handler) handlePutReplyTemplates(c *fiber.Ctx) error {
+	store, owner, handled, herr := h.settingsStoreOr501(c)
+	if handled {
+		return herr
+	}
+	var body struct {
+		Templates []replyTemplate `json:"templates"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return fail(c, fiber.StatusBadRequest, "body must be {templates:[...]}")
+	}
+	if len(body.Templates) > maxReplyTemplates {
+		return fail(c, fiber.StatusBadRequest, "too many templates")
+	}
+	out := make([]replyTemplate, 0, len(body.Templates))
+	for _, t := range body.Templates {
+		t.Name = strings.TrimSpace(t.Name)
+		if t.Name == "" {
+			return fail(c, fiber.StatusBadRequest, "each template needs a name")
+		}
+		if len(t.Name) > 120 {
+			return fail(c, fiber.StatusBadRequest, "template name too long")
+		}
+		t.Body = strings.TrimSpace(t.Body)
+		if t.Body == "" {
+			return fail(c, fiber.StatusBadRequest, "each template needs a body")
+		}
+		if len(t.Body) > 50000 {
+			return fail(c, fiber.StatusBadRequest, "template body too long")
+		}
+		if t.ID == "" {
+			t.ID = newSettingsID()
+		}
+		out = append(out, t)
+	}
+	if err := store.put(owner, kindReplyTemplates, out); err != nil {
+		return fail(c, fiber.StatusInternalServerError, "could not save reply templates")
+	}
+	return c.JSON(fiber.Map{
+		"templates":  out,
+		"configured": true,
+	})
 }
 
 // --- helpers -----------------------------------------------------------------

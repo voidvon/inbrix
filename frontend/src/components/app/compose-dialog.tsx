@@ -638,7 +638,7 @@ export function ComposeDialog({
               recipients={[...recipients, ...ccRecipients].join(", ")}
               conversation={defaults.conversation}
             />
-            {open && <ReplyTemplates editor={editor} chinese={copy === zh} disabled={sourceMode || mutation.isPending || documentBusy} />}
+            {open && <ReplyTemplates editor={editor} chinese={copy === zh} disabled={sourceMode || mutation.isPending || documentBusy} accountEmail={accountEmail} />}
             <Separator orientation="vertical" className="mx-1 h-5" />
             <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("create")}>
               <FilePlus2 />

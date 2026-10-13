@@ -250,4 +250,104 @@ func TestSettings501WithoutStore(t *testing.T) {
 	if code != fiber.StatusNotImplemented {
 		t.Fatalf("no-KV accounts: want 501, got %d", code)
 	}
+	code, _ = doAs(t, app, "user@gmail.com", "GET", "/v1/settings/reply-templates", "")
+	if code != fiber.StatusNotImplemented {
+		t.Fatalf("no-KV reply-templates: want 501, got %d", code)
+	}
+}
+
+// --- Reply templates ---------------------------------------------------------
+
+func TestReplyTemplatesInitialUnconfigured(t *testing.T) {
+	app, _ := newParityApp(t)
+	code, b := doAs(t, app, "user@gmail.com", "GET", "/v1/settings/reply-templates", "")
+	if code != fiber.StatusOK {
+		t.Fatalf("get reply-templates: %d %s", code, b)
+	}
+	var out struct {
+		Templates  []replyTemplate `json:"templates"`
+		Configured bool            `json:"configured"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Configured {
+		t.Fatalf("expected configured: false initially, got true")
+	}
+	if len(out.Templates) != 0 {
+		t.Fatalf("expected empty templates initially, got %d", len(out.Templates))
+	}
+}
+
+func TestReplyTemplatesRoundTrip(t *testing.T) {
+	app, _ := newParityApp(t)
+	code, b := doAs(t, app, "user@gmail.com", "PUT", "/v1/settings/reply-templates",
+		`{"templates":[{"name":"报价单","body":"您好，请查收报价单。"},{"name":"确认收到","body":"已收到，谢谢！"}]}`)
+	if code != fiber.StatusOK {
+		t.Fatalf("put: %d %s", code, b)
+	}
+	var putOut struct {
+		Templates  []replyTemplate `json:"templates"`
+		Configured bool            `json:"configured"`
+	}
+	if err := json.Unmarshal(b, &putOut); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !putOut.Configured {
+		t.Fatalf("expected configured: true after PUT")
+	}
+	if len(putOut.Templates) != 2 {
+		t.Fatalf("expected 2 templates, got %d", len(putOut.Templates))
+	}
+	if putOut.Templates[0].ID == "" || putOut.Templates[1].ID == "" {
+		t.Fatalf("expected server-assigned IDs: %s", b)
+	}
+
+	// GET returns them and configured: true
+	code, b = doAs(t, app, "user@gmail.com", "GET", "/v1/settings/reply-templates", "")
+	if code != fiber.StatusOK {
+		t.Fatalf("get: %d %s", code, b)
+	}
+	var getOut struct {
+		Templates  []replyTemplate `json:"templates"`
+		Configured bool            `json:"configured"`
+	}
+	if err := json.Unmarshal(b, &getOut); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !getOut.Configured {
+		t.Fatalf("expected configured: true on GET")
+	}
+	if len(getOut.Templates) != 2 || getOut.Templates[0].Name != "报价单" {
+		t.Fatalf("unexpected get result: %s", b)
+	}
+}
+
+func TestReplyTemplatesValidation(t *testing.T) {
+	app, _ := newParityApp(t)
+	// Missing name
+	code, _ := doAs(t, app, "user@gmail.com", "PUT", "/v1/settings/reply-templates",
+		`{"templates":[{"body":"正文"}]}`)
+	if code != fiber.StatusBadRequest {
+		t.Fatalf("missing name: want 400, got %d", code)
+	}
+	// Missing body
+	code, _ = doAs(t, app, "user@gmail.com", "PUT", "/v1/settings/reply-templates",
+		`{"templates":[{"name":"名称"}]}`)
+	if code != fiber.StatusBadRequest {
+		t.Fatalf("missing body: want 400, got %d", code)
+	}
+}
+
+func TestReplyTemplatesIsolation(t *testing.T) {
+	app, _ := newParityApp(t)
+	doAs(t, app, "alice@corp.com", "PUT", "/v1/settings/reply-templates",
+		`{"templates":[{"name":"alice-template","body":"alice secret"}]}`)
+	code, b := doAs(t, app, "user@gmail.com", "GET", "/v1/settings/reply-templates", "")
+	if code != fiber.StatusOK {
+		t.Fatalf("get: %d", code)
+	}
+	if strings.Contains(string(b), "alice-template") || strings.Contains(string(b), "alice secret") {
+		t.Fatalf("cross-user reply templates leak: %s", b)
+	}
 }

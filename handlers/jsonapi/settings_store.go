@@ -26,10 +26,18 @@ const settingsNS = "mail_settings"
 
 // Settings "kinds" — the suffix of the composite key.
 const (
-	kindVacation   = "vacation"
-	kindSignatures = "signatures"
-	kindIdentities = "identities"
+	kindVacation       = "vacation"
+	kindSignatures     = "signatures"
+	kindIdentities     = "identities"
+	kindReplyTemplates = "reply_templates"
 )
+
+// replyTemplate is one plain-text quick reply template.
+type replyTemplate struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Body string `json:"body"`
+}
 
 // vacationConfig is the out-of-office responder configuration. Enforcement in the
 // IMAP-broker model is documented in settings.go (handleGetVacation); this is the
@@ -117,4 +125,24 @@ func (s *settingsStore) put(owner, kind string, v any) error {
 		return err
 	}
 	return s.kv.Set(settingsNS, settingsKey(owner, kind), b)
+}
+
+// getWithFound loads the JSON blob for (owner, kind) into v, reporting found=true
+// when the record exists in the store. A missing record leaves v untouched and
+// returns found=false, nil without an error.
+func (s *settingsStore) getWithFound(owner, kind string, v any) (bool, error) {
+	if s == nil || s.kv == nil {
+		return false, errors.New("settings storage unavailable")
+	}
+	if !validKeyComponent(owner) {
+		return false, errBadKeyComponent
+	}
+	b, err := s.kv.Get(settingsNS, settingsKey(owner, kind))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal(b, v)
 }

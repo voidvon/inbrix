@@ -263,6 +263,28 @@ export function saveSignatures(signatures: EmailSignature[]) {
   });
 }
 
+export type ReplyTemplate = {
+  id: string;
+  name: string;
+  body: string;
+};
+
+export type ReplyTemplatesResponse = {
+  templates: ReplyTemplate[];
+  configured?: boolean;
+};
+
+export function getReplyTemplates() {
+  return apiFetch<ReplyTemplatesResponse>("/v1/settings/reply-templates");
+}
+
+export function saveReplyTemplates(templates: ReplyTemplate[]) {
+  return apiFetch<ReplyTemplatesResponse>("/v1/settings/reply-templates", {
+    method: "PUT",
+    body: JSON.stringify({ templates }),
+  });
+}
+
 export type AIModel = {
   id: string;
   provider: "openai" | "gemini" | "deepseek";

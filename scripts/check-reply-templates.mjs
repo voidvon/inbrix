@@ -32,6 +32,24 @@ const base = process.env.DOCUMENT_TEST_URL || 'http://localhost:2342';
 await page.route('**/v1/settings/signatures', route => route.fulfill({ json: { signatures: [
   { id: 'test-signature', name: 'Test signature', html: '<p>Best regards, Test Sender</p>', default: true },
 ] } }));
+let backendTemplates = [];
+let configured = false;
+let failSave = false;
+await page.route('**/v1/settings/reply-templates', async route => {
+  if (route.request().method() === 'GET') {
+    return route.fulfill({ json: { templates: backendTemplates, configured } });
+  }
+  if (route.request().method() === 'PUT') {
+    if (failSave) {
+      return route.fulfill({ status: 500, json: { error: 'Failed' } });
+    }
+    const body = route.request().postDataJSON();
+    backendTemplates = body.templates;
+    configured = true;
+    return route.fulfill({ json: { templates: backendTemplates, configured: true } });
+  }
+  return route.fallback();
+});
 try {
   await page.goto(`${base}/inbox?conversation=test-thread`);
   async function openReply() {
@@ -97,17 +115,14 @@ try {
   assert.equal(await manager.getByRole('button', { name: /^使用模板:/ }).count(), 1);
   page.once('dialog', dialog => dialog.accept());
   await manager.getByRole('button', { name: '删除模板: 已编辑模板', exact: true }).click();
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('inbrix-reply-templates')).some(t => t.name === '已编辑模板')), false);
-  // A failed storage write must retain the unsaved template instead of reporting success.
-  await page.evaluate(() => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
-    if (key === 'inbrix-reply-templates') throw new DOMException('Full', 'QuotaExceededError');
-    return original.call(this, key, value);
-  }; });
+  assert.equal(backendTemplates.some(t => t.name === '已编辑模板'), false);
+  // A failed backend write must retain the unsaved template instead of reporting success.
+  failSave = true;
   await manager.getByRole('button', { name: '新建模板', exact: true }).click();
   await manager.getByLabel('模板名称', { exact: true }).fill('无法保存');
   await manager.getByLabel('模板正文', { exact: true }).fill('内容');
   await manager.getByRole('button', { name: '保存模板', exact: true }).click();
-  await page.getByText('模板保存失败，请检查浏览器存储空间或权限。', { exact: true }).waitFor();
+  await page.getByText('模板保存失败，请检查网络连接或稍后重试。', { exact: true }).waitFor();
   assert.equal(await manager.getByLabel('模板正文', { exact: true }).inputValue(), '内容');
   assert.deepEqual(errors, []);
   console.log('PASS: built-in and custom templates, create/edit/search/delete/persistence, body replacement and undo, signature/quote/attachment preservation, plain text safety, source-mode guard, storage failure, mocked reply send.');
