@@ -28,6 +28,14 @@ import { type Copy, zh } from "../../lib/locale";
 import { cn, formatTime } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -62,6 +70,7 @@ export function ConversationAIChatPanel({
   const queryClient = useQueryClient();
   const [input, setInput] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -238,10 +247,8 @@ export function ConversationAIChatPanel({
     }
   };
 
-  const handleClear = async () => {
-    if (messages.length === 0 && !pendingUserText) return;
-    if (!window.confirm(copy.aiChatClearConfirm)) return;
-
+  const handleConfirmClear = async () => {
+    setClearDialogOpen(false);
     setPendingUserText(null);
     queryClient.setQueryData<ConversationAIChatMessage[]>(
       ["conversation-ai-chat", detail.id],
@@ -326,7 +333,7 @@ export function ConversationAIChatPanel({
               variant="ghost"
               size="icon"
               className="size-7 text-muted-foreground hover:text-destructive"
-              onClick={() => void handleClear()}
+              onClick={() => setClearDialogOpen(true)}
               title={copy.aiChatClearHistory}
               aria-label={copy.aiChatClearHistory}
             >
@@ -405,9 +412,9 @@ export function ConversationAIChatPanel({
             return (
               <div
                 key={message.id}
-                className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
+                className={cn("group flex flex-col gap-1", isUser ? "items-end" : "items-start")}
               >
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1 select-none">
                   {!isUser && (
                     <div className="flex size-4 items-center justify-center rounded-full bg-primary/15 text-primary">
                       <Bot className="size-2.5" />
@@ -419,41 +426,48 @@ export function ConversationAIChatPanel({
                 </div>
                 <div
                   className={cn(
-                    "group relative min-w-0 max-w-[88%] sm:max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed break-words shadow-xs",
-                    isUser
-                      ? "bg-primary text-primary-foreground rounded-tr-xs whitespace-pre-wrap"
-                      : "bg-secondary text-secondary-foreground rounded-tl-xs"
+                    "flex items-end gap-1.5 max-w-[92%] sm:max-w-[88%]",
+                    isUser ? "flex-row-reverse" : "flex-row"
                   )}
                 >
-                  {isUser ? (
-                    message.content
-                  ) : (
-                    <MarkdownContent
-                      content={message.content}
-                      copyLabels={{
-                        copy: copy.copyAIContent,
-                        copied: copy.aiChatCopySuccess,
-                      }}
-                    />
-                  )}
-                  {!isUser && (
-                    <div className="mt-2 flex items-center justify-end gap-1 pt-1 border-t border-border/30 opacity-70 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-5.5 text-muted-foreground hover:text-foreground"
-                        onClick={() => void handleCopy(message.id, message.content)}
-                        title={copy.copyAIContent}
-                      >
-                        {copiedId === message.id ? (
-                          <Check className="size-3 text-emerald-600 dark:text-emerald-400" />
-                        ) : (
-                          <CopyIcon className="size-3" />
-                        )}
-                      </Button>
-                    </div>
-                  )}
+                  <div
+                    className={cn(
+                      "min-w-0 rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed break-words shadow-xs select-text cursor-text",
+                      isUser
+                        ? "bg-primary text-primary-foreground rounded-tr-xs whitespace-pre-wrap selection:bg-primary-foreground/30 selection:text-primary-foreground"
+                        : "bg-secondary text-secondary-foreground rounded-tl-xs"
+                    )}
+                  >
+                    {isUser ? (
+                      <span className="select-text">{message.content}</span>
+                    ) : (
+                      <MarkdownContent
+                        content={message.content}
+                        copyLabels={{
+                          copy: copy.copyAIContent,
+                          copied: copy.aiChatCopySuccess,
+                        }}
+                      />
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
+                      "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                    )}
+                    onClick={() => void handleCopy(message.id, message.content)}
+                    title={copy.copyAIContent}
+                    aria-label={copy.copyAIContent}
+                  >
+                    {copiedId === message.id ? (
+                      <Check className="size-3 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <CopyIcon className="size-3" />
+                    )}
+                  </Button>
                 </div>
               </div>
             );
@@ -540,6 +554,35 @@ export function ConversationAIChatPanel({
           }
         />
       </footer>
+
+      {/* Clear Chat Confirmation Dialog */}
+      <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{copy.aiChatClearHistory}</DialogTitle>
+            <DialogDescription>
+              {copy.aiChatClearConfirm}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setClearDialogOpen(false)}
+            >
+              {copy.cancel}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmClear()}
+            >
+              <Trash2 className="size-4" />
+              {copy.aiChatClearHistory}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

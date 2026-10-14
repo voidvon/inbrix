@@ -52,6 +52,14 @@ import { type Copy, zh } from "../../lib/locale";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -112,6 +120,8 @@ export function AIDocumentChatPanel({
     setActiveSessionId(id);
   };
 
+  const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+
   const handleNewSession = (type: DocumentTemplate = "quotation") => {
     const s = createNewAIDocumentSession(copy, type);
     setSessions(readAIDocumentSessions(copy));
@@ -119,10 +129,15 @@ export function AIDocumentChatPanel({
   };
 
   const handleDeleteSession = (sessionId: string) => {
-    if (!window.confirm(copy.aiDocumentDeleteSessionConfirm)) return;
-    const remaining = deleteAIDocumentSession(copy, sessionId);
+    setDeleteSessionId(sessionId);
+  };
+
+  const confirmDeleteSession = () => {
+    if (!deleteSessionId) return;
+    const remaining = deleteAIDocumentSession(copy, deleteSessionId);
     setSessions(remaining);
     setActiveId(remaining[0]?.id || "default-ai-session");
+    setDeleteSessionId(null);
     toast.success(isZh ? "对话记录已删除" : "Chat session deleted");
   };
 
@@ -573,9 +588,9 @@ export function AIDocumentChatPanel({
                 {/* Assistant or User Content Bubble */}
                 <div
                   className={cn(
-                    "min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-2xs break-words",
+                    "min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-2xs break-words select-text cursor-text",
                     msg.role === "user"
-                      ? "rounded-tr-xs bg-primary text-primary-foreground whitespace-pre-wrap"
+                      ? "rounded-tr-xs bg-primary text-primary-foreground whitespace-pre-wrap selection:bg-primary-foreground/30 selection:text-primary-foreground"
                       : "rounded-tl-xs border bg-card text-foreground"
                   )}
                 >
@@ -756,6 +771,35 @@ export function AIDocumentChatPanel({
           />
         </div>
       </footer>
+
+      {/* Delete Chat Session Confirmation Dialog */}
+      <Dialog open={Boolean(deleteSessionId)} onOpenChange={(open) => !open && setDeleteSessionId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{copy.aiDocumentClearChat}</DialogTitle>
+            <DialogDescription>
+              {copy.aiDocumentDeleteSessionConfirm}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDeleteSessionId(null)}
+            >
+              {copy.cancel}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmDeleteSession}
+            >
+              <Trash2 className="size-4" />
+              {isZh ? "确认删除" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
