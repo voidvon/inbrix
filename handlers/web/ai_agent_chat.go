@@ -73,8 +73,8 @@ type AIAgentChatResponse struct {
 }
 
 var (
-	toolCallRegex = regexp.MustCompile("(?s)```(?:tool_call|json:tool_call)\\s*(\\{.*?\\})\\s*```")
-	documentRegex = regexp.MustCompile("(?s)```(?:document|json:document)\\s*(\\{.*?\\})\\s*```")
+	toolCallRegex = regexp.MustCompile("(?s)```(?:tool_call|json:tool_call|toolCall)\\s*(.*?)\\s*```")
+	documentRegex = regexp.MustCompile("(?s)```(?:document|json:document)\\s*(.*?)\\s*```")
 )
 
 // HandleAgentChat handles multi-turn conversation with an intelligent AI Agent equipped with tool calling.
@@ -158,61 +158,80 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	// 3. Build Base System Instructions with Tool Calling schema
 	instructions := buildAgentSystemPrompt(agentName, agentCustomPrompt, input.ActiveDocument)
 
-	// 4. Run Agent Execution Loop (up to 4 turns of tool calling)
+	// 4. Run Agent Execution Loop (up to 5 rounds of tool calling)
 	executedToolCalls := make([]AIToolCall, 0)
 	var generatedDocument *AIDocumentCard
 
 	historyPrompt := buildConversationTranscript(input.Messages)
 	currentTurnInput := historyPrompt
 
-	maxTurns := 4
+	maxToolTurns := 5
 	finalReply := ""
 
-	for turn := 0; turn < maxTurns; turn++ {
+	for turn := 0; turn < maxToolTurns; turn++ {
 		rawResponse, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
 		if err != nil {
 			h.recordError(c.UserContext(), owner, "agent_chat", input.AccountEmail, model.Model, agentName, err)
 			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 		}
 
-		// Check for Tool Call
-		call, hasCall := parseToolCall(rawResponse)
-		if !hasCall || turn == maxTurns-1 {
-			// No tool call, or reached last turn -> this is the final answer
+		calls := parseToolCalls(rawResponse)
+		if len(calls) == 0 {
+			// No tool call requested; model gave its natural language response
 			finalReply = rawResponse
 			break
 		}
 
-		// Execute Tool
-		call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-		result, summary, err := h.executeTool(c.UserContext(), account.ID, call)
-		if err != nil {
-			call.Status = "error"
-			call.Result = map[string]string{"error": err.Error()}
-			call.Summary = "工具执行出错: " + err.Error()
-		} else {
-			call.Status = "success"
-			call.Result = result
-			call.Summary = summary
-		}
-
-		if call.Name == "generate_document" && call.Status == "success" {
-			if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
-				generatedDocument = doc
+		// Execute all parsed tool calls in this turn
+		for _, call := range calls {
+			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
+			result, summary, err := h.executeTool(c.UserContext(), account.ID, call)
+			if err != nil {
+				call.Status = "error"
+				call.Result = map[string]string{"error": err.Error()}
+				call.Summary = "工具执行出错: " + err.Error()
+			} else {
+				call.Status = "success"
+				call.Result = result
+				call.Summary = summary
 			}
+
+			if call.Name == "generate_document" && call.Status == "success" {
+				if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
+					generatedDocument = doc
+				}
+			}
+
+			executedToolCalls = append(executedToolCalls, call)
+
+			// Feed tool result back to the model for next turn
+			resBytes, _ := json.Marshal(call.Result)
+			currentTurnInput += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%v)\n[Tool Result (%s)]: %s", call.Name, call.Args, call.Name, string(resBytes))
 		}
 
-		executedToolCalls = append(executedToolCalls, call)
-
-		// Feed tool result back to the model for next turn
-		resBytes, _ := json.Marshal(call.Result)
-		currentTurnInput += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%v)\n[Tool Result (%s)]: %s\n\nBased on the tool results above, continue answering the user or call another tool.", call.Name, call.Args, call.Name, string(resBytes))
+		// If this was the last tool turn allowed, ask model for final synthesis
+		if turn == maxToolTurns-1 {
+			currentTurnInput += "\n\n[System]: You have completed the maximum number of tool executions. You must NOT call any more tools or output any tool_call code blocks. Based on all the gathered information and tool results above, provide your final, comprehensive, and polite response to the user now in Markdown."
+			synthesisResponse, synErr := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
+			if synErr == nil && strings.TrimSpace(synthesisResponse) != "" {
+				finalReply = synthesisResponse
+			}
+			break
+		} else {
+			currentTurnInput += "\n\nBased on the tool results above, continue answering the user or call another tool if needed."
+		}
 	}
 
-	// 5. Parse Final Output (extract Document Card if present)
+	// 5. Parse Final Output (extract Document Card if present & sanitize residual tool blocks)
 	cleanedContent, docFromFence := extractDocumentFromResponse(finalReply)
 	if docFromFence != nil {
 		generatedDocument = docFromFence
+	}
+
+	cleanedContent = stripResidualToolCalls(cleanedContent)
+
+	if cleanedContent == "" {
+		cleanedContent = generateFallbackResponse(executedToolCalls, generatedDocument)
 	}
 
 	if generatedDocument != nil {
@@ -273,15 +292,22 @@ func buildAgentSystemPrompt(agentName, customPrompt string, activeDoc *AIAgentCh
    }
 
 TOOL CALLING PROTOCOL:
-If you need to query emails, calculate pricing, or draft a document, output ONLY a tool call code fence like:
+If you need to query emails, read email details, calculate pricing, or draft a document, output one or more tool call code fences like:
 ` + "```tool_call" + `
 {"name": "tool_name", "arguments": {"param": "value"}}
 ` + "```" + `
+You may output multiple ` + "```tool_call```" + ` blocks in a single turn if multiple actions are needed (e.g. read an email and search for another query).
 Do NOT output commentary before or after the tool_call code fence during a tool call.
 
+EFFICIENCY & TOOL SELECTION GUIDELINES:
+- When search_emails returns candidate emails, review their subject and snippet. If any candidate appears relevant, call read_email with its uid to read the full body rather than repeatedly searching with slight keyword variations.
+- Avoid looping on search_emails with redundant queries.
+
 FINAL ANSWER:
-When you have gathered the required information or when no tool is needed:
-- Respond in natural, polite Markdown.
+When you have gathered the required information or when no further tool is needed:
+- Respond in natural, polite, and helpful Markdown.
+- Synthesize all findings from your tool calls clearly for the user.
+- Do NOT output any ` + "```tool_call```" + ` blocks when providing your final answer.
 - If you generated or updated a document, you can either call the ` + "`generate_document`" + ` tool OR include a document code fence at the end:
 ` + "```document" + `
 {
@@ -302,10 +328,15 @@ func buildConversationTranscript(messages []AIAgentChatMessage) string {
 	var sb strings.Builder
 	for i, m := range messages {
 		role := strings.ToLower(strings.TrimSpace(m.Role))
+		content := stripResidualToolCalls(m.Content)
 		if role == "user" {
 			sb.WriteString(fmt.Sprintf("User: %s\n\n", m.Content))
 		} else {
-			sb.WriteString(fmt.Sprintf("Assistant: %s\n\n", m.Content))
+			if content != "" {
+				sb.WriteString(fmt.Sprintf("Assistant: %s\n\n", content))
+			} else if len(m.ToolCalls) > 0 {
+				sb.WriteString("Assistant: [Executed tool calls to assist user]\n\n")
+			}
 		}
 		if i == len(messages)-1 && role == "user" {
 			// Prompt assistant to proceed
@@ -315,54 +346,151 @@ func buildConversationTranscript(messages []AIAgentChatMessage) string {
 	return strings.TrimSpace(sb.String())
 }
 
-func parseToolCall(output string) (AIToolCall, bool) {
-	match := toolCallRegex.FindStringSubmatch(output)
-	if len(match) > 1 {
-		var call struct {
+func parseToolCalls(output string) []AIToolCall {
+	var calls []AIToolCall
+
+	// 1. Match all ```tool_call, ```json:tool_call, ```toolCall code fences
+	matches := toolCallRegex.FindAllStringSubmatch(output, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			fenceContent := strings.TrimSpace(match[1])
+			if fenceContent == "" {
+				continue
+			}
+			calls = append(calls, parseToolCallsFromJSON(fenceContent)...)
+		}
+	}
+
+	if len(calls) > 0 {
+		return calls
+	}
+
+	// 2. Fallback: check if the entire output (or code block) is raw JSON tool call
+	trimmed := strings.TrimSpace(output)
+	return parseToolCallsFromJSON(trimmed)
+}
+
+func parseToolCallsFromJSON(raw string) []AIToolCall {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(raw, "{") && strings.HasSuffix(raw, "}") {
+		var single struct {
 			Name      string         `json:"name"`
 			Arguments map[string]any `json:"arguments"`
 			Args      map[string]any `json:"args"`
 		}
-		if err := json.Unmarshal([]byte(match[1]), &call); err == nil && call.Name != "" {
-			args := call.Arguments
+		if err := json.Unmarshal([]byte(raw), &single); err == nil && single.Name != "" {
+			args := single.Arguments
 			if args == nil {
-				args = call.Args
+				args = single.Args
 			}
 			if args == nil {
 				args = make(map[string]any)
 			}
-			return AIToolCall{Name: call.Name, Args: args}, true
+			return []AIToolCall{{Name: single.Name, Args: args}}
+		}
+	} else if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		var list []struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+			Args      map[string]any `json:"args"`
+		}
+		if err := json.Unmarshal([]byte(raw), &list); err == nil && len(list) > 0 {
+			var res []AIToolCall
+			for _, item := range list {
+				if item.Name != "" {
+					args := item.Arguments
+					if args == nil {
+						args = item.Args
+					}
+					if args == nil {
+						args = make(map[string]any)
+					}
+					res = append(res, AIToolCall{Name: item.Name, Args: args})
+				}
+			}
+			return res
+		}
+	} else {
+		start := strings.Index(raw, "{")
+		end := strings.LastIndex(raw, "}")
+		if start != -1 && end > start {
+			sub := raw[start : end+1]
+			var single struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+				Args      map[string]any `json:"args"`
+			}
+			if err := json.Unmarshal([]byte(sub), &single); err == nil && single.Name != "" {
+				args := single.Arguments
+				if args == nil {
+					args = single.Args
+				}
+				if args == nil {
+					args = make(map[string]any)
+				}
+				return []AIToolCall{{Name: single.Name, Args: args}}
+			}
 		}
 	}
 
-	// Fallback: check if the entire output is a JSON tool call
-	trimmed := strings.TrimSpace(output)
+	return nil
+}
+
+func parseToolCall(output string) (AIToolCall, bool) {
+	calls := parseToolCalls(output)
+	if len(calls) > 0 {
+		return calls[0], true
+	}
+	return AIToolCall{}, false
+}
+
+func stripResidualToolCalls(content string) string {
+	cleaned := toolCallRegex.ReplaceAllString(content, "")
+	trimmed := strings.TrimSpace(cleaned)
 	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
 		var call struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-			Args      map[string]any `json:"args"`
+			Name string `json:"name"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &call); err == nil && call.Name != "" {
-			args := call.Arguments
-			if args == nil {
-				args = call.Args
-			}
-			if args == nil {
-				args = make(map[string]any)
-			}
-			return AIToolCall{Name: call.Name, Args: args}, true
+			return ""
 		}
 	}
+	return strings.TrimSpace(cleaned)
+}
 
-	return AIToolCall{}, false
+func generateFallbackResponse(executedToolCalls []AIToolCall, doc *AIDocumentCard) string {
+	if doc != nil {
+		docName := "报价单"
+		if doc.Type == "contract" {
+			docName = "合同"
+		}
+		return fmt.Sprintf("已为您完成相关信息查询与核对，并成功生成了%s《%s》（买方：%s）。请在下方卡片中查阅或在文档编辑器中打开。",
+			docName, doc.Title, doc.Counterparty)
+	}
+	if len(executedToolCalls) > 0 {
+		var sb strings.Builder
+		sb.WriteString("已为您完成邮件检索与数据核对。工具执行记录如下：\n\n")
+		for i, tc := range executedToolCalls {
+			if tc.Summary != "" {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, tc.Summary))
+			}
+		}
+		sb.WriteString("\n如需进一步查看邮件正文详情或起草正式文档，请随时告诉我。")
+		return sb.String()
+	}
+	return "已为您处理完成。"
 }
 
 func extractDocumentFromResponse(output string) (string, *AIDocumentCard) {
 	match := documentRegex.FindStringSubmatch(output)
 	if len(match) > 1 {
+		rawDoc := strings.TrimSpace(match[1])
 		var card AIDocumentCard
-		if err := json.Unmarshal([]byte(match[1]), &card); err == nil && card.Title != "" {
+		if err := json.Unmarshal([]byte(rawDoc), &card); err == nil && (card.Title != "" || card.Type != "") {
 			cleaned := documentRegex.ReplaceAllString(output, "")
 			return strings.TrimSpace(cleaned), &card
 		}
@@ -370,25 +498,42 @@ func extractDocumentFromResponse(output string) (string, *AIDocumentCard) {
 	return output, nil
 }
 
+func parseStringArg(args map[string]any, keys ...string) string {
+	if args == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if val, exists := args[k]; exists && val != nil {
+			switch v := val.(type) {
+			case string:
+				if s := strings.TrimSpace(v); s != "" {
+					return s
+				}
+			case float64:
+				return strconv.FormatInt(int64(v), 10)
+			case int:
+				return strconv.Itoa(v)
+			case int64:
+				return strconv.FormatInt(v, 10)
+			default:
+				if s := strings.TrimSpace(fmt.Sprintf("%v", v)); s != "" && s != "<nil>" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (h *AISettingsHandler) executeTool(ctx context.Context, accountID string, call AIToolCall) (any, string, error) {
 	switch call.Name {
 	case "search_emails":
-		query, _ := call.Args["query"].(string)
-		if query == "" {
-			if q, ok := call.Args["q"].(string); ok {
-				query = q
-			}
-		}
+		query := parseStringArg(call.Args, "query", "q", "keyword", "keywords")
 		return h.executeSearchEmails(ctx, accountID, query)
 
 	case "read_email":
-		uid, _ := call.Args["uid"].(string)
-		if uid == "" {
-			if id, ok := call.Args["email_id"].(string); ok {
-				uid = id
-			}
-		}
-		folder, _ := call.Args["folder"].(string)
+		uid := parseStringArg(call.Args, "uid", "email_id", "id", "message_id")
+		folder := parseStringArg(call.Args, "folder", "mailbox")
 		return h.executeReadEmail(ctx, accountID, folder, uid)
 
 	case "calculate_pricing":

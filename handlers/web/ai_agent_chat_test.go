@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -153,5 +154,88 @@ func TestExecuteSearchEmailsEmptyQuery(t *testing.T) {
 	}
 	if res != "搜索关键词不能为空" {
 		t.Errorf("expected '搜索关键词不能为空', got %v", res)
+	}
+}
+
+func TestParseMultipleToolCalls(t *testing.T) {
+	// The exact user report case: multiple tool_call fences in one turn
+	input := "```tool_call\n{\"name\": \"search_emails\", \"arguments\": {\"query\": \"pickup confirmation\"}}\n```\n\n```tool_call\n{\"name\": \"read_email\", \"arguments\": {\"uid\": \"386\", \"folder\": \"Sent Messages\"}}\n```"
+	calls := parseToolCalls(input)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 tool calls to be parsed, got %d", len(calls))
+	}
+	if calls[0].Name != "search_emails" {
+		t.Errorf("expected first tool 'search_emails', got %q", calls[0].Name)
+	}
+	if q, _ := calls[0].Args["query"].(string); q != "pickup confirmation" {
+		t.Errorf("expected query 'pickup confirmation', got %v", calls[0].Args["query"])
+	}
+	if calls[1].Name != "read_email" {
+		t.Errorf("expected second tool 'read_email', got %q", calls[1].Name)
+	}
+	if uid, _ := calls[1].Args["uid"].(string); uid != "386" {
+		t.Errorf("expected uid '386', got %v", calls[1].Args["uid"])
+	}
+	if folder, _ := calls[1].Args["folder"].(string); folder != "Sent Messages" {
+		t.Errorf("expected folder 'Sent Messages', got %v", calls[1].Args["folder"])
+	}
+}
+
+func TestStripResidualToolCalls(t *testing.T) {
+	// Mixed text and tool_call fence
+	mixed := "根据您的需求：\n```tool_call\n{\"name\": \"search_emails\", \"arguments\": {\"query\": \"test\"}}\n```\n我已为您找到相关信息。"
+	cleaned := stripResidualToolCalls(mixed)
+	if cleaned != "根据您的需求：\n\n我已为您找到相关信息。" {
+		t.Errorf("unexpected stripped output: %q", cleaned)
+	}
+
+	// Only tool call fence
+	onlyTool := "```tool_call\n{\"name\": \"search_emails\", \"arguments\": {\"query\": \"pickup confirmation\"}}\n```"
+	cleanedOnly := stripResidualToolCalls(onlyTool)
+	if cleanedOnly != "" {
+		t.Errorf("expected empty string for pure tool call, got %q", cleanedOnly)
+	}
+
+	// Pure JSON tool call
+	jsonOnly := "{\"name\": \"read_email\", \"arguments\": {\"uid\": \"123\"}}"
+	cleanedJSON := stripResidualToolCalls(jsonOnly)
+	if cleanedJSON != "" {
+		t.Errorf("expected empty string for pure json tool call, got %q", cleanedJSON)
+	}
+}
+
+func TestGenerateFallbackResponse(t *testing.T) {
+	toolCalls := []AIToolCall{
+		{Name: "search_emails", Summary: "检索到 4 封相关邮件 (关键词: FedEx pickup confirmation number C)"},
+		{Name: "search_emails", Summary: "检索【pickup confirmation code C number FedEx remote pickup】未找到邮件"},
+	}
+	fallback := generateFallbackResponse(toolCalls, nil)
+	if fallback == "" {
+		t.Fatalf("expected non-empty fallback")
+	}
+	if !strings.Contains(fallback, "检索到 4 封相关邮件") {
+		t.Errorf("expected fallback to contain tool summary, got %q", fallback)
+	}
+}
+
+func TestParseStringArg(t *testing.T) {
+	args := map[string]any{
+		"query":     "test query",
+		"uid_int":   float64(386),
+		"folder":    "Sent Messages",
+		"empty_str": "   ",
+	}
+
+	if s := parseStringArg(args, "query"); s != "test query" {
+		t.Errorf("expected 'test query', got %q", s)
+	}
+	if s := parseStringArg(args, "non_existent", "folder"); s != "Sent Messages" {
+		t.Errorf("expected fallback to 'folder', got %q", s)
+	}
+	if s := parseStringArg(args, "uid_int"); s != "386" {
+		t.Errorf("expected float64 386 converted to string '386', got %q", s)
+	}
+	if s := parseStringArg(args, "empty_str", "query"); s != "test query" {
+		t.Errorf("expected empty string to be skipped and fallback to query, got %q", s)
 	}
 }

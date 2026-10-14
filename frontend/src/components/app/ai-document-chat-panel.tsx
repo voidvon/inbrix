@@ -256,10 +256,11 @@ export function AIDocumentChatPanel({
         };
       }
 
+      const cleanedContent = sanitizeAssistantContent(res.content, res.toolCalls, isZh);
       const assistantMsg: AIDocumentMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: res.content || (isZh ? "已为您处理完成。" : "Done."),
+        content: cleanedContent,
         createdAt: new Date().toISOString(),
         toolCalls: res.toolCalls,
         document: generatedDoc,
@@ -580,7 +581,7 @@ export function AIDocumentChatPanel({
                 >
                   {msg.role === "assistant" ? (
                     <MarkdownContent
-                      content={msg.content}
+                      content={sanitizeAssistantContent(msg.content, msg.toolCalls, isZh)}
                       copyLabels={{
                         copy: copy.copyAIContent,
                         copied: copy.aiChatCopySuccess,
@@ -757,4 +758,31 @@ export function AIDocumentChatPanel({
       </footer>
     </section>
   );
+}
+
+function sanitizeAssistantContent(
+  content?: string,
+  toolCalls?: { name: string; summary?: string }[],
+  isZh?: boolean
+): string {
+  if (!content) {
+    if (toolCalls && toolCalls.length > 0) {
+      return isZh
+        ? `已完成 ${toolCalls.length} 项智能工具调用与数据检索。`
+        : `Completed ${toolCalls.length} tool calls and data retrieval.`;
+    }
+    return isZh ? "已为您处理完成。" : "Done.";
+  }
+
+  // Strip ```tool_call ... ``` or ```json:tool_call ... ``` fences
+  const stripped = content.replace(/```(?:tool_call|json:tool_call|toolCall)[\s\S]*?```/gi, "").trim();
+  if (!stripped) {
+    if (toolCalls && toolCalls.length > 0) {
+      return isZh
+        ? `已完成 ${toolCalls.length} 项智能工具调用与数据检索。`
+        : `Completed ${toolCalls.length} tool calls and data retrieval.`;
+    }
+    return isZh ? "已为您处理完成。" : "Done.";
+  }
+  return stripped;
 }
