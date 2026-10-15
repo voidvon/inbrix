@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { Stamp, Upload, Trash2, X } from "lucide-react";
+import { Stamp, Upload, Trash2, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -85,7 +85,8 @@ export function DocumentStampManager({
   onInsert?: (stamp: DocumentStamp, width: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [stamps, setStamps] = useState<DocumentStamp[]>([]);
+  const [stamps, setStamps] = useState<DocumentStamp[]>(() => readStamps());
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const label = chinese ? "印章管理" : "Stamp library";
@@ -104,6 +105,7 @@ export function DocumentStampManager({
   };
 
   const loadStamps = async () => {
+    setLoading(true);
     try {
       const res = await listDocumentStamps();
       if (Array.isArray(res.stamps)) {
@@ -121,11 +123,20 @@ export function DocumentStampManager({
         } catch {}
         return;
       }
+      setStamps(readStamps());
     } catch (err) {
       console.warn("Could not load stamps from server, falling back to local storage", err);
+      setStamps(readStamps());
+    } finally {
+      setLoading(false);
     }
-    setStamps(readStamps());
   };
+
+  useEffect(() => {
+    if (open) {
+      void loadStamps();
+    }
+  }, [open]);
 
   const upload = async (file?: File) => {
     if (!file) return;
@@ -174,7 +185,6 @@ export function DocumentStampManager({
         size="sm"
         disabled={disabled}
         onClick={() => {
-          void loadStamps();
           setOpen(true);
         }}
       >
@@ -193,9 +203,12 @@ export function DocumentStampManager({
             className="fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1.5rem)] sm:max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 sm:p-5 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/10 duration-150 outline-none max-h-[calc(100dvh-2rem)] overflow-y-auto data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
           >
             <div className="flex items-center justify-between">
-              <DialogPrimitive.Title className="text-base font-semibold text-foreground">
-                {label}
-              </DialogPrimitive.Title>
+              <div className="flex items-center gap-2">
+                <DialogPrimitive.Title className="text-base font-semibold text-foreground">
+                  {label}
+                </DialogPrimitive.Title>
+                {loading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+              </div>
               <DialogPrimitive.Close render={<Button variant="ghost" size="icon" className="size-8" />}>
                 <X className="size-4" />
                 <span className="sr-only">Close</span>
@@ -220,7 +233,7 @@ export function DocumentStampManager({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busy}
+                disabled={busy || loading}
                 onClick={() => inputRef.current?.click()}
                 className="gap-1.5"
               >
@@ -229,14 +242,20 @@ export function DocumentStampManager({
               </Button>
             </div>
 
-            {!stamps.length && (
+            {loading && !stamps.length ? (
+              <div className="flex flex-col items-center justify-center gap-2.5 py-12 text-muted-foreground">
+                <Loader2 className="size-6 animate-spin text-primary" />
+                <span className="text-sm">{chinese ? "正在加载印章…" : "Loading stamps…"}</span>
+              </div>
+            ) : !stamps.length ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 {chinese ? "暂无印章，上传后即可在文档中使用。" : "Upload your first stamp to use it in documents."}
               </p>
-            )}
+            ) : null}
 
             {/* Stamp List: All controls on a single row */}
-            <div className="grid gap-2.5">
+            {Boolean(stamps.length) && (
+              <div className="grid gap-2.5">
               {stamps.map((stamp) => (
                 <div
                   key={stamp.id}
@@ -330,6 +349,7 @@ export function DocumentStampManager({
                 </div>
               ))}
             </div>
+            )}
           </DialogPrimitive.Popup>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>

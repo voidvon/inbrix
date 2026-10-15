@@ -3,6 +3,7 @@ import {
   FilePenLine,
   FileSpreadsheet,
   FileText,
+  Loader2,
   Menu,
   Pencil,
   Plus,
@@ -62,6 +63,7 @@ import { zh, en } from "../../lib/locale";
 export function DocumentListPage({ createDocument = false, documentId }: { createDocument?: boolean; documentId?: string }) {
   const { copy, accountEmail, openMobileMenu } = useShell();
   const [documents, setDocuments] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(() => new Set());
   const [documentPage, setDocumentPage] = useState(1);
@@ -92,9 +94,17 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
 
   useEffect(() => {
     let mounted = true;
-    void fetchServerDocuments("all").then((docs) => {
-      if (mounted) setDocuments(docs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
-    });
+    setLoading(true);
+    void fetchServerDocuments("all")
+      .then((docs) => {
+        if (mounted) setDocuments(docs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch documents from server", err);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
     void fetchServerTemplates(copy).then((tpls) => {
       if (mounted) setTemplates(tpls);
     });
@@ -222,6 +232,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
           <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-semibold">{copy.documents}</h1>
+          {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
         </header>
         <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-1.5 sm:px-5">
           <div className="inline-flex h-8 items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label={copy.documentType}>
@@ -276,7 +287,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
         <div ref={documentTableScrollRef} className="min-h-0 flex-1 overflow-auto touch-pan-x touch-pan-y [&_[data-slot=table-container]]:overflow-visible">
           <Table className="min-w-[760px] table-fixed">
             <TableHeader className="sticky top-0 z-10 bg-background"><TableRow className="hover:bg-transparent">
-              <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>
+              <TableHead className="w-12 px-4"><input ref={selectAllDocumentsRef} type="checkbox" className="size-4 accent-primary" checked={allDocumentsSelected} disabled={!pageDocuments.length || loading} onChange={(event) => togglePageDocuments(event.target.checked)} aria-label={copy.deleteSelectedDocuments} /></TableHead>
               <TableHead className="px-2">{copy.documentName}</TableHead>
               <TableHead className="w-[24%]">{copy.documentCounterparty}</TableHead>
               <TableHead className="w-[14%]">{copy.documentType}</TableHead>
@@ -284,15 +295,27 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
               <TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead>
             </TableRow></TableHeader>
             <TableBody>
-              {pageDocuments.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
-                <TableCell className="px-4 py-3" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="size-4 accent-primary" checked={selectedDocumentIds.has(document.id)} onChange={(event) => toggleDocument(document.id, event.target.checked)} aria-label={`${copy.selectedDocuments}: ${document.name}`} /></TableCell>
-                <TableCell className="px-2 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
-                <TableCell className="px-2 py-3"><span className="block truncate text-muted-foreground">{document.company || extractDocumentCompany(document.html) || "—"}</span></TableCell>
-                <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
-                <TableCell className="text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
-                <TableCell className="px-4 text-right"><Button type="button" variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={(event) => { event.stopPropagation(); setDeleteTarget({ kind: "documents", records: [document] }); }} aria-label={`${copy.deleteDocument}: ${document.name}`} title={copy.deleteDocument}><Trash2 /></Button></TableCell>
-              </TableRow>)}
-              {!filteredDocuments.length && <TableRow><TableCell colSpan={6} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>}
+              {loading && !filteredDocuments.length ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="h-48 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center justify-center gap-2.5">
+                      <Loader2 className="size-6 animate-spin text-primary" />
+                      <span className="text-sm">{copy.loading}</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : !filteredDocuments.length ? (
+                <TableRow><TableCell colSpan={6} className="h-40 text-center text-muted-foreground"><div className="grid justify-items-center gap-2"><FilePenLine className="size-6" /><span>{copy.noDocuments}</span></div></TableCell></TableRow>
+              ) : (
+                pageDocuments.map((document) => <TableRow key={document.id} className="cursor-pointer" onClick={() => setEditorTarget({ kind: "document", record: document })}>
+                  <TableCell className="px-4 py-3" onClick={(event) => event.stopPropagation()}><input type="checkbox" className="size-4 accent-primary" checked={selectedDocumentIds.has(document.id)} onChange={(event) => toggleDocument(document.id, event.target.checked)} aria-label={`${copy.selectedDocuments}: ${document.name}`} /></TableCell>
+                  <TableCell className="px-2 py-3"><span className="block truncate font-medium">{document.name}</span></TableCell>
+                  <TableCell className="px-2 py-3"><span className="block truncate text-muted-foreground">{document.company || extractDocumentCompany(document.html) || "—"}</span></TableCell>
+                  <TableCell><Badge variant="secondary">{document.type === "quotation" ? copy.quotation : copy.contract}</Badge></TableCell>
+                  <TableCell className="text-right text-sm text-muted-foreground">{new Date(document.updatedAt).toLocaleString(copy === en ? "en" : "zh-CN")}</TableCell>
+                  <TableCell className="px-4 text-right"><Button type="button" variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" onClick={(event) => { event.stopPropagation(); setDeleteTarget({ kind: "documents", records: [document] }); }} aria-label={`${copy.deleteDocument}: ${document.name}`} title={copy.deleteDocument}><Trash2 /></Button></TableCell>
+                </TableRow>)
+              )}
             </TableBody>
           </Table>
         </div>
