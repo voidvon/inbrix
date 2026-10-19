@@ -38,6 +38,8 @@ type Store struct {
 	db   *sql.DB
 	path string
 	mu   sync.Mutex
+	// background tracks fire-and-forget database work so Close can wait for it.
+	background sync.WaitGroup
 	// priceMu serializes price-list writes. The price grid autosaves one cell at
 	// a time, so several small write transactions can arrive together; SQLite
 	// resolves overlapping read-then-write transactions with SQLITE_BUSY rather
@@ -191,6 +193,8 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	// Let queued background writes finish before the pool goes away.
+	s.background.Wait()
 	return s.db.Close()
 }
 

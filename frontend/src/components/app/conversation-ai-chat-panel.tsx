@@ -46,6 +46,7 @@ import {
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
 import { AIStatusIndicator } from "./ai-status-indicator";
+import { ConversationDocumentCard } from "./conversation-document-card";
 import { MarkdownContent } from "./markdown-content";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
 import type { ConversationAIChatMessage, ConversationDetail } from "../../types";
@@ -232,6 +233,33 @@ export function ConversationAIChatPanel({
           summary: call.summary,
           status: call.status,
         })),
+        document: data.res.document
+          ? {
+              type: data.res.document.type === "contract" ? "contract" : "quotation",
+              title: data.res.document.title,
+              counterparty: data.res.document.counterparty,
+              contact: data.res.document.contact,
+              currency: data.res.document.currency,
+              items: data.res.document.items,
+              terms: data.res.document.terms,
+              notes: data.res.document.notes,
+              total: data.res.document.total,
+              values: data.res.document.values,
+              html: data.res.document.html,
+            }
+          : undefined,
+        documentAction: data.res.documentAction
+          ? {
+              kind: data.res.documentAction.kind,
+              documentId: data.res.documentAction.documentId,
+              type: data.res.documentAction.type,
+              name: data.res.documentAction.name,
+              company: data.res.documentAction.company,
+              values: data.res.documentAction.values,
+              items: data.res.documentAction.items,
+              summary: data.res.documentAction.summary,
+            }
+          : undefined,
       };
       const nextMessages = [...messages, userMsg, assistantMsg];
 
@@ -507,6 +535,9 @@ export function ConversationAIChatPanel({
                     )}
                   </Button>
                 </div>
+                {!isUser && (message.document || message.documentAction) ? (
+                  <ConversationDocumentCard isZh={isZh} draft={message.document} action={message.documentAction} />
+                ) : null}
                 {!isUser && message.toolCalls?.length ? (
                   <div className="flex max-w-full flex-wrap items-center gap-1 px-1">
                     {message.toolCalls.map((call, index) => (

@@ -417,3 +417,196 @@ func TestPrefetchPriceContext(t *testing.T) {
 		t.Fatalf("cross-owner prefetch leaked: %q %+v", block, entries)
 	}
 }
+
+// documentToolsFixture stores one canvas quotation for the document tool tests.
+func documentToolsFixture(t *testing.T) (*mailstore.Store, string, string) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := mailstore.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	user, err := db.CreateUser(ctx, "docs", "Docs", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := canvasBody(t, "spirax-quotation", []map[string]any{
+		controlElement("quote_number", "SQ-202610"),
+		controlElement("buyer_company", "上海宝钢"),
+		controlElement("total_amount", "12,800.00"),
+		tableElement([][]map[string]any{{
+			controlElement("item_model", "DN50-BV"),
+			controlElement("item_qty", "10"),
+			controlElement("item_price", "1280.00"),
+		}}),
+	})
+	record, err := db.SaveDocument(ctx, mailstore.DocumentRecord{
+		OwnerID: user.ID, Type: "quotation", Name: "宝钢报价单", Company: "上海宝钢", HTML: body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db, user.ID, record.ID
+}
+
+func TestExecuteListAndReadDocument(t *testing.T) {
+	db, owner, documentID := documentToolsFixture(t)
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+	ctx := context.Background()
+
+	result, summary, err := handler.executeListDocuments(ctx, owner, map[string]any{"query": "宝钢"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, ok := result.([]aiDocumentSummary)
+	if !ok || len(list) != 1 || list[0].ID != documentID {
+		t.Fatalf("list = %#v (%s)", result, summary)
+	}
+
+	// A query that matches nothing reports it instead of returning everything.
+	if _, summary, _ := handler.executeListDocuments(ctx, owner, map[string]any{"query": "不存在的客户"}); !strings.Contains(summary, "未找到") {
+		t.Fatalf("unexpected summary: %s", summary)
+	}
+
+	read, summary, err := handler.executeReadDocument(ctx, owner, map[string]any{"id": documentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := read.(map[string]any)
+	if !ok {
+		t.Fatalf("read = %#v", read)
+	}
+	fields, ok := payload["fields"].(map[string]string)
+	if !ok || fields["buyer_company"] != "上海宝钢" {
+		t.Fatalf("fields = %#v", payload["fields"])
+	}
+	items, ok := payload["items"].([]AIDocumentItem)
+	if !ok || len(items) != 1 || items[0].Model != "DN50-BV" {
+		t.Fatalf("items = %#v", payload["items"])
+	}
+	if !strings.Contains(summary, "宝钢报价单") {
+		t.Fatalf("summary = %s", summary)
+	}
+
+	// Unknown ids are reported, not silently accepted.
+	if _, summary, _ := handler.executeReadDocument(ctx, owner, map[string]any{"id": "doc_missing"}); !strings.Contains(summary, "未找到") {
+		t.Fatalf("summary = %s", summary)
+	}
+}
+
+func TestExecuteDeleteDocumentProposesOnly(t *testing.T) {
+	db, owner, documentID := documentToolsFixture(t)
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+	ctx := context.Background()
+
+	result, summary, err := handler.executeDeleteDocument(ctx, owner, map[string]any{"id": documentID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, ok := result.(*AIDocumentAction)
+	if !ok || action.Kind != "delete" || action.DocumentID != documentID {
+		t.Fatalf("action = %#v", result)
+	}
+	if !strings.Contains(summary, "等待确认") {
+		t.Fatalf("summary = %s", summary)
+	}
+	// The document must still exist: deletion is the user's call.
+	if _, err := db.GetDocument(ctx, owner, documentID); err != nil {
+		t.Fatalf("document was removed by the proposal: %v", err)
+	}
+}
+
+func TestExecuteUpdateDocumentRejectsUnstructured(t *testing.T) {
+	ctx := context.Background()
+	db, err := mailstore.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := db.CreateUser(ctx, "legacy", "Legacy", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := db.SaveDocument(ctx, mailstore.DocumentRecord{
+		OwnerID: user.ID, Type: "quotation", Name: "旧格式报价单", HTML: "<div>plain html</div>",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+
+	result, summary, err := handler.executeUpdateDocument(ctx, user.ID, map[string]any{"id": record.ID, "instruction": "改单价"}, mailstore.AIModelRecord{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, isAction := result.(*AIDocumentAction); isAction {
+		t.Fatalf("unstructured document produced an action: %#v", result)
+	}
+	if !strings.Contains(summary, "不支持结构化修改") {
+		t.Fatalf("summary = %s", summary)
+	}
+
+	// A missing instruction is reported before any model work happens.
+	if _, summary, _ := handler.executeUpdateDocument(ctx, user.ID, map[string]any{"id": record.ID}, mailstore.AIModelRecord{}, ""); !strings.Contains(summary, "缺少修改要求") {
+		t.Fatalf("summary = %s", summary)
+	}
+}
+
+func TestAgentPromptCoversDocumentTools(t *testing.T) {
+	prompt := buildAgentSystemPrompt(agentModeConversation, "", "", nil)
+	for _, tool := range []string{"list_documents", "read_document", "update_document", "delete_document"} {
+		if !strings.Contains(prompt, tool) {
+			t.Fatalf("prompt does not advertise %s", tool)
+		}
+	}
+	if !strings.Contains(prompt, "only PROPOSE") {
+		t.Fatal("prompt does not require confirmation for document changes")
+	}
+}
+
+func TestExecuteUpdateDocumentAppliesExplicitValues(t *testing.T) {
+	db, owner, documentID := documentToolsFixture(t)
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+	ctx := context.Background()
+
+	// The agent read the document, so it can name the fields directly; no model
+	// call is needed and the merge must keep every untouched field.
+	result, summary, err := handler.executeUpdateDocument(ctx, owner, map[string]any{
+		"id":          documentID,
+		"instruction": "改交期与联系人",
+		"values":      map[string]any{"delivery_time": "35 天", "customer_contact": "李经理"},
+		"items": []any{
+			map[string]any{"model": "DN50-BV", "description": "DN50 球阀", "qty": "10", "price": "1280.00", "amount": "12800.00"},
+			map[string]any{"model": "TD42", "qty": "5", "price": "380", "amount": "1900"},
+		},
+	}, mailstore.AIModelRecord{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, ok := result.(*AIDocumentAction)
+	if !ok || action.Kind != "update" {
+		t.Fatalf("action = %#v", result)
+	}
+	if action.Values["delivery_time"] != "35 天" || action.Values["customer_contact"] != "李经理" {
+		t.Fatalf("values = %#v", action.Values)
+	}
+	// Untouched fields survive the merge.
+	if action.Values["buyer_company"] != "上海宝钢" || action.Values["quote_number"] != "SQ-202610" {
+		t.Fatalf("merge dropped fields: %#v", action.Values)
+	}
+	if len(action.Items) != 2 || action.Items[1].Model != "TD42" || action.Items[1].Qty != "5" {
+		t.Fatalf("items = %#v", action.Items)
+	}
+	if !strings.Contains(action.Summary, "delivery_time") || !strings.Contains(summary, "修改方案") {
+		t.Fatalf("summary = %q / %q", action.Summary, summary)
+	}
+	// The proposal alone must not touch the stored document.
+	record, err := db.GetDocument(ctx, owner, documentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(record.HTML, "35 天") {
+		t.Fatal("proposal wrote to the document")
+	}
+}

@@ -7,10 +7,12 @@ import (
 	"errors"
 	stdhtml "html"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -303,6 +305,43 @@ func TestOutboxImportNeverSendsAndOwnerIsolation(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 409 {
 		t.Fatal("retry discarded missing attachments")
+	}
+}
+
+func TestOutgoingAttachmentInlinePreviewDisposition(t *testing.T) {
+	_, app, _, _ := outboxTestApp(t)
+	id := submitOutbox(t, app, "/api/compose", nil, true)
+
+	// The regular attachment renders inline only when preview is requested; an
+	// embedded (CID) part is always inline.
+	seen := map[string]bool{}
+	for index := 0; index < 6; index++ {
+		for _, request := range []struct{ query, want string }{{"", "attachment"}, {"?inline=true", "inline"}} {
+			response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/outbox/"+id+"/attachments/"+strconv.Itoa(index)+request.query, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			if response.StatusCode == http.StatusNotFound {
+				continue
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("attachment %d%s: %d", index, request.query, response.StatusCode)
+			}
+			disposition, _, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+			if err != nil {
+				t.Fatalf("attachment %d%s: %v", index, request.query, err)
+			}
+			if disposition == "inline" {
+				seen["inline"] = true
+			}
+			if request.query == "?inline=true" && disposition != "inline" {
+				t.Fatalf("preview request served as %q for part %d", disposition, index)
+			}
+		}
+	}
+	if !seen["inline"] {
+		t.Fatal("no part was served inline")
 	}
 }
 

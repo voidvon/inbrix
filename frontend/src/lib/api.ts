@@ -563,10 +563,23 @@ export type AIAgentChatRequest = {
   };
 };
 
+/** A saved-document change the agent proposes and the user confirms. */
+export type AIAgentDocumentAction = {
+  kind: "update" | "delete";
+  documentId: string;
+  type?: "quotation" | "contract";
+  name?: string;
+  company?: string;
+  values?: Record<string, string>;
+  items?: QuotationItem[];
+  summary?: string;
+};
+
 export type AIAgentChatResponse = {
   content: string;
   toolCalls: AIToolCall[];
   document?: AIAgentDocumentCard;
+  documentAction?: AIAgentDocumentAction;
 };
 
 export function chatWithAIAgent(payload: AIAgentChatRequest) {

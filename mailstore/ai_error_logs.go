@@ -47,7 +47,12 @@ func (s *Store) RecordAIError(ctx context.Context, record AIErrorLogRecord) erro
 		return fmt.Errorf("mailstore: record AI error log: %w", err)
 	}
 
+	// Trimming runs in the background so logging stays cheap, but it still holds
+	// the database: Close waits for it, otherwise the pool can be torn down (and
+	// a test's temporary directory removed) while this write is in flight.
+	s.background.Add(1)
 	go func() {
+		defer s.background.Done()
 		_ = s.cleanupOldAIErrorLogs(context.Background(), ownerID, 500)
 	}()
 

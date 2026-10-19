@@ -95,12 +95,42 @@ export type ConversationAIToolCall = {
   status?: "success" | "error";
 };
 
+/** A quotation/contract the conversation agent drafted, awaiting the user's save. */
+export type ConversationAIDocumentDraft = {
+  type: "quotation" | "contract";
+  title: string;
+  counterparty: string;
+  contact?: string;
+  currency?: string;
+  items?: Array<{ model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  terms?: string[];
+  notes?: string;
+  total?: string;
+  values?: Record<string, string>;
+  html?: string;
+};
+
+export type ConversationAIDocumentAction = {
+  kind: "update" | "delete";
+  documentId: string;
+  type?: "quotation" | "contract";
+  name?: string;
+  company?: string;
+  values?: Record<string, string>;
+  items?: Array<{ model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  summary?: string;
+};
+
 export type ConversationAIChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
   toolCalls?: ConversationAIToolCall[];
+  /** Set when the agent drafted a document to save. */
+  document?: ConversationAIDocumentDraft;
+  /** Set when the agent proposed changing a saved document. */
+  documentAction?: ConversationAIDocumentAction;
 };
 
 export type ConversationDetail = {

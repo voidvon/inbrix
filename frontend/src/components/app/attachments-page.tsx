@@ -19,6 +19,7 @@ import { cn, formatSize, formatTime, paginationPageItems, useDebouncedValue } fr
 import type { MailAttachment } from "../../types";
 import { useShell } from "./shell-context";
 import { EmptyState, ErrorState, ListSkeleton } from "./common-states";
+import { AttachmentPreviewDialog } from "./attachment-preview";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -54,11 +55,23 @@ export function attachmentMessageURL(attachment: MailAttachment) {
   return `/folder/${encodeURIComponent(attachment.folder)}?message=${encodeURIComponent(attachment.messageId)}`;
 }
 
+export function attachmentPreviewTarget(attachment: MailAttachment) {
+  return {
+    id: attachment.id,
+    filename: attachment.filename,
+    contentType: attachment.contentType,
+    size: attachment.size,
+    previewURL: attachmentDownloadURL(attachment, true),
+    downloadURL: attachmentDownloadURL(attachment),
+  };
+}
+
 export function AttachmentsPage() {
   const { copy: locale, openMobileMenu } = useShell();
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState<AttachmentKind>("all");
   const [offset, setOffset] = useState(0);
+  const [preview, setPreview] = useState<MailAttachment | null>(null);
   const debouncedSearch = useDebouncedValue(search, 250);
   const attachments = useQuery({
     queryKey: ["attachments", debouncedSearch, kind, offset],
@@ -157,9 +170,9 @@ export function AttachmentsPage() {
                         <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
                           <Icon className="size-4" />
                         </span>
-                        <strong className="min-w-0 truncate text-sm font-medium" title={attachment.filename}>
+                        <button type="button" className="min-w-0 cursor-pointer truncate text-left text-sm font-medium hover:underline" onClick={() => setPreview(attachment)} title={attachment.filename} data-testid="attachment-preview-name">
                           {attachment.filename || locale.noSubject}
-                        </strong>
+                        </button>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -178,7 +191,7 @@ export function AttachmentsPage() {
                     </TableCell>
                     <TableCell className="pr-5">
                       <div className="flex items-center justify-end gap-0.5">
-                        <Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment, true)} target="_blank" rel="noreferrer" aria-label={locale.previewAttachment} title={locale.previewAttachment} />} variant="ghost" size="icon" className="size-8">
+                        <Button variant="ghost" size="icon" className="size-8" onClick={() => setPreview(attachment)} aria-label={locale.previewAttachment} title={locale.previewAttachment} data-testid="attachment-preview-button">
                           <Eye />
                         </Button>
                         <Button nativeButton={false} render={<a href={attachmentDownloadURL(attachment)} aria-label={locale.downloadAttachment} title={locale.downloadAttachment} />} variant="ghost" size="icon" className="size-8">
@@ -243,6 +256,7 @@ export function AttachmentsPage() {
           </Pagination>
         </footer>
       )}
+      <AttachmentPreviewDialog copy={locale} target={preview ? attachmentPreviewTarget(preview) : null} onOpenChange={(open) => { if (!open) setPreview(null); }} />
     </main>
   );
 }

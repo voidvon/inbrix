@@ -317,8 +317,10 @@ func (h *EmailHandler) HandleOutgoingAttachment(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "private, no-store")
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Content-Type", file.ContentType)
+	// Inline rendering is required for in-browser preview of an outgoing
+	// attachment; embedded (CID) parts are always inline.
 	disposition := "attachment"
-	if file.IsInline {
+	if file.IsInline || c.QueryBool("inline", false) {
 		disposition = "inline"
 	}
 	c.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": file.Filename}))

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +71,23 @@ type AIAgentChatResponse struct {
 	Content   string          `json:"content"`
 	ToolCalls []AIToolCall    `json:"toolCalls,omitempty"`
 	Document  *AIDocumentCard `json:"document,omitempty"`
+	// DocumentAction is a change to a stored document that the user confirms in
+	// the UI. The agent never deletes or overwrites a saved document itself.
+	DocumentAction *AIDocumentAction `json:"documentAction,omitempty"`
+}
+
+// AIDocumentAction is a proposed update or deletion of a stored quotation or
+// contract. Values and Items are the complete field set to write, so applying it
+// is deterministic and reviewable.
+type AIDocumentAction struct {
+	Kind       string            `json:"kind"` // "update" | "delete"
+	DocumentID string            `json:"documentId"`
+	Type       string            `json:"type,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Company    string            `json:"company,omitempty"`
+	Values     map[string]string `json:"values,omitempty"`
+	Items      []AIDocumentItem  `json:"items,omitempty"`
+	Summary    string            `json:"summary,omitempty"`
 }
 
 var (
@@ -165,6 +183,7 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	// 4. Run Agent Execution Loop (up to 5 rounds of tool calling)
 	executedToolCalls := make([]AIToolCall, 0)
 	var generatedDocument *AIDocumentCard
+	var documentAction *AIDocumentAction
 
 	historyPrompt := buildConversationTranscript(input.Messages)
 	currentTurnInput := historyPrompt
@@ -213,7 +232,7 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		// Execute all parsed tool calls in this turn
 		for _, call := range calls {
 			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-			result, summary, err := h.executeTool(c.UserContext(), owner, account.ID, call)
+			result, summary, err := h.executeTool(c.UserContext(), owner, account.ID, call, model, apiKey)
 			if err != nil {
 				call.Status = "error"
 				call.Result = map[string]string{"error": err.Error()}
@@ -227,6 +246,12 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 			if call.Name == "generate_document" && call.Status == "success" {
 				if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
 					generatedDocument = doc
+				}
+			}
+
+			if call.Status == "success" {
+				if action, ok := result.(*AIDocumentAction); ok && action != nil {
+					documentAction = action
 				}
 			}
 
@@ -267,9 +292,10 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(AIAgentChatResponse{
-		Content:   strings.TrimSpace(cleanedContent),
-		ToolCalls: executedToolCalls,
-		Document:  generatedDocument,
+		Content:        strings.TrimSpace(cleanedContent),
+		ToolCalls:      executedToolCalls,
+		Document:       generatedDocument,
+		DocumentAction: documentAction,
 	})
 }
 
@@ -332,7 +358,28 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
      "notes": "remarks or invoice notes"
    }
 
-5. lookup_price:
+5. list_documents:
+   Find the user's saved quotations and contracts (by name, customer, or type). Call this before reading, updating, or deleting a document, so you use a real document id.
+   Arguments schema: {"type": "quotation" | "contract" (optional), "query": "name or customer keyword" (optional)}
+
+6. read_document:
+   Read one saved document's structured fields (customer, amounts, terms) and line items.
+   Arguments schema: {"id": "document id from list_documents"}
+
+7. update_document:
+   Propose a change to a saved document. This only proposes: the user confirms it in the UI. Read the document first with read_document, then send the fields you are changing as values; send items only when the product lines change. Include just the fields you change, and give concrete values.
+   Arguments schema: {
+     "id": "document id",
+     "instruction": "one-line description of the change, shown to the user",
+     "values": {"delivery_time": "35 天", "customer_contact": "李经理", "notes": "含运费"},
+     "items": [{"model": "...", "description": "...", "qty": "...", "price": "...", "amount": "..."}]
+   }
+
+8. delete_document:
+   Propose deleting a saved document. This only proposes: the user confirms it in the UI.
+   Arguments schema: {"id": "document id"}
+
+9. lookup_price:
    Look up the user's own price list for authoritative product prices, units, currencies, tax rates, minimum order quantities, and lead times.
    Arguments schema: {"query": "model / SKU / product name keywords", "qty": 10}
    Returns: [{"sku", "name", "unit", "currency", "unit_price", "price_text", "tax_rate", "moq", "lead_time", "list_name"}]
@@ -348,6 +395,14 @@ WHEN TO LOOK UP PRICES:
 - Any question about price, cost, quote, quotation, discount, lead time, MOQ, or availability.
 - Whenever the user asks you to draft a reply, an offer, or a quotation that will contain numbers, even if they did not say the word "price".
 - Before quoting, check the email thread for model numbers or product names and look those up; the mailbox context is where the customer's request lives.
+
+DOCUMENT RULES (QUOTATIONS & CONTRACTS):
+- The user's saved quotations and contracts live in the document library. Use list_documents to find one and read_document to see its current fields and line items.
+- generate_document produces a draft card that the user saves. To change an ALREADY SAVED document, call update_document with its id and a concrete instruction; never regenerate the document and call it an update.
+- update_document and delete_document only PROPOSE the change: the user confirms it in the UI. After calling one, tell the user exactly what you proposed and that they need to confirm it. Never claim a document was changed or deleted by you.
+- Read a document before updating it when you are not certain of its current values, and put concrete values (names, quantities, prices, dates, terms) in the instruction.
+- Deleting is irreversible and needs the user's explicit intent. If the request is ambiguous, ask which document first.
+- Every number written into a quotation or contract follows the pricing rules below.
 
 TOOL CALLING PROTOCOL:
 If you need to query emails, read email details, calculate pricing, or draft a document, output one or more tool call code fences like:
@@ -583,7 +638,7 @@ func parseStringArg(args map[string]any, keys ...string) string {
 	return ""
 }
 
-func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall) (any, string, error) {
+func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
 	switch call.Name {
 	case "search_emails":
 		query := parseStringArg(call.Args, "query", "q", "keyword", "keywords")
@@ -596,6 +651,18 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 
 	case "lookup_price":
 		return h.executeLookupPrice(ctx, owner, call.Args)
+
+	case "list_documents":
+		return h.executeListDocuments(ctx, owner, call.Args)
+
+	case "read_document":
+		return h.executeReadDocument(ctx, owner, call.Args)
+
+	case "update_document":
+		return h.executeUpdateDocument(ctx, owner, call.Args, model, apiKey)
+
+	case "delete_document":
+		return h.executeDeleteDocument(ctx, owner, call.Args)
 
 	case "calculate_pricing":
 		return executeCalculatePricing(call.Args)
@@ -750,6 +817,259 @@ func formatPriceContext(entries []mailstore.PriceLookupEntry) string {
 		sb.WriteString("- " + strings.Join(parts, "；") + "\n")
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+// aiDocumentSummary is one entry in the agent's document list.
+type aiDocumentSummary struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Name      string `json:"name"`
+	Company   string `json:"company,omitempty"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// maxDocumentReadChars bounds how much of a document body is handed to the
+// model. Canvas payloads are mostly layout; the structured fields are what
+// matters, so a truncated read is still useful.
+const maxDocumentReadChars = 20000
+
+func parseDocumentIDArg(args map[string]any) string {
+	return parseStringArg(args, "id", "documentId", "document_id", "doc_id", "uid")
+}
+
+// parseStringMapArg reads a flat object argument such as {"delivery_time": "35 天"}.
+func parseStringMapArg(args map[string]any, keys ...string) map[string]string {
+	for _, key := range keys {
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		object, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		out := make(map[string]string, len(object))
+		for field, value := range object {
+			field = strings.TrimSpace(field)
+			if field == "" || value == nil {
+				continue
+			}
+			text := strings.TrimSpace(fmt.Sprintf("%v", value))
+			if text != "" {
+				out[field] = text
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
+// parseItemsArg reads a line-item array argument.
+func parseItemsArg(args map[string]any, keys ...string) []AIDocumentItem {
+	for _, key := range keys {
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		list, ok := raw.([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		items := make([]AIDocumentItem, 0, len(list))
+		for _, entry := range list {
+			object, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			text := func(fields ...string) string {
+				for _, field := range fields {
+					if value, ok := object[field]; ok && value != nil {
+						if trimmed := strings.TrimSpace(fmt.Sprintf("%v", value)); trimmed != "" {
+							return trimmed
+						}
+					}
+				}
+				return ""
+			}
+			item := AIDocumentItem{
+				Model:       text("model", "sku", "name"),
+				Description: text("description", "desc", "item"),
+				Qty:         text("qty", "quantity"),
+				Price:       text("price", "unit_price", "unitPrice"),
+				Amount:      text("amount", "total"),
+			}
+			if !itemIsEmpty(item) {
+				items = append(items, item)
+			}
+		}
+		if len(items) > 0 {
+			return items
+		}
+	}
+	return nil
+}
+
+// executeListDocuments finds stored quotations/contracts by name or customer.
+func (h *AISettingsHandler) executeListDocuments(ctx context.Context, owner string, args map[string]any) (any, string, error) {
+	docType := strings.ToLower(parseStringArg(args, "type", "documentType", "document_type"))
+	if docType != "quotation" && docType != "contract" {
+		docType = ""
+	}
+	query := strings.ToLower(strings.TrimSpace(parseStringArg(args, "query", "q", "keyword", "name", "company")))
+	records, err := h.mailDB.ListDocuments(ctx, owner, docType)
+	if err != nil {
+		return fmt.Sprintf("读取文档列表出错: %v", err), "读取文档列表出错", nil
+	}
+	list := make([]aiDocumentSummary, 0, len(records))
+	for _, record := range records {
+		if query != "" && !strings.Contains(strings.ToLower(record.Name), query) && !strings.Contains(strings.ToLower(record.Company), query) {
+			continue
+		}
+		list = append(list, aiDocumentSummary{
+			ID: record.ID, Type: record.Type, Name: record.Name, Company: record.Company,
+			UpdatedAt: record.UpdatedAt.Format("2006-01-02 15:04"),
+		})
+		if len(list) >= 20 {
+			break
+		}
+	}
+	if len(list) == 0 {
+		return "没有找到匹配的报价单或合同。", "未找到匹配文档", nil
+	}
+	return list, fmt.Sprintf("找到 %d 份文档", len(list)), nil
+}
+
+// executeReadDocument returns a document's structured fields and line items so
+// the agent can reason about its content before changing it.
+func (h *AISettingsHandler) executeReadDocument(ctx context.Context, owner string, args map[string]any) (any, string, error) {
+	id := parseDocumentIDArg(args)
+	if id == "" {
+		return "缺少文档 id。请先调用 list_documents 获取。", "缺少文档 id", nil
+	}
+	record, err := h.mailDB.GetDocument(ctx, owner, id)
+	if err != nil || record == nil {
+		return "未找到该文档，可能已被删除。", "未找到文档", nil
+	}
+	values, items, ok := canvasDocumentContent(record.HTML)
+	payload := map[string]any{
+		"id": record.ID, "type": record.Type, "name": record.Name, "company": record.Company,
+		"updated_at": record.UpdatedAt.Format("2006-01-02 15:04"),
+	}
+	if ok {
+		payload["fields"] = values
+		payload["items"] = items
+	} else {
+		payload["fields"] = map[string]string{}
+		payload["items"] = []AIDocumentItem{}
+		payload["note"] = "该文档不是结构化模板文档，无法按字段读取或修改。"
+	}
+	return payload, fmt.Sprintf("已读取文档《%s》", record.Name), nil
+}
+
+// executeUpdateDocument turns an instruction into concrete field/item changes on
+// a stored document. It proposes the change; the user applies it in the UI.
+func (h *AISettingsHandler) executeUpdateDocument(ctx context.Context, owner string, args map[string]any, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
+	id := parseDocumentIDArg(args)
+	if id == "" {
+		return "缺少文档 id。请先调用 list_documents 获取。", "缺少文档 id", nil
+	}
+	instruction := strings.TrimSpace(parseStringArg(args, "instruction", "change", "request", "content"))
+	explicitValues := parseStringMapArg(args, "values", "fields", "updates", "changes")
+	explicitItems := parseItemsArg(args, "items", "line_items", "lineItems")
+	if instruction == "" && len(explicitValues) == 0 && len(explicitItems) == 0 {
+		return "缺少修改要求：请给出 instruction，或直接给出要改的 values / items。", "缺少修改要求", nil
+	}
+	record, err := h.mailDB.GetDocument(ctx, owner, id)
+	if err != nil || record == nil {
+		return "未找到该文档，可能已被删除。", "未找到文档", nil
+	}
+	values, items, ok := canvasDocumentContent(record.HTML)
+	if !ok {
+		return "该文档不是结构化模板文档，无法安全地按字段修改。请在「报价单与合同」页面用编辑器直接修改。", "文档不支持结构化修改", nil
+	}
+	// The agent usually knows the exact fields (it read the document first), so an
+	// explicit update is applied directly. Only when it sends a bare instruction
+	// does the server ask a model to resolve it into fields.
+	updates, updatedItems := explicitValues, explicitItems
+	if len(updates) == 0 && len(updatedItems) == 0 {
+		// Resolving a bare instruction needs a model; explicit fields do not.
+		if model.ID == "" || apiKey == "" {
+			return "请直接给出要修改的字段（values），当前没有可用的 AI 模型来解析自然语言要求。", "缺少 AI 模型", nil
+		}
+		variables := make([]aiVariableItem, 0, len(values))
+		for _, key := range documentValueKeys(values) {
+			variables = append(variables, aiVariableItem{ConceptID: key, Label: key, CurrentValue: values[key]})
+		}
+		instructions, prompt := buildDocumentVariablesPrompt(aiDocumentInput{
+			DocumentType: record.Type,
+			Title:        record.Name,
+			Instruction:  instruction,
+			CurrentHTML:  record.HTML,
+			Variables:    variables,
+		})
+		body, err := h.createAIResponseWithInstructions(ctx, model, apiKey, instructions, prompt, 4096)
+		if err != nil {
+			return fmt.Sprintf("解析修改要求出错: %v", err), "解析修改要求出错", nil
+		}
+		resolved, resolvedItems, err := parseAIDocumentUpdateResponse(body)
+		if err != nil {
+			return fmt.Sprintf("模型返回的修改内容无法解析: %v", err), "修改内容无法解析", nil
+		}
+		updates, updatedItems = resolved, resolvedItems
+	}
+	changed := make([]string, 0, len(updates))
+	merged := make(map[string]string, len(values)+len(updates))
+	for key, value := range values {
+		merged[key] = value
+	}
+	for key, value := range updates {
+		if strings.TrimSpace(merged[key]) != strings.TrimSpace(value) {
+			changed = append(changed, key)
+		}
+		merged[key] = value
+	}
+	sort.Strings(changed)
+	if len(updatedItems) > 0 {
+		items = updatedItems
+		changed = append(changed, fmt.Sprintf("items(%d)", len(updatedItems)))
+	}
+	if len(changed) == 0 {
+		return fmt.Sprintf("根据要求没有解析出任何变更，请把修改内容说得更具体一些。"), "没有解析出变更", nil
+	}
+	action := &AIDocumentAction{
+		Kind:       "update",
+		DocumentID: record.ID,
+		Type:       record.Type,
+		Name:       record.Name,
+		Company:    record.Company,
+		Values:     merged,
+		Items:      items,
+		Summary:    "将修改：" + strings.Join(changed, ", "),
+	}
+	return action, fmt.Sprintf("已生成《%s》的修改方案（%d 处）", record.Name, len(changed)), nil
+}
+
+// executeDeleteDocument proposes removing a document; the user confirms it.
+func (h *AISettingsHandler) executeDeleteDocument(ctx context.Context, owner string, args map[string]any) (any, string, error) {
+	id := parseDocumentIDArg(args)
+	if id == "" {
+		return "缺少文档 id。请先调用 list_documents 获取。", "缺少文档 id", nil
+	}
+	record, err := h.mailDB.GetDocument(ctx, owner, id)
+	if err != nil || record == nil {
+		return "未找到该文档，可能已被删除。", "未找到文档", nil
+	}
+	action := &AIDocumentAction{
+		Kind:       "delete",
+		DocumentID: record.ID,
+		Type:       record.Type,
+		Name:       record.Name,
+		Company:    record.Company,
+		Summary:    fmt.Sprintf("将删除《%s》", record.Name),
+	}
+	return action, fmt.Sprintf("等待确认删除《%s》", record.Name), nil
 }
 
 // aiPriceHit is one authoritative price handed to the model by lookup_price.

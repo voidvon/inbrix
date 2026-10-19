@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
+import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachmentPreviewURL, type AttachmentPreviewTarget } from "./attachment-preview";
 import { MailSearchResults, type MailSearchState } from "./mail-search-results";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
@@ -892,6 +893,26 @@ export function SuggestedReplyBubble({
   );
 }
 
+/** Resolve the inline preview and download URLs for a conversation attachment. */
+function conversationAttachmentPreviewTarget(
+  attachment: { id: string; filename: string; contentType?: string; size?: number },
+  folder: string | undefined,
+  accountEmail: string | undefined,
+): AttachmentPreviewTarget {
+  if (folder === "Outbox") {
+    const downloadURL = outgoingAttachmentURL(attachment.id);
+    return { id: attachment.id, filename: attachment.filename, contentType: attachment.contentType, size: attachment.size, previewURL: `${downloadURL}?inline=true`, downloadURL };
+  }
+  return {
+    id: attachment.id,
+    filename: attachment.filename,
+    contentType: attachment.contentType,
+    size: attachment.size,
+    previewURL: mirroredAttachmentPreviewURL(attachment.id, accountEmail),
+    downloadURL: mirroredAttachmentDownloadURL(attachment.id, accountEmail),
+  };
+}
+
 function CopyMessageMenuItem({ copy, message }: { copy: Copy; message: { html?: string; body?: string; preview?: string } }) {
   const copyAll = async () => {
     const text = message.html ? htmlToPlainText(message.html) : message.body || message.preview || "";
@@ -945,6 +966,7 @@ export function MessageBubble({
   highlighted?: boolean;
 }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
+  const [preview, setPreview] = useState<AttachmentPreviewTarget | null>(null);
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
   const visibleText = split.visible || (split.quoted ? copy.quotedOnly : copy.noBody);
   const outgoing = message.outgoing;
@@ -955,6 +977,7 @@ export function MessageBubble({
   const formattedDate = formatTime(message.date);
 
   return (
+    <>
     <ContextMenu>
       <ContextMenuTrigger
         data-message-key={messageKeyOf(message)}
@@ -1025,18 +1048,23 @@ export function MessageBubble({
                 <>
                   <Separator className="my-2 opacity-50" />
                   <div className="grid gap-1.5">
-                    {message.attachments.map((attachment) => (
-                      <a
-                        className="flex min-w-0 items-center gap-1.5 text-xs text-primary"
-                        key={attachment.id}
-                        href={message.folder === "Outbox" ? (message.sendRetryable === false && message.sendStatus !== "sent" ? "#" : outgoingAttachmentURL(attachment.id)) : `/api/attachment/${encodeURIComponent(attachment.id)}?account_email=${encodeURIComponent(accountEmail || "")}`}
-                        onClick={message.folder === "Outbox" && message.sendRetryable === false && message.sendStatus !== "sent" ? (e) => e.preventDefault() : undefined}
-                      >
-                        <Paperclip className="size-3.5 shrink-0" />
-                        <span className="min-w-0 truncate">{attachment.filename}</span>
-                        <small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small>
-                      </a>
-                    ))}
+                    {message.attachments.map((attachment) => {
+                      const target = conversationAttachmentPreviewTarget(attachment, message.folder, accountEmail);
+                      const unavailable = message.folder === "Outbox" && message.sendRetryable === false && message.sendStatus !== "sent";
+                      return (
+                        <a
+                          className="flex min-w-0 cursor-pointer items-center gap-1.5 text-xs text-primary hover:underline"
+                          key={attachment.id}
+                          href={unavailable ? "#" : target.previewURL}
+                          data-testid="message-attachment"
+                          onClick={unavailable ? (event) => event.preventDefault() : (event) => { event.preventDefault(); setPreview(target); }}
+                        >
+                          <Paperclip className="size-3.5 shrink-0" />
+                          <span className="min-w-0 truncate">{attachment.filename}</span>
+                          <small className="shrink-0 text-muted-foreground">{formatSize(attachment.size)}</small>
+                        </a>
+                      );
+                    })}
                   </div>
                 </>
               ) : null}
@@ -1129,6 +1157,8 @@ export function MessageBubble({
         )}
       </ContextMenuContent>
     </ContextMenu>
+    <AttachmentPreviewDialog copy={copy} target={preview} onOpenChange={(open) => { if (!open) setPreview(null); }} />
+    </>
   );
 }
 
@@ -1782,7 +1812,9 @@ export function EmailHTMLFrame({
 
 export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [preview, setPreview] = useState<AttachmentPreviewTarget | null>(null);
   return (
+    <>
     <ContextMenu>
       <ContextMenuTrigger className="block select-text">
     <article ref={scrollRef} className="mx-auto min-w-0 max-w-4xl">
@@ -1800,17 +1832,22 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
           <>
             <Separator className="my-2 opacity-50" />
             <div className="grid gap-1.5">
-              {message.attachments.map((item) => (
-                <a
-                  className="flex min-w-0 items-center gap-1.5 text-xs text-primary"
-                  key={item.id || item.partId}
-                  href={`/api/attachment/${encodeURIComponent(item.id)}?account_email=${encodeURIComponent(message.accountEmail || "")}`}
-                >
-                  <Paperclip className="size-3.5 shrink-0" />
-                  <span className="truncate">{item.filename}</span>
-                  <small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small>
-                </a>
-              ))}
+              {message.attachments.map((item) => {
+                const target = conversationAttachmentPreviewTarget(item, message.folder, message.accountEmail);
+                return (
+                  <a
+                    className="flex min-w-0 cursor-pointer items-center gap-1.5 text-xs text-primary hover:underline"
+                    key={item.id || item.partId}
+                    href={target.previewURL}
+                    data-testid="message-attachment"
+                    onClick={(event) => { event.preventDefault(); setPreview(target); }}
+                  >
+                    <Paperclip className="size-3.5 shrink-0" />
+                    <span className="truncate">{item.filename}</span>
+                    <small className="shrink-0 text-muted-foreground">{formatSize(item.size)}</small>
+                  </a>
+                );
+              })}
             </div>
           </>
         ) : null}
@@ -1822,5 +1859,7 @@ export function MailDetail({ copy, message }: { copy: Copy; message: MailMessage
         <CopyMessageMenuItem copy={copy} message={message} />
       </ContextMenuContent>
     </ContextMenu>
+    <AttachmentPreviewDialog copy={copy} target={preview} onOpenChange={(open) => { if (!open) setPreview(null); }} />
+    </>
   );
 }
