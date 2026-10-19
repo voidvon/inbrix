@@ -490,6 +490,7 @@ func main() {
 		apiRoutes.Post("/update/check", updateHandler.HandleCheck)
 		apiRoutes.Get("/conversations", webEmailHandler.HandleConversationListJSON)
 		apiRoutes.Get("/conversations/search", webEmailHandler.HandleConversationListJSON)
+		apiRoutes.Get("/mail/search", webEmailHandler.HandleMailSearchJSON)
 		apiRoutes.Get("/conversations/:id", webEmailHandler.HandleConversationViewJSON)
 		apiRoutes.Get("/mail/folders", webEmailHandler.HandleLocalFoldersJSON)
 		apiRoutes.Get("/mail/messages", webEmailHandler.HandleLocalFolderMessagesJSON)

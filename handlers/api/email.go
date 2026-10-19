@@ -1217,6 +1217,14 @@ func decodeTransfer(r io.Reader, enc string) io.Reader {
 }
 
 // Simple HTML tag stripping
+// PlainTextFromHTML exposes the tag-free projection used for previews so other
+// packages can search and quote an HTML-only message with the same text the
+// reader sees. It is the plain-text form of an HTML body: styles, scripts,
+// comments, and entities are resolved away.
+func PlainTextFromHTML(markup string) string {
+	return stripHTML(markup)
+}
+
 // stripHTML reduces an HTML body to the text a preview snippet should show.
 // Beyond dropping tags it skips <style>/<script> contents — otherwise a preview
 // of a marketing mail is just its CSS reset ("#outlook a { padding:0; }") — then

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ApiError, getCapabilities, getConversations, signOut, switchAccount } from "../../lib/api";
 import { cn, isSentMailbox } from "../../lib/utils";
+import { APP_TITLE_NAME, mailDocumentTitle } from "../../lib/document-title";
 import { prefersDarkMode } from "../../lib/theme";
 import { folderKind, folderLabel } from "../../lib/mailbox";
 import { type Copy, useLocale } from "../../lib/locale";
@@ -218,6 +219,43 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   const copy = useLocale(shell.data?.locale);
 
+  let currentView: "mail" | "calendar" | "attachments" | "documents" = "mail";
+  let currentFolder: string | undefined = undefined;
+
+  if (path === "/documents" || path.startsWith("/documents/")) {
+    currentView = "documents";
+  } else if (path === "/attachments") {
+    currentView = "attachments";
+  } else if (path === "/calendar" || path === "/calendar/week") {
+    currentView = "calendar";
+  } else if (path.startsWith("/folder/")) {
+    currentView = "mail";
+    currentFolder = decodeURIComponent(path.slice("/folder/".length));
+  } else {
+    currentView = "mail";
+  }
+
+  const signedOut = shell.error instanceof ApiError && shell.error.status === 401;
+  const currentFolderMailbox = currentFolder ? (shell.data?.folders || []).find((folder) => folder.name === currentFolder) : undefined;
+  // The conversations view is inbox + sent, so its unread total is the number of
+  // unread incoming messages the list badges add up to.
+  const unreadMailCount = (shell.data?.conversations || []).reduce((total, conversation) => total + (conversation.unreadCount || 0), 0);
+  const viewLabel = (() => {
+    if (currentView === "documents") return copy.documents;
+    if (currentView === "attachments") return copy.attachmentManager;
+    if (currentView === "calendar") return copy.calendar;
+    if (currentFolder) return currentFolderMailbox ? folderLabel(copy, currentFolderMailbox) : currentFolder;
+    return copy.conversations;
+  })();
+  const viewUnreadCount = currentFolder ? currentFolderMailbox?.unreadCount || 0 : currentView === "mail" ? unreadMailCount : 0;
+  const tabTitle = signedOut ? APP_TITLE_NAME : mailDocumentTitle(viewLabel, viewUnreadCount, shell.data?.accountEmail);
+
+  // Unread mail is visible from the tab strip even while another view is open,
+  // which is what the title badge is for.
+  useEffect(() => {
+    document.title = tabTitle;
+  }, [tabTitle]);
+
   const openCompose = (defaults: ComposeDefaults = { to: "", subject: "" }) => {
     setComposeDefaults(defaults);
     setComposeOpen(true);
@@ -233,24 +271,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     setSidebarOpen(true);
   };
 
-  if (shell.error instanceof ApiError && shell.error.status === 401) {
+  if (signedOut) {
     return <LoginScreen copy={copy} />;
-  }
-
-  let currentView: "mail" | "calendar" | "attachments" | "documents" = "mail";
-  let currentFolder: string | undefined = undefined;
-
-  if (path === "/documents" || path.startsWith("/documents/")) {
-    currentView = "documents";
-  } else if (path === "/attachments") {
-    currentView = "attachments";
-  } else if (path === "/calendar" || path === "/calendar/week") {
-    currentView = "calendar";
-  } else if (path.startsWith("/folder/")) {
-    currentView = "mail";
-    currentFolder = decodeURIComponent(path.slice("/folder/".length));
-  } else {
-    currentView = "mail";
   }
 
   const contextValue: ShellContextType = {

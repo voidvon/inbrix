@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
+import { MailSearchResults, type MailSearchState } from "./mail-search-results";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
@@ -80,6 +81,7 @@ export function ConversationList({
   onRefresh,
   desktopWidth,
   className,
+  searchState,
 }: {
   copy: Copy;
   data?: ConversationListResponse;
@@ -95,9 +97,12 @@ export function ConversationList({
   onRefresh: () => void;
   desktopWidth?: number;
   className?: string;
+  /** When set, a non-empty search box renders message-level results instead of conversations. */
+  searchState?: MailSearchState;
 }) {
   const rows = data?.conversations || [];
   const hasData = Boolean(data);
+  const searching = Boolean(search.trim()) && Boolean(searchState);
 
   return (
     <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
@@ -114,7 +119,7 @@ export function ConversationList({
               className="h-9 bg-muted/60 pl-9 pr-9"
               value={search}
               onChange={(event) => onSearch(event.target.value)}
-              placeholder={copy.search}
+              placeholder={copy.searchHint}
               aria-label={copy.search}
             />
             {search && (
@@ -126,21 +131,27 @@ export function ConversationList({
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
-        {!hasData && (loading || !error) && <ListSkeleton />}
-        {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
-        {hasData && rows.length === 0 && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
-        {hasData &&
-          rows.map((conversation) => (
-            <ConversationRow
-              key={conversation.id}
-              copy={copy}
-              conversation={conversation}
-              selected={conversation.id === selectedId}
-              onClick={() => onSelect(conversation.id)}
-              onMarkUnread={() => onMarkUnread(conversation)}
-              onDelete={() => onDelete(conversation)}
-            />
-          ))}
+        {searching && searchState ? (
+          <MailSearchResults copy={copy} state={searchState} />
+        ) : (
+          <>
+            {!hasData && (loading || !error) && <ListSkeleton />}
+            {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
+            {hasData && rows.length === 0 && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
+            {hasData &&
+              rows.map((conversation) => (
+                <ConversationRow
+                  key={conversation.id}
+                  copy={copy}
+                  conversation={conversation}
+                  selected={conversation.id === selectedId}
+                  onClick={() => onSelect(conversation.id)}
+                  onMarkUnread={() => onMarkUnread(conversation)}
+                  onDelete={() => onDelete(conversation)}
+                />
+              ))}
+          </>
+        )}
       </ScrollArea>
     </section>
   );
@@ -353,6 +364,7 @@ export function ChatPanel({
   onReEdit,
   onConversationEmpty,
   className,
+  focusTarget,
 }: {
   copy: Copy;
   detail?: ConversationDetail;
@@ -366,6 +378,8 @@ export function ChatPanel({
   onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
   className?: string;
+  /** Message to scroll to and highlight once the conversation is on screen. */
+  focusTarget?: MailFocusTarget | null;
 }) {
   const panelClass = cn("min-w-0 flex-1 flex-col bg-surface", className);
   if (loading && !detail)
@@ -391,6 +405,7 @@ export function ChatPanel({
       copy={copy}
       detail={detail}
       className={className}
+      focusTarget={focusTarget}
       onBack={onBack}
       onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
       onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
@@ -400,6 +415,16 @@ export function ChatPanel({
       onConversationEmpty={onConversationEmpty}
     />
   );
+}
+
+/** A message a conversation should open at, e.g. a full-text search hit. */
+export type MailFocusTarget = { folder: string; id: string };
+
+/** How long a jumped-to message stays highlighted. */
+const MESSAGE_HIGHLIGHT_MS = 3000;
+
+export function messageKeyOf(message: { folder?: string; id: string }) {
+  return `${message.folder || "INBOX"}\u0000${message.id}`;
 }
 
 export function ChatView({
@@ -413,6 +438,7 @@ export function ChatView({
   onReEdit,
   onConversationEmpty,
   className,
+  focusTarget,
 }: {
   copy: Copy;
   detail: ConversationDetail;
@@ -424,6 +450,7 @@ export function ChatView({
   onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
   className?: string;
+  focusTarget?: MailFocusTarget | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -432,7 +459,13 @@ export function ChatView({
   const [deleteError, setDeleteError] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const [focusedMessageIds, setFocusedMessageIds] = useState<string[]>([]);
+  const [highlightedMessageKey, setHighlightedMessageKey] = useState<string | null>(null);
   const [aiPanelWidth, setAiPanelWidth] = usePersistedPaneWidth("inbrix-ai-chat-panel-width", 384, 300, 800);
+  const focusKey = focusTarget ? messageKeyOf(focusTarget) : null;
+  // While a search hit is focused, the transcript must not keep snapping to the
+  // newest message: the reader asked to land on a specific one.
+  const focusActiveRef = useRef(Boolean(focusKey));
+  focusActiveRef.current = Boolean(focusKey);
 
   useEffect(() => {
     setFocusedMessageIds([]);
@@ -511,20 +544,47 @@ export function ChatView({
       stickToBottom.current = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
     };
     const keepLatestVisible = () => {
-      if (stickToBottom.current) jumpToLatest();
+      if (stickToBottom.current && !focusActiveRef.current) jumpToLatest();
     };
 
     scroll.addEventListener("scroll", updateStickiness, { passive: true });
     const resizeObserver = new ResizeObserver(keepLatestVisible);
-    jumpToLatest();
+    if (!focusActiveRef.current) jumpToLatest();
     resizeObserver.observe(content);
-    const frame = window.requestAnimationFrame(jumpToLatest);
+    const frame = window.requestAnimationFrame(() => {
+      if (!focusActiveRef.current) jumpToLatest();
+    });
     return () => {
       window.cancelAnimationFrame(frame);
       scroll.removeEventListener("scroll", updateStickiness);
       resizeObserver.disconnect();
     };
   }, [detail.id, detail.messages.length]);
+
+  // A search hit opens the conversation at the matching message. The bubble is
+  // looked up by key rather than a CSS selector so folder names containing
+  // quotes or NUL-adjacent characters cannot break the query.
+  useEffect(() => {
+    if (!focusKey) {
+      setHighlightedMessageKey(null);
+      return;
+    }
+    const content = contentRef.current;
+    if (!content) return;
+    const target = Array.from(content.querySelectorAll<HTMLElement>("[data-message-key]")).find(
+      (element) => element.dataset.messageKey === focusKey
+    );
+    if (!target) return;
+    setHighlightedMessageKey(focusKey);
+    const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    const timer = window.setTimeout(() => setHighlightedMessageKey(null), MESSAGE_HIGHLIGHT_MS);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [focusKey, detail.id, detail.messages.length]);
 
   return (
     <div className={cn("relative flex min-w-0 flex-1 overflow-hidden", className)}>
@@ -597,7 +657,7 @@ export function ChatView({
         <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8" viewportRef={scrollRef}>
           <div ref={contentRef}>
             {detail.messages.map((message, index) => {
-              const messageKey = `${message.folder || "INBOX"}\u0000${message.id}`;
+              const messageKey = messageKeyOf(message);
               const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
               return (
                 <Fragment key={messageKey}>
@@ -620,6 +680,7 @@ export function ChatView({
                     onReEdit={onReEdit && message.sendRetryable === false && (message.sendStatus === "failed" || message.sendStatus === "unknown") ? () => onReEdit(message) : undefined}
                     onAddToAIChat={() => handleAddToAIChat(message)}
                     isFocused={focusedMessageIds.includes(message.id)}
+                    highlighted={highlightedMessageKey === messageKey}
                   />
                   {!message.outgoing && suggestionTargetKey === messageKey ? (
                     <SuggestedReplyBubble
@@ -863,6 +924,7 @@ export function MessageBubble({
   onReEdit,
   onAddToAIChat,
   isFocused,
+  highlighted,
 }: {
   copy: Copy;
   message: ConversationMessage;
@@ -879,6 +941,8 @@ export function MessageBubble({
   onReEdit?: () => void;
   onAddToAIChat?: () => void;
   isFocused?: boolean;
+  /** Set when a search jump landed on this message. */
+  highlighted?: boolean;
 }) {
   const sender = message.outgoing ? copy.me : message.fromName || message.from || senderFallback || copy.conversations;
   const split = splitQuotedText(message.body || message.preview || copy.noBody);
@@ -892,7 +956,13 @@ export function MessageBubble({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger className="mb-5 block select-text">
+      <ContextMenuTrigger
+        data-message-key={messageKeyOf(message)}
+        className={cn(
+          "mb-5 block select-text rounded-lg transition-shadow",
+          highlighted && "ring-2 ring-amber-400/80 ring-offset-2 ring-offset-background"
+        )}
+      >
         <article>
           {isFocused && (
             <div className={cn("mb-1.5 flex items-center gap-1 text-[11px] font-medium text-primary", outgoing && "justify-end")}>

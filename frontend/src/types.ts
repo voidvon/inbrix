@@ -121,6 +121,35 @@ export type ConversationDetailResponse = {
   conversation: ConversationDetail;
 };
 
+/** One matching message from the full-text mail search. */
+export type MailSearchResult = {
+  conversationId: string;
+  messageId: string;
+  folder: string;
+  subject: string;
+  from: string;
+  fromName?: string;
+  to: string;
+  date: string;
+  snippet: string;
+  conversationTitle: string;
+  peerEmail?: string;
+  accountEmail?: string;
+  accountLabel?: string;
+  accountColor?: string;
+  outgoing: boolean;
+  matchedSubject: boolean;
+  matchedBody: boolean;
+};
+
+export type MailSearchResponse = {
+  query: string;
+  /** Normalized terms the server matched, used for highlighting. */
+  terms: string[];
+  results: MailSearchResult[];
+  hasMore: boolean;
+};
+
 export type MailMessage = Omit<ConversationMessage, "outgoing"> & {
   accountEmail?: string;
 };

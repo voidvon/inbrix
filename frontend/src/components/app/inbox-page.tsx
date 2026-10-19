@@ -10,6 +10,7 @@ import {
   markConversationRead,
   markConversationUnread,
   retryOutgoing,
+  searchMailMessages,
 } from "../../lib/api";
 import { en } from "../../lib/locale";
 import {
@@ -28,9 +29,10 @@ import type {
   ConversationListResponse,
   ConversationMessage,
   ConversationSummary,
+  MailSearchResult,
 } from "../../types";
 import { useShell } from "./shell-context";
-import { ChatPanel, ConversationList } from "./chat-view";
+import { ChatPanel, ConversationList, type MailFocusTarget } from "./chat-view";
 import { LoginScreen } from "./auth-screens";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -41,10 +43,29 @@ export function conversationIdFromURL() {
   return new URL(window.location.href).searchParams.get("conversation");
 }
 
-export function setConversationURL(id: string | null, mode: "push" | "replace" = "push") {
+/**
+ * The message a conversation should open at, taken from the URL so a search
+ * hit survives reloads and browser back/forward.
+ */
+export function messageTargetFromURL(): MailFocusTarget | null {
+  if (typeof window === "undefined") return null;
+  const params = new URL(window.location.href).searchParams;
+  const id = params.get("message");
+  if (!id) return null;
+  return { folder: params.get("messageFolder") || "INBOX", id };
+}
+
+export function setConversationURL(id: string | null, mode: "push" | "replace" = "push", target?: MailFocusTarget | null) {
   const url = new URL(window.location.href);
   if (id) url.searchParams.set("conversation", id);
   else url.searchParams.delete("conversation");
+  if (id && target) {
+    url.searchParams.set("message", target.id);
+    url.searchParams.set("messageFolder", target.folder || "INBOX");
+  } else {
+    url.searchParams.delete("message");
+    url.searchParams.delete("messageFolder");
+  }
   window.history[mode === "push" ? "pushState" : "replaceState"](window.history.state, "", url);
 }
 
@@ -53,6 +74,7 @@ export function InboxPage() {
   const { copy: locale, openMobileMenu, openCompose } = useShell();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(conversationIdFromURL);
+  const [messageTarget, setMessageTarget] = useState<MailFocusTarget | null>(messageTargetFromURL);
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
@@ -62,11 +84,13 @@ export function InboxPage() {
   const autoReadRef = useRef(new Set<string>());
   const manuallyUnreadRef = useRef(new Set<string>());
   const debouncedSearch = useDebouncedValue(search, 250);
+  const searchQuery = debouncedSearch.trim();
 
   useEffect(() => {
     const restoreConversationFromURL = () => {
       const id = conversationIdFromURL();
       setSelectedId(id);
+      setMessageTarget(messageTargetFromURL());
       setChatOpen(Boolean(id) || window.innerWidth > 1023);
     };
     window.addEventListener("popstate", restoreConversationFromURL);
@@ -74,9 +98,19 @@ export function InboxPage() {
   }, []);
 
   const conversations = useQuery({
-    queryKey: ["conversations", debouncedSearch],
-    queryFn: () => getConversations(debouncedSearch),
+    queryKey: ["conversations"],
+    queryFn: () => getConversations(),
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
+  });
+
+  // Full-text search runs against the local mirror and returns matching
+  // messages, so a result can be opened at its exact position in the thread.
+  const mailSearch = useQuery({
+    queryKey: ["mail-search", searchQuery],
+    queryFn: () => searchMailMessages(searchQuery),
+    enabled: searchQuery.length > 0,
     placeholderData: keepPreviousData,
     retry: 1,
   });
@@ -331,7 +365,17 @@ export function InboxPage() {
   const closeChat = () => {
     setChatOpen(false);
     setSelectedId(null);
+    setMessageTarget(null);
     setConversationURL(null, "replace");
+  };
+
+  const openSearchResult = (result: MailSearchResult) => {
+    manuallyUnreadRef.current.delete(result.conversationId);
+    const target = { folder: result.folder || "INBOX", id: result.messageId };
+    setSelectedId(result.conversationId);
+    setMessageTarget(target);
+    setChatOpen(true);
+    setConversationURL(result.conversationId, "push", target);
   };
 
   const authenticated = conversations.error instanceof ApiError && conversations.error.status === 401;
@@ -349,9 +393,21 @@ export function InboxPage() {
           loading={conversations.isPending}
           error={conversations.error}
           selectedId={selectedId}
+          searchState={searchQuery ? {
+            query: searchQuery,
+            terms: mailSearch.data?.terms || [],
+            results: mailSearch.data?.results || [],
+            hasMore: mailSearch.data?.hasMore || false,
+            loading: mailSearch.isFetching,
+            error: mailSearch.error,
+            selectedKey: selectedId && messageTarget ? `${selectedId}:${messageTarget.folder}:${messageTarget.id}` : undefined,
+            onSelect: openSearchResult,
+            onRetry: () => void mailSearch.refetch(),
+          } : undefined}
           onSelect={(id) => {
             manuallyUnreadRef.current.delete(id);
             setSelectedId(id);
+            setMessageTarget(null);
             setChatOpen(true);
             if (conversationIdFromURL() !== id) setConversationURL(id);
           }}
@@ -367,6 +423,7 @@ export function InboxPage() {
           detail={serverConversation}
           loading={detail.isPending && Boolean(selectedId)}
           error={detail.error}
+          focusTarget={messageTarget}
           onBack={closeChat}
           onReply={openReply}
           onReplyAll={openReplyAll}

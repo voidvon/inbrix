@@ -1,5 +1,5 @@
 import { getCookie } from "./utils";
-import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, Mailbox } from "../types";
+import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -63,6 +63,15 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 export function getConversations(query = "") {
   const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
   return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
+}
+
+/**
+ * Full-text search over the local mail mirror. Results are message-level so the
+ * client can open a conversation at the matching message.
+ */
+export function searchMailMessages(query: string, limit = 50) {
+  const params = new URLSearchParams({ q: query.trim(), limit: String(limit) });
+  return apiFetch<MailSearchResponse>(`/api/mail/search?${params.toString()}`);
 }
 
 export type UserRole = "user" | "super_admin";
