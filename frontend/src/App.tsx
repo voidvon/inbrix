@@ -6,6 +6,7 @@ import { InboxPage } from "./components/app/inbox-page";
 import { FolderPage } from "./components/app/folder-page";
 import { AttachmentsPage } from "./components/app/attachments-page";
 import { DocumentListPage } from "./components/app/document-list-page";
+import { PriceListPage } from "./components/app/price-list-page";
 import { CalendarPage } from "./components/app/calendar-page";
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
         url.pathname === "/ai-document" ||
         url.pathname === "/attachments" ||
         url.pathname === "/documents" ||
+        url.pathname === "/price-lists" ||
         url.pathname.startsWith("/documents/") ||
         url.pathname === "/calendar" ||
         url.pathname === "/calendar/week" ||
@@ -51,6 +53,8 @@ export function App() {
     content = <DocumentListPage />;
   } else if (path === "/attachments") {
     content = <AttachmentsPage />;
+  } else if (path === "/price-lists") {
+    content = <PriceListPage />;
   } else if (path === "/documents") {
     content = <DocumentListPage />;
   } else if (path === "/documents/new") {

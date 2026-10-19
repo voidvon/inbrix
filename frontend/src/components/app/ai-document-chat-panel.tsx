@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  Tags,
   ArrowLeft,
   BookmarkCheck,
   Bot,
@@ -539,9 +540,10 @@ export function AIDocumentChatPanel({
                           <div className="flex items-center gap-1.5">
                             {tc.name === "search_emails" && <Search className="size-3.5 text-blue-500" />}
                             {tc.name === "read_email" && <Mail className="size-3.5 text-amber-500" />}
+                            {tc.name === "lookup_price" && <Tags className="size-3.5 text-cyan-600" />}
                             {tc.name === "calculate_pricing" && <Calculator className="size-3.5 text-emerald-500" />}
                             {tc.name === "generate_document" && <FileSpreadsheet className="size-3.5 text-purple-500" />}
-                            {!["search_emails", "read_email", "calculate_pricing", "generate_document"].includes(tc.name) && (
+                            {!["search_emails", "read_email", "lookup_price", "calculate_pricing", "generate_document"].includes(tc.name) && (
                               <Wrench className="size-3.5 text-muted-foreground" />
                             )}
                             <span className="font-medium text-foreground">
@@ -549,6 +551,8 @@ export function AIDocumentChatPanel({
                                 ? (isZh ? "检索邮箱邮件" : "Search Emails")
                                 : tc.name === "read_email"
                                 ? (isZh ? "读取邮件正文" : "Read Email")
+                                : tc.name === "lookup_price"
+                                ? (isZh ? "查询价格表" : "Look Up Price")
                                 : tc.name === "calculate_pricing"
                                 ? (isZh ? "核算价格与税费" : "Calculate Pricing")
                                 : tc.name === "generate_document"

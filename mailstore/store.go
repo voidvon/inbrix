@@ -38,6 +38,11 @@ type Store struct {
 	db   *sql.DB
 	path string
 	mu   sync.Mutex
+	// priceMu serializes price-list writes. The price grid autosaves one cell at
+	// a time, so several small write transactions can arrive together; SQLite
+	// resolves overlapping read-then-write transactions with SQLITE_BUSY rather
+	// than by waiting, so they are queued here instead.
+	priceMu sync.Mutex
 }
 
 type User struct {
@@ -519,6 +524,44 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_doc_stamps_owner ON document_stamps(owner_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS price_lists (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_price_lists_owner ON price_lists(owner_id, updated_at DESC)`,
+		// Columns are user-defined: the shape of a price table lives in data, not
+		// in the schema, so a user can add or drop columns like a spreadsheet.
+		`CREATE TABLE IF NOT EXISTS price_list_columns (
+			id TEXT PRIMARY KEY,
+			list_id TEXT NOT NULL,
+			column_key TEXT NOT NULL,
+			label TEXT NOT NULL,
+			type TEXT NOT NULL DEFAULT 'text',
+			role TEXT NOT NULL DEFAULT '',
+			width INTEGER NOT NULL DEFAULT 160,
+			position INTEGER NOT NULL DEFAULT 0,
+			options_json TEXT NOT NULL DEFAULT '[]',
+			UNIQUE(list_id, column_key),
+			FOREIGN KEY(list_id) REFERENCES price_lists(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_price_columns_list ON price_list_columns(list_id, position)`,
+		`CREATE TABLE IF NOT EXISTS price_list_rows (
+			id TEXT PRIMARY KEY,
+			list_id TEXT NOT NULL,
+			position INTEGER NOT NULL DEFAULT 0,
+			data_json TEXT NOT NULL DEFAULT '{}',
+			search_text TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(list_id) REFERENCES price_lists(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_price_rows_list ON price_list_rows(list_id, position, id)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

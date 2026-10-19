@@ -257,6 +257,7 @@ func main() {
 		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
 	}
 	webDocumentsHandler := web.NewDocumentsHandler(store, mailMirror)
+	webPriceListHandler := web.NewPriceListHandler(store, mailMirror)
 	updateHandler := web.NewUpdateHandler(Version, func() error {
 		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 			return fmt.Errorf("automatic restart is unsupported on %s", runtime.GOOS)
@@ -330,7 +331,7 @@ func main() {
 
 	// React owns every browser page. The shell is public; data endpoints remain
 	// session-gated and return JSON when the user is not authenticated.
-	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/documents", "/settings", "/calendar", "/calendar/week"} {
+	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/documents", "/price-lists", "/settings", "/calendar", "/calendar/week"} {
 		app.Get(path, csrfMiddleware, serveSPA)
 	}
 	app.Get("/documents/*", csrfMiddleware, serveSPA)
@@ -534,6 +535,24 @@ func main() {
 		apiRoutes.Get("/document-stamps", webDocumentsHandler.HandleListStamps)
 		apiRoutes.Post("/document-stamps", webDocumentsHandler.HandleSaveStamp)
 		apiRoutes.Delete("/document-stamps/:id", webDocumentsHandler.HandleDeleteStamp)
+
+		// Price lists: user-defined spreadsheet tables that quotations and the
+		// AI tools price against. /lookup is registered before :id so the
+		// literal path wins.
+		apiRoutes.Get("/price-lists", webPriceListHandler.HandleListPriceLists)
+		apiRoutes.Post("/price-lists", webPriceListHandler.HandleCreatePriceList)
+		apiRoutes.Post("/price-lists/lookup", webPriceListHandler.HandleLookupPrices)
+		apiRoutes.Get("/price-lists/:id", webPriceListHandler.HandleGetPriceList)
+		apiRoutes.Put("/price-lists/:id", webPriceListHandler.HandleUpdatePriceList)
+		apiRoutes.Delete("/price-lists/:id", webPriceListHandler.HandleDeletePriceList)
+		apiRoutes.Put("/price-lists/:id/columns", webPriceListHandler.HandleSavePriceColumns)
+		apiRoutes.Get("/price-lists/:id/rows", webPriceListHandler.HandleListPriceRows)
+		apiRoutes.Post("/price-lists/:id/rows", webPriceListHandler.HandleSavePriceRows)
+		apiRoutes.Post("/price-lists/:id/rows/append", webPriceListHandler.HandleAppendPriceRow)
+		apiRoutes.Patch("/price-lists/:id/rows/:rowId", webPriceListHandler.HandleUpdatePriceRowCells)
+		apiRoutes.Delete("/price-lists/:id/rows/:rowId", webPriceListHandler.HandleDeletePriceRow)
+		apiRoutes.Post("/price-lists/:id/import", webPriceListHandler.HandleImportPriceRows)
+		apiRoutes.Get("/price-lists/:id/export", webPriceListHandler.HandleExportPriceRows)
 
 		if systemSettings != nil {
 			apiRoutes.Patch("/account/profile", systemSettings.HandleUpdateProfile)

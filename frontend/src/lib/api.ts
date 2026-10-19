@@ -1,5 +1,5 @@
 import { getCookie } from "./utils";
-import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox } from "../types";
+import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -72,6 +72,114 @@ export function getConversations(query = "") {
 export function searchMailMessages(query: string, limit = 50) {
   const params = new URLSearchParams({ q: query.trim(), limit: String(limit) });
   return apiFetch<MailSearchResponse>(`/api/mail/search?${params.toString()}`);
+}
+
+// ---------------------------------------------------------------------------
+// Price lists: user-defined spreadsheet tables that quotations and the AI
+// tools price against.
+// ---------------------------------------------------------------------------
+
+export function listPriceLists() {
+  return apiFetch<{ priceLists: PriceList[] }>("/api/price-lists");
+}
+
+export function createPriceList(input: { name: string; description?: string; columns?: PriceColumn[] }) {
+  return apiFetch<PriceListDetailResponse>("/api/price-lists", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getPriceList(id: string) {
+  return apiFetch<PriceListDetailResponse>(`/api/price-lists/${encodeURIComponent(id)}`);
+}
+
+export function updatePriceList(id: string, input: { name: string; description?: string }) {
+  return apiFetch<{ priceList: PriceList }>(`/api/price-lists/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deletePriceList(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/price-lists/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Replaces the column set: add, rename, retype, reorder, and delete in one call. */
+export function savePriceColumns(id: string, columns: PriceColumn[]) {
+  return apiFetch<{ columns: PriceColumn[] }>(`/api/price-lists/${encodeURIComponent(id)}/columns`, {
+    method: "PUT",
+    body: JSON.stringify({ columns }),
+  });
+}
+
+export function listPriceRows(id: string, options: { q?: string; sort?: string; dir?: "asc" | "desc"; limit?: number; offset?: number } = {}) {
+  const params = new URLSearchParams();
+  if (options.q?.trim()) params.set("q", options.q.trim());
+  if (options.sort) params.set("sort", options.sort);
+  if (options.dir) params.set("dir", options.dir);
+  params.set("limit", String(options.limit ?? 200));
+  params.set("offset", String(options.offset ?? 0));
+  return apiFetch<PriceRowsResponse>(`/api/price-lists/${encodeURIComponent(id)}/rows?${params.toString()}`);
+}
+
+/**
+ * Creates one row and returns it with its server id. The grid appends a row
+ * once, then addresses every later edit to that id.
+ */
+export function appendPriceRow(id: string, data: Record<string, string>) {
+  return apiFetch<{ row: PriceRow }>(`/api/price-lists/${encodeURIComponent(id)}/rows/append`, {
+    method: "POST",
+    body: JSON.stringify({ data }),
+  });
+}
+
+/**
+ * Writes only the cells that changed. This is the autosave-on-blur call: one
+ * row, one or two cells, so a large sheet never resends itself.
+ */
+export function updatePriceRowCells(id: string, rowId: string, cells: Record<string, string>) {
+  return apiFetch<{ row?: PriceRow }>(`/api/price-lists/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ cells }),
+  });
+}
+
+export function deletePriceRow(id: string, rowId: string) {
+  return apiFetch<{ ok: boolean }>(`/api/price-lists/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function savePriceRows(id: string, input: { rows: PriceRow[]; deletedIds?: string[] }) {
+  return apiFetch<{ ok: boolean; saved: number }>(`/api/price-lists/${encodeURIComponent(id)}/rows`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function importPriceRows(id: string, input: {
+  content: string;
+  delimiter?: string;
+  createColumns?: boolean;
+  mode?: "append" | "upsert";
+  dryRun?: boolean;
+}) {
+  return apiFetch<{ result: PriceImportResult }>(`/api/price-lists/${encodeURIComponent(id)}/import`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function priceListExportURL(id: string) {
+  return `/api/price-lists/${encodeURIComponent(id)}/export`;
+}
+
+export function lookupPrices(input: { query?: string; queries?: string[]; limit?: number }) {
+  return apiFetch<{ entries: PriceLookupEntry[] }>("/api/price-lists/lookup", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export type UserRole = "user" | "super_admin";

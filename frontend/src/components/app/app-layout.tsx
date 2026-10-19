@@ -14,6 +14,7 @@ import {
   Pencil,
   Settings,
   Sun,
+  Table2,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -121,7 +122,7 @@ export function Sidebar({
   accountEmail: string;
   calendarEnabled: boolean;
   currentFolder?: string;
-  currentView?: "mail" | "calendar" | "attachments" | "documents";
+  currentView?: "mail" | "calendar" | "attachments" | "documents" | "prices";
   loading?: boolean;
   onCompose: () => void;
   onSettings: () => void;
@@ -140,6 +141,7 @@ export function Sidebar({
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
         <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView === "mail" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView === "mail" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
         <Button nativeButton={false} render={<a href="/documents" onClick={onClose} />} variant={currentView === "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><FilePenLine /><span>{copy.documents}</span></Button>
+        <Button nativeButton={false} render={<a href="/price-lists" onClick={onClose} />} variant={currentView === "prices" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "prices" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Table2 /><span>{copy.priceLists}</span></Button>
         <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
         {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
         <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
@@ -219,10 +221,12 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   const copy = useLocale(shell.data?.locale);
 
-  let currentView: "mail" | "calendar" | "attachments" | "documents" = "mail";
+  let currentView: "mail" | "calendar" | "attachments" | "documents" | "prices" = "mail";
   let currentFolder: string | undefined = undefined;
 
-  if (path === "/documents" || path.startsWith("/documents/")) {
+  if (path === "/price-lists") {
+    currentView = "prices";
+  } else if (path === "/documents" || path.startsWith("/documents/")) {
     currentView = "documents";
   } else if (path === "/attachments") {
     currentView = "attachments";
@@ -241,6 +245,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   // unread incoming messages the list badges add up to.
   const unreadMailCount = (shell.data?.conversations || []).reduce((total, conversation) => total + (conversation.unreadCount || 0), 0);
   const viewLabel = (() => {
+    if (currentView === "prices") return copy.priceLists;
     if (currentView === "documents") return copy.documents;
     if (currentView === "attachments") return copy.attachmentManager;
     if (currentView === "calendar") return copy.calendar;

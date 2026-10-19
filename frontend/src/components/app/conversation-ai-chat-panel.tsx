@@ -8,7 +8,9 @@ import {
   Copy as CopyIcon,
   Loader2,
   Sparkles,
+  Tags,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -47,6 +49,24 @@ import { AIStatusIndicator } from "./ai-status-indicator";
 import { MarkdownContent } from "./markdown-content";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
 import type { ConversationAIChatMessage, ConversationDetail } from "../../types";
+
+/** Localized label for a tool the agent ran, so the chip reads as an action. */
+function toolDisplayName(name: string, isZh: boolean) {
+  switch (name) {
+    case "search_emails":
+      return isZh ? "检索邮箱邮件" : "Searched mail";
+    case "read_email":
+      return isZh ? "读取邮件正文" : "Read email";
+    case "lookup_price":
+      return isZh ? "查询价格表" : "Looked up price list";
+    case "calculate_pricing":
+      return isZh ? "核算价格与税费" : "Calculated pricing";
+    case "generate_document":
+      return isZh ? "生成结构化文档" : "Generated document";
+    default:
+      return name;
+  }
+}
 
 export function ConversationAIChatPanel({
   copy,
@@ -204,6 +224,14 @@ export function ConversationAIChatPanel({
         role: "assistant",
         content: data.res.content || "已处理完成。",
         createdAt: now,
+        // Keep the tools the agent used, so "did it read the price list?" is
+        // answerable after the fact instead of only during the status spinner.
+        toolCalls: (data.res.toolCalls ?? []).map((call) => ({
+          id: call.id,
+          name: call.name,
+          summary: call.summary,
+          status: call.status,
+        })),
       };
       const nextMessages = [...messages, userMsg, assistantMsg];
 
@@ -397,6 +425,16 @@ export function ConversationAIChatPanel({
               <button
                 type="button"
                 className="group flex items-center justify-between rounded-xl border border-border/70 bg-secondary/40 hover:bg-secondary/80 px-3 py-2 text-left text-xs transition-colors cursor-pointer"
+                onClick={() => handleSend(copy.aiChatPromptPrice)}
+              >
+                <span className="truncate text-foreground group-hover:text-primary transition-colors">
+                  💰 {copy.aiChatPromptPrice}
+                </span>
+                <span className="text-[11px] text-muted-foreground ml-2 shrink-0">↵</span>
+              </button>
+              <button
+                type="button"
+                className="group flex items-center justify-between rounded-xl border border-border/70 bg-secondary/40 hover:bg-secondary/80 px-3 py-2 text-left text-xs transition-colors cursor-pointer"
                 onClick={() => handleSend(copy.aiChatPromptReplySuggestion)}
               >
                 <span className="truncate text-foreground group-hover:text-primary transition-colors">
@@ -469,6 +507,26 @@ export function ConversationAIChatPanel({
                     )}
                   </Button>
                 </div>
+                {!isUser && message.toolCalls?.length ? (
+                  <div className="flex max-w-full flex-wrap items-center gap-1 px-1">
+                    {message.toolCalls.map((call, index) => (
+                      <span
+                        key={call.id ?? `${call.name}-${index}`}
+                        className={cn(
+                          "inline-flex max-w-full items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-4",
+                          call.status === "error"
+                            ? "border-destructive/30 bg-destructive/10 text-destructive"
+                            : "border-border bg-muted/60 text-muted-foreground"
+                        )}
+                        title={call.summary}
+                      >
+                        {call.name === "lookup_price" ? <Tags className="size-2.5 shrink-0 text-cyan-600" /> : <Wrench className="size-2.5 shrink-0" />}
+                        <span className="shrink-0">{toolDisplayName(call.name, isZh)}</span>
+                        {call.summary ? <span className="min-w-0 truncate opacity-80">· {call.summary}</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })

@@ -156,7 +156,11 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 
 	// 3. Build Base System Instructions with Tool Calling schema
-	instructions := buildAgentSystemPrompt(agentName, agentCustomPrompt, input.ActiveDocument)
+	promptMode := agentModeConversation
+	if input.ActiveDocument != nil {
+		promptMode = agentModeDocument
+	}
+	instructions := buildAgentSystemPrompt(promptMode, agentName, agentCustomPrompt, input.ActiveDocument)
 
 	// 4. Run Agent Execution Loop (up to 5 rounds of tool calling)
 	executedToolCalls := make([]AIToolCall, 0)
@@ -164,6 +168,30 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 
 	historyPrompt := buildConversationTranscript(input.Messages)
 	currentTurnInput := historyPrompt
+
+	// Resolve anything model-shaped the user (or the open document) mentions
+	// before the first model call, so price questions are answered from the
+	// user's own price list even when the model would not call the tool itself.
+	prefetchTexts := make([]string, 0, len(input.Messages)+2)
+	for _, message := range input.Messages {
+		prefetchTexts = append(prefetchTexts, message.Content)
+	}
+	if input.ActiveDocument != nil {
+		for _, item := range input.ActiveDocument.Items {
+			prefetchTexts = append(prefetchTexts, item.Model, item.Description)
+		}
+	}
+	priceContext, priceEntries := h.prefetchPriceContext(c.UserContext(), owner, prefetchTexts, maxPrefetchedPrices)
+	if priceContext != "" {
+		currentTurnInput = priceContext + "\n\n" + currentTurnInput
+		executedToolCalls = append(executedToolCalls, AIToolCall{
+			ID:      "call_price_prefetch",
+			Name:    "lookup_price",
+			Args:    map[string]any{"auto": true},
+			Status:  "success",
+			Summary: fmt.Sprintf("价格表预匹配 %d 条", len(priceEntries)),
+		})
+	}
 
 	maxToolTurns := 5
 	finalReply := ""
@@ -185,7 +213,7 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		// Execute all parsed tool calls in this turn
 		for _, call := range calls {
 			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-			result, summary, err := h.executeTool(c.UserContext(), account.ID, call)
+			result, summary, err := h.executeTool(c.UserContext(), owner, account.ID, call)
 			if err != nil {
 				call.Status = "error"
 				call.Result = map[string]string{"error": err.Error()}
@@ -245,10 +273,23 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	})
 }
 
-func buildAgentSystemPrompt(agentName, customPrompt string, activeDoc *AIAgentChatDocContext) string {
+// Agent prompt modes. The tool set is shared; what differs is how the agent is
+// framed, because the same agent is used from the document workspace and from
+// the email conversation sidebar.
+const (
+	agentModeDocument     = "document"
+	agentModeConversation = "conversation"
+)
+
+func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIAgentChatDocContext) string {
 	var sb strings.Builder
-	sb.WriteString("You are the Inbrix Intelligent Document Assistant & Business Agent (Inbrix 智能文档助手与商业助理).\n")
-	sb.WriteString("You help the user search emails, extract quotation/order requirements, compute pricing & taxes accurately, and draft or revise business documents (Quotations / Sales Contracts).\n\n")
+	sb.WriteString("You are the Inbrix Intelligent Business Agent (Inbrix 智能商业助理).\n")
+	if mode == agentModeConversation {
+		sb.WriteString("You are assisting the user inside an email conversation (邮件会话). The email thread below is your context: the user is asking about it, and may ask you to price something, prepare a quotation, or draft a reply.\n")
+		sb.WriteString("You can search the mailbox, read a message in full, look up the user's own price list, compute pricing and taxes, and draft or revise business documents (Quotations / Sales Contracts).\n\n")
+	} else {
+		sb.WriteString("You help the user search emails, extract quotation/order requirements, compute pricing & taxes accurately, and draft or revise business documents (Quotations / Sales Contracts).\n\n")
+	}
 
 	if agentName != "" {
 		sb.WriteString(fmt.Sprintf("CURRENT AGENT ROLE: %s\n", agentName))
@@ -290,6 +331,23 @@ func buildAgentSystemPrompt(agentName, customPrompt string, activeDoc *AIAgentCh
      "terms": ["payment term", "delivery term", "warranty"],
      "notes": "remarks or invoice notes"
    }
+
+5. lookup_price:
+   Look up the user's own price list for authoritative product prices, units, currencies, tax rates, minimum order quantities, and lead times.
+   Arguments schema: {"query": "model / SKU / product name keywords", "qty": 10}
+   Returns: [{"sku", "name", "unit", "currency", "unit_price", "price_text", "tax_rate", "moq", "lead_time", "list_name"}]
+
+PRICING RULES (ABSOLUTE, NEVER VIOLATE):
+- Every price, tax rate, unit, MOQ, or lead time you output MUST come from a lookup_price result, or from a ` + "`【价格表匹配】`" + ` block supplied with the request.
+- NEVER invent, guess, or recall a price from memory. When lookup_price returns no match, say plainly that the price list has no entry for that model, ask the user to confirm the model number or add it to the price list, and do NOT propose a number.
+- Treat unit_price / tax_rate / currency / lead_time from those sources as authoritative and quote them unchanged.
+- Use calculate_pricing for arithmetic (line totals, tax, discounts) on prices that lookup_price returned.
+- A ` + "`【价格表匹配】`" + ` block, when present, is the user's own price list already resolved for this request. Use it directly and do not re-look-up the same models.
+
+WHEN TO LOOK UP PRICES:
+- Any question about price, cost, quote, quotation, discount, lead time, MOQ, or availability.
+- Whenever the user asks you to draft a reply, an offer, or a quotation that will contain numbers, even if they did not say the word "price".
+- Before quoting, check the email thread for model numbers or product names and look those up; the mailbox context is where the customer's request lives.
 
 TOOL CALLING PROTOCOL:
 If you need to query emails, read email details, calculate pricing, or draft a document, output one or more tool call code fences like:
@@ -525,7 +583,7 @@ func parseStringArg(args map[string]any, keys ...string) string {
 	return ""
 }
 
-func (h *AISettingsHandler) executeTool(ctx context.Context, accountID string, call AIToolCall) (any, string, error) {
+func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall) (any, string, error) {
 	switch call.Name {
 	case "search_emails":
 		query := parseStringArg(call.Args, "query", "q", "keyword", "keywords")
@@ -536,6 +594,9 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, accountID string, c
 		folder := parseStringArg(call.Args, "folder", "mailbox")
 		return h.executeReadEmail(ctx, accountID, folder, uid)
 
+	case "lookup_price":
+		return h.executeLookupPrice(ctx, owner, call.Args)
+
 	case "calculate_pricing":
 		return executeCalculatePricing(call.Args)
 
@@ -545,6 +606,210 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, accountID string, c
 	default:
 		return nil, "", fmt.Errorf("unknown tool: %q", call.Name)
 	}
+}
+
+// maxPrefetchedPrices bounds how many price rows are resolved before the agent
+// runs, so a long thread cannot turn into a large prompt.
+const maxPrefetchedPrices = 8
+
+var (
+	// Model numbers look like DN50-BV, SN-100, A-1: letters, digits, and the
+	// separators part numbers actually use.
+	priceCandidatePattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._/-]*`)
+	priceQuotedPattern    = regexp.MustCompile(`["“”'\x60]([^"“”'\x60]{2,40})["“”'\x60]`)
+)
+
+func priceCandidateHasLetter(value string) bool {
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func priceCandidateHasDigit(value string) bool {
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// priceLookupCandidates pulls model-number-shaped tokens and quoted product
+// names out of what the user just sent. Resolving these before the model runs
+// means the agent starts with the user's own prices even when it would not have
+// thought to call lookup_price itself.
+func priceLookupCandidates(texts []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, limit)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || len(out) >= limit {
+			return
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	for _, text := range texts {
+		for _, match := range priceQuotedPattern.FindAllStringSubmatch(text, -1) {
+			add(match[1])
+		}
+		for _, token := range priceCandidatePattern.FindAllString(text, -1) {
+			if len(token) < 3 || len(token) > 40 {
+				continue
+			}
+			if !priceCandidateHasLetter(token) || !priceCandidateHasDigit(token) {
+				continue
+			}
+			add(token)
+		}
+	}
+	return out
+}
+
+// prefetchPriceContext resolves candidates against the user's price lists and
+// renders the matches as an authoritative block for the prompt.
+func (h *AISettingsHandler) prefetchPriceContext(ctx context.Context, owner string, texts []string, limit int) (string, []mailstore.PriceLookupEntry) {
+	if h == nil || h.mailDB == nil || strings.TrimSpace(owner) == "" || limit <= 0 {
+		return "", nil
+	}
+	candidates := priceLookupCandidates(texts, limit)
+	if len(candidates) == 0 {
+		return "", nil
+	}
+	seen := make(map[string]bool)
+	entries := make([]mailstore.PriceLookupEntry, 0, limit)
+	for _, candidate := range candidates {
+		found, err := h.mailDB.LookupPrices(ctx, owner, candidate, 3)
+		if err != nil {
+			continue
+		}
+		for _, entry := range found {
+			if seen[entry.RowID] {
+				continue
+			}
+			seen[entry.RowID] = true
+			entries = append(entries, entry)
+			if len(entries) >= limit {
+				break
+			}
+		}
+		if len(entries) >= limit {
+			break
+		}
+	}
+	if len(entries) == 0 {
+		return "", nil
+	}
+	return formatPriceContext(entries), entries
+}
+
+// formatPriceContext renders matches compactly. It is deliberately explicit
+// about provenance so the model treats the numbers as facts, not suggestions.
+func formatPriceContext(entries []mailstore.PriceLookupEntry) string {
+	var sb strings.Builder
+	sb.WriteString("【价格表匹配】以下条目来自用户自己的价格表，是权威价格；回答价格、报价、交期、起订量时必须直接使用，不得改写或另编：\n")
+	for _, entry := range entries {
+		parts := make([]string, 0, 8)
+		if entry.Model != "" {
+			parts = append(parts, "型号 "+entry.Model)
+		}
+		if entry.Name != "" {
+			parts = append(parts, "名称 "+entry.Name)
+		}
+		if entry.PriceText != "" {
+			parts = append(parts, "单价 "+entry.PriceText)
+		}
+		if entry.Currency != "" {
+			parts = append(parts, "币种 "+entry.Currency)
+		}
+		if entry.Unit != "" {
+			parts = append(parts, "单位 "+entry.Unit)
+		}
+		if entry.TaxRate > 0 {
+			parts = append(parts, fmt.Sprintf("税率 %.4g", entry.TaxRate))
+		}
+		if entry.MOQ != "" {
+			parts = append(parts, "起订量 "+entry.MOQ)
+		}
+		if entry.LeadTime != "" {
+			parts = append(parts, "交期 "+entry.LeadTime)
+		}
+		if entry.ListName != "" {
+			parts = append(parts, "来源 "+entry.ListName)
+		}
+		sb.WriteString("- " + strings.Join(parts, "；") + "\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// aiPriceHit is one authoritative price handed to the model by lookup_price.
+type aiPriceHit struct {
+	SKU       string  `json:"sku"`
+	Name      string  `json:"name"`
+	Unit      string  `json:"unit,omitempty"`
+	Currency  string  `json:"currency,omitempty"`
+	UnitPrice float64 `json:"unit_price"`
+	PriceText string  `json:"price_text"`
+	TaxRate   float64 `json:"tax_rate,omitempty"`
+	MOQ       string  `json:"moq,omitempty"`
+	LeadTime  string  `json:"lead_time,omitempty"`
+	ListName  string  `json:"list_name"`
+}
+
+// executeLookupPrice resolves a model or product name against the user's price
+// lists. It is the only way the agent can obtain a price, and an empty result
+// is reported as such so the model has no room to invent one.
+func (h *AISettingsHandler) executeLookupPrice(ctx context.Context, owner string, args map[string]any) (any, string, error) {
+	query := parseStringArg(args, "query", "model", "sku", "keyword", "product", "name")
+	if strings.TrimSpace(query) == "" {
+		return "查询关键词不能为空", "查询关键词为空", nil
+	}
+	limit := 5
+	if value, ok := args["limit"].(float64); ok && value > 0 {
+		limit = int(value)
+	}
+	entries, err := h.mailDB.LookupPrices(ctx, owner, query, limit)
+	if err != nil {
+		return fmt.Sprintf("查询价格表出错: %v", err), "查询价格表出错", nil
+	}
+	if len(entries) == 0 {
+		message := fmt.Sprintf("价格表中没有匹配【%s】的条目。请告知用户价格表未收录该型号，请其确认型号或先录入价格表；不要推测价格。", query)
+		return message, fmt.Sprintf("价格表中未找到【%s】", query), nil
+	}
+
+	hits := make([]aiPriceHit, 0, len(entries))
+	for _, entry := range entries {
+		hits = append(hits, aiPriceHit{
+			SKU:       entry.Model,
+			Name:      entry.Name,
+			Unit:      entry.Unit,
+			Currency:  entry.Currency,
+			UnitPrice: entry.Price,
+			PriceText: entry.PriceText,
+			TaxRate:   entry.TaxRate,
+			MOQ:       entry.MOQ,
+			LeadTime:  entry.LeadTime,
+			ListName:  entry.ListName,
+		})
+	}
+	payload := map[string]any{
+		"matches": hits,
+		"note":    "These prices are authoritative and come from the user's own price list. Quote them unchanged.",
+	}
+	if qty := parseStringArg(args, "qty", "quantity"); qty != "" {
+		payload["requested_qty"] = qty
+	}
+	return payload, fmt.Sprintf("价格表匹配到 %d 条（关键词: %s）", len(hits), query), nil
 }
 
 func (h *AISettingsHandler) executeSearchEmails(ctx context.Context, accountID, query string) (any, string, error) {

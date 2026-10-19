@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"inbrix/config"
+	"inbrix/mailstore"
 	"strings"
 	"testing"
 )
@@ -237,5 +239,181 @@ func TestParseStringArg(t *testing.T) {
 	}
 	if s := parseStringArg(args, "empty_str", "query"); s != "test query" {
 		t.Errorf("expected empty string to be skipped and fallback to query, got %q", s)
+	}
+}
+
+func TestExecuteLookupPrice(t *testing.T) {
+	ctx := context.Background()
+	db, err := mailstore.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := db.CreateUser(ctx, "agent", "Agent", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _, err := db.CreatePriceList(ctx, user.ID, "阀门价目表", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SavePriceRows(ctx, user.ID, list.ID, []mailstore.PriceRow{
+		{Data: map[string]string{"model": "DN50-BV", "name": "DN50 球阀", "price": "1280", "currency": "CNY", "unit": "台", "tax": "13%", "lead_time": "15"}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+
+	result, summary, err := handler.executeLookupPrice(ctx, user.ID, map[string]any{"query": "DN50-BV", "qty": "10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	matches, ok := payload["matches"].([]aiPriceHit)
+	if !ok {
+		t.Fatalf("matches type = %T", payload["matches"])
+	}
+	if len(matches) != 1 || matches[0].UnitPrice != 1280 || matches[0].TaxRate != 0.13 {
+		t.Fatalf("matches = %+v", matches)
+	}
+	if matches[0].SKU != "DN50-BV" || matches[0].Unit != "台" || matches[0].LeadTime != "15" {
+		t.Fatalf("roled fields = %+v", matches[0])
+	}
+	if payload["requested_qty"] != "10" {
+		t.Fatalf("requested_qty = %v", payload["requested_qty"])
+	}
+	if !strings.Contains(summary, "1") {
+		t.Fatalf("summary = %q", summary)
+	}
+
+	// A miss must be explicit so the model has no room to invent a price.
+	result, summary, err = handler.executeLookupPrice(ctx, user.ID, map[string]any{"query": "不存在的型号"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "未找到") {
+		t.Fatalf("miss summary = %q", summary)
+	}
+	if text, ok := result.(string); !ok || !strings.Contains(text, "不要推测价格") {
+		t.Fatalf("miss result = %#v", result)
+	}
+
+	// An empty query is rejected rather than matching everything.
+	if _, summary, _ := handler.executeLookupPrice(ctx, user.ID, nil); !strings.Contains(summary, "为空") {
+		t.Fatalf("empty query summary = %q", summary)
+	}
+}
+
+func TestPriceLookupCandidates(t *testing.T) {
+	texts := []string{
+		"客户问 DN50-BV 和 SN-100 的交期，另外 A-1 也报一下",
+		"请参考 “不锈钢球阀” 的价格",
+		"订单号 20260119 与电话 13800138000，日期 2026-10-19",
+	}
+	candidates := priceLookupCandidates(texts, 10)
+	joined := strings.Join(candidates, ",")
+	for _, want := range []string{"DN50-BV", "SN-100", "A-1", "不锈钢球阀"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("candidate %q missing from %v", want, candidates)
+		}
+	}
+	// Pure numbers and pure words are not model numbers.
+	if strings.Contains(joined, "13800138000") || strings.Contains(joined, "2026-10-19") {
+		t.Fatalf("non-model tokens leaked in: %v", candidates)
+	}
+	if len(candidates) > 10 {
+		t.Fatalf("limit not applied: %d", len(candidates))
+	}
+	if got := priceLookupCandidates(nil, 5); len(got) != 0 {
+		t.Fatalf("empty input produced %v", got)
+	}
+	// Duplicates collapse regardless of case.
+	deduped := priceLookupCandidates([]string{"dn50-bv DN50-BV"}, 5)
+	if len(deduped) != 1 {
+		t.Fatalf("dedupe failed: %v", deduped)
+	}
+}
+
+func TestFormatPriceContext(t *testing.T) {
+	block := formatPriceContext([]mailstore.PriceLookupEntry{
+		{Model: "DN50-BV", Name: "DN50 球阀", PriceText: "1280", Currency: "CNY", Unit: "台", TaxRate: 0.13, MOQ: "1", LeadTime: "15", ListName: "阀门价目表"},
+	})
+	if !strings.Contains(block, "【价格表匹配】") || !strings.Contains(block, "不得改写或另编") {
+		t.Fatalf("block lacks provenance wording: %q", block)
+	}
+	for _, want := range []string{"型号 DN50-BV", "单价 1280", "币种 CNY", "单位 台", "税率 0.13", "起订量 1", "交期 15", "来源 阀门价目表"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("block missing %q: %q", want, block)
+		}
+	}
+}
+
+func TestAgentPromptCoversPriceLookup(t *testing.T) {
+	conversation := buildAgentSystemPrompt(agentModeConversation, "销售助手", "", nil)
+	if !strings.Contains(conversation, "email conversation") {
+		t.Fatal("conversation mode is not framed as an email conversation")
+	}
+	if !strings.Contains(conversation, "lookup_price") {
+		t.Fatal("conversation prompt does not advertise lookup_price")
+	}
+	if !strings.Contains(conversation, "【价格表匹配】") {
+		t.Fatal("conversation prompt does not explain the prefetched price block")
+	}
+	if !strings.Contains(conversation, "NEVER invent") {
+		t.Fatal("conversation prompt lacks the no-invention rule")
+	}
+	document := buildAgentSystemPrompt(agentModeDocument, "", "", &AIAgentChatDocContext{Type: "quotation", Title: "报价单"})
+	if !strings.Contains(document, "ACTIVE DOCUMENT IN WORKSPACE") || strings.Contains(document, "email conversation (邮件会话)") {
+		t.Fatal("document mode framing is wrong")
+	}
+}
+
+func TestPrefetchPriceContext(t *testing.T) {
+	ctx := context.Background()
+	db, err := mailstore.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := db.CreateUser(ctx, "prefetch", "Prefetch", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _, err := db.CreatePriceList(ctx, user.ID, "阀门价目表", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SavePriceRows(ctx, user.ID, list.ID, []mailstore.PriceRow{
+		{Data: map[string]string{"model": "DN50-BV", "name": "DN50 球阀", "price": "1280", "currency": "CNY", "unit": "台", "lead_time": "15"}},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAISettingsHandler(nil, &config.Config{}, db)
+
+	// A thread that names a model gets its authoritative price up front.
+	block, entries := handler.prefetchPriceContext(ctx, user.ID, []string{"客户询价：DN50-BV 要 10 台，请报价"}, 8)
+	if len(entries) != 1 || entries[0].Model != "DN50-BV" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if !strings.Contains(block, "单价 1280") || !strings.Contains(block, "DN50-BV") {
+		t.Fatalf("block = %q", block)
+	}
+
+	// A thread with nothing model-shaped injects nothing.
+	block, entries = handler.prefetchPriceContext(ctx, user.ID, []string{"你好，请问在吗？"}, 8)
+	if block != "" || len(entries) != 0 {
+		t.Fatalf("unexpected prefetch: %q %+v", block, entries)
+	}
+
+	// Another user's price list is never visible.
+	other, err := db.CreateUser(ctx, "other-prefetch", "Other", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block, entries := handler.prefetchPriceContext(ctx, other.ID, []string{"DN50-BV"}, 8); block != "" || len(entries) != 0 {
+		t.Fatalf("cross-owner prefetch leaked: %q %+v", block, entries)
 	}
 }
