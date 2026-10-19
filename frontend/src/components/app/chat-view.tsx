@@ -26,6 +26,10 @@ import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachm
 import { MailSearchResults, type MailSearchState } from "./mail-search-results";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
+import { ComposeDialog } from "./compose-dialog";
+import { ThreadDraftEntry } from "./thread-draft-entry";
+import { useComposeDraft } from "../../lib/compose-draft";
+import { useShell } from "./shell-context";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -456,6 +460,16 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  const { compose, closeCompose, accountEmail: shellAccountEmail } = useShell();
+  // The compose window resolves its own account the same way, so both sides of
+  // the draft query agree on the key and share one fetch.
+  const draftAccountEmail = detail.accountEmail || shellAccountEmail || "";
+  const composeOpenHere = compose.open && compose.defaults.conversationId === detail.id;
+  const conversationDraft = useComposeDraft(draftAccountEmail, detail.id, { enabled: Boolean(detail.id) });
+  const openReplyToLatest = () => {
+    const latest = detail.messages.at(-1);
+    if (latest) onReply(latest);
+  };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
@@ -561,6 +575,17 @@ export function ChatView({
       resizeObserver.disconnect();
     };
   }, [detail.id, detail.messages.length]);
+
+  // The reply editor is appended to the end of the transcript, so opening one
+  // has to bring it into view even when the reader had scrolled back.
+  useEffect(() => {
+    if (!composeOpenHere) return;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = contentRef.current?.querySelector<HTMLElement>("[data-testid=compose-inline]");
+      editor?.scrollIntoView({ block: "end", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [composeOpenHere]);
 
   // A search hit opens the conversation at the matching message. The bubble is
   // looked up by key rather than a CSS selector so folder names containing
@@ -697,6 +722,20 @@ export function ChatView({
                 </Fragment>
               );
             })}
+            {composeOpenHere ? (
+              <ComposeDialog
+                copy={copy}
+                open
+                variant="inline"
+                defaults={compose.defaults}
+                accountEmail={draftAccountEmail}
+                onOpenChange={(value) => {
+                  if (!value) closeCompose();
+                }}
+              />
+            ) : conversationDraft.data ? (
+              <ThreadDraftEntry copy={copy} draft={conversationDraft.data} onOpen={openReplyToLatest} />
+            ) : null}
           </div>
         </ScrollArea>
         <Dialog

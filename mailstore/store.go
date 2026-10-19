@@ -45,6 +45,11 @@ type Store struct {
 	// resolves overlapping read-then-write transactions with SQLITE_BUSY rather
 	// than by waiting, so they are queued here instead.
 	priceMu sync.Mutex
+	// draftMu serializes draft upserts. Autosave resolves "does a draft for this
+	// conversation already exist?" with a read followed by a write, and two
+	// concurrent saves for the same conversation would otherwise race past each
+	// other into the partial unique index.
+	draftMu sync.Mutex
 }
 
 type User struct {
@@ -480,6 +485,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		// Drafts live on the server so an unsent compose window follows the
+		// account to another computer. One row per conversation (see the partial
+		// unique index) so repeated Reply clicks reuse the same draft; a brand
+		// new message has no conversation and is keyed by its own id.
+		`CREATE TABLE IF NOT EXISTS drafts (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			account_email TEXT NOT NULL DEFAULT '',
+			conversation_id TEXT NOT NULL DEFAULT '',
+			mode TEXT NOT NULL DEFAULT 'new' CHECK(mode IN ('new', 'reply', 'reply_all')),
+			in_reply_to TEXT NOT NULL DEFAULT '',
+			refs TEXT NOT NULL DEFAULT '',
+			to_addrs TEXT NOT NULL DEFAULT '',
+			cc_addrs TEXT NOT NULL DEFAULT '',
+			subject TEXT NOT NULL DEFAULT '',
+			body_html TEXT NOT NULL DEFAULT '',
+			body_text TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drafts_owner_updated ON drafts(owner_id, updated_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_drafts_conversation ON drafts(owner_id, account_email, conversation_id) WHERE conversation_id <> ''`,
 		`CREATE TABLE IF NOT EXISTS ai_error_logs (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,

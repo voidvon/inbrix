@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   Code2,
@@ -26,7 +26,9 @@ import { ReplyQuote } from "../../extensions/reply-quote";
 import { RichTextButtons } from "./rich-text-buttons";
 import { ReplyTemplates } from "./reply-templates";
 import { ComposeDocumentAttachment } from "./document-editor-dialog";
-import { generateEmail, getSignatures, sendMessage } from "../../lib/api";
+import { ComposeBubble, type ComposeBubbleSize, type ComposeDraftStatus, type ComposeVariant } from "./compose-bubble";
+import { deleteDraft, generateEmail, getSignatures, saveDraft, sendMessage } from "../../lib/api";
+import { composeDraftKey, useComposeDraft } from "../../lib/compose-draft";
 import { cn, formatSize } from "../../lib/utils";
 import {
   MAX_COMPOSE_ATTACHMENT_BYTES,
@@ -46,13 +48,13 @@ import {
   setEditorSignature,
   aiConversationContext,
   replaceEditorDraft,
+  draftBodyForStorage,
 } from "../../lib/email-format";
 import { type Copy, zh } from "../../lib/locale";
 import { AIStatusIndicator } from "./ai-status-indicator";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
 import type { ConversationMessage } from "../../types";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -389,21 +391,42 @@ export function RecipientTagInput({
   );
 }
 
+/** How long typing must pause before the draft is pushed to the server. */
+const DRAFT_AUTOSAVE_MS = 1200;
+
+/**
+ * What "the draft has not changed" means: the exact values that would be
+ * written. Comparing this against the last known-saved values is what keeps
+ * merely opening a reply from creating a draft row, and keeps the flush on
+ * close from re-sending content the server already has.
+ */
+function draftSignature(to: string, cc: string, subject: string, html: string) {
+  return JSON.stringify([to.trim(), cc.trim(), subject.trim(), html]);
+}
+
+function formatDraftTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
 export function ComposeDialog({
   copy,
   open,
+  variant,
   defaults,
   accountEmail,
   onOpenChange,
-  onSent,
 }: {
   copy: Copy;
   open: boolean;
+  /** A reply sits in the transcript it answers; a new message floats. */
+  variant: ComposeVariant;
   defaults: ComposeDefaults;
   accountEmail: string;
   onOpenChange: (value: boolean) => void;
-  onSent: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [recipients, setRecipients] = useState<string[]>([]);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
@@ -423,6 +446,58 @@ export function ComposeDialog({
   const ccDraftRef = useRef("");
   const signatureInitializedRef = useRef(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
+
+  // --- server-side draft state -------------------------------------------
+  const [bubbleSize, setBubbleSize] = useState<ComposeBubbleSize>("normal");
+  const [draftStatus, setDraftStatus] = useState<ComposeDraftStatus>("idle");
+  const [draftSavedAt, setDraftSavedAt] = useState("");
+  const [hasDraft, setHasDraft] = useState(false);
+  // The handle the server gave us; empty until the first successful save.
+  const draftIdRef = useRef("");
+  // The compose window the editor currently holds. `defaults` is a fresh
+  // object per Reply click, so its identity tells us two things at once: that
+  // the editor is already filled for this window (which stops a background
+  // refetch from overwriting typing), and which conversation a pending save
+  // belongs to.
+  const activeWindowRef = useRef<{ defaults: ComposeDefaults; conversationId: string } | null>(null);
+  const lastSavedRef = useRef("");
+  const autosaveTimerRef = useRef<number | null>(null);
+  // Reassigned every render so a debounced timer or the flush-on-close always
+  // saves the CURRENT state, not the state captured when the timer was set.
+  const saveDraftRef = useRef<() => void>(() => {});
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  // Set when the window is thrown away while a save is in flight, so the row that
+  // save writes cannot outlive the discard.
+  const discardedRef = useRef(false);
+  // A draft fetch that never settles must not leave an unusable compose window.
+  const [draftWaitExpired, setDraftWaitExpired] = useState(false);
+
+  const cancelAutosave = () => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  };
+
+  // Armed on every keystroke and every field edit. Only a timer is set here:
+  // serializing the editor and issuing the request happen once typing pauses,
+  // so a fast typist costs one request instead of one per character.
+  const scheduleDraftSave = () => {
+    cancelAutosave();
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      saveDraftRef.current();
+    }, DRAFT_AUTOSAVE_MS);
+  };
+
+  const conversationId = defaults.conversationId || "";
+  // Always fresh: a draft written on another computer must win over a warm local
+  // cache, so the editor re-reads the server before it is filled.
+  const draftQuery = useComposeDraft(accountEmail, conversationId, { enabled: open, alwaysFresh: true });
+  const storedDraft = draftQuery.data ?? null;
+  const draftLoaded = draftWaitExpired || (draftQuery.isFetched && !draftQuery.isFetching);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ blockquote: false, paragraph: false }),
@@ -436,11 +511,138 @@ export function ComposeDialog({
     ],
     content: "",
     immediatelyRender: false,
+    onUpdate: () => scheduleDraftSave(),
   });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
   const requestIdRef = useRef("");
   useEffect(() => { if (open) requestIdRef.current = ""; }, [open]);
+
+  const persistDraft = (target: { defaults: ComposeDefaults; conversationId: string }, payload: { to: string; cc: string; subject: string; html: string; signature: string }) => {
+    // One write at a time. A second change that arrives while a save is in
+    // flight is remembered and sent once that save settles, so an older body can
+    // never land on top of a newer one.
+    if (savingRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
+    savingRef.current = true;
+    setDraftStatus("saving");
+    // Deliberately a plain promise rather than a useMutation: closing the editor
+    // unmounts this component, and React Query stops delivering a mutation
+    // observer's callbacks once its component is gone. Closing keeps the draft,
+    // so this bookkeeping — above all telling the transcript to re-read — has to
+    // run anyway.
+    void saveDraft({
+      id: draftIdRef.current || undefined,
+      accountEmail,
+      conversationId: target.conversationId || undefined,
+      mode: !target.conversationId ? "new" : payload.cc ? "reply_all" : "reply",
+      inReplyTo: target.defaults.inReplyTo,
+      references: target.defaults.references?.length ? target.defaults.references.join(" ") : undefined,
+      to: payload.to,
+      cc: payload.cc,
+      subject: payload.subject,
+      bodyHtml: payload.html,
+      bodyText: htmlToPlainText(payload.html),
+    })
+      .then((data) => {
+        if (discardedRef.current) {
+          // The window was discarded while this save was in flight. Put the row
+          // back out of reach rather than letting it outlive the discard.
+          void deleteDraft(data.draft.id).catch(() => undefined);
+          return;
+        }
+        // The transcript's draft entry mirrors what the server now holds, so
+        // this runs even when the window has already been closed — closing
+        // keeps the draft, and the reader still has to see it.
+        void queryClient.invalidateQueries({ queryKey: composeDraftKey(accountEmail, conversationId) });
+        // The user may have opened another conversation while this save was in
+        // flight; the window's own state belongs to the window that issued it.
+        if (activeWindowRef.current !== target) return;
+        draftIdRef.current = data.draft.id;
+        lastSavedRef.current = payload.signature;
+        setHasDraft(true);
+        setDraftStatus("saved");
+        setDraftSavedAt(formatDraftTime(data.draft.updatedAt));
+      })
+      .catch(() => {
+        if (activeWindowRef.current === target) setDraftStatus("error");
+      })
+      .finally(() => {
+        savingRef.current = false;
+        if (pendingSaveRef.current) {
+          pendingSaveRef.current = false;
+          saveDraftRef.current();
+        }
+      });
+  };
+
+  // Reassigned on every render, so whoever calls it — the debounce timer or the
+  // flush on close — reads the state as it is now.
+  saveDraftRef.current = () => {
+    const target = activeWindowRef.current;
+    if (!open || !editor || !target) return;
+    const to = recipients.join(", ");
+    const cc = ccRecipients.join(", ");
+    const trimmedSubject = subject.trim();
+    const html = draftBodyForStorage(sourceMode ? sourceCode : editor.getHTML());
+    const signature = draftSignature(to, cc, trimmedSubject, html);
+    if (signature === lastSavedRef.current) return;
+    // An empty window is not worth a row: opening Reply and closing it again
+    // must not leave a draft behind.
+    if (!to && !cc && !trimmedSubject && !htmlToPlainText(html).trim()) return;
+    persistDraft(target, { to, cc, subject: trimmedSubject, html, signature });
+  };
+
+  const flushDraft = () => {
+    cancelAutosave();
+    saveDraftRef.current();
+  };
+
+  // A window can also be unmounted rather than closed — the reply moves into
+  // another conversation's transcript, or the mailbox goes away entirely — and
+  // anything typed inside the debounce window still has to reach the server.
+  useEffect(() => () => saveDraftRef.current(), []);
+
+  const forgetDraft = async () => {
+    cancelAutosave();
+    discardedRef.current = true;
+    const id = draftIdRef.current;
+    draftIdRef.current = "";
+    lastSavedRef.current = "";
+    savingRef.current = false;
+    pendingSaveRef.current = false;
+    setHasDraft(false);
+    if (id) {
+      try {
+        await deleteDraft(id);
+      } catch {
+        // The draft is already unreachable from this window; a failed delete
+        // must not block closing it.
+      }
+    }
+    void queryClient.invalidateQueries({ queryKey: composeDraftKey(accountEmail, conversationId) });
+  };
+
+  const handleClose = () => {
+    // Closing keeps the draft — that is the whole point of storing it on the
+    // server — but anything typed inside the debounce window is flushed first.
+    flushDraft();
+    activeWindowRef.current = null;
+    setDraftStatus("idle");
+    setDraftSavedAt("");
+    onOpenChange(false);
+  };
+
+  const discardDraft = () => {
+    if (!window.confirm(copy.draftDiscardConfirm)) return;
+    activeWindowRef.current = null;
+    void forgetDraft();
+    setDraftStatus("idle");
+    setDraftSavedAt("");
+    onOpenChange(false);
+  };
 
   const replaceInlineImages = (images: InlineComposeImage[]) => {
     inlineImagesRef.current = images;
@@ -463,14 +665,44 @@ export function ComposeDialog({
     if (!open && inlineImagesRef.current.length) clearInlineImages();
   }, [open]);
 
+  // Bound how long the editor waits for the stored draft. A request that never
+  // settles must degrade to today's behaviour (a blank reply template) rather
+  // than an unusable compose window.
+  useEffect(() => {
+    if (!open || !conversationId) return;
+    setDraftWaitExpired(false);
+    const timer = window.setTimeout(() => setDraftWaitExpired(true), 3000);
+    return () => window.clearTimeout(timer);
+  }, [open, conversationId, defaults]);
+
+  // Fill the editor once the stored draft is known. A draft written on another
+  // computer replaces the blank reply template; without one the template stands.
+  //
+  // `activeWindowRef` pins this to one compose window: `defaults` is a fresh
+  // object per Reply click, so a background refetch can never re-fill the editor
+  // and wipe out what the user is typing.
   useEffect(() => {
     if (!open || !editor) return;
-    setRecipients(splitRecipientValues(defaults.to));
-    setCcRecipients(splitRecipientValues(defaults.cc || ""));
-    setSubject(defaults.subject);
+    const previous = activeWindowRef.current;
+    if (previous?.defaults === defaults) return;
+    if (!draftLoaded) return;
+    // The bubble is not modal, so the user can click Reply on another
+    // conversation while this one is still open. Whatever was typed into the
+    // window being replaced is saved under ITS conversation first.
+    if (previous) saveDraftRef.current();
+    const stored = storedDraft;
+    const to = stored ? stored.to : defaults.to;
+    const cc = stored ? stored.cc : defaults.cc || "";
+    const subjectValue = stored ? stored.subject : defaults.subject;
+    const html = normalizeQuoteHTML(stored ? stored.bodyHtml : defaults.html || "");
+    cancelAutosave();
+    discardedRef.current = false;
+    setRecipients(splitRecipientValues(to));
+    setCcRecipients(splitRecipientValues(cc));
+    setSubject(subjectValue);
     setError("");
     setSourceMode(false);
-    setSourceCode(defaults.html || "");
+    setSourceCode(html);
     setSelectedSignatureId("none");
     signatureInitializedRef.current = false;
     setAttachments([]);
@@ -480,9 +712,24 @@ export function ComposeDialog({
     recipientDraftRef.current = "";
     ccDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
-    editor.commands.setContent(normalizeQuoteHTML(defaults.html || ""));
+    editor.commands.setContent(html, { emitUpdate: false });
     editor.commands.focus("start");
-  }, [open, defaults, editor]);
+    draftIdRef.current = stored?.id || "";
+    setHasDraft(Boolean(stored));
+    setDraftStatus(stored ? "saved" : "idle");
+    setDraftSavedAt(stored ? formatDraftTime(stored.updatedAt) : "");
+    // Baseline taken from the editor itself, not from the input HTML: the editor
+    // normalizes what it is given, and a baseline that does not match what the
+    // next save would serialize would write a draft the moment a reply opens.
+    lastSavedRef.current = draftSignature(to, cc, subjectValue, draftBodyForStorage(editor.getHTML()));
+    activeWindowRef.current = { defaults, conversationId };
+  }, [open, defaults, editor, draftLoaded, storedDraft, conversationId]);
+
+  // Field edits are not editor updates, so they arm the autosave separately.
+  useEffect(() => {
+    if (!open) return;
+    scheduleDraftSave();
+  }, [open, defaults, recipients, ccRecipients, subject, sourceMode, sourceCode]);
 
   const insertInlineImages = async (files: File[], position?: number) => {
     if (!editor || !files.length) return;
@@ -593,209 +840,234 @@ export function ComposeDialog({
 
     mutation.mutate(form, {
       onSuccess: () => {
-        onSent();
+        // The reply is queued, so its draft is spent. The server discards it too
+        // (a tab that dies mid-send must not leave one behind); this is the
+        // client's own half of that promise, and covers a new message, which the
+        // server cannot find by conversation.
+        activeWindowRef.current = null;
+        void forgetDraft();
+        setDraftStatus("idle");
+        setDraftSavedAt("");
         onOpenChange(false);
+        void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        void queryClient.invalidateQueries({ queryKey: ["conversation"] });
+        void queryClient.invalidateQueries({ queryKey: ["folder"] });
+        void queryClient.invalidateQueries({ queryKey: ["attachments"] });
       },
       onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed),
     });
   };
 
+  if (!open) return null;
+
+  // The floating window has a fixed height, so its body can grow to fill it. The
+  // inline card is sized by its content, where `flex-1` on a flex-basis-0 child
+  // would collapse the editor to nothing — so its editing area gets a definite
+  // height of its own.
+  const editorAreaClass = variant === "inline" ? "h-48 shrink-0" : "min-h-0 flex-1";
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="compose-dialog" className="flex h-[calc(100dvh-1.5rem)] sm:h-[80vh] w-[calc(100%-1rem)] sm:w-[80vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]">
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
-          <DialogHeader className="border-b px-5 py-4 pr-12 text-left">
-            <DialogTitle className="truncate text-base">{subject || copy.writeMessage}</DialogTitle>
-            <DialogDescription className="sr-only">{copy.compose}</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 border-b px-5 py-4">
-            <Label className="grid gap-1.5 text-xs text-muted-foreground">
-              {copy.to}
-              <RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus />
-            </Label>
-            <Label className="grid gap-1.5 text-xs text-muted-foreground">
-              {copy.cc}
-              <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
-            </Label>
-            <Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">
-              {copy.subject}
-              <Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />
-            </Label>
-          </div>
-          <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
-            <RichTextButtons editor={editor} disabled={sourceMode} />
-            <Button type="button" variant="ghost" size="icon" disabled={sourceMode || !editor} onClick={() => inlineImageInputRef.current?.click()} aria-label={copy.insertImage} title={copy.insertImage}>
-              <ImagePlus />
-            </Button>
-            <Separator orientation="vertical" className="mx-1 h-5" />
-            <AIAssistantButton
-              copy={copy}
-              editor={editor}
-              disabled={sourceMode}
-              composeOpen={open}
-              accountEmail={accountEmail}
-              subject={subject}
-              recipients={[...recipients, ...ccRecipients].join(", ")}
-              conversation={defaults.conversation}
-            />
-            {open && <ReplyTemplates editor={editor} chinese={copy === zh} disabled={sourceMode || mutation.isPending || documentBusy} accountEmail={accountEmail} />}
-            <Separator orientation="vertical" className="mx-1 h-5" />
-            <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("create")}>
-              <FilePlus2 />
-              {copy === zh ? "新建报价单" : "New quotation"}
-            </Button>
-            <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("import")}>
-              <Paperclip />
-              {copy === zh ? "引入附件" : "Import attachment"}
-            </Button>
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              <Select
-                value={selectedSignatureId}
-                disabled={sourceMode || signatures.isPending}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  setSelectedSignatureId(value);
-                  if (editor) setEditorSignature(editor, signatures.data?.signatures.find((item) => item.id === value) || null);
-                }}
-              >
-                <SelectTrigger className="h-8 w-44" aria-label={copy.signatureSettings} title={copy.signatureSettings}>
-                  <SignatureIcon />
-                  <SelectValue>{selectedSignatureId === "none" ? copy.noSignature : signatures.data?.signatures.find((item) => item.id === selectedSignatureId)?.name || copy.noSignature}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{copy.noSignature}</SelectItem>
-                  {signatures.data?.signatures.map((signature) => (
-                    <SelectItem key={signature.id} value={signature.id}>
-                      {signature.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="sm" onClick={toggleSourceMode} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}>
-                <Code2 />
-                {sourceMode ? copy.richText : copy.sourceCode}
-              </Button>
-            </div>
-          </div>
-          {sourceMode ? (
-            <textarea
-              className="min-h-0 flex-1 resize-none bg-background px-5 py-4 font-mono text-sm leading-6 outline-none"
-              value={sourceCode}
-              onChange={(event) => setSourceCode(event.target.value)}
-              spellCheck={false}
-              aria-label={copy.sourceCode}
-            />
-          ) : (
-            <ScrollArea className="min-h-0 flex-1" contentClassName="px-5 py-4">
-              <EditorContent
-                editor={editor}
-                onPaste={(event) => {
-                  const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-                  if (!images.length) return;
-                  event.preventDefault();
-                  void insertInlineImages(images);
-                }}
-                onDrop={(event) => {
-                  const images = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith("image/"));
-                  if (!images.length) return;
-                  event.preventDefault();
-                  const position = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-                  void insertInlineImages(images, position);
-                }}
-              />
-            </ScrollArea>
-          )}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-t px-5 py-2">
-              {attachments.map((file, index) => (
-                <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
-                  <Paperclip className="size-3.5 shrink-0" />
-                  <span className="truncate" title={file.name}>
-                    {file.name}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-5"
-                    onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                    aria-label={`${copy.removeAttachment}: ${file.name}`}
-                    title={copy.removeAttachment}
-                  >
-                    <X className="size-3" />
-                  </Button>
-                </span>
-              ))}
-            </div>
-          )}
-          {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
-          <DialogFooter className="flex-row items-center justify-between border-t px-5 py-3 sm:flex-row sm:justify-between">
-            <input
-              ref={attachmentInputRef}
-              className="sr-only"
-              type="file"
-              multiple
-              onChange={(event) => {
-                const selected = Array.from(event.target.files || []);
-                setAttachments((current) => {
-                  const next = [...current, ...selected];
-                  if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) {
-                    setError(copy.attachmentsTooLarge);
-                    return current;
-                  }
-                  setError("");
-                  return next;
-                });
-                event.target.value = "";
-              }}
-            />
-            <input
-              ref={inlineImageInputRef}
-              className="sr-only"
-              type="file"
-              accept="image/jpeg,image/png,image/gif"
-              multiple
-              onChange={(event) => {
-                void insertInlineImages(Array.from(event.target.files || []));
-                event.target.value = "";
-              }}
-            />
-            <Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}>
-              <Paperclip />
-              {copy.attach}
-            </Button>
-            <div className="flex gap-2">
-              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-                {copy.cancel}
-              </Button>
-              <Button type="submit" disabled={mutation.isPending || documentBusy || documentAction !== null}>
-                <Send />
-                {mutation.isPending ? copy.sending : copy.send}
-              </Button>
-            </div>
-          </DialogFooter>
-        </form>
-        {open && documentAction && (
-          <ComposeDocumentAttachment
+    <ComposeBubble
+      copy={copy}
+      variant={variant}
+      title={subject.trim() || copy.writeMessage}
+      size={bubbleSize}
+      draftStatus={draftStatus}
+      draftSavedAt={draftSavedAt}
+      canDiscard={hasDraft}
+      onSizeChange={setBubbleSize}
+      onClose={handleClose}
+      onDiscard={discardDraft}
+    >
+      <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
+        <div className="grid gap-3 border-b px-5 py-4">
+          <Label className="grid gap-1.5 text-xs text-muted-foreground">
+            {copy.to}
+            <RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus />
+          </Label>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground">
+            {copy.cc}
+            <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
+          </Label>
+          <Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">
+            {copy.subject}
+            <Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />
+          </Label>
+        </div>
+        <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
+          <RichTextButtons editor={editor} disabled={sourceMode} />
+          <Button type="button" variant="ghost" size="icon" disabled={sourceMode || !editor} onClick={() => inlineImageInputRef.current?.click()} aria-label={copy.insertImage} title={copy.insertImage}>
+            <ImagePlus />
+          </Button>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <AIAssistantButton
             copy={copy}
+            editor={editor}
+            disabled={sourceMode}
+            composeOpen={open}
             accountEmail={accountEmail}
-            action={documentAction}
-            onClose={() => {
-              setDocumentAction(null);
-              setDocumentBusy(false);
-            }}
-            onBusyChange={setDocumentBusy}
-            onAttach={(file) => {
-              const files = [...attachmentsRef.current, file];
-              if ([...files, ...inlineImagesRef.current.map((image) => image.file)].reduce((total, item) => total + item.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) throw new Error(copy.attachmentsTooLarge);
-              attachmentsRef.current = files;
-              setAttachments(files);
-              setError("");
+            subject={subject}
+            recipients={[...recipients, ...ccRecipients].join(", ")}
+            conversation={defaults.conversation}
+          />
+          {open && <ReplyTemplates editor={editor} chinese={copy === zh} disabled={sourceMode || mutation.isPending || documentBusy} accountEmail={accountEmail} />}
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("create")}>
+            <FilePlus2 />
+            {copy === zh ? "新建报价单" : "New quotation"}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending || documentBusy} onClick={() => setDocumentAction("import")}>
+            <Paperclip />
+            {copy === zh ? "引入附件" : "Import attachment"}
+          </Button>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Select
+              value={selectedSignatureId}
+              disabled={sourceMode || signatures.isPending}
+              onValueChange={(value) => {
+                if (!value) return;
+                setSelectedSignatureId(value);
+                if (editor) setEditorSignature(editor, signatures.data?.signatures.find((item) => item.id === value) || null);
+              }}
+            >
+              <SelectTrigger className="h-8 w-44" aria-label={copy.signatureSettings} title={copy.signatureSettings}>
+                <SignatureIcon />
+                <SelectValue>{selectedSignatureId === "none" ? copy.noSignature : signatures.data?.signatures.find((item) => item.id === selectedSignatureId)?.name || copy.noSignature}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{copy.noSignature}</SelectItem>
+                {signatures.data?.signatures.map((signature) => (
+                  <SelectItem key={signature.id} value={signature.id}>
+                    {signature.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="sm" onClick={toggleSourceMode} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}>
+              <Code2 />
+              {sourceMode ? copy.richText : copy.sourceCode}
+            </Button>
+          </div>
+        </div>
+        {sourceMode ? (
+          <textarea
+            className={cn("resize-none bg-background px-5 py-4 font-mono text-sm leading-6 outline-none", editorAreaClass)}
+            value={sourceCode}
+            onChange={(event) => setSourceCode(event.target.value)}
+            spellCheck={false}
+            aria-label={copy.sourceCode}
+          />
+        ) : (
+          <ScrollArea className={editorAreaClass} contentClassName="px-5 py-4">
+            <EditorContent
+              editor={editor}
+              onPaste={(event) => {
+                const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+                if (!images.length) return;
+                event.preventDefault();
+                void insertInlineImages(images);
+              }}
+              onDrop={(event) => {
+                const images = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith("image/"));
+                if (!images.length) return;
+                event.preventDefault();
+                const position = editor?.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+                void insertInlineImages(images, position);
+              }}
+            />
+          </ScrollArea>
+        )}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 border-t px-5 py-2">
+            {attachments.map((file, index) => (
+              <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
+                <Paperclip className="size-3.5 shrink-0" />
+                <span className="truncate" title={file.name}>
+                  {file.name}
+                </span>
+                <span className="shrink-0 text-muted-foreground">{formatSize(file.size)}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-5"
+                  onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                  aria-label={`${copy.removeAttachment}: ${file.name}`}
+                  title={copy.removeAttachment}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            ))}
+          </div>
+        )}
+        {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
+        <div className="flex shrink-0 flex-row items-center justify-between gap-2 border-t px-5 py-3">
+          <input
+            ref={attachmentInputRef}
+            className="sr-only"
+            type="file"
+            multiple
+            onChange={(event) => {
+              const selected = Array.from(event.target.files || []);
+              setAttachments((current) => {
+                const next = [...current, ...selected];
+                if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) {
+                  setError(copy.attachmentsTooLarge);
+                  return current;
+                }
+                setError("");
+                return next;
+              });
+              event.target.value = "";
             }}
           />
-        )}
-      </DialogContent>
-    </Dialog>
+          <input
+            ref={inlineImageInputRef}
+            className="sr-only"
+            type="file"
+            accept="image/jpeg,image/png,image/gif"
+            multiple
+            onChange={(event) => {
+              void insertInlineImages(Array.from(event.target.files || []));
+              event.target.value = "";
+            }}
+          />
+          <Button type="button" variant="ghost" size="sm" onClick={() => attachmentInputRef.current?.click()}>
+            <Paperclip />
+            {copy.attach}
+          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" onClick={handleClose}>
+              {copy.composeCloseKeep}
+            </Button>
+            <Button type="submit" disabled={mutation.isPending || documentBusy || documentAction !== null}>
+              <Send />
+              {mutation.isPending ? copy.sending : copy.send}
+            </Button>
+          </div>
+        </div>
+      </form>
+      {open && documentAction && (
+        <ComposeDocumentAttachment
+          copy={copy}
+          accountEmail={accountEmail}
+          action={documentAction}
+          onClose={() => {
+            setDocumentAction(null);
+            setDocumentBusy(false);
+          }}
+          onBusyChange={setDocumentBusy}
+          onAttach={(file) => {
+            const files = [...attachmentsRef.current, file];
+            if ([...files, ...inlineImagesRef.current.map((image) => image.file)].reduce((total, item) => total + item.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) throw new Error(copy.attachmentsTooLarge);
+            attachmentsRef.current = files;
+            setAttachments(files);
+            setError("");
+          }}
+        />
+      )}
+    </ComposeBubble>
   );
 }

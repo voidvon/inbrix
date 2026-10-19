@@ -1,5 +1,5 @@
 import { getCookie } from "./utils";
-import type { CalendarEvent, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
+import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -173,6 +173,27 @@ export function importPriceRows(id: string, input: {
 
 export function priceListExportURL(id: string) {
   return `/api/price-lists/${encodeURIComponent(id)}/export`;
+}
+
+/**
+ * Drafts live on the server so an unsent compose window follows the account to
+ * another computer. `conversationId` narrows the list to the single draft a
+ * conversation can hold.
+ */
+export function listDrafts(conversationId?: string) {
+  const suffix = conversationId?.trim() ? `?conversation_id=${encodeURIComponent(conversationId.trim())}` : "";
+  return apiFetch<ComposeDraftListResponse>(`/api/drafts${suffix}`);
+}
+
+export function saveDraft(input: ComposeDraftInput) {
+  return apiFetch<ComposeDraftResponse>("/api/drafts", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteDraft(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export function lookupPrices(input: { query?: string; queries?: string[]; limit?: number }) {

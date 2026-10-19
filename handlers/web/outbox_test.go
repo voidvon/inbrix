@@ -85,6 +85,9 @@ func outboxTestApp(t *testing.T) (*EmailHandler, *fiber.App, mailstore.Account, 
 			current = other
 		}
 		c.Locals("username", "owner")
+		// Mirror what the session middleware does in production, so handlers
+		// that resolve the owner from Locals are exercised here too.
+		c.Locals("user_id", current.OwnerID)
 		sess, err := sessions.Get(c)
 		if err != nil {
 			return err
@@ -392,5 +395,47 @@ func TestOutboxTencentMirrorReplacesBubbleAndPreservesThread(t *testing.T) {
 	date, err := time.Parse(time.RFC3339Nano, list.Conversations[0].Date)
 	if err != nil || date.Sub(accepted.Message.Date).Abs() > time.Millisecond {
 		t.Fatalf("acceptance date lost: %s, want %s", list.Conversations[0].Date, accepted.Message.Date)
+	}
+}
+
+// A reply that reaches the outbox spends its draft. The browser discards its
+// own copy, but the server must not depend on that: a tab closed mid-send would
+// otherwise leave a stale draft on the conversation forever.
+func TestOutboxConsumesConversationDraft(t *testing.T) {
+	h, app, account, _ := outboxTestApp(t)
+	ctx := context.Background()
+	thread := conversationID(account.ID, []string{"peer@example.com"})
+
+	save := func(conversationID, subject string) {
+		t.Helper()
+		if _, err := h.mailDB.SaveDraft(ctx, account.OwnerID, mailstore.DraftInput{
+			AccountEmail:   account.Email,
+			ConversationID: conversationID,
+			Mode:           mailstore.DraftModeReply,
+			To:             "peer@example.com",
+			Subject:        subject,
+			BodyHTML:       "<p>half written</p>",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(thread, "Re: hello")
+	save("conv-unrelated", "Re: something else")
+
+	submitOutbox(t, app, "/api/compose", map[string]string{"to": "peer@example.com", "conversation_id": thread, "html_body": "<p>reply</p>"}, false)
+
+	sent, err := h.mailDB.ListDrafts(ctx, account.OwnerID, thread)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 0 {
+		t.Fatalf("draft survived the send: %+v", sent)
+	}
+	other, err := h.mailDB.ListDrafts(ctx, account.OwnerID, "conv-unrelated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other) != 1 {
+		t.Fatalf("an unrelated draft was discarded: %+v", other)
 	}
 }

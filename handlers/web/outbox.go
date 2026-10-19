@@ -94,6 +94,17 @@ func (h *EmailHandler) queueOutgoingCompose(c *fiber.Ctx, from, thread, draft, t
 		log.Printf("outbox: persist compose: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "Could not save email to the server outbox"})
 	}
+	// The reply is queued, so the draft it came from is spent. Best-effort: the
+	// message is already persisted, so a cleanup failure must not fail the send.
+	// The browser discards its draft too; this covers the case where the tab
+	// closed before it could.
+	if thread != "" && h.mailDB != nil {
+		if ownerID := requestOwnerID(c, h.store); ownerID != "" {
+			if _, err := h.mailDB.DeleteDraftsForConversation(c.UserContext(), ownerID, from, thread); err != nil {
+				log.Printf("outbox: discard draft for %s: %v", thread, err)
+			}
+		}
+	}
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"success": true, "queued": saved.Status == "queued", "outboxId": saved.ID, "conversationId": saved.ConversationID, "status": saved.Status})
 }
 

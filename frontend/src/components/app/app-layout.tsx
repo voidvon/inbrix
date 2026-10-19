@@ -287,6 +287,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     accounts: shell.data?.accounts || [],
     openMobileMenu,
     openCompose,
+    compose: { open: composeOpen, defaults: composeDefaults },
+    closeCompose: () => setComposeOpen(false),
     openSettings,
   };
 
@@ -319,20 +321,19 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
         />
         <ResizeHandle label="Resize navigation" width={sidebarWidth} minWidth={180} maxWidth={360} onResize={setSidebarWidth} />
         {children}
-        <ComposeDialog
-          copy={copy}
-          open={composeOpen}
-          defaults={composeDefaults}
-          accountEmail={composeDefaults.accountEmail || shell.data?.accountEmail || ""}
-          onOpenChange={setComposeOpen}
-          onSent={() => {
-            void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
-            void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-            void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-            void queryClient.invalidateQueries({ queryKey: ["folder"] });
-            void queryClient.invalidateQueries({ queryKey: ["attachments"] });
-          }}
-        />
+        {/* A new message has no transcript to belong to, so it floats in the
+            corner. A reply is rendered by the conversation it answers, as the
+            last entry of that transcript. */}
+        {composeOpen && !composeDefaults.conversationId && (
+          <ComposeDialog
+            copy={copy}
+            open
+            variant="floating"
+            defaults={composeDefaults}
+            accountEmail={composeDefaults.accountEmail || shell.data?.accountEmail || ""}
+            onOpenChange={setComposeOpen}
+          />
+        )}
         <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </ShellContext.Provider>

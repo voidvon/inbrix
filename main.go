@@ -258,6 +258,7 @@ func main() {
 	}
 	webDocumentsHandler := web.NewDocumentsHandler(store, mailMirror)
 	webPriceListHandler := web.NewPriceListHandler(store, mailMirror)
+	webDraftHandler := web.NewDraftHandler(store, mailMirror)
 	updateHandler := web.NewUpdateHandler(Version, func() error {
 		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 			return fmt.Errorf("automatic restart is unsupported on %s", runtime.GOOS)
@@ -518,6 +519,13 @@ func main() {
 		apiRoutes.Post("/outbox/:id/retry", webEmailHandler.HandleRetryOutgoing)
 		apiRoutes.Delete("/outbox/:id", webEmailHandler.HandleDeleteOutgoing)
 		apiRoutes.Get("/outbox/:id/attachments/:part", webEmailHandler.HandleOutgoingAttachment)
+
+		// Drafts: unsent compose windows kept server-side so a half-written
+		// reply follows the account to another computer.
+		apiRoutes.Get("/drafts", webDraftHandler.HandleListDrafts)
+		apiRoutes.Post("/drafts", webDraftHandler.HandleSaveDraft)
+		apiRoutes.Get("/drafts/:id", webDraftHandler.HandleGetDraft)
+		apiRoutes.Delete("/drafts/:id", webDraftHandler.HandleDeleteDraft)
 
 		// Document management routes
 		apiRoutes.Get("/documents", webDocumentsHandler.HandleListDocuments)

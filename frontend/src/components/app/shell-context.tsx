@@ -10,6 +10,13 @@ export type ShellContextType = {
   accounts: ConversationListResponse["accounts"];
   openMobileMenu: () => void;
   openCompose: (defaults?: ComposeDefaults) => void;
+  /**
+   * The open compose window, if any. A reply renders inside the transcript it
+   * answers, so the conversation view needs to know whether the window belongs
+   * to it — hence the state, not just the opener.
+   */
+  compose: { open: boolean; defaults: ComposeDefaults };
+  closeCompose: () => void;
   openSettings: () => void;
 };
 

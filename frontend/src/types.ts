@@ -248,6 +248,51 @@ export type PriceRowsResponse = {
   offset: number;
 };
 
+export type ComposeDraftMode = "new" | "reply" | "reply_all";
+
+/**
+ * An unsent compose window stored on the server. It is kept there rather than in
+ * browser storage so the same account can pick a half-written reply up from a
+ * different computer.
+ */
+export type ComposeDraft = {
+  id: string;
+  accountEmail: string;
+  conversationId: string;
+  mode: ComposeDraftMode;
+  inReplyTo: string;
+  references: string;
+  to: string;
+  cc: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ComposeDraftInput = {
+  id?: string;
+  accountEmail?: string;
+  conversationId?: string;
+  mode?: ComposeDraftMode;
+  inReplyTo?: string;
+  references?: string;
+  to?: string;
+  cc?: string;
+  subject?: string;
+  bodyHtml?: string;
+  bodyText?: string;
+};
+
+export type ComposeDraftListResponse = {
+  drafts: ComposeDraft[];
+};
+
+export type ComposeDraftResponse = {
+  draft: ComposeDraft;
+};
+
 export type PriceLookupEntry = {
   listId: string;
   listName: string;

@@ -249,6 +249,22 @@ export function serializeComposeHTML(html: string) {
   return document.body.innerHTML;
 }
 
+/**
+ * The editor's HTML as it should be stored in a server-side draft.
+ *
+ * Inline images exist in the compose session as `blob:` URLs, which are scoped
+ * to the tab that created them and can never resolve on another computer. They
+ * are dropped rather than stored, so a restored draft shows clean text instead
+ * of broken-image placeholders. Note the consequence: inline images and
+ * attachments are not part of a draft — only the message text syncs.
+ */
+export function draftBodyForStorage(html: string) {
+  if (!html.trim()) return "";
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.body.querySelectorAll<HTMLImageElement>('img[src^="blob:"]').forEach((image) => image.remove());
+  return document.body.innerHTML;
+}
+
 export function signatureNodeHTML(signature: EmailSignature) {
   return `<div data-inbrix-signature="${escapeHTML(signature.id)}" data-signature-name="${escapeHTML(signature.name)}">${signature.html.trim() || "<p></p>"}</div>`;
 }
