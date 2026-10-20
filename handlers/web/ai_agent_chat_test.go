@@ -137,11 +137,122 @@ func TestExecuteGenerateDocument(t *testing.T) {
 	if doc.Values["delivery_date"] == "" {
 		t.Errorf("expected delivery_date to be populated in values")
 	}
+	// The quotation prints "Lead Time" and "Total", the contract prints a subtotal:
+	// the derived values have to reach the ids those templates actually read.
+	if doc.Values["lead_time"] != "交货期: 现货，款到后3个工作日内发出" {
+		t.Errorf("expected lead_time to mirror the delivery term, got %q", doc.Values["lead_time"])
+	}
+	if doc.Values["subtotal"] == "" {
+		t.Errorf("expected subtotal to be populated in values")
+	}
+	if doc.Values["currency"] != "¥" {
+		t.Errorf("expected currency in values, got %q", doc.Values["currency"])
+	}
 	if len(doc.Items) != 1 || doc.Items[0].Amount != "9000.00" {
 		t.Errorf("expected item amount to be computed '9000.00', got %+v", doc.Items)
 	}
 	if summary == "" {
 		t.Errorf("expected non-empty summary")
+	}
+}
+
+func TestExecuteGenerateDocumentFillsBuyerDetailsAndValues(t *testing.T) {
+	args := map[string]any{
+		"type":         "contract",
+		"title":        "SALES CONTRACT SPX-2026-0815",
+		"counterparty": "上海某某机械有限公司",
+		"contact":      "王工",
+		"email":        "wang@example.cn",
+		"phone":        "+86 138 0000 0000",
+		"address":      "上海市浦东新区某某路 88 号",
+		"currency":     "USD",
+		"items": []any{
+			map[string]any{"model": "DN25", "description": "疏水阀", "qty": "10", "price": "1200"},
+			map[string]any{"model": "DN40", "description": "过滤器", "qty": "5", "price": "2300"},
+		},
+		"terms": []any{"付款方式: 30% 预付，发货前付清", "交货期: 15 天"},
+		"values": map[string]any{
+			"customer_po":    "PO-7788",
+			"lead_time":      "15 天",
+			"validity":       "30 天",
+			"customer_phone": "+86 21 5555 0000",
+		},
+	}
+
+	res, _, err := executeGenerateDocument(args)
+	if err != nil {
+		t.Fatalf("generate_document failed: %v", err)
+	}
+	doc, ok := res.(*AIDocumentCard)
+	if !ok || doc == nil {
+		t.Fatalf("expected *AIDocumentCard")
+	}
+	// The buyer's coordinates reach both spellings the two canvases read.
+	for key, want := range map[string]string{
+		"buyer_company":    "上海某某机械有限公司",
+		"buyer_contact":    "王工",
+		"buyer_email":      "wang@example.cn",
+		"customer_email":   "wang@example.cn",
+		"buyer_address":    "上海市浦东新区某某路 88 号",
+		"customer_address": "上海市浦东新区某某路 88 号",
+		"customer_po":      "PO-7788",
+		"validity":         "30 天",
+		"customer_phone":   "+86 21 5555 0000",
+	} {
+		if got := doc.Values[key]; got != want {
+			t.Errorf("values[%q] = %q, want %q", key, got, want)
+		}
+	}
+	if doc.Values["buyer_phone"] != "+86 138 0000 0000" {
+		t.Errorf("buyer_phone = %q", doc.Values["buyer_phone"])
+	}
+	if len(doc.Items) != 2 {
+		t.Fatalf("expected both product rows, got %+v", doc.Items)
+	}
+	if doc.Items[0].Amount != "12000.00" || doc.Items[1].Amount != "11500.00" {
+		t.Errorf("expected computed amounts, got %+v", doc.Items)
+	}
+}
+
+func TestExecuteGenerateDocumentExplicitValuesWin(t *testing.T) {
+	// The agent sometimes learns the buyer's registered name from the thread while
+	// the headline "counterparty" argument carries a short form. The explicit map
+	// is the more careful reading, so it must survive hydration.
+	res, _, err := executeGenerateDocument(map[string]any{
+		"type":         "quotation",
+		"title":        "报价单",
+		"counterparty": "某某机械",
+		"values":       map[string]any{"buyer_company": "上海某某机械有限公司", "currency": "USD"},
+	})
+	if err != nil {
+		t.Fatalf("generate_document failed: %v", err)
+	}
+	doc := res.(*AIDocumentCard)
+	if doc.Values["buyer_company"] != "上海某某机械有限公司" {
+		t.Errorf("explicit buyer_company was overwritten: %q", doc.Values["buyer_company"])
+	}
+	if doc.Values["customer_company"] != "某某机械" {
+		t.Errorf("derived customer_company should stay as the counterparty: %q", doc.Values["customer_company"])
+	}
+}
+
+func TestAgentPromptDemandsCompleteDocuments(t *testing.T) {
+	prompt := buildAgentSystemPrompt(agentModeConversation, "", "", nil)
+	for _, want := range []string{
+		"DOCUMENT COMPLETENESS",
+		"ONE ROW PER PRODUCT",
+		`"values"`,
+		"customer_po",
+		"buyer contact email",
+		"seller_company",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt does not require %q", want)
+		}
+	}
+	// Completeness must not weaken the no-invention rule.
+	if !strings.Contains(prompt, "NEVER invent, guess, or recall a price") {
+		t.Fatal("pricing rule was lost")
 	}
 }
 

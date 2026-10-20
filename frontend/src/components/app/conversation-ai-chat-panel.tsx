@@ -565,7 +565,13 @@ export function ConversationAIChatPanel({
                   </Button>
                 </div>
                 {!isUser && (message.document || message.documentAction) ? (
-                  <ConversationDocumentCard isZh={isZh} draft={message.document} action={message.documentAction} />
+                  <ConversationDocumentCard
+                    copy={copy}
+                    accountEmail={detail.accountEmail || ""}
+                    counterpartyEmail={detail.peerEmail}
+                    draft={message.document}
+                    action={message.documentAction}
+                  />
                 ) : null}
                 {!isUser && message.toolCalls?.length ? (
                   <div className="flex max-w-full flex-wrap items-center gap-1 px-1">

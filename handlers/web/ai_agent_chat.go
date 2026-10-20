@@ -346,16 +346,26 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
    }
 
 4. generate_document:
-   Create or update a structured quotation or sales contract.
+   Create a structured quotation or sales contract, filled as completely as the thread allows.
    Arguments schema: {
      "type": "quotation" | "contract",
      "title": "document title",
-     "counterparty": "customer company name",
-     "contact": "contact person",
-     "currency": "¥",
+     "counterparty": "buyer company, exactly as the thread writes it",
+     "contact": "buyer contact person",
+     "email": "buyer contact email",
+     "phone": "buyer phone",
+     "address": "buyer address",
+     "currency": "USD",
      "items": [{"model": "...", "description": "...", "qty": "...", "price": "...", "amount": "..."}],
      "terms": ["payment term", "delivery term", "warranty"],
-     "notes": "remarks or invoice notes"
+     "notes": "remarks or invoice notes",
+     "values": {"customer_po": "...", "validity": "...", "lead_time": "...", "payment_terms": "...",
+                "trade_term": "...", "origin": "...", "port_of_loading": "...", "remarks": "...",
+                "seller_company": "...", "seller_contact": "...", "seller_email": "...",
+                "seller_phone": "...", "seller_address": "...", "bank_account_name": "...",
+                "bank_account_no": "...", "bank_swift": "...", "bank_name": "...",
+                "bank_address": "...", "bank_country": "...", "payment_method": "...",
+                "order_note_1": "...", "order_note_2": "...", "order_note_3": "...", "order_note_4": "..."}
    }
 
 5. list_documents:
@@ -404,6 +414,14 @@ DOCUMENT RULES (QUOTATIONS & CONTRACTS):
 - Deleting is irreversible and needs the user's explicit intent. If the request is ambiguous, ask which document first.
 - Every number written into a quotation or contract follows the pricing rules below.
 
+DOCUMENT COMPLETENESS (QUOTATIONS & CONTRACTS):
+- A document is filled from the WHOLE thread, not from the user's last sentence. Re-read the conversation before calling generate_document and collect: the buyer's full company name, contact person, email, phone and address; the customer's PO or reference number; the currency; every product model, description and quantity discussed; payment terms, lead time, validity and any delivery or packing note.
+- Buyer details come from the thread itself. The sender's signature usually carries the company name, phone and address, and the From/Cc headers carry the email address. Copy the company name exactly as it is written. Never leave the buyer blank when anyone in the thread names the company.
+- Line items: ONE ROW PER PRODUCT. If the mail lists or tabulates products, reproduce every row in the same order with model, description, quantity and unit price, and let the amount be quantity x price. Never collapse several products into one summary row, and never drop a row the thread discusses.
+- Prices still follow the pricing rules: when lookup_price has no entry for a model, leave its price and amount empty and say so. Quantities, descriptions, buyer details and terms are never left empty when the thread has them.
+- Everything without a dedicated argument goes into "values", keyed by these concept ids: customer_po, validity, commercial_validity, lead_time, payment_terms, trade_term, origin, port_of_loading, remarks, notes, item_model, contract_title, seller_company, seller_contact, seller_email, seller_phone, seller_address, bank_account_name, bank_account_no, bank_swift, bank_name, bank_address, bank_country, payment_method, order_note_1, order_note_2, order_note_3, order_note_4. Fill seller and bank details only when the thread or the user's own signature states them; never invent a bank account.
+- A field the document needs but the thread does not contain stays empty AND is named in your reply, so the user can supply it. Do not silently hand over a half-empty document.
+
 TOOL CALLING PROTOCOL:
 If you need to query emails, read email details, calculate pricing, or draft a document, output one or more tool call code fences like:
 ` + "```tool_call" + `
@@ -427,9 +445,15 @@ When you have gathered the required information or when no further tool is neede
   "type": "quotation",
   "title": "...",
   "counterparty": "...",
+  "contact": "...",
+  "email": "...",
+  "phone": "...",
+  "address": "...",
+  "currency": "...",
   "items": [{"model": "...", "description": "...", "qty": "...", "price": "...", "amount": "..."}],
   "terms": ["..."],
-  "notes": "..."
+  "notes": "...",
+  "values": {"customer_po": "...", "lead_time": "...", "payment_terms": "..."}
 }
 ` + "```" + `
 Always use the user's language (default Chinese). Be precise, courteous, and efficient.`)
@@ -1328,9 +1352,9 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 			title = "商业报价单"
 		}
 	}
-	counterparty, _ := args["counterparty"].(string)
-	contact, _ := args["contact"].(string)
-	currency, _ := args["currency"].(string)
+	counterparty := parseStringArg(args, "counterparty", "buyer_company", "customer_company", "buyer", "customer", "company")
+	contact := parseStringArg(args, "contact", "buyer_contact", "customer_contact", "contact_person")
+	currency := parseStringArg(args, "currency")
 	if currency == "" {
 		currency = "¥"
 	}
@@ -1409,6 +1433,10 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 	}
 
 	hydrateDocumentCard(card)
+	// Everything the agent found in the thread that has no dedicated argument:
+	// the buyer's coordinates, the customer's PO, commercial terms, and any other
+	// field the documents read by concept id.
+	mergeDocumentValueArgs(card, args)
 
 	docName := "报价单"
 	if docType == "contract" {
@@ -1416,6 +1444,75 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 	}
 	summary := fmt.Sprintf("已生成%s: %s (买方: %s)", docName, title, counterparty)
 	return card, summary, nil
+}
+
+// mergeDocumentValueArgs fills the rest of a generated document from the agent's
+// own field map.
+//
+// The three headline arguments cover a title, a company and a contact; a real
+// quotation also carries the buyer's address, the customer's PO, payment and
+// delivery terms, and the seller's own details. Those arrive either as the
+// buyer's headline email/phone/address or in a generic "values" map keyed by the
+// concept ids the canvas documents read. Explicit values land last so the
+// agent's reading of the thread wins over anything derived from the headline
+// arguments.
+func mergeDocumentValueArgs(card *AIDocumentCard, args map[string]any) {
+	if card == nil || args == nil {
+		return
+	}
+	if card.Values == nil {
+		card.Values = make(map[string]string)
+	}
+	set := func(key, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			card.Values[key] = value
+		}
+	}
+	// Both spellings exist in the templates: quotations read customer_*, contracts
+	// read buyer_* (and fall back to customer_*). Write both so the same document
+	// renders correctly whichever type the user keeps it as.
+	if email := parseStringArg(args, "email", "buyer_email", "customer_email", "contact_email"); email != "" {
+		set("buyer_email", email)
+		set("customer_email", email)
+	}
+	if phone := parseStringArg(args, "phone", "buyer_phone", "customer_phone", "contact_phone"); phone != "" {
+		set("buyer_phone", phone)
+		set("customer_phone", phone)
+	}
+	if address := parseStringArg(args, "address", "buyer_address", "customer_address"); address != "" {
+		set("buyer_address", address)
+		set("customer_address", address)
+	}
+	for key, value := range parseDocumentValueMap(args["values"]) {
+		set(key, value)
+	}
+}
+
+// parseDocumentValueMap normalizes a JSON field map to strings. Numbers are
+// decoded as float64, so an unformatted id or amount must not arrive as "1e+06".
+func parseDocumentValueMap(value any) map[string]string {
+	raw, ok := value.(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for key, item := range raw {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		switch typed := item.(type) {
+		case string:
+			out[key] = strings.TrimSpace(typed)
+		case float64:
+			out[key] = strconv.FormatFloat(typed, 'f', -1, 64)
+		case bool:
+			if typed {
+				out[key] = "true"
+			}
+		}
+	}
+	return out
 }
 
 func hydrateDocumentCard(card *AIDocumentCard) {
@@ -1441,8 +1538,18 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 		card.Values["total_amount"] = card.Total
 		card.Values["contract_amount"] = card.Total
 	}
+	// The contract's amount block reads subtotal and total separately; without it
+	// a multi-row document leaves that line blank.
+	if card.Subtotal != "" {
+		card.Values["subtotal"] = card.Subtotal
+	}
+	// The quotation prints the currency it was written in; the card's currency is
+	// otherwise dropped when the document is rebuilt on the client.
+	if card.Currency != "" {
+		card.Values["currency"] = card.Currency
+	}
 	if card.Notes != "" {
-		card.Values["order_note_01"] = card.Notes
+		card.Values["notes"] = card.Notes
 	}
 
 	if isContract {
@@ -1464,6 +1571,8 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 			} else if strings.Contains(term, "交货") || strings.Contains(term, "交付") {
 				card.Values["delivery_date"] = term
 				card.Values["delivery_lead_time"] = term
+				// The quotation's line is "Lead Time", not "delivery date".
+				card.Values["lead_time"] = term
 			} else if strings.Contains(term, "质保") || strings.Contains(term, "保修") {
 				card.Values["warranty_period"] = term
 			} else {

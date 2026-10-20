@@ -396,7 +396,22 @@ export function DocumentAISidebar({
   );
 }
 
-export function DocumentEditorDialog({ copy, accountEmail, target, templates, onOpenChange, onSave, onAttach, onBusyChange }: { copy: Copy; accountEmail: string; target: DocumentEditorTarget | null; templates: StoredTemplate[]; onOpenChange: (open: boolean) => void; onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void | Promise<void>; onAttach?: (file: File) => void; onBusyChange?: (busy: boolean) => void }) {
+export function DocumentEditorDialog({ copy, accountEmail, target, templates, initialTab, onOpenChange, onSave, onAttach, onBusyChange }: {
+  copy: Copy;
+  accountEmail: string;
+  target: DocumentEditorTarget | null;
+  templates: StoredTemplate[];
+  /**
+   * Which view to show first. Defaults to the document on a desktop and to the
+   * document AI on a phone; a caller that opens this to look at a document says
+   * so explicitly, so a phone lands on the page instead of a second chat.
+   */
+  initialTab?: "chat" | "document";
+  onOpenChange: (open: boolean) => void;
+  onSave: (kind: DocumentEditorTarget["kind"], record: StoredDocument) => void | Promise<void>;
+  onAttach?: (file: File) => void;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const initialTemplate = target?.initialTemplate || templates.find((template) => template.type === target?.record?.type) || templates[0];
   const initialType = target?.record?.type || initialTemplate?.type || "quotation";
   const editorRef = useRef<CanvasDocumentEditorHandle>(null);
@@ -424,6 +439,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, on
   }, []);
   const [aiSidebarOpen, setAiSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"chat" | "document" | "variables">(() => {
+    if (initialTab) return initialTab;
     if (typeof window !== "undefined" && window.innerWidth < 768) return "chat";
     return "document";
   });

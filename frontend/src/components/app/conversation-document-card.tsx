@@ -1,14 +1,26 @@
 import { useState } from "react";
-import { BookmarkCheck, FileSignature, FileText, Loader2, Trash2, Wand2 } from "lucide-react";
+import { BookmarkCheck, Eye, FileSignature, FileText, Loader2, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { convertGeneratedToStoredDocument } from "../../lib/ai-document-storage";
-import { deleteServerDocuments, persistServerDocument } from "../../lib/document-storage";
+import {
+  type DocumentEditorTarget,
+  type StoredDocument,
+  type StoredTemplate,
+  deleteServerDocuments,
+  persistServerDocument,
+  readStoredTemplates,
+} from "../../lib/document-storage";
 import type { ConversationAIDocumentAction, ConversationAIDocumentDraft } from "../../types";
+import { type Copy, zh } from "../../lib/locale";
 import { cn } from "../../lib/utils";
+import { DocumentEditorDialog } from "./document-editor-dialog";
 
 type Props = {
-  isZh: boolean;
+  copy: Copy;
+  accountEmail: string;
+  /** The conversation's other side — the buyer, so their address is never blank. */
+  counterpartyEmail?: string;
   /** A freshly drafted quotation/contract the user can save. */
   draft?: ConversationAIDocumentDraft;
   /** A proposed change to an already saved document. */
@@ -34,29 +46,86 @@ function documentTypeLabel(type: string | undefined, isZh: boolean) {
 /**
  * Renders a document the conversation agent produced: a draft to save, or a
  * proposed update/delete of a saved document. Nothing is written until the user
- * presses the button, because the agent cannot see the document library.
+ * presses a button, because the agent cannot see the document library.
+ *
+ * "View document" opens the same full-screen editor the documents page uses,
+ * right here, so a quotation the agent just filled in can be read and corrected
+ * without leaving the conversation. What it shows is the document as it would be
+ * saved — the proposed fields for an update, the generated content for a new
+ * one — and saving from the editor writes it to the library.
  */
-export function ConversationDocumentCard({ isZh, draft, action }: Props) {
+export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail, draft, action }: Props) {
+  const isZh = copy === zh;
   const [busy, setBusy] = useState<"save" | "apply" | "delete" | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // One id per card, so re-opening the editor edits the same document instead of
+  // minting a second copy of it.
+  const [draftId] = useState(() => crypto.randomUUID());
+  const [editor, setEditor] = useState<{ record: StoredDocument; templates: StoredTemplate[] } | null>(null);
 
-  const saveDraft = async () => {
-    if (!draft || busy) return;
-    setBusy("save");
-    try {
-      const stored = convertGeneratedToStoredDocument({
-        id: crypto.randomUUID(),
+  /** The document this card stands for, as the editor and the library see it. */
+  const buildRecord = (): StoredDocument | null => {
+    if (draft) {
+      // The buyer's address is the one field the conversation itself knows for
+      // certain, so it stands in when the agent did not extract one.
+      const values = { ...(draft.values || {}) };
+      if (counterpartyEmail && !values.customer_email && !values.buyer_email) {
+        values.customer_email = counterpartyEmail;
+        values.buyer_email = counterpartyEmail;
+      }
+      return convertGeneratedToStoredDocument({
+        id: draftId,
         type: draft.type,
         name: draft.title || documentTypeLabel(draft.type, isZh),
         company: draft.counterparty,
         html: draft.html || "",
-        values: draft.values,
+        values,
         items: toQuotationItems(draft.items),
         terms: draft.terms,
         notes: draft.notes,
         total: draft.total,
         updatedAt: new Date().toISOString(),
       });
+    }
+    if (action && action.kind !== "delete") {
+      return convertGeneratedToStoredDocument({
+        id: action.documentId,
+        type: action.type === "contract" ? "contract" : "quotation",
+        name: action.name || documentTypeLabel(action.type, isZh),
+        company: action.company,
+        html: "",
+        values: action.values,
+        items: toQuotationItems(action.items),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    return null;
+  };
+
+  const openDocument = () => {
+    const record = buildRecord();
+    if (!record) return;
+    setEditor({ record, templates: readStoredTemplates(copy) });
+  };
+
+  const saveFromEditor = async (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
+    if (kind !== "document") return;
+    try {
+      const saved = await persistServerDocument(record);
+      setEditor({ record: saved, templates: readStoredTemplates(copy) });
+      setDone(isZh ? `已保存《${saved.name}》` : `Saved "${saved.name}"`);
+      toast.success(isZh ? "已保存到报价单与合同" : "Saved to quotations & contracts");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : isZh ? "保存失败" : "Save failed");
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!draft || busy) return;
+    setBusy("save");
+    try {
+      const stored = buildRecord();
+      if (!stored) return;
       const saved = await persistServerDocument(stored);
       setDone(isZh ? `已保存《${saved.name}》` : `Saved "${saved.name}"`);
       toast.success(isZh ? "已保存到报价单与合同" : "Saved to quotations & contracts");
@@ -73,16 +142,8 @@ export function ConversationDocumentCard({ isZh, draft, action }: Props) {
     try {
       // Rebuild the canvas document from the merged fields the server returned,
       // keeping the original document id so the library entry is replaced.
-      const rebuilt = convertGeneratedToStoredDocument({
-        id: action.documentId,
-        type: action.type === "contract" ? "contract" : "quotation",
-        name: action.name || documentTypeLabel(action.type, isZh),
-        company: action.company,
-        html: "",
-        values: action.values,
-        items: toQuotationItems(action.items),
-        updatedAt: new Date().toISOString(),
-      });
+      const rebuilt = buildRecord();
+      if (!rebuilt) return;
       const saved = await persistServerDocument({ ...rebuilt, id: action.documentId });
       setDone(isZh ? `已更新《${saved.name}》` : `Updated "${saved.name}"`);
       toast.success(isZh ? "文档已更新" : "Document updated");
@@ -114,6 +175,7 @@ export function ConversationDocumentCard({ isZh, draft, action }: Props) {
     : isDelete
       ? `${isZh ? "删除文档" : "Delete document"}：${action?.name ?? ""}`
       : `${isZh ? "修改文档" : "Update document"}：${action?.name ?? ""}`;
+  const viewable = Boolean(draft) || Boolean(action && action.kind !== "delete");
 
   return (
     <div
@@ -141,6 +203,24 @@ export function ConversationDocumentCard({ isZh, draft, action }: Props) {
               {isZh ? "客户" : "Customer"}：{draft.counterparty}
               {draft.contact ? ` · ${draft.contact}` : ""}
             </div>
+          ) : null}
+          {draft ? (
+            (() => {
+              // Buyers' coordinates, so the card shows how much of the document
+              // the thread actually filled instead of only the company name.
+              const details = [
+                draft.values?.customer_email || draft.values?.buyer_email,
+                draft.values?.customer_phone || draft.values?.buyer_phone,
+                draft.values?.customer_address || draft.values?.buyer_address,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return details ? (
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={details}>
+                  {details}
+                </div>
+              ) : null;
+            })()
           ) : null}
           {action?.company && !isDelete ? (
             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -179,6 +259,13 @@ export function ConversationDocumentCard({ isZh, draft, action }: Props) {
               ))}
             </tbody>
           </table>
+          {draft.items.length > 5 ? (
+            <div className="border-t border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
+              {isZh
+                ? `另有 ${draft.items.length - 5} 行，打开文档查看完整明细`
+                : `${draft.items.length - 5} more rows — open the document for the full list`}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -188,52 +275,80 @@ export function ConversationDocumentCard({ isZh, draft, action }: Props) {
         </div>
       ) : null}
 
-      {done ? (
-        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
-          <BookmarkCheck className="size-3" />
-          {done}
-        </div>
-      ) : (
-        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {draft ? (
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 gap-1 px-2.5 text-xs shadow-none"
-              disabled={busy !== null}
-              onClick={() => void saveDraft()}
-            >
-              {busy === "save" ? <Loader2 className="size-3 animate-spin" /> : <BookmarkCheck className="size-3" />}
-              {isZh ? "保存到报价单与合同" : "Save to documents"}
-            </Button>
-          ) : null}
-          {action?.kind === "update" ? (
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 gap-1 px-2.5 text-xs shadow-none"
-              disabled={busy !== null}
-              onClick={() => void applyUpdate()}
-            >
-              {busy === "apply" ? <Loader2 className="size-3 animate-spin" /> : <FileSignature className="size-3" />}
-              {isZh ? "应用修改" : "Apply changes"}
-            </Button>
-          ) : null}
-          {isDelete ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              className="h-7 gap-1 px-2.5 text-xs shadow-none"
-              disabled={busy !== null}
-              onClick={() => void removeDocument()}
-            >
-              {busy === "delete" ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
-              {isZh ? "确认删除" : "Delete"}
-            </Button>
-          ) : null}
-        </div>
-      )}
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        {viewable ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2.5 text-xs shadow-none"
+            onClick={openDocument}
+            title={copy.viewDocument}
+            data-testid="conversation-document-view"
+          >
+            <Eye className="size-3" />
+            {copy.viewDocument}
+          </Button>
+        ) : null}
+        {!done && draft ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 gap-1 px-2.5 text-xs shadow-none"
+            disabled={busy !== null}
+            onClick={() => void saveDraft()}
+          >
+            {busy === "save" ? <Loader2 className="size-3 animate-spin" /> : <BookmarkCheck className="size-3" />}
+            {isZh ? "保存到报价单与合同" : "Save to documents"}
+          </Button>
+        ) : null}
+        {!done && action?.kind === "update" ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 gap-1 px-2.5 text-xs shadow-none"
+            disabled={busy !== null}
+            onClick={() => void applyUpdate()}
+          >
+            {busy === "apply" ? <Loader2 className="size-3 animate-spin" /> : <FileSignature className="size-3" />}
+            {isZh ? "应用修改" : "Apply changes"}
+          </Button>
+        ) : null}
+        {!done && isDelete ? (
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="h-7 gap-1 px-2.5 text-xs shadow-none"
+            disabled={busy !== null}
+            onClick={() => void removeDocument()}
+          >
+            {busy === "delete" ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+            {isZh ? "确认删除" : "Delete"}
+          </Button>
+        ) : null}
+        {done ? (
+          <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <BookmarkCheck className="size-3" />
+            {done}
+          </div>
+        ) : null}
+      </div>
+
+      {editor ? (
+        <DocumentEditorDialog
+          key={`document-${editor.record.id}`}
+          copy={copy}
+          accountEmail={accountEmail}
+          target={{ kind: "document", record: editor.record }}
+          templates={editor.templates}
+          initialTab="document"
+          onOpenChange={(open) => {
+            if (!open) setEditor(null);
+          }}
+          onSave={saveFromEditor}
+        />
+      ) : null}
     </div>
   );
 }
