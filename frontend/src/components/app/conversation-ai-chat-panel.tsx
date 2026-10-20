@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Copy as CopyIcon,
   Loader2,
+  PenLine,
   Sparkles,
   Tags,
   Trash2,
@@ -25,6 +26,7 @@ import {
 import {
   buildConversationAIContext,
   copyToClipboard,
+  markdownToPlainText,
 } from "../../lib/email-format";
 import { type Copy, zh } from "../../lib/locale";
 import { cn, formatTime } from "../../lib/utils";
@@ -77,6 +79,7 @@ export function ConversationAIChatPanel({
   focusedMessageIds = [],
   onRemoveFocusedMessage,
   onClearFocusedMessages,
+  onWriteDraft,
   className,
 }: {
   copy: Copy;
@@ -86,6 +89,8 @@ export function ConversationAIChatPanel({
   focusedMessageIds?: string[];
   onRemoveFocusedMessage?: (id: string) => void;
   onClearFocusedMessages?: () => void;
+  /** Puts an answer into the reply draft in the transcript, creating it if needed. */
+  onWriteDraft?: (body: string) => void;
   className?: string;
 }) {
   const queryClient = useQueryClient();
@@ -516,6 +521,30 @@ export function ConversationAIChatPanel({
                       />
                     )}
                   </div>
+                  {!isUser && onWriteDraft ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
+                        "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                      )}
+                      onClick={() => {
+                        const body = markdownToPlainText(message.content);
+                        if (!body) return;
+                        onWriteDraft(body);
+                        // On mobile the panel covers the transcript, and the
+                        // point of the click is to see the draft it filled.
+                        if (isMobile) onClose();
+                      }}
+                      title={copy.draftWriteFromAI}
+                      aria-label={copy.draftWriteFromAI}
+                      data-testid="ai-message-write-draft"
+                    >
+                      <PenLine className="size-3" />
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="ghost"

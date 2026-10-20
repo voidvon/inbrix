@@ -26,6 +26,16 @@ export type ComposeDefaults = {
   conversation?: ConversationMessage[];
   conversationId?: string;
   replacesOutboxId?: string;
+  /**
+   * The reply text a compose window should start with, applied after the window
+   * is filled — including when it is filled from a draft stored on the server.
+   *
+   * `html` above only reaches a window that has no draft yet; a draft always
+   * wins over it. This is the other half: the quote and signature of whatever is
+   * loaded are kept, and only the author's own text is replaced, which is what
+   * "put the AI's answer into my reply" has to mean.
+   */
+  replaceBody?: string;
 };
 
 export function inlineImageDimensions(previewURL: string) {
@@ -263,6 +273,28 @@ export function draftBodyForStorage(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.body.querySelectorAll<HTMLImageElement>('img[src^="blob:"]').forEach((image) => image.remove());
   return document.body.innerHTML;
+}
+
+/**
+ * Markdown as the plain text an email body should hold. AI answers are written
+ * as markdown, but a draft is real mail: the asterisks and backticks have to go
+ * before they reach the reader.
+ */
+export function markdownToPlainText(value: string) {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/^```[^\n]*\n([\s\S]*?)^```[ \t]*$/gm, "$1")
+    .replace(/^#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, "$1 ($2)")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(\*|_)([^*_\n]+)\1/g, "$2")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "- ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function signatureNodeHTML(signature: EmailSignature) {

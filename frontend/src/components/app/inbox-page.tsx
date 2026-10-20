@@ -15,7 +15,6 @@ import {
 import { en } from "../../lib/locale";
 import {
   escapeHTML,
-  generatedEmailHTML,
   splitRecipientValues,
   structuredQuotedTextToHTML,
   uniqueRecipients,
@@ -283,7 +282,12 @@ export function InboxPage() {
       accountEmail: conversation.accountEmail,
       to: recipient,
       subject: replySubject,
-      html: `${suggestedBody?.trim() ? generatedEmailHTML(suggestedBody) : "<p><br></p>"}<p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
+      // Deliberately the empty template: a body baked into `html` would be
+      // indistinguishable from "already saved", and opening a reply with a
+      // suggested answer would then leave no draft behind. The text travels in
+      // `replaceBody`, which counts as an edit.
+      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
+      replaceBody: suggestedBody?.trim() || undefined,
       inReplyTo: source?.messageId,
       references,
       conversation: conversation.messages,
@@ -314,7 +318,8 @@ export function InboxPage() {
       to: finalTo.join(", "),
       cc: cc.join(", "),
       subject: replySubject,
-      html: `${suggestedBody?.trim() ? generatedEmailHTML(suggestedBody) : "<p><br></p>"}<p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
+      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
+      replaceBody: suggestedBody?.trim() || undefined,
       inReplyTo: source.messageId,
       references,
       conversation: conversation.messages,

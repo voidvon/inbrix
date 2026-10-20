@@ -470,6 +470,14 @@ export function ChatView({
     const latest = detail.messages.at(-1);
     if (latest) onReply(latest);
   };
+  // An answer from the AI panel lands in the reply draft at the bottom of the
+  // transcript — the same editor Reply opens, and the same row the server keeps
+  // — instead of in a second compose surface of its own.
+  const writeDraftToLatest = (body: string) => {
+    const latest = detail.messages.at(-1);
+    if (!latest) return;
+    onReply(latest, body);
+  };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
@@ -788,6 +796,7 @@ export function ChatView({
               onRemoveFocusedMessage={handleRemoveFocusedMessage}
               onClearFocusedMessages={handleClearFocusedMessages}
               onClose={() => setIsAIChatOpen(false)}
+              onWriteDraft={writeDraftToLatest}
             />
           </aside>
         </>
@@ -804,6 +813,7 @@ export function ChatView({
             onRemoveFocusedMessage={handleRemoveFocusedMessage}
             onClearFocusedMessages={handleClearFocusedMessages}
             onClose={() => setIsAIChatOpen(false)}
+            onWriteDraft={writeDraftToLatest}
           />
         </div>
       )}

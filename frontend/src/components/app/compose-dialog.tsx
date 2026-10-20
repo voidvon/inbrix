@@ -27,6 +27,7 @@ import { RichTextButtons } from "./rich-text-buttons";
 import { ReplyTemplates } from "./reply-templates";
 import { ComposeDocumentAttachment } from "./document-editor-dialog";
 import { ComposeBubble, type ComposeBubbleSize, type ComposeDraftStatus, type ComposeVariant } from "./compose-bubble";
+import { usePersistedPaneHeight, viewportHeightLimit } from "./resize-handle";
 import { deleteDraft, generateEmail, getSignatures, saveDraft, sendMessage } from "../../lib/api";
 import { composeDraftKey, useComposeDraft } from "../../lib/compose-draft";
 import { cn, formatSize } from "../../lib/utils";
@@ -329,13 +330,13 @@ export function RecipientTagInput({
     <div>
       <div
         className={cn(
-          "flex min-h-8 flex-wrap items-center gap-1.5 rounded-lg border border-input bg-transparent px-2 py-1 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
+          "flex h-8 flex-nowrap items-center gap-1 overflow-x-auto rounded-lg border border-input bg-transparent px-2 py-0.5 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
           invalid && "border-destructive focus-within:border-destructive focus-within:ring-destructive/20"
         )}
         onClick={() => inputRef.current?.focus()}
       >
         {recipients.map((recipient, index) => (
-          <span className="flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-sm" key={`${recipient}-${index}`}>
+          <span className="flex max-w-full items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs" key={`${recipient}-${index}`}>
             <span className="truncate" title={recipient}>
               {recipient}
             </span>
@@ -355,7 +356,7 @@ export function RecipientTagInput({
         ))}
         <input
           ref={inputRef}
-          className="h-6 min-w-32 flex-1 bg-transparent px-0.5 text-sm outline-none placeholder:text-muted-foreground"
+          className="h-6 min-w-8 flex-1 bg-transparent px-0.5 text-sm outline-none placeholder:text-muted-foreground"
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value);
@@ -393,6 +394,33 @@ export function RecipientTagInput({
 
 /** How long typing must pause before the draft is pushed to the server. */
 const DRAFT_AUTOSAVE_MS = 1200;
+
+// The compose window's height is the user's to choose; these are only the
+// starting point and the floor. The default is deliberately generous because the
+// rich-text area is what suffers when it is not: every fixed row above it —
+// header, recipients, subject, toolbar, footer — is taken out of this budget.
+const COMPOSE_FLOATING_HEIGHT = 660;
+const COMPOSE_INLINE_HEIGHT = 580;
+const COMPOSE_MIN_HEIGHT = 300;
+
+/**
+ * Whether two Reply clicks describe the same compose window. The reply text is
+ * excluded on purpose: writing an AI answer into a window that is already open
+ * only changes the body, and reloading the window for it would throw away a
+ * subject edit that has not reached the server yet.
+ */
+function sameComposeWindow(a: ComposeDefaults, b: ComposeDefaults) {
+  return (
+    a.conversationId === b.conversationId &&
+    a.to === b.to &&
+    (a.cc || "") === (b.cc || "") &&
+    a.subject === b.subject &&
+    (a.html || "") === (b.html || "") &&
+    (a.inReplyTo || "") === (b.inReplyTo || "") &&
+    (a.replacesOutboxId || "") === (b.replacesOutboxId || "") &&
+    (a.references || []).join(" ") === (b.references || []).join(" ")
+  );
+}
 
 /**
  * What "the draft has not changed" means: the exact values that would be
@@ -449,6 +477,15 @@ export function ComposeDialog({
 
   // --- server-side draft state -------------------------------------------
   const [bubbleSize, setBubbleSize] = useState<ComposeBubbleSize>("normal");
+  // The window's height, remembered per variant: the inline reply sits in a
+  // transcript and the floating one in the corner, and neither wants the other's
+  // size. The editor takes whatever is left after the fixed rows.
+  const [composeHeight, setComposeHeight] = usePersistedPaneHeight(
+    variant === "inline" ? "inbrix-compose-inline-height" : "inbrix-compose-height",
+    variant === "inline" ? COMPOSE_INLINE_HEIGHT : COMPOSE_FLOATING_HEIGHT,
+    COMPOSE_MIN_HEIGHT,
+    viewportHeightLimit(),
+  );
   const [draftStatus, setDraftStatus] = useState<ComposeDraftStatus>("idle");
   const [draftSavedAt, setDraftSavedAt] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
@@ -685,6 +722,13 @@ export function ComposeDialog({
     if (!open || !editor) return;
     const previous = activeWindowRef.current;
     if (previous?.defaults === defaults) return;
+    // The same window, with a new reply text: apply it in place instead of
+    // reloading the draft, so the subject and whatever has been typed survive.
+    if (previous && sameComposeWindow(previous.defaults, defaults) && defaults.replaceBody?.trim()) {
+      activeWindowRef.current = { defaults, conversationId };
+      replaceEditorDraft(editor, defaults.replaceBody);
+      return;
+    }
     if (!draftLoaded) return;
     // The bubble is not modal, so the user can click Reply on another
     // conversation while this one is still open. Whatever was typed into the
@@ -723,6 +767,10 @@ export function ComposeDialog({
     // next save would serialize would write a draft the moment a reply opens.
     lastSavedRef.current = draftSignature(to, cc, subjectValue, draftBodyForStorage(editor.getHTML()));
     activeWindowRef.current = { defaults, conversationId };
+    // Applied AFTER the baseline is taken, so it counts as an edit and the draft
+    // is written out on the next autosave — that is what makes "write this
+    // answer into my reply" also work when there was no draft to begin with.
+    if (defaults.replaceBody?.trim()) replaceEditorDraft(editor, defaults.replaceBody);
   }, [open, defaults, editor, draftLoaded, storedDraft, conversationId]);
 
   // Field edits are not editor updates, so they arm the autosave separately.
@@ -861,18 +909,16 @@ export function ComposeDialog({
 
   if (!open) return null;
 
-  // The floating window has a fixed height, so its body can grow to fill it. The
-  // inline card is sized by its content, where `flex-1` on a flex-basis-0 child
-  // would collapse the editor to nothing — so its editing area gets a definite
-  // height of its own.
-  const editorAreaClass = variant === "inline" ? "h-48 shrink-0" : "min-h-0 flex-1";
-
   return (
     <ComposeBubble
       copy={copy}
       variant={variant}
       title={subject.trim() || copy.writeMessage}
       size={bubbleSize}
+      height={composeHeight}
+      minHeight={COMPOSE_MIN_HEIGHT}
+      maxHeight={viewportHeightLimit()}
+      onHeightChange={setComposeHeight}
       draftStatus={draftStatus}
       draftSavedAt={draftSavedAt}
       canDiscard={hasDraft}
@@ -881,21 +927,28 @@ export function ComposeDialog({
       onDiscard={discardDraft}
     >
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
-        <div className="grid gap-3 border-b px-5 py-4">
-          <Label className="grid gap-1.5 text-xs text-muted-foreground">
-            {copy.to}
-            <RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus />
-          </Label>
-          <Label className="grid gap-1.5 text-xs text-muted-foreground">
-            {copy.cc}
-            <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
-          </Label>
-          <Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="compose-subject">
-            {copy.subject}
-            <Input id="compose-subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />
+        {/* Label beside its field rather than above it: three stacked rows cost
+            roughly twice the height, and that height comes straight out of the
+            editor. Recipients and copy share the first row because a "to" is
+            normally one address while a "cc" can be a list, so the wider half
+            goes to the one that can grow. */}
+        <div className="grid gap-1.5 border-b px-3 py-2">
+          <div className="grid gap-1.5 sm:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
+            <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground">
+              <span className="whitespace-nowrap">{copy.to}</span>
+              <RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus />
+            </Label>
+            <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground">
+              <span className="whitespace-nowrap">{copy.cc}</span>
+              <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
+            </Label>
+          </div>
+          <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground" htmlFor="compose-subject">
+            <span className="whitespace-nowrap">{copy.subject}</span>
+            <Input id="compose-subject" className="h-8" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />
           </Label>
         </div>
-        <div className="flex items-center gap-1 overflow-x-auto border-b bg-muted px-4 py-1">
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-muted px-3 py-0.5">
           <RichTextButtons editor={editor} disabled={sourceMode} />
           <Button type="button" variant="ghost" size="icon" disabled={sourceMode || !editor} onClick={() => inlineImageInputRef.current?.click()} aria-label={copy.insertImage} title={copy.insertImage}>
             <ImagePlus />
@@ -952,14 +1005,14 @@ export function ComposeDialog({
         </div>
         {sourceMode ? (
           <textarea
-            className={cn("resize-none bg-background px-5 py-4 font-mono text-sm leading-6 outline-none", editorAreaClass)}
+            className="min-h-0 flex-1 resize-none bg-background px-4 py-3 font-mono text-sm leading-6 outline-none"
             value={sourceCode}
             onChange={(event) => setSourceCode(event.target.value)}
             spellCheck={false}
             aria-label={copy.sourceCode}
           />
         ) : (
-          <ScrollArea className={editorAreaClass} contentClassName="px-5 py-4">
+          <ScrollArea data-testid="compose-editor-area" className="min-h-0 flex-1" contentClassName="px-4 py-3">
             <EditorContent
               editor={editor}
               onPaste={(event) => {
@@ -979,7 +1032,7 @@ export function ComposeDialog({
           </ScrollArea>
         )}
         {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 border-t px-5 py-2">
+          <div className="flex shrink-0 flex-wrap gap-2 border-t px-3 py-1.5">
             {attachments.map((file, index) => (
               <span className="flex max-w-64 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
                 <Paperclip className="size-3.5 shrink-0" />
@@ -1002,8 +1055,8 @@ export function ComposeDialog({
             ))}
           </div>
         )}
-        {error && <p className="px-5 pb-2 text-xs text-destructive">{error}</p>}
-        <div className="flex shrink-0 flex-row items-center justify-between gap-2 border-t px-5 py-3">
+        {error && <p className="shrink-0 px-3 pb-1.5 text-xs text-destructive">{error}</p>}
+        <div className="flex shrink-0 flex-row items-center justify-between gap-2 border-t px-3 py-2">
           <input
             ref={attachmentInputRef}
             className="sr-only"
