@@ -295,6 +295,13 @@ export function getConversation(id: string) {
   return apiFetch<ConversationDetailResponse>(`/api/conversations/${encodeURIComponent(id)}`);
 }
 
+export function startConversation(accountEmail: string, to: string) {
+  return apiFetch<ConversationDetailResponse>("/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ accountEmail, to }),
+  });
+}
+
 export function saveConversationNote(id: string, note: string) {
   return apiFetch<{ ok: boolean; note: string }>(`/api/conversations/${encodeURIComponent(id)}/note`, {
     method: "PUT",

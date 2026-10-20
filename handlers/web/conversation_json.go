@@ -7,6 +7,7 @@ import (
 	"inbrix/i18n"
 	"inbrix/mailstore"
 	"inbrix/models"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"strings"
@@ -103,6 +104,7 @@ type ConversationDetailJSON struct {
 	Title        string                    `json:"title"`
 	PeerEmail    string                    `json:"peerEmail,omitempty"`
 	Subject      string                    `json:"subject"`
+	Note         string                    `json:"note"`
 	Count        int                       `json:"count"`
 	AccountEmail string                    `json:"accountEmail,omitempty"`
 	AccountLabel string                    `json:"accountLabel,omitempty"`
@@ -163,6 +165,7 @@ func conversationDetailJSONForLocale(conversation Conversation, locale string) C
 		Title:        conversation.Title,
 		PeerEmail:    conversation.PeerEmail,
 		Subject:      conversation.Subject,
+		Note:         conversation.Note,
 		Count:        conversation.Count,
 		AccountEmail: conversation.AccountEmail,
 		AccountLabel: conversation.AccountLabel,
@@ -431,6 +434,53 @@ func (h *EmailHandler) HandleConversationListJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversations"})
 	}
 	return c.JSON(response)
+}
+
+// HandleStartConversationJSON opens the account's peer conversation or creates
+// an initial draft so a conversation without sent messages survives reloads.
+func (h *EmailHandler) HandleStartConversationJSON(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.NewError(fiber.StatusNotImplemented, "Mail mirror is unavailable")
+	}
+	ownerID := requestOwnerID(c, h.store)
+	if ownerID == "" {
+		return fiber.ErrUnauthorized
+	}
+	var input struct {
+		To           string `json:"to"`
+		AccountEmail string `json:"accountEmail"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+	address, err := mail.ParseAddress(strings.TrimSpace(input.To))
+	if err != nil || !strings.Contains(address.Address, "@") {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid recipient email address")
+	}
+	account, ok := h.mirrorAccountForEmail(c, input.AccountEmail)
+	if !ok {
+		return fiber.NewError(fiber.StatusNotFound, "Mail account not found")
+	}
+	to := strings.ToLower(address.Address)
+	id := conversationID(account.ID, messageParticipants(models.Email{From: account.Email, To: to}, account.Email))
+	conversations, _, err := h.localConversations(c, []mailstore.Account{account})
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Error loading local conversations")
+	}
+	if existing := findConversation(conversations, id); existing != nil {
+		return c.JSON(fiber.Map{"conversation": conversationDetailJSONForLocale(*existing, CurrentLocale(c))})
+	}
+	draft, err := h.mailDB.SaveDraft(c.UserContext(), ownerID, mailstore.DraftInput{
+		AccountEmail: account.Email, ConversationID: id, Mode: mailstore.DraftModeNew, To: to,
+	})
+	if err != nil {
+		return draftError(err)
+	}
+	conversation := Conversation{
+		ID: id, Title: to, PeerEmail: to, Latest: models.Email{Date: draft.UpdatedAt},
+		AccountEmail: account.Email, AccountLabel: account.Label, AccountColor: account.Color, Status: "no_action",
+	}
+	return c.JSON(fiber.Map{"conversation": conversationDetailJSON(conversation)})
 }
 
 func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
@@ -783,6 +833,17 @@ func (h *EmailHandler) HandleConversationDeleteJSON(c *fiber.Ctx) error {
 	queuedDeletes, err := h.mailDB.QueueMessageDeletions(c.UserContext(), account.ID, deleteKeys)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation locally"})
+	}
+	drafts, err := h.mailDB.ListDrafts(c.UserContext(), account.OwnerID, selected.ID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not delete conversation draft")
+	}
+	for _, draft := range drafts {
+		if strings.EqualFold(draft.AccountEmail, account.Email) {
+			if err := h.mailDB.DeleteDraft(c.UserContext(), account.OwnerID, draft.ID); err != nil {
+				return draftError(err)
+			}
+		}
 	}
 
 	if (queuedMoves > 0 || queuedDeletes > 0) && h.auth != nil && h.auth.syncer != nil {

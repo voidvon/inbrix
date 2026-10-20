@@ -4,8 +4,8 @@ import type { ComposeDraft, ComposeDraftListResponse } from "../types";
 
 /**
  * The single draft a compose window owns. A reply owns the draft parked on its
- * conversation; a new message has no conversation to key on, so it picks up the
- * newest conversation-less draft.
+ * conversation, including a new email started by selecting a recipient. The
+ * conversation-less lookup is retained for older drafts.
  *
  * The transcript's draft entry and the editor itself read the same query key, so
  * one fetch serves both and saving in the editor immediately updates the entry

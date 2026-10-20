@@ -56,7 +56,7 @@ export type ConversationSummary = {
   accountLabel?: string;
   accountColor?: string;
   note?: string;
-	status: "answered" | "unanswered" | "no_action";
+	status: "answered" | "unanswered" | "no_action" | "draft";
 };
 
 export type ConversationMessage = {
@@ -138,6 +138,7 @@ export type ConversationDetail = {
   title: string;
   peerEmail?: string;
   subject: string;
+  note?: string;
   count: number;
   accountEmail?: string;
   accountLabel?: string;

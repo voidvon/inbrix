@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -25,9 +25,11 @@ import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
 import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachmentPreviewURL, type AttachmentPreviewTarget } from "./attachment-preview";
 import { MailSearchResults, type MailSearchState } from "./mail-search-results";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
-import { ConversationStatusTag, type ConversationStatus } from "./conversation-status-tag";
+import { ConversationStatusTag, type EditableConversationStatus } from "./conversation-status-tag";
 import { ComposeDialog } from "./compose-dialog";
 import { ThreadDraftEntry } from "./thread-draft-entry";
+import { ConversationNoteEntry } from "./conversation-note-entry";
+import { useSaveConversationNote } from "../../lib/conversation-note";
 import { useComposeDraft } from "../../lib/compose-draft";
 import { useShell } from "./shell-context";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
@@ -38,13 +40,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
+import { Switch } from "../ui/switch";
 import {
   deleteConversationMessage,
   deleteOutgoing,
   outgoingAttachmentURL,
   generateEmail,
   getAIModels,
-  saveConversationNote,
   saveConversationStatus,
   summarizeMailMessage,
   translateMailMessage,
@@ -105,7 +107,12 @@ export function ConversationList({
   /** When set, a non-empty search box renders message-level results instead of conversations. */
   searchState?: MailSearchState;
 }) {
-  const rows = data?.conversations || [];
+  const [showAllConversations, setShowAllConversations] = useState(false);
+  const filterLabelId = useId();
+  const allRows = data?.conversations || [];
+  const rows = showAllConversations
+    ? allRows
+    : allRows.filter((conversation) => conversation.status === "unanswered" || conversation.status === "draft");
   const hasData = Boolean(data);
   const searching = Boolean(search.trim()) && Boolean(searchState);
 
@@ -133,6 +140,10 @@ export function ConversationList({
               </Button>
             )}
           </div>
+          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground" title={copy.showAllConversationsHint}>
+            <span id={filterLabelId}>{copy.showAllConversations}</span>
+            <Switch checked={showAllConversations} onCheckedChange={setShowAllConversations} aria-labelledby={filterLabelId} />
+          </label>
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
@@ -194,6 +205,7 @@ export function ConversationRow({
   const [draft, setDraft] = useState(conversation.note || "");
   const [error, setError] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
+  const noteMutation = useSaveConversationNote(conversation.id);
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -215,18 +227,10 @@ export function ConversationRow({
     setEditing(false);
     if (note === (conversation.note || "")) return;
     try {
-      await saveConversationNote(conversation.id, note);
+      await noteMutation.mutateAsync(note);
       setError("");
-      queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) =>
-        current
-          ? {
-              ...current,
-              conversations: current.conversations.map((item) => (item.id === conversation.id ? { ...item, note } : item)),
-            }
-          : current
-      );
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     } catch {
+      setDraft(note);
       setError(copy.noteSaveFailed);
       setEditing(true);
       window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -241,7 +245,7 @@ export function ConversationRow({
     inputRef.current?.blur();
   };
 
-  const changeStatus = async (status: ConversationStatus) => {
+  const changeStatus = async (status: EditableConversationStatus) => {
     if (status === conversation.status) return;
     setStatusSaving(true);
     try {
@@ -278,8 +282,17 @@ export function ConversationRow({
       <ContextMenuTrigger className="block">
         <article
           data-testid="conversation-row"
+          onClick={(event) => {
+            const target = event.target;
+            // Fill the gaps between controls and the row's outer padding.
+            // Buttons/inputs handle themselves; portaled menus belong to the
+            // row in React's event tree but must never select a conversation.
+            if (event.defaultPrevented || !(target instanceof Element) || !event.currentTarget.contains(target)) return;
+            if (target.closest("button, a, input, textarea, select, [contenteditable=true]")) return;
+            onClick();
+          }}
           className={cn(
-            "relative w-full max-w-full overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted",
+            "relative w-full max-w-full cursor-pointer overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted",
             selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]"
           )}
         >
@@ -300,7 +313,8 @@ export function ConversationRow({
           <div className="mt-1.5 flex h-5 w-full items-center gap-1.5 overflow-visible">
             <ConversationStatusTag
               value={conversation.status}
-              labels={{ answered: copy.answered, unanswered: copy.unanswered, no_action: copy.noAction }}
+              labels={{ answered: copy.answered, unanswered: copy.unanswered, no_action: copy.noAction, draft: copy.draftBadge }}
+              draftHint={copy.draftStatusHint}
               disabled={statusSaving}
               onChange={(status) => void changeStatus(status)}
             />
@@ -460,13 +474,23 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-  const { compose, closeCompose, accountEmail: shellAccountEmail } = useShell();
+  const { compose, openCompose, closeCompose, accountEmail: shellAccountEmail } = useShell();
   // The compose window resolves its own account the same way, so both sides of
   // the draft query agree on the key and share one fetch.
   const draftAccountEmail = detail.accountEmail || shellAccountEmail || "";
   const composeOpenHere = compose.open && compose.defaults.conversationId === detail.id;
   const conversationDraft = useComposeDraft(draftAccountEmail, detail.id, { enabled: Boolean(detail.id) });
   const openReplyToLatest = () => {
+    const draft = conversationDraft.data;
+    if (draft) {
+      openCompose({
+        accountEmail: draftAccountEmail, conversationId: detail.id,
+        conversation: detail.messages, to: draft.to, cc: draft.cc, subject: draft.subject,
+        inReplyTo: draft.inReplyTo || undefined,
+        references: draft.references.trim().split(/\s+/).filter(Boolean),
+      });
+      return;
+    }
     const latest = detail.messages.at(-1);
     if (latest) onReply(latest);
   };
@@ -744,6 +768,7 @@ export function ChatView({
             ) : conversationDraft.data ? (
               <ThreadDraftEntry copy={copy} draft={conversationDraft.data} onOpen={openReplyToLatest} />
             ) : null}
+            <ConversationNoteEntry key={detail.id} copy={copy} conversationId={detail.id} note={detail.note || ""} />
           </div>
         </ScrollArea>
         <Dialog

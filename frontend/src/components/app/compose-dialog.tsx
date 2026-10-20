@@ -470,7 +470,6 @@ export function ComposeDialog({
   const inlineImagesRef = useRef<InlineComposeImage[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const inlineImageInputRef = useRef<HTMLInputElement>(null);
-  const recipientDraftRef = useRef("");
   const ccDraftRef = useRef("");
   const signatureInitializedRef = useRef(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
@@ -553,6 +552,7 @@ export function ComposeDialog({
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
   const requestIdRef = useRef("");
+  const draftHeadersRef = useRef<{ inReplyTo?: string; references?: string[] }>({});
   useEffect(() => { if (open) requestIdRef.current = ""; }, [open]);
 
   const persistDraft = (target: { defaults: ComposeDefaults; conversationId: string }, payload: { to: string; cc: string; subject: string; html: string; signature: string }) => {
@@ -574,9 +574,9 @@ export function ComposeDialog({
       id: draftIdRef.current || undefined,
       accountEmail,
       conversationId: target.conversationId || undefined,
-      mode: !target.conversationId ? "new" : payload.cc ? "reply_all" : "reply",
-      inReplyTo: target.defaults.inReplyTo,
-      references: target.defaults.references?.length ? target.defaults.references.join(" ") : undefined,
+      mode: !draftHeadersRef.current.inReplyTo ? "new" : payload.cc ? "reply_all" : "reply",
+      inReplyTo: draftHeadersRef.current.inReplyTo,
+      references: draftHeadersRef.current.references?.join(" ") || undefined,
       to: payload.to,
       cc: payload.cc,
       subject: payload.subject,
@@ -594,6 +594,7 @@ export function ComposeDialog({
         // this runs even when the window has already been closed — closing
         // keeps the draft, and the reader still has to see it.
         void queryClient.invalidateQueries({ queryKey: composeDraftKey(accountEmail, conversationId) });
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
         // The user may have opened another conversation while this save was in
         // flight; the window's own state belongs to the window that issued it.
         if (activeWindowRef.current !== target) return;
@@ -660,6 +661,8 @@ export function ComposeDialog({
       }
     }
     void queryClient.invalidateQueries({ queryKey: composeDraftKey(accountEmail, conversationId) });
+    void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
   };
 
   const handleClose = () => {
@@ -735,7 +738,11 @@ export function ComposeDialog({
     // window being replaced is saved under ITS conversation first.
     if (previous) saveDraftRef.current();
     const stored = storedDraft;
-    const to = stored ? stored.to : defaults.to;
+    draftHeadersRef.current = stored ? {
+      inReplyTo: stored.inReplyTo || undefined,
+      references: stored.references.trim().split(/\s+/).filter(Boolean),
+    } : { inReplyTo: defaults.inReplyTo, references: defaults.references };
+    const to = stored?.to.trim() || defaults.to;
     const cc = stored ? stored.cc : defaults.cc || "";
     const subjectValue = stored ? stored.subject : defaults.subject;
     const html = normalizeQuoteHTML(stored ? stored.bodyHtml : defaults.html || "");
@@ -753,7 +760,6 @@ export function ComposeDialog({
     setDocumentAction(null);
     setDocumentBusy(false);
     clearInlineImages();
-    recipientDraftRef.current = "";
     ccDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     editor.commands.setContent(html, { emitUpdate: false });
@@ -841,9 +847,8 @@ export function ComposeDialog({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (documentBusy || documentAction || mutation.isPending) return;
-    const pendingRecipients = splitRecipientValues(recipientDraftRef.current);
     const pendingCcRecipients = splitRecipientValues(ccDraftRef.current);
-    const submittedRecipients = [...recipients, ...pendingRecipients.filter((value) => isValidRecipient(value))];
+    const submittedRecipients = recipients;
     const submittedCcRecipients = uniqueRecipients([...ccRecipients, ...pendingCcRecipients.filter((value) => isValidRecipient(value))], submittedRecipients);
     const htmlBody = serializeComposeHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
     const plainBody = htmlToPlainText(htmlBody);
@@ -853,7 +858,7 @@ export function ComposeDialog({
         .filter(Boolean)
     );
     const submittedInlineImages = inlineImages.filter((image) => referencedContentIds.has(image.contentId));
-    if (!submittedRecipients.length || [...pendingRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
+    if (!submittedRecipients.length || [...submittedRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
       setError(copy.invalidRecipient);
       return;
     }
@@ -871,8 +876,8 @@ export function ComposeDialog({
     form.set("subject", subject.trim());
     form.set("body", plainBody);
     form.set("html_body", htmlBody);
-    if (defaults.inReplyTo) form.set("in_reply_to", defaults.inReplyTo);
-    if (defaults.references?.length) form.set("references", defaults.references.join(" "));
+    if (draftHeadersRef.current.inReplyTo) form.set("in_reply_to", draftHeadersRef.current.inReplyTo);
+    if (draftHeadersRef.current.references?.length) form.set("references", draftHeadersRef.current.references.join(" "));
     if (defaults.conversationId) form.set("conversation_id", defaults.conversationId);
     if (accountEmail) form.set("account_email", accountEmail);
     attachments.forEach((file) => form.append("attachments", file, file.name));
@@ -927,22 +932,11 @@ export function ComposeDialog({
       onDiscard={discardDraft}
     >
       <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
-        {/* Label beside its field rather than above it: three stacked rows cost
-            roughly twice the height, and that height comes straight out of the
-            editor. Recipients and copy share the first row because a "to" is
-            normally one address while a "cc" can be a list, so the wider half
-            goes to the one that can grow. */}
         <div className="grid gap-1.5 border-b px-3 py-2">
-          <div className="grid gap-1.5 sm:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
-            <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground">
-              <span className="whitespace-nowrap">{copy.to}</span>
-              <RecipientTagInput copy={copy} label={copy.to} recipients={recipients} onChange={setRecipients} draftRef={recipientDraftRef} autoFocus />
-            </Label>
-            <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground">
-              <span className="whitespace-nowrap">{copy.cc}</span>
-              <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
-            </Label>
-          </div>
+          <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground">
+            <span className="whitespace-nowrap">{copy.cc}</span>
+            <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
+          </Label>
           <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground" htmlFor="compose-subject">
             <span className="whitespace-nowrap">{copy.subject}</span>
             <Input id="compose-subject" className="h-8" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />

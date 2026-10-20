@@ -3,6 +3,7 @@ import { Badge } from "../ui/badge";
 import { cn, formatTime } from "../../lib/utils";
 import type { ComposeDraft } from "../../types";
 import type { Copy } from "../../lib/locale";
+import { draftStatusClassName } from "./conversation-status-tag";
 
 /**
  * The bottom-most entry of a transcript when a reply has been started but not
@@ -27,7 +28,7 @@ export function ThreadDraftEntry({ copy, draft, onOpen, className }: {
         <div className="min-w-0">
           <div className="flex items-center justify-end gap-2">
             <span className="font-medium">{copy.me}</span>
-            <Badge variant="outline" className="h-4 border-dashed px-1.5 text-[10px] font-normal text-muted-foreground" data-testid="thread-draft-label">
+            <Badge variant="outline" className={cn("h-4 px-1.5 text-[10px] font-semibold", draftStatusClassName)} data-testid="thread-draft-label">
               {copy.draftBadge}
             </Badge>
             <time>{formatTime(draft.updatedAt)}</time>

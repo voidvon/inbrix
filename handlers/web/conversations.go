@@ -392,6 +392,29 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 		}
 		result.Emails = tagMirrorEmails(emails, account)
 		accountConversations := buildConversations(account, result.Emails)
+		// A recipient selected for a new email already has a conversation, even
+		// before the first message is sent. Its draft keeps that conversation alive.
+		drafts, err := h.mailDB.ListDrafts(c.UserContext(), account.OwnerID, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		draftConversations := make(map[string]bool)
+		for _, draft := range drafts {
+			if !strings.EqualFold(draft.AccountEmail, account.Email) || draft.ConversationID == "" {
+				continue
+			}
+			draftConversations[draft.ConversationID] = true
+			if findConversation(accountConversations, draft.ConversationID) != nil {
+				continue
+			}
+			accountConversations = append(accountConversations, Conversation{
+				ID: draft.ConversationID, Title: draft.To, PeerEmail: draft.To,
+				Subject: draft.Subject, Preview: draft.BodyText,
+				Latest:       models.Email{Date: draft.UpdatedAt},
+				AccountEmail: account.Email, AccountLabel: account.Label, AccountColor: account.Color,
+				Status: "no_action",
+			})
+		}
 		notes, err := h.mailDB.ListConversationNotes(c.UserContext(), account.ID)
 		if err != nil {
 			result.Err = err
@@ -408,6 +431,11 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			accountConversations[i].Note = notes[accountConversations[i].ID]
 			if saved, ok := statuses[accountConversations[i].ID]; ok && saved.MessageKey == accountConversations[i].StatusMessageKey {
 				accountConversations[i].Status = saved.Status
+			}
+			// Keep manual processing status intact underneath the unsent draft.
+			// Sending or discarding the draft reveals that status again.
+			if draftConversations[accountConversations[i].ID] {
+				accountConversations[i].Status = "draft"
 			}
 		}
 		conversations = append(conversations, accountConversations...)

@@ -25,9 +25,9 @@ import { prefersDarkMode } from "../../lib/theme";
 import { folderKind, folderLabel } from "../../lib/mailbox";
 import { type Copy, useLocale } from "../../lib/locale";
 import type { ComposeDefaults } from "../../lib/email-format";
-import type { ConversationListResponse, Mailbox } from "../../types";
+import type { ConversationDetail, ConversationListResponse, Mailbox } from "../../types";
 import { ShellContext, type ShellContextType } from "./shell-context";
-import { ComposeDialog } from "./compose-dialog";
+import { StartConversationDialog } from "./start-conversation-dialog";
 import { SettingsDialog } from "./settings-dialog";
 import { LoginScreen } from "./auth-screens";
 import { Badge } from "../ui/badge";
@@ -175,6 +175,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   const queryClient = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [recipientDialogOpen, setRecipientDialogOpen] = useState(false);
+  const [recipientDefaults, setRecipientDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
   const [composeDefaults, setComposeDefaults] = useState<ComposeDefaults>({ to: "", subject: "" });
   const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
@@ -262,9 +264,32 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   }, [tabTitle]);
 
   const openCompose = (defaults: ComposeDefaults = { to: "", subject: "" }) => {
-    setComposeDefaults(defaults);
-    setComposeOpen(true);
+    if (defaults.conversationId) {
+      setComposeDefaults(defaults);
+      setComposeOpen(true);
+    } else {
+      setRecipientDefaults(defaults);
+      setRecipientDialogOpen(true);
+    }
     setSidebarOpen(false);
+  };
+
+  const startWriting = async (conversation: ConversationDetail) => {
+    queryClient.setQueryData(["conversation", conversation.id], { conversation });
+    await queryClient.cancelQueries({ queryKey: ["conversations"], exact: true });
+    await queryClient.fetchQuery({ queryKey: ["conversations"], queryFn: () => getConversations(), staleTime: 0 });
+    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
+    setComposeDefaults({
+      accountEmail: conversation.accountEmail,
+      conversationId: conversation.id,
+      conversation: conversation.messages,
+      to: conversation.peerEmail || conversation.title,
+      subject: "",
+    });
+    setComposeOpen(true);
+    setRecipientDialogOpen(false);
+    window.history.pushState(window.history.state, "", `/inbox?conversation=${encodeURIComponent(conversation.id)}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   };
 
   const openSettings = () => {
@@ -321,17 +346,13 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
         />
         <ResizeHandle label="Resize navigation" width={sidebarWidth} minWidth={180} maxWidth={360} onResize={setSidebarWidth} />
         {children}
-        {/* A new message has no transcript to belong to, so it floats in the
-            corner. A reply is rendered by the conversation it answers, as the
-            last entry of that transcript. */}
-        {composeOpen && !composeDefaults.conversationId && (
-          <ComposeDialog
+        {recipientDialogOpen && (
+          <StartConversationDialog
             copy={copy}
-            open
-            variant="floating"
-            defaults={composeDefaults}
-            accountEmail={composeDefaults.accountEmail || shell.data?.accountEmail || ""}
-            onOpenChange={setComposeOpen}
+            initialTo={recipientDefaults.to}
+            accountEmail={recipientDefaults.accountEmail || shell.data?.accountEmail || ""}
+            onClose={() => setRecipientDialogOpen(false)}
+            onStarted={startWriting}
           />
         )}
         <SettingsDialog copy={copy} open={settingsOpen} onOpenChange={setSettingsOpen} />
