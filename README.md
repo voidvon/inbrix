@@ -262,7 +262,7 @@ make release
 
 The command increments `VERSION`, updates every published version marker,
 regenerates the site docs, commits and tags the release, runs `make check`, and
-builds the Linux and macOS archives locally. It verifies every archive against
+builds only the Linux amd64 archive locally. It verifies the archive against
 the generated `SHA256SUMS`, atomically pushes `main` and the tag, then uploads
 and publishes a draft GitHub Release directly with `gh`. Patch versions run
 from 0 through 20, then the minor version increments; `X.20.0` advances

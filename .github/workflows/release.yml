@@ -51,10 +51,8 @@ jobs:
 
     # Everything that will be published lands in release/ and nothing else does.
     # The manifest below covers that directory, so "published" and "covered" are
-    # the same set by construction rather than two lists someone keeps in sync by
-    # hand — add a sixth platform here and it is covered without touching the
-    # manifest step.
-    - name: Build release binaries
+    # the same set by construction.
+    - name: Build Linux amd64 release archive
       id: stage
       run: |
         set -euo pipefail
@@ -67,27 +65,9 @@ jobs:
         cp config.toml.example release/inbrix/config.toml.example
 
         # linux/amd64
-        GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o release/inbrix/inbrix .
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o release/inbrix/inbrix .
         cd release && zip -r "inbrix_${VERSION}_linux_amd64.zip" inbrix/ && cd ..
         rm release/inbrix/inbrix
-
-        # linux/arm64
-        GOOS=linux GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o release/inbrix/inbrix .
-        cd release && zip -r "inbrix_${VERSION}_linux_arm64.zip" inbrix/ && cd ..
-        rm release/inbrix/inbrix
-
-        # darwin/amd64
-        GOOS=darwin GOARCH=amd64 go build -ldflags "${LDFLAGS}" -o release/inbrix/inbrix .
-        cd release && zip -r "inbrix_${VERSION}_darwin_amd64.zip" inbrix/ && cd ..
-        rm release/inbrix/inbrix
-
-        # darwin/arm64 (Apple Silicon)
-        GOOS=darwin GOARCH=arm64 go build -ldflags "${LDFLAGS}" -o release/inbrix/inbrix .
-        cd release && zip -r "inbrix_${VERSION}_darwin_arm64.zip" inbrix/ && cd ..
-        rm release/inbrix/inbrix
-
-        # Source archive
-        git archive --format=zip HEAD -o "release/inbrix_${VERSION}_source.zip"
 
         # Clean up the staging dir — release/ must be FLAT, because the manifest
         # step lists it with `find -maxdepth 1 -type f`, while `files: release/*`

@@ -63,7 +63,7 @@ verify-selftest:
 release-version-selftest:
 	bash scripts/release.sh --selftest
 
-# Bump VERSION, build and verify release assets locally, then commit, tag and
+# Bump VERSION, build and verify the Linux amd64 archive locally, then commit, tag and
 # upload the GitHub Release directly with the gh CLI.
 release:
 	bash scripts/release.sh

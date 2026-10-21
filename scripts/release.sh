@@ -102,15 +102,11 @@ ldflags="-s -w -X main.Version=$version"
 mkdir -p "$asset_dir/inbrix"
 cp config.toml.example "$asset_dir/inbrix/config.toml.example"
 
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-  IFS=/ read -r goos goarch <<< "$target"
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "$ldflags" -o "$asset_dir/inbrix/inbrix" .
-  (cd "$asset_dir" && zip -qr "inbrix_${version}_${goos}_${goarch}.zip" inbrix)
-  rm "$asset_dir/inbrix/inbrix"
-done
-git archive --format=zip HEAD -o "$asset_dir/inbrix_${version}_source.zip"
-(cd "$asset_dir" && shasum -a 256 inbrix_*.zip > SHA256SUMS)
-assets=("$asset_dir"/inbrix_*.zip)
+asset_name="inbrix_${version}_linux_amd64.zip"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o "$asset_dir/inbrix/inbrix" .
+(cd "$asset_dir" && zip -qr "$asset_name" inbrix)
+(cd "$asset_dir" && shasum -a 256 "$asset_name" > SHA256SUMS)
+assets=("$asset_dir/$asset_name")
 bash scripts/verify.sh --dir "$asset_dir" "${assets[@]##*/}"
 
 echo "==> 推送发布提交和标签"
