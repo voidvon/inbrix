@@ -29,6 +29,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import { toast, toastError } from "../../lib/toast";
+import { useQueryErrorToast } from "../../lib/use-query-error-toast";
 import { EmailParagraph } from "../../extensions/email-paragraph";
 import { EmailImage } from "../../extensions/email-image";
 import {
@@ -175,6 +176,7 @@ export function AboutSettings({ copy, isSuperAdmin }: { copy: Copy; isSuperAdmin
     onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
   });
   const status = info.data;
+  useQueryErrorToast(info.error, copy.loadFailed, "update-info-error", () => void info.refetch(), copy.retry);
   const version = status?.currentVersion || "—";
   const buttonLabel = install.isPending ? copy.updatingApplication : check.isPending ? copy.checkingForUpdates : status?.updateAvailable ? copy.updateNow : copy.checkForUpdates;
   const buttonDisabled = info.isPending || check.isPending || install.isPending || (Boolean(status?.updateAvailable) && (!isSuperAdmin || !status?.canAutoUpdate));
@@ -190,7 +192,6 @@ export function AboutSettings({ copy, isSuperAdmin }: { copy: Copy; isSuperAdmin
           <Button className={cn("shrink-0", status?.updateAvailable && "bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-600 dark:text-white dark:hover:bg-emerald-600/90")} disabled={buttonDisabled} onClick={() => status?.updateAvailable ? install.mutate() : check.mutate()}><RefreshCw className={cn((check.isPending || install.isPending) && "animate-spin")} />{buttonLabel}</Button>
         </div>
       </div>
-      {info.error && <p className="mt-3 text-sm text-destructive">{info.error.message}</p>}
       <div className="mt-auto pt-10"><p className="text-xs font-medium text-muted-foreground">{copy.githubRepository}</p><a className="mt-2 inline-flex min-w-0 items-center gap-2 text-sm font-medium hover:underline" href={status?.repositoryUrl || "https://github.com/voidvon/inbrix"} target="_blank" rel="noreferrer"><span className="truncate">github.com/voidvon/inbrix</span><ExternalLink className="size-3.5 shrink-0" /></a></div>
     </section>
   );
@@ -219,12 +220,12 @@ export function SystemSettings({ copy }: { copy: Copy }) {
     },
     onError: (value) => toast.error(value instanceof Error ? value.message : copy.loadFailed),
   });
+  useQueryErrorToast(settings.error, copy.loadFailed, "system-settings-error", () => void settings.refetch(), copy.retry);
   return (
     <section className="min-w-0">
       <h2 className="text-lg font-semibold">{copy.systemSettings}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{copy.systemSettingsDescription}</p>
       {settings.isPending && <div className="mt-6 grid gap-3"><Skeleton className="h-16 w-full" /><Skeleton className="h-40 w-full" /></div>}
-      {settings.error && <p className="mt-6 text-sm text-destructive">{settings.error.message}</p>}
       {settings.data && <>
         <div className="mt-6 flex items-center justify-between border-y py-4 text-sm"><span className="text-muted-foreground">{copy.systemVersion}</span><strong className="font-mono font-medium">{settings.data.version}</strong></div>
         <div className="flex items-center justify-between gap-6 border-b py-4">
@@ -260,6 +261,7 @@ export function SystemSettings({ copy }: { copy: Copy }) {
 export function SignatureSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const signatures = useQuery({ queryKey: ["signatures"], queryFn: getSignatures, retry: false });
+  useQueryErrorToast(signatures.error, copy.loadFailed, "signatures-error", () => void signatures.refetch(), copy.retry);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<EmailSignature | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<EmailSignature | null>(null);
@@ -354,10 +356,9 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[36rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.signatureName}</TableHead><TableHead className="px-4">{copy.signaturePreview}</TableHead><TableHead className="w-24 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{signatures.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <TableRow key={signature.id}><TableCell className="px-4 py-3"><div className="flex items-center gap-2"><span className="truncate font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => setDeleteTarget(signature)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</TableCell></TableRow>}</TableBody>
+          <TableBody>{signatures.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <TableRow key={signature.id}><TableCell className="px-4 py-3"><div className="flex items-center gap-2"><span className="truncate font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => setDeleteTarget(signature)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : signatures.isError ? null : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {signatures.isError && <p className="mt-3 text-xs text-destructive">{signatures.error instanceof Error ? signatures.error.message : copy.loadFailed}</p>}
       <Dialog open={open} onOpenChange={(next) => { if (!persist.isPending) setOpen(next); }}>
         <DialogContent className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-auto flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editSignature : copy.addSignature}</DialogTitle><DialogDescription>{copy.signatureSettingsDescription}</DialogDescription></DialogHeader>
@@ -450,6 +451,7 @@ export function AgentOutputLabelInput({ copy, labels, onChange, draftRef, disabl
 export function AgentSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, retry: false });
+  useQueryErrorToast(agents.error, copy.loadFailed, "ai-agents-error", () => void agents.refetch(), copy.retry);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AIAgent | null>(null);
   const [name, setName] = useState("");
@@ -505,10 +507,9 @@ export function AgentSettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[36rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.agentName}</TableHead><TableHead className="px-4">{copy.agentPrompt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
+          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : agents.isError ? null : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {agents.isError && <p className="mt-3 text-xs text-destructive">{agents.error instanceof Error ? agents.error.message : copy.loadFailed}</p>}
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
@@ -531,6 +532,7 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
     queryFn: () => getAIErrorLogs(100),
     retry: false,
   });
+  useQueryErrorToast(errorLogs.error, copy.loadFailed, "ai-error-logs-error", () => void errorLogs.refetch(), copy.retry);
   const [detailLog, setDetailLog] = useState<AIErrorLog | null>(null);
 
   const clearMutation = useMutation({
@@ -670,7 +672,7 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
                   </TableCell>
                 </TableRow>
               ))
-            ) : (
+            ) : errorLogs.isError ? null : (
               <TableRow>
                 <TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>
                   {copy.noErrorLogs}
@@ -752,6 +754,7 @@ function apiFormatLabel(provider: AIModel["provider"]): string {
 export function AISettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
+  useQueryErrorToast(models.error, copy.loadFailed, "ai-models-error", () => void models.refetch(), copy.retry);
   const [addOpen, setAddOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [apiFormat, setAPIFormat] = useState<APIFormat>("chat_completions");
@@ -886,10 +889,9 @@ export function AISettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[46rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[19%] px-4">{copy.aiModel}</TableHead><TableHead className="w-[16%] px-4">{copy.aiAPIFormat}</TableHead><TableHead className="w-[12%] px-4">{copy.aiReasoningEffort}</TableHead><TableHead className="px-4">{copy.aiBaseURL}</TableHead><TableHead className="w-52 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">{apiFormatLabel(item.provider)}</TableCell><TableCell className="px-4 py-3">{apiFormatForProvider(item.provider) === "chat_completions" ? "—" : item.reasoningEffort === "low" ? copy.aiReasoningLow : item.reasoningEffort === "medium" ? copy.aiReasoningMedium : copy.aiReasoningHigh}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
+          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">{apiFormatLabel(item.provider)}</TableCell><TableCell className="px-4 py-3">{apiFormatForProvider(item.provider) === "chat_completions" ? "—" : item.reasoningEffort === "low" ? copy.aiReasoningLow : item.reasoningEffort === "medium" ? copy.aiReasoningMedium : copy.aiReasoningHigh}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : models.isError ? null : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {models.isError && <p className="mt-3 text-xs text-destructive">{models.error instanceof Error ? models.error.message : copy.loadFailed}</p>}
       <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setEditingModel(null); }}>
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-md flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle></DialogHeader>
@@ -1012,6 +1014,7 @@ export const emptyAccountForm = { email: "", password: "", label: "", color: "#4
 export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccount: (account: ConnectedAccount | null) => void }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts, retry: false });
+  useQueryErrorToast(accounts.error, copy.loadFailed, "accounts-error", () => void accounts.refetch(), copy.retry);
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
@@ -1038,11 +1041,10 @@ export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManag
                 <TableCell className="px-4 py-3"><div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon" className="size-8" disabled={remove.isPending} onClick={() => onManageAccount(account)} aria-label={copy.editAccount} title={copy.editAccount}><Pencil /></Button><Button variant="ghost" size="icon" className="size-8 text-destructive hover:text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(account.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell>
               </TableRow>
             ))}
-            {!accounts.isPending && !accounts.data?.accounts.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>}
+            {!accounts.isPending && !accounts.isError && !accounts.data?.accounts.length && <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={4}>{copy.noAccounts}</TableCell></TableRow>}
           </TableBody>
         </Table>
       </div>
-      {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
     </section>
   );
 }
