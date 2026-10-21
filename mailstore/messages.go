@@ -569,21 +569,23 @@ func (s *Store) UpdateFlags(ctx context.Context, accountID, folderName, uid stri
 
 // BatchSyncFlags updates flags for locally cached messages. It respects
 // pending flag updates, and uses a WHERE clause to avoid dirtying pages
-// when flags are already identical.
-func (s *Store) BatchSyncFlags(ctx context.Context, accountID, folderName string, items []api.MessageFlagItem) error {
+// when flags are already identical. The returned count is the number of rows
+// whose flags actually changed, which lets the sync worker emit a change event
+// only when the mailbox state moved.
+func (s *Store) BatchSyncFlags(ctx context.Context, accountID, folderName string, items []api.MessageFlagItem) (int64, error) {
 	if len(items) == 0 || accountID == "" || folderName == "" {
-		return nil
+		return 0, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("mailstore: begin flag sync: %w", err)
+		return 0, fmt.Errorf("mailstore: begin flag sync: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	pendingSeen := make(map[int64]int)
 	seenRows, err := tx.QueryContext(ctx, `SELECT uid, add_flag FROM pending_flag_updates WHERE account_id = ? AND folder_name = ? AND flag = ?`, accountID, folderName, seenFlag)
 	if err != nil {
-		return fmt.Errorf("mailstore: query pending seen flags: %w", err)
+		return 0, fmt.Errorf("mailstore: query pending seen flags: %w", err)
 	}
 	for seenRows.Next() {
 		var uid int64
@@ -599,23 +601,28 @@ func (s *Store) BatchSyncFlags(ctx context.Context, accountID, folderName string
 		SET flags_json = ?, updated_at = ?
 		WHERE account_id = ? AND folder_name = ? AND uid = ? AND flags_json <> ?`)
 	if err != nil {
-		return fmt.Errorf("mailstore: prepare flag update: %w", err)
+		return 0, fmt.Errorf("mailstore: prepare flag update: %w", err)
 	}
 	defer stmt.Close()
 
 	now := time.Now().Unix()
+	var changed int64
 	for _, item := range items {
 		flags := item.Flags
 		if addFlag, exists := pendingSeen[int64(item.UID)]; exists {
 			flags, _ = flagsWithState(flags, seenFlag, intBool(addFlag))
 		}
 		marshaled := marshalJSON(flags, "[]")
-		if _, err := stmt.ExecContext(ctx, marshaled, now, accountID, folderName, item.UID, marshaled); err != nil {
-			return fmt.Errorf("mailstore: update flag for %s/%s/%d: %w", accountID, folderName, item.UID, err)
+		result, err := stmt.ExecContext(ctx, marshaled, now, accountID, folderName, item.UID, marshaled)
+		if err != nil {
+			return 0, fmt.Errorf("mailstore: update flag for %s/%s/%d: %w", accountID, folderName, item.UID, err)
+		}
+		if affected, err := result.RowsAffected(); err == nil {
+			changed += affected
 		}
 	}
 
-	return tx.Commit()
+	return changed, tx.Commit()
 }
 
 func (s *Store) DeleteMessage(ctx context.Context, accountID, folderName, uid string) error {
@@ -629,22 +636,23 @@ func (s *Store) DeleteMessage(ctx context.Context, accountID, folderName, uid st
 
 // PruneFolder removes records not observed during a complete IMAP scan. It is
 // only called after the worker has reached the end of a folder, never when a
-// configured per-folder cap truncated the scan.
-func (s *Store) PruneFolder(ctx context.Context, accountID, folderName string, seen []uint32) error {
+// configured per-folder cap truncated the scan. The returned count is the
+// number of messages removed.
+func (s *Store) PruneFolder(ctx context.Context, accountID, folderName string, seen []uint32) (int64, error) {
 	seenSet := make(map[int64]struct{}, len(seen))
 	for _, uid := range seen {
 		seenSet[int64(uid)] = struct{}{}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT uid FROM messages WHERE account_id = ? AND folder_name = ?`, accountID, folderName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var stale []int64
 	for rows.Next() {
 		var uid int64
 		if err := rows.Scan(&uid); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		if _, ok := seenSet[uid]; !ok {
 			stale = append(stale, uid)
@@ -652,26 +660,26 @@ func (s *Store) PruneFolder(ctx context.Context, accountID, folderName string, s
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return 0, err
 	}
 	rows.Close()
 	if len(stale) == 0 {
-		return nil
+		return 0, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 	stmt, err := tx.PrepareContext(ctx, `DELETE FROM messages WHERE account_id = ? AND folder_name = ? AND uid = ?`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer stmt.Close()
 	for _, uid := range stale {
 		if _, err := stmt.ExecContext(ctx, accountID, folderName, uid); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return tx.Commit()
+	return int64(len(stale)), tx.Commit()
 }

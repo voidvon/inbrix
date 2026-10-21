@@ -325,18 +325,33 @@ CardDAV address-book for recipient autocomplete in the compose modal.
 
 ## `[notifications]`
 
-Real-time new-mail notifications. All keys are opt-in; setting
-`enabled = false` (the default) creates no extra goroutines or routes.
+Optional desktop and Web Push delivery. The SSE channel (`GET /events`) is
+**always registered**: the React client does not poll mail endpoints, so push
+invalidation is core infrastructure. `enabled` gates only the extra delivery
+channels, not the SSE stream.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Master switch |
-| `idle` | bool | `true` | Start an IMAP IDLE watcher per session (recommended; falls back to NOOP poll) |
+| `enabled` | bool | `false` | Enable desktop toasts and Web Push (SSE remains on regardless) |
+| `idle` | bool | `true` | Open an IMAP IDLE connection per active user and wake the sync worker on new mail. With `false`, the worker still syncs every `[mail_sync].interval` seconds and emits events after each sync |
 | `desktop` | bool | `false` | Show native OS toasts via `gen2brain/beeep` (useful for local/desktop runs) |
 | `webpush` | bool | `false` | Enable VAPID Web Push for background notifications. Requires HTTPS |
 | `vapid_key_file` | string | `"vapid.json"` | Path to the VAPID key-pair JSON file (auto-generated on first start; **protect this file**) |
+| `max_connections_per_user` | int | `8` | Maximum concurrent SSE tabs per user; additional tabs get `429` and retry |
+| `max_idle_watchers` | int | `64` | Maximum concurrent IMAP IDLE watchers. When reached, sync still runs every `[mail_sync].interval` seconds but the accelerator is skipped |
 
-### Web Push routes (registered only when `webpush = true`)
+Events are emitted after the mirror commits a change (new mail, flag updates,
+deletions, outbox status, completed AI summaries) and after successful HTTP
+mail mutations. Every SSE connection starts with a `resync` frame; clients
+refetch on `resync` and on reconnect, so no polling interval is required.
+
+`GET /api/conversations` returns a per-user `revision`. A client reconnecting
+with the same revision receives a compact `{"unchanged":true}` response instead
+of a full conversation rebuild. `GET /api/realtime/metrics` exposes aggregate
+counters (connections, connects/disconnects, events published/dropped,
+overflows, IDLE watcher failures/skips) for monitoring.
+
+### Web Push routes (registered only when `enabled = true` and `webpush = true`)
 
 | Route | Description |
 |-------|-------------|

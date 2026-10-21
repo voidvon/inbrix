@@ -23,10 +23,11 @@ import (
 const demoAuthType = "demo"
 
 type AuthHandler struct {
-	store  *session.Store
-	config *config.Config
-	mirror *mailstore.Store
-	syncer *mailstore.SyncManager
+	store    *session.Store
+	config   *config.Config
+	mirror   *mailstore.Store
+	syncer   *mailstore.SyncManager
+	onLogout func(userID string)
 }
 
 // smtpUseSTARTTLS keeps the standard implicit-TLS submission port from being
@@ -55,6 +56,13 @@ func NewAuthHandler(store *session.Store, config *config.Config) *AuthHandler {
 func (h *AuthHandler) SetMailMirror(mirror *mailstore.Store, syncer *mailstore.SyncManager) {
 	h.mirror = mirror
 	h.syncer = syncer
+}
+
+// SetLogoutHook wires a callback that runs after a session is destroyed. The
+// realtime hub uses it to close every SSE stream for the user immediately,
+// instead of waiting for the 30-minute connection lifetime.
+func (h *AuthHandler) SetLogoutHook(hook func(userID string)) {
+	h.onLogout = hook
 }
 
 // ShowLogin is retained for compatibility with embedders; page rendering is
@@ -381,8 +389,12 @@ func (h *AuthHandler) HandleLogout(c *fiber.Ctx) error {
 		}
 	}
 
+	userID, _ := sess.Get("user_id").(string)
 	if err := sess.Destroy(); err != nil {
 		return c.Status(500).SendString("Error during logout")
+	}
+	if h.onLogout != nil && userID != "" {
+		h.onLogout(userID)
 	}
 
 	if strings.Contains(c.Get(fiber.HeaderAccept), fiber.MIMEApplicationJSON) {
@@ -448,10 +460,12 @@ func (h *AuthHandler) fetchInitialData(client *api.Client, cacheFolder string) e
 	return nil
 }
 
-// CreateIMAPClient returns a MailClient for the authenticated session.
-// In demo mode it returns a *api.DemoClient (no network); otherwise it opens
-// a real IMAP TLS connection using the session credentials.
-func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
+// MailClientFactory snapshots the session's IMAP credentials and returns a
+// function that opens the connection later. The Fiber context is only valid
+// for the duration of the request, so background watchers must use this
+// instead of retaining *fiber.Ctx. The returned closure owns plain values and
+// is safe to call from a goroutine.
+func (h *AuthHandler) MailClientFactory(c *fiber.Ctx) (func() (api.MailClient, error), error) {
 	// Get credentials from session
 	sess, err := h.store.Get(c)
 	if err != nil {
@@ -460,7 +474,7 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 
 	// Demo mode: return an in-memory client with seed data.
 	if authType, _ := sess.Get("auth_type").(string); authType == demoAuthType {
-		return api.NewDemoClient(), nil
+		return func() (api.MailClient, error) { return api.NewDemoClient(), nil }, nil
 	}
 
 	// OAuth2 sessions authenticate with a (possibly refreshed) bearer token.
@@ -469,13 +483,15 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 		if err != nil {
 			return nil, err
 		}
-		return api.NewClientOAuth(
-			h.config.IMAP.Server,
-			h.config.IMAP.Port,
-			username,
-			token,
-			h.config.OAuth2.Mechanism,
-		)
+		return func() (api.MailClient, error) {
+			return api.NewClientOAuth(
+				h.config.IMAP.Server,
+				h.config.IMAP.Port,
+				username,
+				token,
+				h.config.OAuth2.Mechanism,
+			)
+		}, nil
 	}
 
 	if h.mirror != nil {
@@ -484,7 +500,9 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to load mail account: %v", err)
 			}
-			return h.CreateIMAPClientForMirrorAccount(account)
+			return func() (api.MailClient, error) {
+				return h.CreateIMAPClientForMirrorAccount(account)
+			}, nil
 		}
 		return nil, fmt.Errorf("no active local mail account in session")
 	}
@@ -517,14 +535,26 @@ func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
 		return nil, fmt.Errorf("invalid email format")
 	}
 
-	// Create new IMAP client
-	return api.NewClientTLS(
-		h.config.IMAP.Server,
-		h.config.IMAP.Port,
-		username,
-		creds.Password,
-		h.config.IMAP.TLS,
-	)
+	return func() (api.MailClient, error) {
+		return api.NewClientTLS(
+			h.config.IMAP.Server,
+			h.config.IMAP.Port,
+			username,
+			creds.Password,
+			h.config.IMAP.TLS,
+		)
+	}, nil
+}
+
+// CreateIMAPClient returns a MailClient for the authenticated session.
+// In demo mode it returns a *api.DemoClient (no network); otherwise it opens
+// a real IMAP TLS connection using the session credentials.
+func (h *AuthHandler) CreateIMAPClient(c *fiber.Ctx) (api.MailClient, error) {
+	factory, err := h.MailClientFactory(c)
+	if err != nil {
+		return nil, err
+	}
+	return factory()
 }
 
 // CreateIMAPClientForMirrorAccount opens a connection for an owner-scoped

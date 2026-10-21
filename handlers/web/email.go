@@ -34,6 +34,7 @@ type EmailHandler struct {
 	acctStore      *AccountStore // nil when accounts.enabled = false
 	mailDB         *mailstore.Store
 	kv             storage.KV
+	revisionSource func(userID string) uint64
 	outboxCancel   context.CancelFunc
 	outboxWG       sync.WaitGroup
 	outboxSMTP     func(mailstore.Account) (outboxSender, error)
@@ -59,6 +60,13 @@ func (h *EmailHandler) SetMailMirror(s *mailstore.Store) {
 }
 
 func (h *EmailHandler) SetDurableStore(kv storage.KV) { h.kv = kv }
+
+// SetRevisionSource wires the realtime hub's per-user change counter into the
+// conversation list. With it, a reconnect resync can return "unchanged" and
+// skip the expensive full conversation rebuild.
+func (h *EmailHandler) SetRevisionSource(source func(userID string) uint64) {
+	h.revisionSource = source
+}
 
 type mailAccountOption struct {
 	ID       string

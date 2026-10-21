@@ -18,7 +18,6 @@ export function useSaveConversationNote(conversationId: string) {
       } : current);
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
       void queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     },
   });
 }

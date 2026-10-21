@@ -1,4 +1,5 @@
 import { getCookie } from "./utils";
+import { CLIENT_ID } from "./client-id";
 import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
 
 export class ApiError extends Error {
@@ -25,6 +26,7 @@ async function fetchCSRFToken(signal?: AbortSignal | null) {
 export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
+  headers.set("X-Client-Id", CLIENT_ID);
   const method = (init.method || "GET").toUpperCase();
   const mutates = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
   let csrf = getCookie("_csrf");
@@ -60,8 +62,11 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   return payload as T;
 }
 
-export function getConversations(query = "") {
-  const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+export function getConversations(query = "", revision?: number) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  if (revision !== undefined && revision > 0) params.set("rev", String(revision));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
   return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
 }
 

@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"inbrix/events"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -50,6 +52,9 @@ type Store struct {
 	// concurrent saves for the same conversation would otherwise race past each
 	// other into the partial unique index.
 	draftMu sync.Mutex
+	// publisher fans change notifications out to SSE subscribers. It is set once
+	// at startup, before the sync workers begin, and is nil in tests.
+	publisher events.Publisher
 }
 
 type User struct {
@@ -211,6 +216,47 @@ func (s *Store) DB() *sql.DB {
 		return nil
 	}
 	return s.db
+}
+
+// SetPublisher wires the realtime hub into the mail pipeline. It must be
+// called before sync workers start; events emitted before it is set are lost,
+// which is fine because no browser is connected yet (and every SSE connection
+// starts with a full resync).
+func (s *Store) SetPublisher(publisher events.Publisher) {
+	if s == nil {
+		return
+	}
+	s.publisher = publisher
+}
+
+// PublishEvent sends an already-addressed event. Callers that only have an
+// account ID should use PublishAccountEvent instead.
+func (s *Store) PublishEvent(ev events.Event) {
+	if s == nil || s.publisher == nil || ev.UserID == "" {
+		return
+	}
+	s.publisher.Publish(ev)
+}
+
+// PublishAccountEvent resolves the account owner (user ID and login) and emits
+// the event for that user. It is the normal entry point for sync workers,
+// outbox delivery and any other background work that only knows an account.
+func (s *Store) PublishAccountEvent(ctx context.Context, accountID string, ev events.Event) {
+	if s == nil || s.publisher == nil || strings.TrimSpace(accountID) == "" {
+		return
+	}
+	account, err := s.GetAccount(ctx, accountID)
+	if err != nil {
+		return
+	}
+	user, err := s.GetUser(ctx, account.OwnerID)
+	if err != nil {
+		return
+	}
+	ev.UserID = account.OwnerID
+	ev.Username = user.Login
+	ev.AccountID = account.ID
+	s.publisher.Publish(ev)
 }
 
 func (s *Store) migrate(ctx context.Context) error {

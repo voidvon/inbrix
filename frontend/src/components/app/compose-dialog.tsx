@@ -657,7 +657,6 @@ export function ComposeDialog({
     }
     void queryClient.invalidateQueries({ queryKey: composeDraftKey(accountEmail, conversationId) });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
   };
 
   const handleClose = () => {
@@ -905,7 +904,6 @@ export function ComposeDialog({
         setDraftStatus("idle");
         setDraftSavedAt("");
         onOpenChange(false);
-        void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
         void queryClient.invalidateQueries({ queryKey: ["conversations"] });
         void queryClient.invalidateQueries({ queryKey: ["conversation"] });
         void queryClient.invalidateQueries({ queryKey: ["folder"] });

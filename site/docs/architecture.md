@@ -232,12 +232,45 @@ Two subsystems live inside this package:
   bounded retry budget. Enabled only when a KV store is wired (`NewWithStore`);
   otherwise the `/v1/scheduled` surface reports `501`.
 
-### Notifications
+### Realtime mail updates
 
-When `[notifications].enabled = true`, a per-session IMAP IDLE goroutine is
-started after login. New-mail events are pushed to a channel that drives an SSE
-response on `GET /events`. The browser Web Notifications API is triggered from
-client-side JavaScript listening to the SSE stream.
+The React client does not poll mail endpoints. `GET /events` is an always-on
+SSE stream; each tab holds one connection and invalidates its TanStack Query
+mail caches when an event arrives. Events are emitted **after** the SQLite
+mirror commits a change: new messages, flag updates, deletions, outbox status
+changes and completed AI summaries all publish through `NotificationHub`.
+Successful HTTP mail mutations publish a generic `mail.changed` event from
+middleware, which keeps other tabs in step without editing every handler.
+
+The hub is process-local (the mail mirror is a local SQLite file, so the
+supported topology is a single instance). Every connection starts with a
+`resync` frame and the server sends a 15-second comment heartbeat, so a
+reconnect after a proxy timeout, laptop sleep or deploy cannot leave stale
+caches. Connections are closed after 30 minutes to force a fresh session
+check; EventSource reconnects and resyncs automatically. Each tab holds one
+connection: with direct HTTP/1.1 serving, the browser's six-connections-per-
+origin limit applies, so multi-tab deployments should terminate TLS at an
+HTTP/2 proxy.
+
+Backpressure is explicit. Each subscriber has a bounded event channel; if a
+tab falls behind, the hub closes its overflow signal, the HTTP handler ends
+the stream, and EventSource reconnects into a fresh `resync`. Events are never
+silently dropped while the UI believes it is live. Concurrent tabs and IMAP
+IDLE watchers are capped (`max_connections_per_user`, `max_idle_watchers`);
+aggregate counters are exposed at `GET /api/realtime/metrics`.
+
+`/api/conversations` returns a per-user revision. A reconnect that presents
+the unchanged revision gets a compact `unchanged` response, so an idle tab
+does not rebuild the full INBOX+Sent aggregation. Revision values include a
+startup epoch, so a process restart cannot match a stale client revision and
+always forces a full resync. HTTP mutation middleware advances the revision
+before the handler runs, which prevents a list read racing the response from
+seeing the old revision with new data.
+
+`[notifications].idle = true` adds a per-user IMAP IDLE connection. It does not
+broadcast directly: it calls `SyncManager.Trigger`, and the sync worker emits
+the event after writing the mirror. `[notifications].enabled` gates only
+desktop toasts and Web Push; the SSE stream is core infrastructure.
 
 Web Push uses the `SherClockHolmes/webpush-go` library. VAPID keys are
 auto-generated on first start and persisted to `vapid.json`.

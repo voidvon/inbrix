@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"inbrix/events"
 	mailapi "inbrix/handlers/api"
 	"inbrix/models"
 )
@@ -156,20 +157,44 @@ func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi
 			log.Printf("mail AI: skip message %s/%s because full body is unavailable", account.ID, message.ID)
 			continue
 		}
-		if _, err := GetOrCreateReplySuggestion(ctx, aiClient, m.store, m.key, account, fullMessage, false); err != nil && !errors.Is(err, ErrNotFound) {
-			log.Printf("mail AI: suggest reply for account %s message %s: %v", account.ID, message.ID, err)
+		conversationChanged := false
+		publishConversationUpdate := func() {
+			m.store.PublishAccountEvent(ctx, account.ID, events.Event{
+				Kind:      events.KindConversationUpdated,
+				Folder:    "INBOX",
+				MessageID: fullMessage.ID,
+			})
+		}
+		if _, err := GetOrCreateReplySuggestion(ctx, aiClient, m.store, m.key, account, fullMessage, false); err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				log.Printf("mail AI: suggest reply for account %s message %s: %v", account.ID, message.ID, err)
+			}
+		} else {
+			conversationChanged = true
 		}
 		if !cfg.Enabled || cfg.URL == "" {
+			if conversationChanged {
+				publishConversationUpdate()
+			}
 			continue
 		}
 		result, err := GetOrCreateMailSummary(ctx, aiClient, m.store, m.key, account, fullMessage, false)
 		if err != nil {
 			log.Printf("mail webhook: analyze account %s message %s: %v", account.ID, message.ID, err)
+			if conversationChanged {
+				publishConversationUpdate()
+			}
 			continue
 		}
+		conversationChanged = true
 		if err := sendFeishuWebhook(ctx, webhookClient, cfg.URL, account, fullMessage, result.Record.Summary); err != nil {
 			log.Printf("mail webhook: notify account %s message %s: %v", account.ID, message.ID, err)
 		}
+		// The reply suggestion (and, when the Feishu webhook is enabled, the
+		// summary) is written asynchronously after the initial new-mail event.
+		// Tell clients the conversation gained AI data so they refetch it
+		// without polling.
+		publishConversationUpdate()
 	}
 }
 

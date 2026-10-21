@@ -155,6 +155,10 @@ export type ConversationListResponse = {
   locale: string;
   unified: boolean;
   unifiedAvailable: boolean;
+  /** Monotonic per-user change counter; echoed on reconnect. */
+  revision: number;
+  /** True for the compact "nothing changed" response. */
+  unchanged?: boolean;
 };
 
 export type ConversationDetailResponse = {

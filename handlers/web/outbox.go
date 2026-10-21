@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"inbrix/events"
 	"inbrix/handlers/api"
 	"inbrix/mailstore"
 	"inbrix/models"
@@ -185,6 +186,14 @@ func (h *EmailHandler) deliverOutgoing(record mailstore.OutgoingMessage) {
 		log.Printf("outbox: record send result %s: %v", record.ID, persistErr)
 		return
 	}
+	// The browser no longer polls a "sending" message. Publish the terminal
+	// status so every tab refetches the conversation immediately.
+	h.mailDB.PublishAccountEvent(ctx, record.AccountID, events.Event{
+		Kind:           events.KindOutboxUpdated,
+		ConversationID: record.ConversationID,
+		MessageID:      record.ID,
+		Folder:         "Outbox",
+	})
 	if err != nil {
 		return
 	}

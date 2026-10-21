@@ -187,7 +187,6 @@ export function FolderPage({ folder }: { folder: string }) {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["folder", folder] }),
       queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-      queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
     ]);
   };
 
@@ -239,7 +238,6 @@ export function FolderPage({ folder }: { folder: string }) {
     queryClient.setQueryData<MailMessage>(["message", folder, message.id], (current) => current ? { ...current, flags: flagsMarkedSeen(current.flags) } : current);
     void markMailMessageRead(folder, message.id, effectiveEmail).then(() => {
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     }).catch((value) => {
       queryClient.setQueryData(["folder", folder], previousList);
       queryClient.setQueryData(["message", folder, message.id], previousDetail);

@@ -557,7 +557,7 @@ export function ChatView({
     onSuccess: async () => {
       setDeleteTarget(null);
       if (detail.messages.length === 1) onConversationEmpty();
-      await Promise.all([queryClient.invalidateQueries({ queryKey: ["conversations"] }), queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] })]);
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
       if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
     },
     onError: (value) => toastError(value, copy.deleteEmailFailed),

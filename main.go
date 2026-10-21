@@ -224,11 +224,6 @@ func main() {
 			log.Fatal("Failed to initialize mail mirror:", err)
 		}
 		mailSync = mailstore.NewSyncManager(mailMirror, config.Encryption.Key, config.MailSync)
-		if accounts, listErr := mailMirror.ListAllAccounts(context.Background()); listErr != nil {
-			log.Printf("mail sync: could not restore accounts: %v", listErr)
-		} else {
-			mailSync.StartAll(accounts)
-		}
 		// Stop workers before closing SQLite so an in-flight sync cannot
 		// write through a closed database handle during shutdown.
 		defer mailMirror.Close()
@@ -251,6 +246,44 @@ func main() {
 	} else {
 		defer durableKV.Close()
 		webEmailHandler.SetDurableStore(durableKV)
+	}
+
+	// Realtime mail invalidation. SSE is always registered because the React
+	// client no longer polls; [notifications] only controls desktop toasts,
+	// Web Push and the IDLE accelerator.
+	var notificationHub *web.NotificationHub
+	var pushHandler *web.PushHandler
+	var vapidKeys *web.VAPIDKeys
+	var pushStore *web.PushStore
+	if config.Notifications.Enabled && config.Notifications.WebPush {
+		var keyErr error
+		vapidKeys, keyErr = web.LoadOrGenerateVAPIDKeys(config.Notifications.VAPIDKeyFile)
+		if keyErr != nil {
+			log.Printf("webpush: VAPID key init failed (%v) — web push disabled", keyErr)
+			vapidKeys = nil
+		} else {
+			log.Printf("webpush: VAPID public key loaded (%s)", config.Notifications.VAPIDKeyFile)
+			if durableKV != nil {
+				pushStore = web.NewPushStore(durableKV)
+				pushHandler = web.NewPushHandler(vapidKeys, pushStore)
+			}
+		}
+	}
+	notificationHub = web.NewNotificationHub(store, config, webAuthHandler, vapidKeys, pushStore)
+	webAuthHandler.SetLogoutHook(notificationHub.DisconnectUser)
+	webEmailHandler.SetRevisionSource(notificationHub.Revision)
+	if mailMirror != nil {
+		mailMirror.SetPublisher(notificationHub)
+	}
+	if mailSync != nil {
+		notificationHub.SetTrigger(mailSync.Trigger)
+		// Start sync only after the publisher is wired, so a sync that runs at
+		// boot cannot race the first subscriber.
+		if accounts, listErr := mailMirror.ListAllAccounts(context.Background()); listErr != nil {
+			log.Printf("mail sync: could not restore accounts: %v", listErr)
+		} else {
+			mailSync.StartAll(accounts)
+		}
 	}
 	var systemSettings *web.SystemSettingsHandler
 	if mailMirror != nil {
@@ -421,7 +454,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -448,7 +481,7 @@ func main() {
 	}
 
 	// Protected routes group — session-gated, mirror-session-gated, and CSRF-protected.
-	protected := app.Group("", api.SessionMiddleware(store), mirrorSessionMiddleware, csrfMiddleware)
+	protected := app.Group("", api.SessionMiddleware(store), mirrorSessionMiddleware, csrfMiddleware, web.MailMutationEvents(notificationHub))
 
 	// Logout MUST be POST to prevent forced-logout via a crafted GET link
 	// (CSRF attack). Placed in the protected group so CSRF middleware covers it.
@@ -487,6 +520,9 @@ func main() {
 		apiRoutes.Get("/csrf", func(c *fiber.Ctx) error {
 			token, _ := c.Locals("csrfToken").(string)
 			return c.JSON(fiber.Map{"token": token})
+		})
+		apiRoutes.Get("/realtime/metrics", func(c *fiber.Ctx) error {
+			return c.JSON(notificationHub.MetricsSnapshot())
 		})
 		apiRoutes.Get("/update", updateHandler.HandleInfo)
 		apiRoutes.Post("/update/check", updateHandler.HandleCheck)
@@ -625,38 +661,17 @@ func main() {
 	defer aiHandler.Close()
 	aiHandler.Register(apiRoutes)
 
-	// Notifications routes — registered only when notifications.enabled = true.
-	// With enabled = false (the default) this block is never entered, so no
-	// extra goroutines are created and no new routes appear.
-	if config.Notifications.Enabled {
-		// Optional VAPID Web Push.
-		var vapidKeys *web.VAPIDKeys
-		var pushStore *web.PushStore
-		if config.Notifications.WebPush {
-			var err error
-			vapidKeys, err = web.LoadOrGenerateVAPIDKeys(config.Notifications.VAPIDKeyFile)
-			if err != nil {
-				log.Printf("webpush: VAPID key init failed (%v) — web push disabled", err)
-			} else {
-				log.Printf("webpush: VAPID public key loaded (%s)", config.Notifications.VAPIDKeyFile)
-				if durableKV != nil {
-					pushStore = web.NewPushStore(durableKV)
-				}
-			}
-		}
+	// Realtime mail invalidation is core UI infrastructure: every tab connects
+	// to /events and refetches on push, so there is no polling fallback. The
+	// [notifications] section only controls optional desktop/Web Push delivery.
+	protected.Get("/events", web.NewNotificationsHandler(notificationHub).HandleSSE)
 
-		hub := web.NewNotificationHub(store, config, webAuthHandler, vapidKeys, pushStore)
-		notifHandler := web.NewNotificationsHandler(hub)
-		protected.Get("/events", notifHandler.HandleSSE)
-
-		// VAPID public key endpoint — public (no session required) so the SW can
-		// fetch it before the user navigates to an authenticated page.
-		if vapidKeys != nil && pushStore != nil {
-			pushHandler := web.NewPushHandler(vapidKeys, pushStore)
-			app.Get("/api/push/vapid-public", pushHandler.HandleVAPIDPublicKey)
-			protected.Post("/api/push/subscribe", pushHandler.HandleSubscribe)
-			protected.Delete("/api/push/subscribe", pushHandler.HandleUnsubscribe)
-		}
+	// VAPID public key endpoint — public (no session required) so the SW can
+	// fetch it before the user navigates to an authenticated page.
+	if pushHandler != nil {
+		app.Get("/api/push/vapid-public", pushHandler.HandleVAPIDPublicKey)
+		protected.Post("/api/push/subscribe", pushHandler.HandleSubscribe)
+		protected.Delete("/api/push/subscribe", pushHandler.HandleUnsubscribe)
 	}
 
 	var acctHandler *web.AccountsHandler

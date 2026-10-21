@@ -62,14 +62,17 @@ key = "replace-this-32-byte-key-now!!!!"
 # mechanism = "xoauth2"
 # use_pkce = true
 
-# Optional server-side notification capability. Users enable or disable their
-# own browser subscription from Settings after this capability is enabled.
+# Realtime mail updates use SSE (GET /events) unconditionally; the browser does
+# not poll. The [notifications] section only adds optional delivery channels.
+# Users enable or disable their own browser subscription from Settings.
 # [notifications]
-# enabled = true
-# idle = true
+# enabled = true          # desktop toasts + Web Push
+# idle = true             # IMAP IDLE accelerator (wakes the sync worker)
 # desktop = false
 # webpush = true
 # vapid_key_file = "vapid.json"
+# max_connections_per_user = 8   # cap SSE tabs per user
+# max_idle_watchers = 64         # cap concurrent IMAP IDLE watchers
 
 # Optional DAV integrations. These connection settings are not currently
 # managed by the UI.

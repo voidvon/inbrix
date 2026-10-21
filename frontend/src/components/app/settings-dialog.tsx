@@ -1018,7 +1018,6 @@ export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManag
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
   };
   const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => refreshAccountData(), onError: (value) => toastError(value, copy.loadFailed) });
@@ -1174,7 +1173,7 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
     if (!value) setInvalid({});
     onOpenChange(value);
   };
-  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setInvalid({}); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => toastError(value, copy.loadFailed) });
+  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setInvalid({}); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => toastError(value, copy.loadFailed) });
   const clearInvalid = (name: string) => setInvalid((current) => {
     if (!current[name]) return current;
     const next = { ...current };

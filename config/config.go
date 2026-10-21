@@ -285,23 +285,31 @@ type AIConfig struct {
 // EmbeddedAI reports whether the AI assistant runs llmux in-process.
 func (c AIConfig) EmbeddedAI() bool { return c.Mode == AIModeEmbedded }
 
-// NotificationsConfig configures Phase-6 real-time notifications.
-// Everything is opt-in and default-disabled: with Enabled = false (the
-// default) the application behaves exactly as without this feature — no extra
-// goroutines and no SSE route.
+// NotificationsConfig configures optional desktop and Web Push notifications.
+//
+// The SSE channel (GET /events) is always on: the React client no longer polls
+// mail endpoints, so push invalidation is core infrastructure rather than an
+// opt-in feature. Enabled gates only desktop toasts and VAPID Web Push.
+// Idle controls the IMAP IDLE accelerator that wakes the sync worker as soon
+// as new mail arrives; with Idle = false the worker still syncs every
+// [mail_sync].interval seconds.
 //
 //	[notifications]
-//	enabled      = false          # master switch — MUST be true to activate anything
-//	idle         = true           # start an IMAP IDLE watcher when enabled
+//	enabled      = false          # desktop toasts + Web Push (SSE is always on)
+//	idle         = true           # wake the sync worker on new mail (recommended)
 //	desktop      = false          # native OS toast via gen2brain/beeep (local runs)
 //	webpush      = false          # VAPID Web Push (background, even with no open tab)
 //	vapid_key_file = "vapid.json" # relative paths live under the runtime data directory
+//	max_connections_per_user = 8  # cap SSE tabs per user (0 = default)
+//	max_idle_watchers = 64        # cap concurrent IMAP IDLE watchers (0 = default)
 type NotificationsConfig struct {
-	Enabled      bool   `toml:"enabled"`        // master switch; default false
-	Idle         bool   `toml:"idle"`           // IMAP IDLE watcher; default true when Enabled
-	Desktop      bool   `toml:"desktop"`        // native OS toasts via beeep; default false
-	WebPush      bool   `toml:"webpush"`        // VAPID Web Push; default false
-	VAPIDKeyFile string `toml:"vapid_key_file"` // path to JSON key file; auto-generated
+	Enabled               bool   `toml:"enabled"`                  // desktop + Web Push; default false
+	Idle                  bool   `toml:"idle"`                     // IMAP IDLE sync accelerator; default true
+	Desktop               bool   `toml:"desktop"`                  // native OS toasts via beeep; default false
+	WebPush               bool   `toml:"webpush"`                  // VAPID Web Push; default false
+	VAPIDKeyFile          string `toml:"vapid_key_file"`           // path to JSON key file; auto-generated
+	MaxConnectionsPerUser int    `toml:"max_connections_per_user"` // SSE tabs per user; default 8
+	MaxIdleWatchers       int    `toml:"max_idle_watchers"`        // concurrent IDLE watchers; default 64
 }
 
 // AccountsConfig enables the non-mirror multi-account compatibility flow.
@@ -419,15 +427,15 @@ func LoadConfig(filepath string) (*Config, error) {
 	// Default CalDAV configuration
 	config.CalDAV.Auth = "basic"
 
-	// Default Notifications configuration — everything OFF by default.
-	// Idle is set to true here so that it activates automatically once the
-	// user opts in by setting enabled = true; they can still turn it off
-	// individually with idle = false.
+	// Default Notifications configuration. Desktop and Web Push stay off;
+	// the IMAP IDLE accelerator is on because the browser no longer polls.
 	config.Notifications.Enabled = false
 	config.Notifications.Idle = true
 	config.Notifications.Desktop = false
 	config.Notifications.WebPush = false
 	config.Notifications.VAPIDKeyFile = "vapid.json"
+	config.Notifications.MaxConnectionsPerUser = 8
+	config.Notifications.MaxIdleWatchers = 64
 	config.Accounts.Enabled = false
 
 	// Default AI configuration.

@@ -1,5 +1,8 @@
 export const zh = {
   conversations: "对话",
+  realtimeConnected: "实时同步已连接",
+  realtimeConnecting: "正在连接实时同步…",
+  realtimeDisconnected: "实时同步已断开，正在重连…",
   compose: "写邮件",
   composeRecipientDescription: "输入收件邮箱，在对话中编辑邮件。已有对话会直接打开。",
   composeStart: "开始写邮件",
@@ -564,6 +567,9 @@ export const zh = {
 
 export const en = {
   conversations: "Conversations",
+  realtimeConnected: "Realtime updates connected",
+  realtimeConnecting: "Connecting realtime updates…",
+  realtimeDisconnected: "Realtime updates disconnected — reconnecting…",
   compose: "Compose",
   composeRecipientDescription: "Enter a recipient to write in their conversation. Existing conversations open directly.",
   composeStart: "Start writing",

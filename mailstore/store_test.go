@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"inbrix/events"
 	"inbrix/handlers/api"
 	"inbrix/models"
 )
@@ -249,7 +250,7 @@ func TestMessagesPreserveCachedBodyAndSupportSearch(t *testing.T) {
 	if err != nil || maxUID != 11 {
 		t.Fatalf("MaxMessageUID: got %d, err %v", maxUID, err)
 	}
-	if err := s.PruneFolder(ctx, account.ID, "INBOX", []uint32{10}); err != nil {
+	if _, err := s.PruneFolder(ctx, account.ID, "INBOX", []uint32{10}); err != nil {
 		t.Fatalf("PruneFolder: %v", err)
 	}
 	if _, err := s.GetMessage(ctx, account.ID, "INBOX", "11"); !errors.Is(err, ErrNotFound) {
@@ -662,11 +663,10 @@ func TestGetFolderAndBatchSyncFlags(t *testing.T) {
 	}
 
 	// Batch sync flags: mark 1 as Seen, 2 as Flagged
-	err = s.BatchSyncFlags(ctx, account.ID, "INBOX", []api.MessageFlagItem{
+	if _, err = s.BatchSyncFlags(ctx, account.ID, "INBOX", []api.MessageFlagItem{
 		{UID: 1, Flags: []string{`\Seen`}},
 		{UID: 2, Flags: []string{`\Flagged`}},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("BatchSyncFlags: %v", err)
 	}
 
@@ -677,5 +677,29 @@ func TestGetFolderAndBatchSyncFlags(t *testing.T) {
 	msg2, err := s.GetMessage(ctx, account.ID, "INBOX", "2")
 	if err != nil || len(msg2.Flags) != 1 || msg2.Flags[0] != `\Flagged` {
 		t.Fatalf("msg2 flags not updated: %+v, err=%v", msg2, err)
+	}
+}
+
+func TestPublishAccountEventResolvesOwnerAndAccount(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "events@example.com", "Events", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount(t, s, owner.ID, "events@example.com", true)
+
+	var got []events.Event
+	s.SetPublisher(events.PublisherFunc(func(ev events.Event) { got = append(got, ev) }))
+	s.PublishAccountEvent(ctx, account.ID, events.Event{Kind: events.KindMailSync, Folder: "INBOX"})
+
+	if len(got) != 1 {
+		t.Fatalf("published %d events, want 1", len(got))
+	}
+	if got[0].UserID != owner.ID || got[0].Username != owner.Login || got[0].AccountID != account.ID {
+		t.Fatalf("event routing fields = %+v", got[0])
+	}
+	if got[0].Kind != events.KindMailSync || got[0].Folder != "INBOX" {
+		t.Fatalf("event payload = %+v", got[0])
 	}
 }

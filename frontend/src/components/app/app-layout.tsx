@@ -24,6 +24,8 @@ import { APP_TITLE_NAME, mailDocumentTitle } from "../../lib/document-title";
 import { prefersDarkMode } from "../../lib/theme";
 import { folderKind, folderLabel } from "../../lib/mailbox";
 import { type Copy, useLocale } from "../../lib/locale";
+import { useMailEvents, type MailEventStatus } from "../../lib/use-mail-events";
+import { useConversationsQuery } from "../../lib/use-conversations";
 import type { ComposeDefaults } from "../../lib/email-format";
 import type { ConversationDetail, ConversationListResponse, Mailbox } from "../../types";
 import { ShellContext, type ShellContextType } from "./shell-context";
@@ -115,6 +117,7 @@ export function Sidebar({
   darkMode,
   onToggleDarkMode,
   desktopWidth,
+  realtimeStatus,
 }: {
   copy: Copy;
   folders: Mailbox[];
@@ -131,9 +134,11 @@ export function Sidebar({
   darkMode: boolean;
   onToggleDarkMode: () => void;
   desktopWidth: number;
+  realtimeStatus: MailEventStatus;
 }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
+  const realtimeLabel = realtimeStatus === "open" ? copy.realtimeConnected : realtimeStatus === "connecting" ? copy.realtimeConnecting : copy.realtimeDisconnected;
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
   return (
     <aside style={{ "--sidebar-width": `${desktopWidth}px` } as React.CSSProperties} className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-(--sidebar-width) lg:shrink-0 lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
@@ -160,6 +165,11 @@ export function Sidebar({
           </ScrollArea>
         )}
         <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
+          <span
+            className={cn("size-2 shrink-0 rounded-full", realtimeStatus === "open" ? "bg-emerald-500" : realtimeStatus === "connecting" ? "bg-amber-400" : "bg-red-500")}
+            title={realtimeLabel}
+            aria-label={realtimeLabel}
+          />
           <AccountMenu copy={copy} accounts={accounts} accountEmail={accountEmail} />
           <Button variant="ghost" size="icon" onClick={onSettings} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
           <Button variant="ghost" size="icon" onClick={onToggleDarkMode} aria-label={darkMode ? copy.lightMode : copy.darkMode} title={darkMode ? copy.lightMode : copy.darkMode}>
@@ -187,39 +197,13 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
-  const shell = useQuery({
-    queryKey: ["mailbox-shell"],
-    queryFn: () => getConversations(),
-    staleTime: 60_000,
-    refetchInterval: 30_000,
-  });
+  const shell = useConversationsQuery();
 
   const capabilities = useQuery({
     queryKey: ["capabilities"],
     queryFn: getCapabilities,
     staleTime: 60_000,
   });
-
-  useEffect(() => {
-    if (!capabilities.data?.notifications) return;
-    const events = new EventSource("/events", { withCredentials: true });
-    events.onmessage = (event) => {
-      void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      void queryClient.invalidateQueries({ queryKey: ["conversation"] });
-      void queryClient.invalidateQueries({ queryKey: ["folder"] });
-      void queryClient.invalidateQueries({ queryKey: ["attachments"] });
-      try {
-        const payload = JSON.parse(String(event.data)) as { from?: string; subject?: string };
-        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
-          new Notification(payload.from ? `New mail from ${payload.from}` : "New mail", { body: payload.subject || "" });
-        }
-      } catch {
-        // A malformed optional notification must not interrupt inbox refreshes.
-      }
-    };
-    return () => events.close();
-  }, [capabilities.data?.notifications, queryClient]);
 
   const copy = useLocale(shell.data?.locale);
 
@@ -242,6 +226,10 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   }
 
   const signedOut = shell.error instanceof ApiError && shell.error.status === 401;
+  // SSE is the only refresh channel for mail; the shell query no longer polls.
+  // Wait for a mailbox before connecting (a user without an account would be
+  // redirected by the server-side mailbox gate), and resync on every reconnect.
+  const realtimeStatus = useMailEvents(!signedOut && Boolean(shell.data?.accountEmail));
   const currentFolderMailbox = currentFolder ? (shell.data?.folders || []).find((folder) => folder.name === currentFolder) : undefined;
   // The conversations view is inbox + sent, so its unread total is the number of
   // unread incoming messages the list badges add up to.
@@ -278,7 +266,6 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     queryClient.setQueryData(["conversation", conversation.id], { conversation });
     await queryClient.cancelQueries({ queryKey: ["conversations"], exact: true });
     await queryClient.fetchQuery({ queryKey: ["conversations"], queryFn: () => getConversations(), staleTime: 0 });
-    void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     setComposeDefaults({
       accountEmail: conversation.accountEmail,
       conversationId: conversation.id,
@@ -343,6 +330,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((value) => !value)}
           desktopWidth={sidebarWidth}
+          realtimeStatus={realtimeStatus}
         />
         <ResizeHandle label="Resize navigation" width={sidebarWidth} minWidth={180} maxWidth={360} onResize={setSidebarWidth} />
         {children}

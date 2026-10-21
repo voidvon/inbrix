@@ -6,13 +6,13 @@ import {
   ApiError,
   deleteConversation,
   getConversation,
-  getConversations,
   markConversationRead,
   markConversationUnread,
   retryOutgoing,
   searchMailMessages,
 } from "../../lib/api";
 import { en } from "../../lib/locale";
+import { useConversationsQuery } from "../../lib/use-conversations";
 import {
   escapeHTML,
   splitRecipientValues,
@@ -95,13 +95,7 @@ export function InboxPage() {
     return () => window.removeEventListener("popstate", restoreConversationFromURL);
   }, []);
 
-  const conversations = useQuery({
-    queryKey: ["conversations"],
-    queryFn: () => getConversations(),
-    refetchInterval: 30_000,
-    placeholderData: keepPreviousData,
-    retry: 1,
-  });
+  const conversations = useConversationsQuery();
 
   // Full-text search runs against the local mirror and returns matching
   // messages, so a result can be opened at its exact position in the thread.
@@ -117,7 +111,6 @@ export function InboxPage() {
     queryKey: ["conversation", selectedId],
     queryFn: () => getConversation(selectedId!),
     enabled: Boolean(selectedId),
-    refetchInterval: (query) => query.state.data?.conversation.messages.some((message) => message.sendStatus === "sending") ? 2_000 : 30_000,
     retry: 1,
   });
 
@@ -184,7 +177,6 @@ export function InboxPage() {
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
       ]);
       queryClient.removeQueries({ queryKey: ["conversation", conversation.id] });
     },
@@ -212,7 +204,6 @@ export function InboxPage() {
     void markConversationRead(conversation.id).then(async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
       ]);
     }).catch(() => {
@@ -239,7 +230,6 @@ export function InboxPage() {
       await markConversationUnread(conversation.id);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }),
         queryClient.invalidateQueries({ queryKey: ["conversation", conversation.id] }),
       ]);
     } catch (value) {

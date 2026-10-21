@@ -10,6 +10,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -134,6 +135,13 @@ type ConversationListJSON struct {
 	Locale           string                         `json:"locale"`
 	Unified          bool                           `json:"unified"`
 	UnifiedAvailable bool                           `json:"unifiedAvailable"`
+	// Revision increments whenever the realtime pipeline publishes a change
+	// for this user. Clients echo it on reconnect so an unchanged mailbox can
+	// be answered without rebuilding the conversation list.
+	Revision uint64 `json:"revision"`
+	// Unchanged is true only for the compact response used by the revision
+	// fast path; all other fields are empty in that case.
+	Unchanged bool `json:"unchanged,omitempty"`
 }
 
 func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON {
@@ -391,6 +399,21 @@ func filterConversationJSON(conversations []Conversation, query string) []Conver
 }
 
 func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (ConversationListJSON, error) {
+	// Revision fast path: a reconnect resync with no changes should not rebuild
+	// every conversation. Only the unfiltered list participates; a search query
+	// must always be evaluated.
+	revision := uint64(0)
+	if h.revisionSource != nil {
+		if ownerID := requestOwnerID(c, h.store); ownerID != "" {
+			revision = h.revisionSource(ownerID)
+		}
+	}
+	if strings.TrimSpace(query) == "" && revision > 0 {
+		if requested := strings.TrimSpace(c.Query("rev")); requested != "" && requested == strconv.FormatUint(revision, 10) {
+			return ConversationListJSON{Revision: revision, Unchanged: true}, nil
+		}
+	}
+
 	data, err := h.conversationPageData(c)
 	if err != nil {
 		return ConversationListJSON{}, err
@@ -404,6 +427,7 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (Convers
 		Locale:           CurrentLocale(c),
 		Unified:          data["Unified"].(bool),
 		UnifiedAvailable: data["UnifiedAvailable"].(bool),
+		Revision:         revision,
 	}
 	for _, account := range data["MailAccounts"].([]mailAccountOption) {
 		response.Accounts = append(response.Accounts, ConversationAccountJSON{

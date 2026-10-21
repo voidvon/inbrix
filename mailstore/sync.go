@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"inbrix/config"
+	"inbrix/events"
 	"inbrix/handlers/api"
 	"inbrix/models"
 	"log"
@@ -539,13 +540,21 @@ func (m *SyncManager) syncFolder(ctx context.Context, client *api.Client, accoun
 		}
 	}
 
+	var pruned int64
 	if full && complete {
-		if err := m.store.PruneFolder(ctx, accountID, folderName, seen); err != nil {
-			return fmt.Errorf("prune folder: %w", err)
+		var pruneErr error
+		pruned, pruneErr = m.store.PruneFolder(ctx, accountID, folderName, seen)
+		if pruneErr != nil {
+			return fmt.Errorf("prune folder: %w", pruneErr)
 		}
 	}
 	if err := m.store.UpdateFolderStats(ctx, accountID, folderName); err != nil {
 		return err
+	}
+	// A full sync can repair a stale mirror after the worker was down or a
+	// folder state was lost. Emit one coalesced event instead of one per page.
+	if len(seen) > 0 || pruned > 0 {
+		m.store.PublishAccountEvent(ctx, accountID, events.Event{Kind: events.KindMailSync, Folder: folderName})
 	}
 	return m.store.MarkFolderSync(ctx, accountID, folderName, complete, nil)
 }
@@ -585,6 +594,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 	}
 
 	// Step 4: Refresh flags on the newest messages window using lightweight UID+FLAGS only (no headers)
+	var flagChanges int64
 	if mbox.Messages > 0 {
 		flagBatch := batch
 		if flagBatch > 100 {
@@ -594,7 +604,8 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 		if flagErr != nil {
 			log.Printf("mail sync: refresh flags %s: %v", folderName, flagErr)
 		} else if len(flagItems) > 0 {
-			if err := m.store.BatchSyncFlags(ctx, accountID, folderName, flagItems); err != nil {
+			flagChanges, err = m.store.BatchSyncFlags(ctx, accountID, folderName, flagItems)
+			if err != nil {
 				return err
 			}
 		}
@@ -639,18 +650,49 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 	// If remote message count equals (localMessageCount + newlyAddedCount), no message was deleted.
 	expectedCount := uint32(localFolder.MessageCount) + uint32(len(newMessages))
 	needsPrune := mbox.Messages < expectedCount || (mbox.Messages == 0 && localFolder.MessageCount > 0)
+	var pruned int64
 	if needsPrune {
 		remoteUIDs, err := client.FetchMessageUIDs(folderName)
 		if err != nil {
 			return fmt.Errorf("reconcile remote UIDs: %w", err)
 		}
-		if err := m.store.PruneFolder(ctx, accountID, folderName, remoteUIDs); err != nil {
+		pruned, err = m.store.PruneFolder(ctx, accountID, folderName, remoteUIDs)
+		if err != nil {
 			return fmt.Errorf("prune deleted messages: %w", err)
 		}
 	}
 
 	if err := m.store.UpdateFolderStats(ctx, accountID, folderName); err != nil {
 		return err
+	}
+	// Publish after the database writes and stats update, so an immediate
+	// refetch sees the committed state. One event per folder per sync is enough;
+	// clients invalidate all mail queries and coalesce duplicate events.
+	if len(newMessages) > 0 || flagChanges > 0 || pruned > 0 {
+		ev := events.Event{Kind: events.KindMailSync, Folder: folderName}
+		switch {
+		case len(newMessages) > 0:
+			latest := newMessages[len(newMessages)-1]
+			for _, message := range newMessages[1:] {
+				if uid, parseErr := parseUIDString(message.ID); parseErr == nil {
+					if latestUID, latestErr := parseUIDString(latest.ID); latestErr == nil && uid > latestUID {
+						latest = message
+					}
+				}
+			}
+			if strings.EqualFold(strings.TrimSpace(folderName), "INBOX") {
+				ev.Kind = events.KindMailNew
+				ev.From = latest.From
+				ev.Subject = latest.Subject
+			}
+			ev.MessageID = latest.ID
+			ev.ConversationID = latest.ConversationID
+		case flagChanges > 0:
+			ev.Kind = events.KindMailFlags
+		case pruned > 0:
+			ev.Kind = events.KindMailDeleted
+		}
+		m.store.PublishAccountEvent(ctx, accountID, ev)
 	}
 	if err := m.store.MarkFolderSync(ctx, accountID, folderName, true, nil); err != nil {
 		return err
