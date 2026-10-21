@@ -1,7 +1,9 @@
 package web
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	stdhtml "html"
 	"inbrix/handlers/api"
 	"inbrix/i18n"
@@ -12,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/net/html"
@@ -142,6 +145,74 @@ type ConversationListJSON struct {
 	// Unchanged is true only for the compact response used by the revision
 	// fast path; all other fields are empty in that case.
 	Unchanged bool `json:"unchanged,omitempty"`
+	// NextCursor is an opaque cursor for the next page. It is empty when this
+	// is the last page or when the caller asked for the legacy unpaginated list.
+	NextCursor string `json:"nextCursor,omitempty"`
+	HasMore    bool   `json:"hasMore"`
+	// Total is the number of conversations matching the query before paging.
+	Total int `json:"total"`
+	// UnreadCount is the mailbox-wide unread message count, not just the rows
+	// on this page. The sidebar badge and tab title depend on it.
+	UnreadCount int `json:"unreadCount"`
+}
+
+const conversationMaxPageSize = 100
+
+var errInvalidConversationCursor = errors.New("invalid conversation cursor")
+
+type conversationCursor struct {
+	Date time.Time
+	ID   string
+}
+
+func encodeConversationCursor(conversation Conversation) string {
+	raw := strconv.FormatInt(conversation.Latest.Date.UnixNano(), 10) + "\x00" + conversation.ID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeConversationCursor(value string) (conversationCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return conversationCursor{}, errInvalidConversationCursor
+	}
+	parts := strings.SplitN(string(decoded), "\x00", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return conversationCursor{}, errInvalidConversationCursor
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return conversationCursor{}, errInvalidConversationCursor
+	}
+	return conversationCursor{Date: time.Unix(0, nanos), ID: parts[1]}, nil
+}
+
+// conversationBeforeOrAtCursor reports whether c is at or above the cursor in
+// the list order (latest first, then conversation ID ascending as a stable
+// tie). Those rows were already returned by the previous page.
+func conversationBeforeOrAtCursor(conversation Conversation, cursor conversationCursor) bool {
+	if conversation.Latest.Date.After(cursor.Date) {
+		return true
+	}
+	if conversation.Latest.Date.Before(cursor.Date) {
+		return false
+	}
+	return conversation.ID <= cursor.ID
+}
+
+func conversationListLimit(c *fiber.Ctx) int {
+	raw := strings.TrimSpace(c.Query("limit"))
+	if raw == "" {
+		// Legacy callers that do not pass limit still receive the complete list.
+		return 0
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 0
+	}
+	if limit > conversationMaxPageSize {
+		return conversationMaxPageSize
+	}
+	return limit
 }
 
 func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON {
@@ -398,29 +469,70 @@ func filterConversationJSON(conversations []Conversation, query string) []Conver
 	return filtered
 }
 
-func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (ConversationListJSON, error) {
+func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string, filter string, limit int, cursor string) (ConversationListJSON, error) {
 	// Revision fast path: a reconnect resync with no changes should not rebuild
-	// every conversation. Only the unfiltered list participates; a search query
-	// must always be evaluated.
+	// every conversation. It applies to the first page only; a cursor request
+	// must receive the rows after that cursor (or the client would keep an
+	// empty page). A search query must always be evaluated.
 	revision := uint64(0)
 	if h.revisionSource != nil {
 		if ownerID := requestOwnerID(c, h.store); ownerID != "" {
 			revision = h.revisionSource(ownerID)
 		}
 	}
-	if strings.TrimSpace(query) == "" && revision > 0 {
+	if strings.TrimSpace(query) == "" && strings.TrimSpace(cursor) == "" && revision > 0 {
 		if requested := strings.TrimSpace(c.Query("rev")); requested != "" && requested == strconv.FormatUint(revision, 10) {
 			return ConversationListJSON{Revision: revision, Unchanged: true}, nil
 		}
 	}
 
-	data, err := h.conversationPageData(c)
+	// Conversation search may match a body, so only that legacy path asks for
+	// full rows. The normal inbox list stays on the header projection.
+	includeBodies := strings.TrimSpace(query) != ""
+	data, err := h.conversationPageData(c, includeBodies)
 	if err != nil {
 		return ConversationListJSON{}, err
 	}
-	conversations := filterConversationJSON(data["Conversations"].([]Conversation), query)
+	conversations := data["Conversations"].([]Conversation)
+	unreadCount := 0
+	for _, conversation := range conversations {
+		unreadCount += conversation.UnreadCount
+	}
+	all := filterConversationJSON(conversations, query)
+	if strings.EqualFold(strings.TrimSpace(filter), "open") {
+		open := make([]Conversation, 0, len(all))
+		for _, conversation := range all {
+			if conversation.Status == "unanswered" || conversation.Status == "draft" {
+				open = append(open, conversation)
+			}
+		}
+		all = open
+	}
+	total := len(all)
+
+	start := 0
+	if limit > 0 && strings.TrimSpace(cursor) != "" {
+		parsed, err := decodeConversationCursor(cursor)
+		if err != nil {
+			return ConversationListJSON{}, err
+		}
+		for start < len(all) && conversationBeforeOrAtCursor(all[start], parsed) {
+			start++
+		}
+	}
+	end := len(all)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	page := all[start:end]
+	hasMore := end < len(all)
+	nextCursor := ""
+	if hasMore && len(page) > 0 {
+		nextCursor = encodeConversationCursor(page[len(page)-1])
+	}
+
 	response := ConversationListJSON{
-		Conversations:    make([]ConversationSummaryJSON, 0, len(conversations)),
+		Conversations:    make([]ConversationSummaryJSON, 0, len(page)),
 		Folders:          data["Folders"].([]*api.MailboxInfo),
 		Accounts:         make([]ConversationAccountJSON, 0),
 		AccountEmail:     data["Email"].(string),
@@ -428,6 +540,10 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (Convers
 		Unified:          data["Unified"].(bool),
 		UnifiedAvailable: data["UnifiedAvailable"].(bool),
 		Revision:         revision,
+		NextCursor:       nextCursor,
+		HasMore:          hasMore,
+		Total:            total,
+		UnreadCount:      unreadCount,
 	}
 	for _, account := range data["MailAccounts"].([]mailAccountOption) {
 		response.Accounts = append(response.Accounts, ConversationAccountJSON{
@@ -438,7 +554,7 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (Convers
 			IsActive: account.IsActive,
 		})
 	}
-	for _, conversation := range conversations {
+	for _, conversation := range page {
 		response.Conversations = append(response.Conversations, conversationSummaryJSON(conversation))
 	}
 	for _, account := range data["AccountErrors"].([]AccountFetchResult) {
@@ -453,7 +569,10 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string) (Convers
 }
 
 func (h *EmailHandler) HandleConversationListJSON(c *fiber.Ctx) error {
-	response, err := h.conversationListJSON(c, c.Query("q"))
+	response, err := h.conversationListJSON(c, c.Query("q"), c.Query("filter"), conversationListLimit(c), c.Query("cursor"))
+	if errors.Is(err, errInvalidConversationCursor) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid conversation cursor"})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversations"})
 	}
@@ -487,11 +606,14 @@ func (h *EmailHandler) HandleStartConversationJSON(c *fiber.Ctx) error {
 	}
 	to := strings.ToLower(address.Address)
 	id := conversationID(account.ID, messageParticipants(models.Email{From: account.Email, To: to}, account.Email))
-	conversations, _, err := h.localConversations(c, []mailstore.Account{account})
+	conversations, _, err := h.localConversations(c, []mailstore.Account{account}, false)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error loading local conversations")
 	}
 	if existing := findConversation(conversations, id); existing != nil {
+		if err := h.hydrateConversation(c, account.ID, existing); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Error loading conversation messages")
+		}
 		return c.JSON(fiber.Map{"conversation": conversationDetailJSONForLocale(*existing, CurrentLocale(c))})
 	}
 	draft, err := h.mailDB.SaveDraft(c.UserContext(), ownerID, mailstore.DraftInput{
@@ -508,7 +630,7 @@ func (h *EmailHandler) HandleStartConversationJSON(c *fiber.Ctx) error {
 }
 
 func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -516,48 +638,53 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 	if selected == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
+	account, accountOK := h.mirrorAccountForEmail(c, selected.AccountEmail)
+	if !accountOK {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+	}
+	if err := h.hydrateConversation(c, account.ID, selected); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+	}
 	response := conversationDetailJSONForLocale(*selected, CurrentLocale(c))
-	if account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail); ok {
-		keys := make([]mailstore.MessageSummaryKey, 0, len(selected.Messages))
-		for _, message := range selected.Messages {
-			if message.Email.Folder == "Outbox" {
-				continue
-			}
-			keys = append(keys, mailstore.MessageSummaryKey{FolderName: message.Email.Folder, UID: message.Email.ID})
+	keys := make([]mailstore.MessageSummaryKey, 0, len(selected.Messages))
+	for _, message := range selected.Messages {
+		if message.Email.Folder == "Outbox" {
+			continue
 		}
-		summaries, summaryErr := h.mailDB.ListMessageSummaries(c.UserContext(), account.ID, keys)
-		if summaryErr != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail summaries"})
+		keys = append(keys, mailstore.MessageSummaryKey{FolderName: message.Email.Folder, UID: message.Email.ID})
+	}
+	summaries, summaryErr := h.mailDB.ListMessageSummaries(c.UserContext(), account.ID, keys)
+	if summaryErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail summaries"})
+	}
+	replySuggestions, suggestionErr := h.mailDB.ListMessageReplySuggestions(c.UserContext(), account.ID, keys)
+	if suggestionErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved reply suggestions"})
+	}
+	translations, translationErr := h.mailDB.ListMessageTranslations(c.UserContext(), account.ID, keys)
+	if translationErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail translations"})
+	}
+	translationsAll, translationAllErr := h.mailDB.ListMessageTranslationsAll(c.UserContext(), account.ID, keys)
+	if translationAllErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail translations"})
+	}
+	configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account)
+	for index, message := range selected.Messages {
+		lookupKey := mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)
+		if record, exists := summaries[lookupKey]; exists {
+			sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, message.Email)
+			stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
+			response.Messages[index].MailSummary = mailSummaryJSON(record, stale)
 		}
-		replySuggestions, suggestionErr := h.mailDB.ListMessageReplySuggestions(c.UserContext(), account.ID, keys)
-		if suggestionErr != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved reply suggestions"})
+		if record, exists := replySuggestions[lookupKey]; exists && record.Status == "ready" && strings.TrimSpace(record.Summary) != "" {
+			response.Messages[index].SuggestedReply = &SuggestedReplyJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
 		}
-		translations, translationErr := h.mailDB.ListMessageTranslations(c.UserContext(), account.ID, keys)
-		if translationErr != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail translations"})
+		if record, exists := translations[lookupKey]; exists {
+			response.Messages[index].MailTranslation = mailTranslationJSON(record)
 		}
-		translationsAll, translationAllErr := h.mailDB.ListMessageTranslationsAll(c.UserContext(), account.ID, keys)
-		if translationAllErr != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading saved mail translations"})
-		}
-		configHash, _ := mailstore.CurrentMailSummaryConfigHash(c.UserContext(), h.mailDB, account)
-		for index, message := range selected.Messages {
-			lookupKey := mailstore.MessageSummaryLookupKey(message.Email.Folder, message.Email.ID)
-			if record, exists := summaries[lookupKey]; exists {
-				sourceHash, sourceErr := mailstore.CurrentMailSummarySourceHash(c.UserContext(), h.mailDB, account, message.Email)
-				stale := sourceErr != nil || record.SourceHash != sourceHash || (configHash != "" && record.ConfigHash != configHash)
-				response.Messages[index].MailSummary = mailSummaryJSON(record, stale)
-			}
-			if record, exists := replySuggestions[lookupKey]; exists && record.Status == "ready" && strings.TrimSpace(record.Summary) != "" {
-				response.Messages[index].SuggestedReply = &SuggestedReplyJSON{Text: record.Summary, Status: record.Status, UpdatedAt: record.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00")}
-			}
-			if record, exists := translations[lookupKey]; exists {
-				response.Messages[index].MailTranslation = mailTranslationJSON(record)
-			}
-			if record, exists := translationsAll[lookupKey]; exists {
-				response.Messages[index].MailTranslationAll = mailTranslationJSON(record)
-			}
+		if record, exists := translationsAll[lookupKey]; exists {
+			response.Messages[index].MailTranslationAll = mailTranslationJSON(record)
 		}
 	}
 	return c.JSON(fiber.Map{"conversation": response})
@@ -568,7 +695,7 @@ func (h *EmailHandler) HandleConversationNoteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
 	conversationID := strings.TrimSpace(c.Params("id"))
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -606,7 +733,7 @@ func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
 	conversationID := strings.TrimSpace(c.Params("id"))
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -639,7 +766,7 @@ func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
 	conversationID := strings.TrimSpace(c.Params("id"))
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -677,7 +804,7 @@ func (h *EmailHandler) HandleDeleteConversationAIChatJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
 	conversationID := strings.TrimSpace(c.Params("id"))
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -705,7 +832,7 @@ func (h *EmailHandler) HandleConversationStatusJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
 	conversationID := strings.TrimSpace(c.Params("id"))
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -760,7 +887,7 @@ func (h *EmailHandler) handleConversationSeenJSON(c *fiber.Ctx, seen bool) error
 	if h.mailDB == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -810,7 +937,7 @@ func (h *EmailHandler) HandleConversationDeleteJSON(c *fiber.Ctx) error {
 	if h.mailDB == nil {
 		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "Mail mirror is unavailable"})
 	}
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -894,7 +1021,7 @@ func (h *EmailHandler) HandleConversationMessageDeleteJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Message folder and UID are required"})
 	}
 
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, false)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}

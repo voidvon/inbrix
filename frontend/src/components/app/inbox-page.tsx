@@ -70,7 +70,7 @@ export function setConversationURL(id: string | null, mode: "push" | "replace" =
 
 export function InboxPage() {
   const queryClient = useQueryClient();
-  const { copy: locale, openMobileMenu, openCompose } = useShell();
+  const { copy: locale, openMobileMenu, openCompose, showAllConversations, setShowAllConversations } = useShell();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(conversationIdFromURL);
   const [messageTarget, setMessageTarget] = useState<MailFocusTarget | null>(messageTargetFromURL);
@@ -95,7 +95,7 @@ export function InboxPage() {
     return () => window.removeEventListener("popstate", restoreConversationFromURL);
   }, []);
 
-  const conversations = useConversationsQuery();
+  const conversations = useConversationsQuery(showAllConversations ? "all" : "open");
 
   // Full-text search runs against the local mirror and returns matching
   // messages, so a result can be opened at its exact position in the thread.
@@ -242,18 +242,23 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!conversations.data) return;
-    const items = conversations.data?.conversations || [];
-    if (selectedId && !items.some((item) => item.id === selectedId)) {
-      setSelectedId(null);
-      setChatOpen(false);
-      if (conversationIdFromURL() === selectedId) setConversationURL(null, "replace");
-      return;
-    }
+    const items = conversations.data.conversations || [];
     if (!selectedId && items.length > 0 && window.innerWidth > 1023) {
       setSelectedId(items[0].id);
       setChatOpen(true);
     }
   }, [conversations.data, selectedId]);
+
+  // The list is server-filtered and paginated, so a conversation can be absent
+  // from the loaded rows while still existing (deep link or a hidden status).
+  // Only the detail endpoint's 404 is authoritative for "deleted".
+  useEffect(() => {
+    if (selectedId && detail.error instanceof ApiError && detail.error.status === 404) {
+      setSelectedId(null);
+      setChatOpen(false);
+      if (conversationIdFromURL() === selectedId) setConversationURL(null, "replace");
+    }
+  }, [detail.error, selectedId]);
 
   const openReply = (conversation: ConversationDetail, message?: ConversationMessage, suggestedBody?: string) => {
     const source = message || conversation.messages.at(-1);
@@ -407,6 +412,12 @@ export function InboxPage() {
           onMarkUnread={(conversation) => void markUnread(conversation)}
           onDelete={(conversation) => setDeleteTarget(conversation)}
           onRefresh={() => void conversations.refetch()}
+          onLoadMore={conversations.loadMore}
+          hasMore={conversations.data?.hasMore}
+          loadingMore={conversations.loadingMore}
+          loadMoreError={conversations.loadMoreError}
+          showAllConversations={showAllConversations}
+          onShowAllChange={setShowAllConversations}
           desktopWidth={listWidth}
           className={chatOpen ? "hidden lg:flex" : "flex"}
         />

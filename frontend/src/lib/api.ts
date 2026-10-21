@@ -62,10 +62,19 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
   return payload as T;
 }
 
-export function getConversations(query = "", revision?: number) {
+export function getConversations(options: {
+  query?: string;
+  filter?: "open" | "all";
+  revision?: number;
+  cursor?: string;
+  limit?: number;
+} = {}) {
   const params = new URLSearchParams();
-  if (query.trim()) params.set("q", query.trim());
-  if (revision !== undefined && revision > 0) params.set("rev", String(revision));
+  if (options.query?.trim()) params.set("q", options.query.trim());
+  if (options.filter) params.set("filter", options.filter);
+  if (options.revision !== undefined && options.revision > 0) params.set("rev", String(options.revision));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined && options.limit > 0) params.set("limit", String(options.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
 }

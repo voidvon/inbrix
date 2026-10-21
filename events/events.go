@@ -60,6 +60,10 @@ type Event struct {
 	// originating tab already applied the change locally and ignores its own
 	// event, avoiding a duplicate full refetch; other tabs still process it.
 	Origin string `json:"origin,omitempty"`
+	// Revision is the per-user change counter at the moment the event was
+	// published. The resync frame uses it so a reconnecting client can decide
+	// locally whether anything changed and skip the HTTP request entirely.
+	Revision uint64 `json:"revision,omitempty"`
 }
 
 // Publisher is implemented by the realtime hub. A nil publisher (tests, or a

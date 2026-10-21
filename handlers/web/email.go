@@ -1114,7 +1114,7 @@ func (h *EmailHandler) HandleComposeEmail(c *fiber.Ctx) error {
 	// folder finishes syncing. The saved marker also lets a later incoming mail
 	// automatically return the conversation to "unanswered".
 	if conversationID != "" && h.mailDB != nil {
-		if data, statusErr := h.conversationPageData(c); statusErr == nil {
+		if data, statusErr := h.conversationPageData(c, false); statusErr == nil {
 			if selected := findConversation(data["Conversations"].([]Conversation), conversationID); selected != nil {
 				if account, ok := h.mirrorAccountForEmail(c, selected.AccountEmail); ok {
 					if statusErr = h.mailDB.SetConversationStatus(c.UserContext(), account.ID, conversationID, "answered", selected.StatusMessageKey); statusErr != nil {

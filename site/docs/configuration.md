@@ -343,8 +343,9 @@ channels, not the SSE stream.
 
 Events are emitted after the mirror commits a change (new mail, flag updates,
 deletions, outbox status, completed AI summaries) and after successful HTTP
-mail mutations. Every SSE connection starts with a `resync` frame; clients
-refetch on `resync` and on reconnect, so no polling interval is required.
+mail mutations. Every SSE connection starts with a `resync` frame carrying the
+current revision; clients compare it with their cached revision and refetch
+only when it differs, so an idle reconnect makes zero data requests.
 
 `GET /api/conversations` returns a per-user `revision`. A client reconnecting
 with the same revision receives a compact `{"unchanged":true}` response instead

@@ -159,6 +159,14 @@ export type ConversationListResponse = {
   revision: number;
   /** True for the compact "nothing changed" response. */
   unchanged?: boolean;
+  /** Opaque cursor for the next page; absent on the last page. */
+  nextCursor?: string;
+  /** Whether another page exists after this one. */
+  hasMore?: boolean;
+  /** Number of conversations matching the query before paging. */
+  total?: number;
+  /** Mailbox-wide unread message count, not just the loaded rows. */
+  unreadCount?: number;
 };
 
 export type ConversationDetailResponse = {

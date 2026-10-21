@@ -49,7 +49,7 @@ func (h *EmailHandler) queueOutgoingCompose(c *fiber.Ctx, from, thread, draft, t
 	if thread != conversationID(account.ID, messageParticipants(message, account.Email)) {
 		// Replies may change To (e.g. reply-all), so accept an existing owned
 		// conversation as well as the computed identity for a new message.
-		conversations, _, err := h.localConversations(c, []mailstore.Account{account})
+		conversations, _, err := h.localConversations(c, []mailstore.Account{account}, false)
 		var selected *Conversation
 		if err == nil {
 			selected = findConversation(conversations, thread)

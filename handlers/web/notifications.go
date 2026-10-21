@@ -356,6 +356,7 @@ func (h *NotificationHub) Publish(ev events.Event) {
 	}
 	h.ensureRevisionLocked(ev.UserID)
 	h.revisions[ev.UserID]++
+	ev.Revision = h.revisions[ev.UserID]
 	h.mu.Unlock()
 
 	h.metrics.eventsPublished.Add(1)
@@ -483,7 +484,10 @@ func (nh *NotificationsHandler) HandleSSE(c *fiber.Ctx) error {
 		if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
 			return
 		}
-		resync, err := json.Marshal(events.Event{Kind: events.KindResync})
+		resync, err := json.Marshal(events.Event{
+			Kind:     events.KindResync,
+			Revision: nh.hub.Revision(userID),
+		})
 		if err != nil {
 			return
 		}

@@ -243,13 +243,15 @@ middleware, which keeps other tabs in step without editing every handler.
 
 The hub is process-local (the mail mirror is a local SQLite file, so the
 supported topology is a single instance). Every connection starts with a
-`resync` frame and the server sends a 15-second comment heartbeat, so a
-reconnect after a proxy timeout, laptop sleep or deploy cannot leave stale
-caches. Connections are closed after 30 minutes to force a fresh session
-check; EventSource reconnects and resyncs automatically. Each tab holds one
-connection: with direct HTTP/1.1 serving, the browser's six-connections-per-
-origin limit applies, so multi-tab deployments should terminate TLS at an
-HTTP/2 proxy.
+`resync` frame that carries the current revision; the client compares it with
+its cached revision and only refetches when it differs, so a reconnect with no
+changes makes zero data requests. The server sends a 15-second comment
+heartbeat, so a connection that went through a proxy timeout, laptop sleep or
+deploy is detected and re-established. Connections are closed after 30
+minutes to force a fresh session check; EventSource reconnects and resyncs
+automatically. Each tab holds one connection: with direct HTTP/1.1 serving,
+the browser's six-connections-per-origin limit applies, so multi-tab
+deployments should terminate TLS at an HTTP/2 proxy.
 
 Backpressure is explicit. Each subscriber has a bounded event channel; if a
 tab falls behind, the hub closes its overflow signal, the HTTP handler ends

@@ -189,6 +189,10 @@ func TestNotificationHubRevisionIncrements(t *testing.T) {
 		t.Fatal("initial revision is zero")
 	}
 	hub.Publish(events.Event{UserID: "user-alice", Kind: events.KindMailChanged})
+	ev := receiveEvent(t, ch)
+	if ev.Revision != base+1 {
+		t.Fatalf("event revision = %d, want %d", ev.Revision, base+1)
+	}
 	if rev := hub.Revision("user-alice"); rev != base+1 {
 		t.Fatalf("revision after publish = %d, want %d", rev, base+1)
 	}

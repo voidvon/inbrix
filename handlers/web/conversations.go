@@ -318,8 +318,11 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 		for _, email := range group.messages {
 			// Older mirror rows may have marked cid-referenced images as regular
 			// attachments. Reclassify them from the cached HTML before building both
-			// the conversation summary and its message bubbles.
-			email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
+			// the conversation summary and its message bubbles. Header-only list
+			// rows have no HTML, so there is nothing to reparse.
+			if strings.TrimSpace(email.HTML) != "" {
+				email.Attachments = api.MarkInlineAttachmentsFromHTML(email.HTML, email.Attachments)
+			}
 			outgoing := isSentMailboxName(email.Folder) || sameMailboxAddress(email.From, account.Email)
 			conversation.Messages = append(conversation.Messages, ConversationMessage{Email: email, Outgoing: outgoing})
 			if !outgoing && isUnread(email) {
@@ -345,12 +348,15 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 		conversations = append(conversations, conversation)
 	}
 	sort.SliceStable(conversations, func(i, j int) bool {
+		if conversations[i].Latest.Date.Equal(conversations[j].Latest.Date) {
+			return conversations[i].ID < conversations[j].ID
+		}
 		return conversations[i].Latest.Date.After(conversations[j].Latest.Date)
 	})
 	return conversations
 }
 
-func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Account) ([]Conversation, []AccountFetchResult, error) {
+func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Account, includeBodies bool) ([]Conversation, []AccountFetchResult, error) {
 	if h.mailDB == nil {
 		return nil, nil, fmt.Errorf("mail mirror is not configured")
 	}
@@ -365,7 +371,12 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			continue
 		}
 		names := conversationFolderNames(folders)
-		emails, err := h.mailDB.ListMessagesForFolders(c.UserContext(), account.ID, names)
+		var emails []models.Email
+		if includeBodies {
+			emails, err = h.mailDB.ListMessagesForFolders(c.UserContext(), account.ID, names)
+		} else {
+			emails, err = h.mailDB.ListMessageHeadersForFolders(c.UserContext(), account.ID, names)
+		}
 		if err != nil {
 			result.Err = err
 			results = append(results, result)
@@ -442,6 +453,11 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 		results = append(results, result)
 	}
 	sort.SliceStable(conversations, func(i, j int) bool {
+		if conversations[i].Latest.Date.Equal(conversations[j].Latest.Date) {
+			// Pagination cursors need a total order. Without this tie-break the
+			// upstream map iteration makes equal-date rows move between pages.
+			return conversations[i].ID < conversations[j].ID
+		}
 		return conversations[i].Latest.Date.After(conversations[j].Latest.Date)
 	})
 	return conversations, results, nil
@@ -456,7 +472,41 @@ func findConversation(conversations []Conversation, id string) *Conversation {
 	return nil
 }
 
-func (h *EmailHandler) conversationPageData(c *fiber.Ctx) (fiber.Map, error) {
+// hydrateConversation replaces a thread's header-only rows with the full
+// messages. The list builds every conversation from headers; only the thread
+// the user opens pays for bodies and HTML.
+func (h *EmailHandler) hydrateConversation(c *fiber.Ctx, accountID string, conversation *Conversation) error {
+	if h.mailDB == nil || conversation == nil || len(conversation.Messages) == 0 {
+		return nil
+	}
+	keys := make([]mailstore.MessageKey, 0, len(conversation.Messages))
+	for _, message := range conversation.Messages {
+		keys = append(keys, mailstore.MessageKey{FolderName: message.Email.Folder, UID: message.Email.ID})
+	}
+	emails, err := h.mailDB.ListMessagesByKeys(c.UserContext(), accountID, keys)
+	if err != nil {
+		return fmt.Errorf("load conversation messages: %w", err)
+	}
+	byKey := make(map[string]models.Email, len(emails))
+	for _, email := range emails {
+		byKey[email.Folder+"\x00"+email.ID] = email
+	}
+	for i := range conversation.Messages {
+		email, ok := byKey[conversation.Messages[i].Email.Folder+"\x00"+conversation.Messages[i].Email.ID]
+		if !ok {
+			// Pending outbox rows are not mirrored yet; their header already
+			// carries the full payload, so leave them alone.
+			continue
+		}
+		email.AccountEmail = conversation.AccountEmail
+		email.AccountLabel = conversation.AccountLabel
+		email.AccountColor = conversation.AccountColor
+		conversation.Messages[i].Email = email
+	}
+	return nil
+}
+
+func (h *EmailHandler) conversationPageData(c *fiber.Ctx, includeBodies bool) (fiber.Map, error) {
 	username, _ := c.Locals("username").(string)
 	if username == "" {
 		return nil, fiber.ErrUnauthorized
@@ -472,7 +522,7 @@ func (h *EmailHandler) conversationPageData(c *fiber.Ctx) (fiber.Map, error) {
 			accounts = mirrorAccounts
 		}
 	}
-	conversations, accountErrors, err := h.localConversations(c, accounts)
+	conversations, accountErrors, err := h.localConversations(c, accounts, includeBodies)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +567,7 @@ func (h *EmailHandler) conversationPageData(c *fiber.Ctx) (fiber.Map, error) {
 }
 
 func (h *EmailHandler) HandleConversationList(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, true)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Error loading local conversations"})
 	}
@@ -525,7 +575,7 @@ func (h *EmailHandler) HandleConversationList(c *fiber.Ctx) error {
 }
 
 func (h *EmailHandler) HandleConversationView(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, true)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
@@ -538,7 +588,7 @@ func (h *EmailHandler) HandleConversationView(c *fiber.Ctx) error {
 }
 
 func (h *EmailHandler) HandleConversationSearch(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, true)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Error searching local conversations"})
 	}
@@ -572,7 +622,7 @@ func (h *EmailHandler) HandleConversationSearch(c *fiber.Ctx) error {
 }
 
 func (h *EmailHandler) HandleConversations(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c)
+	data, err := h.conversationPageData(c, true)
 	if err != nil {
 		if h.localUserWithoutMailbox(c) {
 			return c.Redirect("/settings?setup=1")

@@ -18,7 +18,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { ApiError, getCapabilities, getConversations, signOut, switchAccount } from "../../lib/api";
+import { ApiError, getCapabilities, signOut, switchAccount } from "../../lib/api";
 import { cn, isSentMailbox } from "../../lib/utils";
 import { APP_TITLE_NAME, mailDocumentTitle } from "../../lib/document-title";
 import { prefersDarkMode } from "../../lib/theme";
@@ -191,13 +191,16 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [sidebarWidth, setSidebarWidth] = usePersistedPaneWidth("inbrix-sidebar-width", 230, 180, 360);
+  // Shared by the sidebar shell and the inbox list so both observe the same
+  // server-filtered query. The default matches the old "open" toggle.
+  const [showAllConversations, setShowAllConversations] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
     window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
   }, [darkMode]);
 
-  const shell = useConversationsQuery();
+  const shell = useConversationsQuery(showAllConversations ? "all" : "open");
 
   const capabilities = useQuery({
     queryKey: ["capabilities"],
@@ -231,9 +234,11 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   // redirected by the server-side mailbox gate), and resync on every reconnect.
   const realtimeStatus = useMailEvents(!signedOut && Boolean(shell.data?.accountEmail));
   const currentFolderMailbox = currentFolder ? (shell.data?.folders || []).find((folder) => folder.name === currentFolder) : undefined;
-  // The conversations view is inbox + sent, so its unread total is the number of
-  // unread incoming messages the list badges add up to.
-  const unreadMailCount = (shell.data?.conversations || []).reduce((total, conversation) => total + (conversation.unreadCount || 0), 0);
+  // The server returns the mailbox-wide unread total so the badge does not
+  // shrink when only the first page is loaded. Older servers omit it; keep the
+  // sum of the loaded rows as a fallback.
+  const unreadMailCount = shell.data?.unreadCount
+    ?? (shell.data?.conversations || []).reduce((total, conversation) => total + (conversation.unreadCount || 0), 0);
   const viewLabel = (() => {
     if (currentView === "prices") return copy.priceLists;
     if (currentView === "documents") return copy.documents;
@@ -264,8 +269,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   const startWriting = async (conversation: ConversationDetail) => {
     queryClient.setQueryData(["conversation", conversation.id], { conversation });
-    await queryClient.cancelQueries({ queryKey: ["conversations"], exact: true });
-    await queryClient.fetchQuery({ queryKey: ["conversations"], queryFn: () => getConversations(), staleTime: 0 });
+    await queryClient.cancelQueries({ queryKey: ["conversations"] });
+    await queryClient.invalidateQueries({ queryKey: ["conversations"] });
     setComposeDefaults({
       accountEmail: conversation.accountEmail,
       conversationId: conversation.id,
@@ -302,6 +307,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     compose: { open: composeOpen, defaults: composeDefaults },
     closeCompose: () => setComposeOpen(false),
     openSettings,
+    showAllConversations,
+    setShowAllConversations,
   };
 
   return (

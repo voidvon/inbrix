@@ -18,6 +18,9 @@ export type ShellContextType = {
   compose: { open: boolean; defaults: ComposeDefaults };
   closeCompose: () => void;
   openSettings: () => void;
+  /** False is the default "unanswered + draft" server filter. */
+  showAllConversations: boolean;
+  setShowAllConversations: (value: boolean) => void;
 };
 
 export const ShellContext = createContext<ShellContextType | null>(null);

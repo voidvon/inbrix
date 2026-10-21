@@ -11,6 +11,7 @@ type MailEventPayload = {
   from?: string;
   subject?: string;
   origin?: string;
+  revision?: number;
 };
 
 export type MailEventStatus = "connecting" | "open" | "closed";
@@ -74,13 +75,24 @@ export function useMailEvents(enabled = true): MailEventStatus {
       }, 150);
     };
 
+    const cachedConversations = () => {
+      // The list query key includes the open/all filter. Read the query that is
+      // currently observed so a resync compares the right revision after a
+      // filter switch.
+      const query = queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["conversations"] })
+        .find((candidate) => candidate.getObserversCount() > 0);
+      return query?.state.data as { revision?: number } | undefined;
+    };
+
     source = new EventSource("/events", { withCredentials: true });
     source.onopen = () => {
       failuresRef.current = 0;
       setStatus("open");
-      // The server sends a resync frame too; this covers the narrow window
-      // where the connection opened but the frame never arrived.
-      invalidate();
+      // No refetch here: the resync frame carries the server revision, and we
+      // compare it with the cached revision below. Equal revision => zero
+      // requests on reconnect.
     };
     source.onmessage = (event) => {
       let payload: MailEventPayload = {};
@@ -88,6 +100,20 @@ export function useMailEvents(enabled = true): MailEventStatus {
         payload = JSON.parse(String(event.data)) as MailEventPayload;
       } catch {
         // Ignore malformed frames; invalidating is still safe.
+      }
+      if (payload.type === "resync") {
+        const cached = cachedConversations();
+        // A fresh page has no cached data yet; the initial query is already
+        // fetching, so the resync must not trigger a duplicate request.
+        if (!cached) return;
+        // Older servers do not send a revision; fall back to refetching.
+        if (payload.revision === undefined) {
+          invalidate();
+          return;
+        }
+        if (cached.revision !== undefined && payload.revision === cached.revision) return;
+        invalidate();
+        return;
       }
       if (payload.type === "mail.new") notifyNewMail(payload);
       // The tab that caused an HTTP mutation already invalidated locally; its

@@ -86,6 +86,12 @@ export function ConversationList({
   onMarkUnread,
   onDelete,
   onRefresh,
+  onLoadMore,
+  hasMore = false,
+  loadingMore = false,
+  loadMoreError,
+  showAllConversations,
+  onShowAllChange,
   desktopWidth,
   className,
   searchState,
@@ -102,19 +108,46 @@ export function ConversationList({
   onMarkUnread: (conversation: ConversationSummary) => void;
   onDelete: (conversation: ConversationSummary) => void;
   onRefresh: () => void;
+  onLoadMore: () => void | Promise<void>;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadMoreError?: Error | null;
+  showAllConversations: boolean;
+  onShowAllChange: (value: boolean) => void;
   desktopWidth?: number;
   className?: string;
   /** When set, a non-empty search box renders message-level results instead of conversations. */
   searchState?: MailSearchState;
 }) {
-  const [showAllConversations, setShowAllConversations] = useState(false);
   const filterLabelId = useId();
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const allRows = data?.conversations || [];
   const rows = showAllConversations
     ? allRows
     : allRows.filter((conversation) => conversation.status === "unanswered" || conversation.status === "draft");
   const hasData = Boolean(data);
   const searching = Boolean(search.trim()) && Boolean(searchState);
+
+  // The sentinel loads the next page before it reaches the bottom. The explicit
+  // button below is the accessible fallback when IntersectionObserver is not
+  // available.
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || !hasMore || searching || loadMoreError) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void onLoadMore();
+    }, { rootMargin: "400px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, rows.length, searching, loadMoreError]);
+
+  // The default filter hides answered threads. A page can therefore contain no
+  // visible row even though later pages do; keep pulling until one matches or
+  // the server says there is nothing left.
+  useEffect(() => {
+    if (!hasData || searching || !hasMore || rows.length > 0 || loadingMore || loadMoreError) return;
+    void onLoadMore();
+  }, [hasData, searching, hasMore, rows.length, loadingMore, loadMoreError, onLoadMore]);
 
   return (
     <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
@@ -142,7 +175,7 @@ export function ConversationList({
           </div>
           <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground" title={copy.showAllConversationsHint}>
             <span id={filterLabelId}>{copy.showAllConversations}</span>
-            <Switch checked={showAllConversations} onCheckedChange={setShowAllConversations} aria-labelledby={filterLabelId} />
+            <Switch checked={showAllConversations} onCheckedChange={onShowAllChange} aria-labelledby={filterLabelId} />
           </label>
         </div>
       </div>
@@ -153,7 +186,7 @@ export function ConversationList({
           <>
             {!hasData && (loading || !error) && <ListSkeleton />}
             {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
-            {hasData && rows.length === 0 && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
+            {hasData && rows.length === 0 && !hasMore && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
             {hasData &&
               rows.map((conversation) => (
                 <ConversationRow
@@ -166,6 +199,19 @@ export function ConversationList({
                   onDelete={() => onDelete(conversation)}
                 />
               ))}
+            {hasData && hasMore && (
+              <div ref={loadMoreRef} className="flex items-center justify-center px-3 py-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-muted-foreground"
+                  disabled={loadingMore}
+                  onClick={() => void onLoadMore()}
+                >
+                  {loadingMore ? <Loader2 className="size-4 animate-spin" /> : loadMoreError ? copy.retry : copy.loadMore}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </ScrollArea>

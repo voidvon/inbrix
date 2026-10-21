@@ -347,6 +347,19 @@ func scanMessage(scanner interface{ Scan(...any) error }) (models.Email, error) 
 	return decodeMessage(accountID, folderName, uid, dateUnix, fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON, messageID, inReplyTo, referencesJSON, hasAttachments, bodyCached, attachmentMetadataCached, authJSON, unsubscribeJSON, inviteJSON, brandJSON), nil
 }
 
+func scanMessageHeader(scanner interface{ Scan(...any) error }) (models.Email, error) {
+	var accountID, folderName string
+	var uid, dateUnix int64
+	var fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON string
+	var messageID, inReplyTo, referencesJSON string
+	var hasAttachments, bodyCached, attachmentMetadataCached int
+	err := scanner.Scan(&accountID, &folderName, &uid, &dateUnix, &fromAddr, &fromName, &toAddrs, &toNamesJSON, &cc, &subject, &preview, &body, &html, &flagsJSON, &attachmentsJSON, &messageID, &inReplyTo, &referencesJSON, &hasAttachments, &bodyCached, &attachmentMetadataCached)
+	if err != nil {
+		return models.Email{}, err
+	}
+	return decodeMessage(accountID, folderName, uid, dateUnix, fromAddr, fromName, toAddrs, toNamesJSON, cc, subject, preview, body, html, flagsJSON, attachmentsJSON, messageID, inReplyTo, referencesJSON, hasAttachments, bodyCached, attachmentMetadataCached, "", "", "", ""), nil
+}
+
 func (s *Store) ListMessages(ctx context.Context, accountID, folderName string, limit, offset int) ([]models.Email, error) {
 	if limit <= 0 {
 		limit = 50
@@ -414,6 +427,122 @@ func (s *Store) ListMessagesForFolders(ctx context.Context, accountID string, fo
 		email, err := scanMessage(rows)
 		if err != nil {
 			return nil, fmt.Errorf("mailstore: scan conversation message: %w", err)
+		}
+		out = append(out, email)
+	}
+	return out, rows.Err()
+}
+
+// messageHeaderColumns is the list-view projection. It deliberately omits the
+// full body and HTML, but keeps a short plain-text prefix for messages whose
+// stored preview is empty. The conversation list only needs a one-line preview;
+// loading the whole MIME body there would make every refresh read the entire
+// mailbox and then throw it away.
+const messageHeaderColumns = `account_id, folder_name, uid, date_unix, from_addr, from_name,
+	to_addrs, to_names_json, cc, subject, preview,
+	CASE WHEN trim(preview) = '' THEN substr(body, 1, 1024) ELSE '' END,
+	'', flags_json, attachments_json, message_id, in_reply_to, references_json,
+	has_attachments, body_cached, attachment_metadata_cached`
+
+// ListMessageHeadersForFolders returns the lightweight conversation-list
+// projection for the given mailboxes. Bodies are fetched later, only for the
+// conversation the user actually opens.
+func (s *Store) ListMessageHeadersForFolders(ctx context.Context, accountID string, folderNames []string) ([]models.Email, error) {
+	if strings.TrimSpace(accountID) == "" || len(folderNames) == 0 {
+		return nil, nil
+	}
+
+	unique := make([]string, 0, len(folderNames))
+	seen := make(map[string]struct{}, len(folderNames))
+	for _, name := range folderNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		unique = append(unique, name)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(unique))
+	args := make([]any, 0, len(unique)+1)
+	args = append(args, accountID)
+	for i, name := range unique {
+		placeholders[i] = "?"
+		args = append(args, name)
+	}
+	query := `SELECT ` + messageHeaderColumns + ` FROM messages WHERE account_id = ? AND folder_name IN (` + strings.Join(placeholders, ",") + `) ORDER BY date_unix ASC, uid ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list message headers for folders: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]models.Email, 0)
+	for rows.Next() {
+		email, err := scanMessageHeader(rows)
+		if err != nil {
+			return nil, fmt.Errorf("mailstore: scan conversation header: %w", err)
+		}
+		out = append(out, email)
+	}
+	return out, rows.Err()
+}
+
+// MessageKey identifies one mirrored message. It mirrors the composite primary
+// key of the messages table and is used to hydrate only the selected thread.
+type MessageKey struct {
+	FolderName string
+	UID        string
+}
+
+// ListMessagesByKeys returns the full messages for a small set of keys. The
+// conversation detail endpoint uses it after locating the thread from headers,
+// so opening one conversation no longer reads every body in the mailbox.
+func (s *Store) ListMessagesByKeys(ctx context.Context, accountID string, keys []MessageKey) ([]models.Email, error) {
+	if strings.TrimSpace(accountID) == "" || len(keys) == 0 {
+		return nil, nil
+	}
+
+	clauses := make([]string, 0, len(keys))
+	args := make([]any, 0, len(keys)*2+1)
+	args = append(args, accountID)
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		folder := strings.TrimSpace(key.FolderName)
+		uid, err := parseUIDString(key.UID)
+		if err != nil || folder == "" {
+			continue
+		}
+		dedupe := folder + "\x00" + key.UID
+		if _, ok := seen[dedupe]; ok {
+			continue
+		}
+		seen[dedupe] = struct{}{}
+		clauses = append(clauses, "(folder_name = ? AND uid = ?)")
+		args = append(args, folder, uid)
+	}
+	if len(clauses) == 0 {
+		return nil, nil
+	}
+
+	query := `SELECT ` + messageColumns + ` FROM messages WHERE account_id = ? AND (` + strings.Join(clauses, " OR ") + `)`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("mailstore: list messages by keys: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]models.Email, 0, len(keys))
+	for rows.Next() {
+		email, err := scanMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("mailstore: scan selected message: %w", err)
 		}
 		out = append(out, email)
 	}
