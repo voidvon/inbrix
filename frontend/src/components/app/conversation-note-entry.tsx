@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSaveConversationNote } from "../../lib/conversation-note";
+import { toastError } from "../../lib/toast";
 import type { Copy } from "../../lib/locale";
 import { Textarea } from "../ui/textarea";
 
@@ -16,6 +17,10 @@ export function ConversationNoteEntry({ copy, conversationId, note }: {
   const saveRequestedRef = useRef(false);
   const saveRef = useRef<() => void>(() => {});
   const mutation = useSaveConversationNote(conversationId);
+
+  useEffect(() => {
+    if (mutation.error) toastError(mutation.error, copy.noteSaveFailed);
+  }, [mutation.error, copy.noteSaveFailed]);
 
   useEffect(() => {
     // List edits and background refreshes must not overwrite unsaved typing.
@@ -76,9 +81,7 @@ export function ConversationNoteEntry({ copy, conversationId, note }: {
         }}
         aria-busy={mutation.isPending}
         aria-invalid={mutation.isError}
-        aria-describedby={mutation.isError ? "conversation-note-error" : undefined}
       />
-      {mutation.isError && <p id="conversation-note-error" role="alert" className="mt-1 text-xs text-destructive">{copy.noteSaveFailed}</p>}
     </div>
   );
 }

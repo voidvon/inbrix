@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BookmarkCheck, Eye, FileSignature, FileText, Loader2, Trash2, Wand2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { convertGeneratedToStoredDocument } from "../../lib/ai-document-storage";
 import {

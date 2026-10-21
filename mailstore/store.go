@@ -116,6 +116,7 @@ type AIModelRecord struct {
 	BaseURL         string
 	Model           string
 	ReasoningEffort string
+	ExtraParams     string
 	EncryptedAPIKey string
 	IsDefault       bool
 	CreatedAt       time.Time
@@ -280,6 +281,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			base_url TEXT NOT NULL,
 			model TEXT NOT NULL,
 			reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+			extra_params TEXT NOT NULL DEFAULT '{}',
 			encrypted_api_key TEXT NOT NULL,
 			is_default INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
@@ -615,6 +617,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureAIModelReasoningEffortColumn(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureAIModelExtraParamsColumn(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureUserRoleColumn(ctx); err != nil {
 		return err
 	}
@@ -884,6 +889,33 @@ func (s *Store) ensureAIModelReasoningEffortColumn(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'medium'`); err != nil {
 		return fmt.Errorf("mailstore: add AI model reasoning effort column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureAIModelExtraParamsColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_models)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI models schema: %w", err)
+		}
+		if name == "extra_params" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN extra_params TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		return fmt.Errorf("mailstore: add AI model extra params column: %w", err)
 	}
 	return nil
 }

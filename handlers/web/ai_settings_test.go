@@ -440,3 +440,66 @@ func TestBuildDocumentVariablesPromptNoHTML(t *testing.T) {
 		t.Error("prompt missing allowed variable id total_amount")
 	}
 }
+
+func TestValidateOpenAICompatibleBaseURL(t *testing.T) {
+	valid := []string{
+		"https://api.cline.bot/api/v1",
+		"https://openrouter.ai/api/v1",
+		"https://gateway.example.com/openai",
+		"http://localhost:8080/v1",
+		"http://127.0.0.1:8080/v1",
+	}
+	for _, raw := range valid {
+		if err := validateAIBaseURL("openai-compatible", raw); err != nil {
+			t.Errorf("valid OpenAI-compatible URL %q: %v", raw, err)
+		}
+	}
+	invalid := []string{
+		"http://api.cline.bot/api/v1",
+		"https://api.cline.bot/api/v1/chat/completions",
+		"https://api.cline.bot/api/v1/responses",
+		"not-a-url",
+	}
+	for _, raw := range invalid {
+		if err := validateAIBaseURL("openai-compatible", raw); err == nil {
+			t.Errorf("invalid OpenAI-compatible URL accepted: %q", raw)
+		}
+	}
+}
+
+func TestCreateOpenAICompatibleResponseInWebHandler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/chat/completions" {
+			t.Errorf("path: got %q, want /api/v1/chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-cline-key" {
+			t.Errorf("authorization header: %q", got)
+		}
+		var body struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Model != "cline-pass/deepseek-v4.1-flash-1017" || body.Stream {
+			t.Errorf("unexpected request: %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"compatible web test output"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	h := &AISettingsHandler{client: server.Client()}
+	got, err := h.createAIResponse(context.Background(), mailstore.AIModelRecord{
+		Provider: "openai-compatible",
+		BaseURL:  server.URL + "/api/v1",
+		Model:    "cline-pass/deepseek-v4.1-flash-1017",
+	}, "test-cline-key", "test prompt")
+	if err != nil {
+		t.Fatalf("createAIResponse: %v", err)
+	}
+	if got != "compatible web test output" {
+		t.Fatalf("output: got %q, want 'compatible web test output'", got)
+	}
+}

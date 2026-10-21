@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { marked, type Token, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 import { Check, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { cn } from "../../lib/utils";
 import { copyToClipboard } from "../../lib/email-format";
 

@@ -14,8 +14,22 @@ import (
 )
 
 const (
-	maxAIResponseBytes = 2 << 20 // 2 MB
+	maxAIResponseBytes    = 2 << 20  // 2 MB
+	maxAIExtraParamsBytes = 16 << 10 // 16 KB
 )
+
+// reservedAIExtraParamKeys are structural fields the app builds itself. Letting
+// extra parameters replace them would break prompt construction or streaming,
+// so they are rejected when the model is saved.
+var reservedAIExtraParamKeys = map[string]struct{}{
+	"model":             {},
+	"messages":          {},
+	"input":             {},
+	"instructions":      {},
+	"contents":          {},
+	"systeminstruction": {},
+	"stream":            {},
+}
 
 // CreateAIResponse calls the configured model backend (OpenAI or Gemini) and returns the output text.
 func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
@@ -39,8 +53,75 @@ func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 		return createDeepSeekResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
 	case "openai":
 		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+	case "openai-compatible":
+		return createOpenAICompatibleResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
 	default:
 		return "", fmt.Errorf("unsupported AI provider: %q", model.Provider)
+	}
+}
+
+// ValidateAIExtraParams checks that raw is an optional JSON object whose keys do
+// not collide with the request fields the app generates itself.
+func ValidateAIExtraParams(raw string) error {
+	_, err := parseAIExtraParams(raw)
+	return err
+}
+
+func parseAIExtraParams(raw string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "{}" {
+		return nil, nil
+	}
+	if len(trimmed) > maxAIExtraParamsBytes {
+		return nil, fmt.Errorf("extra parameters must be at most %d bytes", maxAIExtraParamsBytes)
+	}
+	var params map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &params); err != nil {
+		return nil, errors.New("extra parameters must be a valid JSON object")
+	}
+	if params == nil {
+		return nil, errors.New("extra parameters must be a JSON object")
+	}
+	for key := range params {
+		if _, reserved := reservedAIExtraParamKeys[strings.ToLower(strings.TrimSpace(key))]; reserved {
+			return nil, fmt.Errorf("extra parameters cannot override %q", key)
+		}
+	}
+	return params, nil
+}
+
+// marshalAIRequestBody serializes the app-built request and deep-merges the
+// model's optional extra parameters on top. Extra parameters win on conflicts,
+// except for the reserved structural keys rejected by ValidateAIExtraParams.
+func marshalAIRequestBody(defaultBody any, extraRaw string) ([]byte, error) {
+	raw, err := json.Marshal(defaultBody)
+	if err != nil {
+		return nil, err
+	}
+	extra, err := parseAIExtraParams(extraRaw)
+	if err != nil {
+		return nil, err
+	}
+	if len(extra) == 0 {
+		return raw, nil
+	}
+	var base map[string]any
+	if err := json.Unmarshal(raw, &base); err != nil {
+		return nil, err
+	}
+	mergeJSONMaps(base, extra)
+	return json.Marshal(base)
+}
+
+func mergeJSONMaps(base, override map[string]any) {
+	for key, value := range override {
+		if overrideMap, ok := value.(map[string]any); ok {
+			if baseMap, ok := base[key].(map[string]any); ok {
+				mergeJSONMaps(baseMap, overrideMap)
+				continue
+			}
+		}
+		base[key] = value
 	}
 }
 
@@ -108,7 +189,7 @@ func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelR
 			}
 		}
 
-		bodyBytes, err := json.Marshal(reqBody)
+		bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -251,7 +332,7 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 	if maxOutputTokens > 0 {
 		payload["max_output_tokens"] = maxOutputTokens
 	}
-	body, err := json.Marshal(payload)
+	body, err := marshalAIRequestBody(payload, model.ExtraParams)
 	if err != nil {
 		return "", err
 	}
@@ -284,6 +365,221 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 		return "", fmt.Errorf("OpenAI returned HTTP %d", resp.StatusCode)
 	}
 	return openAIResponseText(raw)
+}
+
+// BuildOpenAICompatibleURL constructs the endpoint for OpenAI-compatible chat
+// completions APIs (Cline, OpenRouter, local gateways, and similar services).
+func BuildOpenAICompatibleURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	if strings.HasSuffix(baseURL, "/chat/completions") {
+		return baseURL
+	}
+	return baseURL + "/chat/completions"
+}
+
+type openAICompatibleMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type openAICompatibleRequest struct {
+	Model     string                    `json:"model"`
+	Messages  []openAICompatibleMessage `json:"messages"`
+	MaxTokens int                       `json:"max_tokens,omitempty"`
+	Stream    bool                      `json:"stream"`
+}
+
+type openAICompatibleChoice struct {
+	Message struct {
+		Content          string `json:"content"`
+		ReasoningContent string `json:"reasoning_content"`
+	} `json:"message"`
+	FinishReason string          `json:"finish_reason"`
+	Error        json.RawMessage `json:"error"`
+}
+
+// openAICompatibleResponse accepts both the standard OpenAI shape
+// ({"choices":[...]}) and the envelope used by some gateways, including
+// ClinePass, which nests the payload under "data" ({"data":{"choices":[...]}}).
+type openAICompatibleResponse struct {
+	Choices []openAICompatibleChoice  `json:"choices"`
+	Error   json.RawMessage           `json:"error"`
+	Data    *openAICompatibleResponse `json:"data"`
+}
+
+func (r *openAICompatibleResponse) choiceList() []openAICompatibleChoice {
+	for depth := 0; r != nil && depth < 4; depth++ {
+		if len(r.Choices) > 0 {
+			return r.Choices
+		}
+		r = r.Data
+	}
+	return nil
+}
+
+func (r *openAICompatibleResponse) errorMessage() string {
+	for depth := 0; r != nil && depth < 4; depth++ {
+		if len(r.Error) > 0 {
+			if msg := aiErrorValueMessage(r.Error); msg != "" {
+				return msg
+			}
+		}
+		r = r.Data
+	}
+	return ""
+}
+
+func openAICompatibleResponseError(raw []byte) string {
+	if msg := openAICompatibleErrorMessage(raw); msg != "" {
+		return msg
+	}
+	var result openAICompatibleResponse
+	if err := json.Unmarshal(raw, &result); err == nil {
+		return result.errorMessage()
+	}
+	return ""
+}
+
+// openAICompatibleErrorMessage extracts the human-readable message from the
+// error envelopes used by OpenAI-compatible gateways: {"error":{"message":...}}
+// or the shorter {"error":"..."}.
+func openAICompatibleErrorMessage(raw []byte) string {
+	var payload struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	if len(payload.Error) > 0 {
+		return aiErrorValueMessage(payload.Error)
+	}
+	return strings.TrimSpace(payload.Message)
+}
+
+// aiErrorValueMessage accepts both error shapes used by OpenAI-compatible
+// gateways: a plain string or an object with message/code fields.
+func aiErrorValueMessage(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	var obj struct {
+		Code    json.RawMessage `json:"code"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	message := strings.TrimSpace(obj.Message)
+	code := strings.Trim(strings.TrimSpace(string(obj.Code)), `"`)
+	if code != "" && code != "null" {
+		if message == "" {
+			return code
+		}
+		return code + ": " + message
+	}
+	return message
+}
+
+// truncateForError keeps diagnostic response snippets readable in error logs
+// without dumping an entire upstream response.
+func truncateForError(s string, limit int) string {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+	endpoint := BuildOpenAICompatibleURL(model.BaseURL)
+
+	var msgs []openAICompatibleMessage
+	if strings.TrimSpace(instructions) != "" {
+		msgs = append(msgs, openAICompatibleMessage{Role: "system", Content: instructions})
+	}
+	if strings.TrimSpace(input) != "" {
+		msgs = append(msgs, openAICompatibleMessage{Role: "user", Content: input})
+	}
+
+	reqBody := openAICompatibleRequest{
+		Model:     model.Model,
+		Messages:  msgs,
+		MaxTokens: maxOutputTokens,
+		// Cline and several other gateways stream by default; force a single
+		// JSON response so the result can be parsed uniformly.
+		Stream: false,
+	}
+	bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
+	if err != nil {
+		return "", err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("OpenAI-compatible request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
+	if err != nil {
+		return "", fmt.Errorf("read OpenAI-compatible response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if msg := openAICompatibleResponseError(raw); msg != "" {
+			return "", fmt.Errorf("OpenAI-compatible returned HTTP %d: %s", resp.StatusCode, msg)
+		}
+		return "", fmt.Errorf("OpenAI-compatible returned HTTP %d", resp.StatusCode)
+	}
+
+	var result openAICompatibleResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("OpenAI-compatible returned invalid JSON (response: %s)", truncateForError(string(raw), 200))
+	}
+	if msg := result.errorMessage(); msg != "" {
+		return "", fmt.Errorf("OpenAI-compatible error: %s", msg)
+	}
+	choices := result.choiceList()
+	if len(choices) == 0 {
+		if snippet := strings.TrimSpace(string(raw)); snippet != "" {
+			return "", fmt.Errorf("OpenAI-compatible returned no choices for model %q (response: %s)", model.Model, truncateForError(snippet, 400))
+		}
+		return "", fmt.Errorf("OpenAI-compatible returned no choices for model %q", model.Model)
+	}
+	if len(choices[0].Error) > 0 {
+		if msg := aiErrorValueMessage(choices[0].Error); msg != "" {
+			return "", fmt.Errorf("OpenAI-compatible error: %s", msg)
+		}
+	}
+
+	content := StripThinkTags(strings.TrimSpace(choices[0].Message.Content))
+	if content == "" {
+		switch reason := choices[0].FinishReason; reason {
+		case "length":
+			return "", errors.New("OpenAI-compatible response was truncated: max tokens limit reached during reasoning or generation")
+		case "content_filter":
+			return "", errors.New("OpenAI-compatible response was filtered by content moderation policy")
+		case "error":
+			return "", errors.New("OpenAI-compatible finished with an error and no content")
+		case "":
+			return "", errors.New("OpenAI-compatible returned empty content")
+		default:
+			return "", fmt.Errorf("OpenAI-compatible returned empty content (finish reason: %s)", reason)
+		}
+	}
+	return content, nil
 }
 
 // BuildDeepSeekURL constructs the endpoint for DeepSeek chat completions API calls.
@@ -352,7 +648,7 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 		Stream:    false,
 	}
 
-	bodyBytes, err := json.Marshal(reqBody)
+	bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
 	if err != nil {
 		return "", err
 	}

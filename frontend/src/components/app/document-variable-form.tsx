@@ -15,7 +15,7 @@ import {
   Truck,
   User,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import type { CanvasDocumentEditorHandle, DocumentDataPayload } from "./canvas-document-editor";
 import type { QuotationItem } from "./spirax-quotation-canvas";
 import { Button } from "../ui/button";

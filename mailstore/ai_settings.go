@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, encrypted_api_key, is_default, created_at`
+const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, encrypted_api_key, is_default, created_at`
 
 func scanAIModel(scanner interface{ Scan(...any) error }) (AIModelRecord, error) {
 	var model AIModelRecord
 	var isDefault int
 	var createdAt int64
-	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.EncryptedAPIKey, &isDefault, &createdAt)
+	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.ExtraParams, &model.EncryptedAPIKey, &isDefault, &createdAt)
 	model.IsDefault = intBool(isDefault)
 	model.CreatedAt = time.Unix(createdAt, 0)
 	return model, err
@@ -57,11 +57,14 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	if model.Provider == "" {
 		model.Provider = "openai"
 	}
-	if model.Provider != "openai" && model.Provider != "gemini" && model.Provider != "deepseek" {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, gemini, or deepseek")
+	if !isSupportedAIProvider(model.Provider) {
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or deepseek")
 	}
 	if model.ReasoningEffort == "" {
 		model.ReasoningEffort = "medium"
+	}
+	if strings.TrimSpace(model.ExtraParams) == "" {
+		model.ExtraParams = "{}"
 	}
 	if model.ID == "" {
 		var err error
@@ -81,8 +84,8 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	}
 	model.IsDefault = count == 0 || model.IsDefault
 	now := time.Now().Unix()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, extra_params, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: create AI model: %w", err)
 	}
 	if model.IsDefault {
@@ -102,11 +105,11 @@ func (s *Store) UpdateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 		return AIModelRecord{}, errors.New("mailstore: AI model id, owner, Base URL, model, and reasoning effort are required")
 	}
 	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
-	if model.Provider != "" && model.Provider != "openai" && model.Provider != "gemini" && model.Provider != "deepseek" {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, gemini, or deepseek")
+	if model.Provider != "" && !isSupportedAIProvider(model.Provider) {
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or deepseek")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
-		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
+		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
 	if err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: update AI model: %w", err)
 	}
@@ -171,4 +174,12 @@ func (s *Store) GetDefaultAIModel(ctx context.Context, ownerID string) (AIModelR
 		return AIModelRecord{}, fmt.Errorf("mailstore: get default AI model: %w", err)
 	}
 	return model, nil
+}
+
+func isSupportedAIProvider(provider string) bool {
+	switch provider {
+	case "openai", "openai-compatible", "gemini", "deepseek":
+		return true
+	}
+	return false
 }

@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import { ApiError, getPublicSettings, register, signIn } from "../../lib/api";
 import type { Copy } from "../../lib/locale";
 import { Button } from "../ui/button";
@@ -12,12 +12,25 @@ import { Skeleton } from "../ui/skeleton";
 export function LoginScreen({ copy }: { copy: Copy }) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [invalid, setInvalid] = useState<{ login?: boolean; password?: boolean }>({});
   const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
   const mutation = useMutation({
     mutationFn: () => signIn(login, password),
     onSuccess: (result) => window.location.assign(result.next),
     onError: (value) => toast.error(value instanceof ApiError && value.status === 401 ? copy.invalidCredentials : copy.loginFailed),
   });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const missingLogin = !login.trim();
+    const missingPassword = !password;
+    if (missingLogin || missingPassword) {
+      setInvalid({ login: missingLogin, password: missingPassword });
+      toast.error(copy.requiredFieldsMissing);
+      return;
+    }
+    setInvalid({});
+    mutation.mutate();
+  };
 
   return (
     <main className="grid min-h-screen place-items-center bg-background p-6">
@@ -32,18 +45,16 @@ export function LoginScreen({ copy }: { copy: Copy }) {
         <p className="-mt-2 text-sm text-muted-foreground">{copy.appAccount}</p>
         <form
           className="grid gap-4"
-          onSubmit={(event: FormEvent) => {
-            event.preventDefault();
-            mutation.mutate();
-          }}
+          noValidate
+          onSubmit={submit}
         >
           <Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-account">
             {copy.appAccount}
-            <Input id="login-account" value={login} onChange={(event) => setLogin(event.target.value)} autoComplete="username" required />
+            <Input id="login-account" value={login} aria-invalid={invalid.login} onChange={(event) => { setLogin(event.target.value); if (invalid.login) setInvalid((current) => ({ ...current, login: false })); }} autoComplete="username" required />
           </Label>
           <Label className="grid gap-1.5 text-xs text-muted-foreground" htmlFor="login-password">
             {copy.password}
-            <Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+            <Input id="login-password" type="password" value={password} aria-invalid={invalid.password} onChange={(event) => { setPassword(event.target.value); if (invalid.password) setInvalid((current) => ({ ...current, password: false })); }} autoComplete="current-password" required />
           </Label>
           <Button type="submit" className="w-full" disabled={mutation.isPending}>
             {mutation.isPending ? copy.loading : copy.login}
@@ -61,16 +72,43 @@ export function LoginScreen({ copy }: { copy: Copy }) {
 
 export function RegisterScreen({ copy }: { copy: Copy }) {
   const [form, setForm] = useState({ login: "", displayName: "", password: "", confirmation: "" });
-  const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<{ login?: boolean; password?: boolean; confirmation?: boolean }>({});
   const publicSettings = useQuery({ queryKey: ["public-settings"], queryFn: getPublicSettings, retry: false });
   const mutation = useMutation({
     mutationFn: () => register(form.login, form.displayName, form.password, form.confirmation),
     onSuccess: (result) => window.location.assign(result.next),
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed),
+    onError: (value) => toastError(value, copy.loginFailed),
   });
 
-  const field = (key: keyof typeof form) => (event: ChangeEvent<HTMLInputElement>) =>
+  const field = (key: keyof typeof form) => (event: ChangeEvent<HTMLInputElement>) => {
     setForm((value) => ({ ...value, [key]: event.target.value }));
+    if (key !== "displayName" && invalid[key]) {
+      setInvalid((current) => ({ ...current, [key]: false }));
+    }
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const missingLogin = !form.login.trim();
+    const missingPassword = !form.password;
+    const missingConfirmation = !form.confirmation;
+    if (missingLogin || missingPassword || missingConfirmation) {
+      setInvalid({ login: missingLogin, password: missingPassword, confirmation: missingConfirmation });
+      toast.error(copy.requiredFieldsMissing);
+      return;
+    }
+    if (form.password.length < 8) {
+      setInvalid({ password: true });
+      toast.error(copy.passwordRequirements);
+      return;
+    }
+    if (form.password !== form.confirmation) {
+      setInvalid({ password: true, confirmation: true });
+      toast.error(copy.passwordMismatch);
+      return;
+    }
+    setInvalid({});
+    mutation.mutate();
+  };
 
   return (
     <main className="grid min-h-screen place-items-center bg-background p-6">
@@ -87,15 +125,12 @@ export function RegisterScreen({ copy }: { copy: Copy }) {
         ) : publicSettings.data?.registrationOpen ? (
           <form
             className="grid gap-3"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault();
-              setError("");
-              mutation.mutate();
-            }}
+            noValidate
+            onSubmit={submit}
           >
             <Label className="grid gap-1.5">
               {copy.appAccount}
-              <Input value={form.login} onChange={field("login")} required />
+              <Input value={form.login} aria-invalid={invalid.login} onChange={field("login")} required />
             </Label>
             <Label className="grid gap-1.5">
               {copy.displayName}
@@ -103,13 +138,12 @@ export function RegisterScreen({ copy }: { copy: Copy }) {
             </Label>
             <Label className="grid gap-1.5">
               {copy.password}
-              <Input type="password" minLength={8} value={form.password} onChange={field("password")} required />
+              <Input type="password" minLength={8} value={form.password} aria-invalid={invalid.password} onChange={field("password")} required />
             </Label>
             <Label className="grid gap-1.5">
-              {copy.password}
-              <Input type="password" minLength={8} value={form.confirmation} onChange={field("confirmation")} required />
+              {copy.confirmNewPassword}
+              <Input type="password" minLength={8} value={form.confirmation} aria-invalid={invalid.confirmation} onChange={field("confirmation")} required />
             </Label>
-            {error && <p className="text-xs text-destructive">{error}</p>}
             <Button type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? copy.loading : copy.createAccount}
             </Button>

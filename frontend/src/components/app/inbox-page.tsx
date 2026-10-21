@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import {
   ApiError,
   deleteConversation,
@@ -76,7 +76,6 @@ export function InboxPage() {
   const [messageTarget, setMessageTarget] = useState<MailFocusTarget | null>(messageTargetFromURL);
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
-  const [deleteError, setDeleteError] = useState("");
   const [retryTarget, setRetryTarget] = useState<ConversationMessage | null>(null);
   const [retryPending, setRetryPending] = useState(false);
   const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
@@ -178,7 +177,6 @@ export function InboxPage() {
     mutationFn: (conversation: ConversationSummary) => deleteConversation(conversation.id),
     onSuccess: async (_, conversation) => {
       setDeleteTarget(null);
-      setDeleteError("");
       if (selectedId === conversation.id) {
         setSelectedId(null);
         setChatOpen(false);
@@ -190,7 +188,7 @@ export function InboxPage() {
       ]);
       queryClient.removeQueries({ queryKey: ["conversation", conversation.id] });
     },
-    onError: (value) => setDeleteError(value instanceof Error ? value.message : locale.deleteConversationFailed),
+    onError: (value) => toastError(value, locale.deleteConversationFailed),
   });
 
   useEffect(() => {
@@ -417,7 +415,7 @@ export function InboxPage() {
             if (conversationIdFromURL() !== id) setConversationURL(id);
           }}
           onMarkUnread={(conversation) => void markUnread(conversation)}
-          onDelete={(conversation) => { setDeleteError(""); setDeleteTarget(conversation); }}
+          onDelete={(conversation) => setDeleteTarget(conversation)}
           onRefresh={() => void conversations.refetch()}
           desktopWidth={listWidth}
           className={chatOpen ? "hidden lg:flex" : "flex"}
@@ -459,13 +457,12 @@ export function InboxPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) { setDeleteTarget(null); setDeleteError(""); } }}>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) setDeleteTarget(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{locale.deleteConversationTitle}</DialogTitle>
             <DialogDescription>{locale.deleteConversationDescription}</DialogDescription>
           </DialogHeader>
-          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
           <DialogFooter>
             <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>{locale.cancel}</Button>
             <Button variant="destructive" disabled={deleteMutation.isPending || !deleteTarget} onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget)}>

@@ -45,6 +45,7 @@ type aiModelInput struct {
 	Model           string `json:"model"`
 	APIKey          string `json:"apiKey"`
 	ReasoningEffort string `json:"reasoningEffort"`
+	ExtraParams     string `json:"extraParams"`
 }
 
 type aiVariableItem struct {
@@ -69,6 +70,7 @@ type aiModelPublic struct {
 	BaseURL         string `json:"baseUrl"`
 	Model           string `json:"model"`
 	ReasoningEffort string `json:"reasoningEffort"`
+	ExtraParams     string `json:"extraParams"`
 	IsDefault       bool   `json:"isDefault"`
 }
 
@@ -111,6 +113,7 @@ func publicAIModel(model mailstore.AIModelRecord) aiModelPublic {
 		BaseURL:         model.BaseURL,
 		Model:           model.Model,
 		ReasoningEffort: model.ReasoningEffort,
+		ExtraParams:     model.ExtraParams,
 		IsDefault:       model.IsDefault,
 	}
 }
@@ -132,7 +135,7 @@ func (h *AISettingsHandler) HandleListModels(c *fiber.Ctx) error {
 }
 
 func validProvider(p string) bool {
-	return p == "openai" || p == "gemini" || p == "deepseek"
+	return p == "openai" || p == "openai-compatible" || p == "gemini" || p == "deepseek"
 }
 
 func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
@@ -149,7 +152,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -178,8 +181,12 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = defaultReasoningEffort
 	}
+	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
+	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	if !validReasoningEffort(input.ReasoningEffort) {
-		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
+		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low, medium, or high")
 	}
 	if err := validateAIBaseURL(input.Provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -198,6 +205,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		BaseURL:         strings.TrimRight(input.BaseURL, "/"),
 		Model:           input.Model,
 		ReasoningEffort: input.ReasoningEffort,
+		ExtraParams:     input.ExtraParams,
 		EncryptedAPIKey: encryptedKey,
 	})
 	if err != nil {
@@ -230,12 +238,16 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
+	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
+	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	if input.BaseURL == "" || input.Model == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Base URL and model are required")
 	}
@@ -243,7 +255,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		input.ReasoningEffort = defaultReasoningEffort
 	}
 	if !validReasoningEffort(input.ReasoningEffort) {
-		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
+		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low, medium, or high")
 	}
 	if err := validateAIBaseURL(provider, input.BaseURL); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -256,7 +268,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		}
 	}
 	updated, err := h.mailDB.UpdateAIModel(c.UserContext(), mailstore.AIModelRecord{
-		ID: c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, EncryptedAPIKey: encryptedKey,
+		ID: c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams, EncryptedAPIKey: encryptedKey,
 	})
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
@@ -281,7 +293,7 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -316,12 +328,16 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 	if input.APIKey == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "API key is required")
 	}
+	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
+	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	if !validReasoningEffort(input.ReasoningEffort) {
-		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
+		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low, medium, or high")
 	}
 	started := time.Now()
 	output, err := h.createAIResponseWithInstructions(c.UserContext(), mailstore.AIModelRecord{
-		Provider: input.Provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
+		Provider: input.Provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams,
 	}, input.APIKey, "You are an AI connectivity tester. Reply with: OK", "This is a model connectivity test. Reply with exactly: OK", 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
@@ -354,12 +370,19 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
+	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
+	if input.ExtraParams == "" {
+		input.ExtraParams = stored.ExtraParams
+	}
+	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	if input.BaseURL == "" {
 		input.BaseURL = stored.BaseURL
 	}
@@ -373,7 +396,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if !validReasoningEffort(input.ReasoningEffort) {
-		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low or medium")
+		return fiber.NewError(fiber.StatusBadRequest, "reasoning effort must be low, medium, or high")
 	}
 	apiKey := input.APIKey
 	if apiKey == "" && (stored.EncryptedAPIKey == "" || mailapi.DecryptJSON(stored.EncryptedAPIKey, &apiKey, h.config.Encryption.Key) != nil) {
@@ -381,7 +404,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 	}
 	started := time.Now()
 	output, err := h.createAIResponseWithInstructions(c.UserContext(), mailstore.AIModelRecord{
-		Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort,
+		Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams,
 	}, apiKey, "You are an AI connectivity tester. Reply with: OK", "This is a model connectivity test. Reply with exactly: OK", 8192)
 	if err != nil {
 		h.recordError(c.UserContext(), owner, "model_test", "", input.Model, "", err)
@@ -391,7 +414,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 }
 
 func validReasoningEffort(effort string) bool {
-	return effort == "low" || effort == "medium"
+	return effort == "low" || effort == "medium" || effort == "high"
 }
 
 func (h *AISettingsHandler) HandleDeleteModel(c *fiber.Ctx) error {
@@ -968,6 +991,11 @@ func validateAIBaseURL(provider, raw string) error {
 		trimmedPath := strings.TrimRight(u.Path, "/")
 		if strings.HasSuffix(trimmedPath, "/chat/completions") {
 			return errors.New("Base URL must be the API root (e.g. https://api.deepseek.com), without /chat/completions")
+		}
+	case "openai-compatible":
+		trimmedPath := strings.TrimRight(u.Path, "/")
+		if strings.HasSuffix(trimmedPath, "/chat/completions") || strings.HasSuffix(trimmedPath, "/responses") {
+			return errors.New("Base URL must be the API root, without /chat/completions or /responses")
 		}
 	default:
 		if strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/responses") {

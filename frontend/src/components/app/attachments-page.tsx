@@ -13,7 +13,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { getMailAttachments } from "../../lib/api";
 import { cn, formatSize, formatTime, paginationPageItems, useDebouncedValue } from "../../lib/utils";
 import type { MailAttachment } from "../../types";

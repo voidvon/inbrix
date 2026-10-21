@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
 import { createCalendarEvent, getCalendarEvents } from "../../lib/api";
+import { toast, toastError } from "../../lib/toast";
 import { formatTime } from "../../lib/utils";
 import { en } from "../../lib/locale";
 import type { CalendarEvent } from "../../types";
@@ -19,13 +20,31 @@ export function CalendarPage() {
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
   const events = useQuery({ queryKey: ["calendar", start], queryFn: () => getCalendarEvents(start, end), retry: false });
   const [form, setForm] = useState({ summary: "", location: "", start: "", end: "" });
+  const [invalid, setInvalid] = useState<{ summary?: boolean; start?: boolean; end?: boolean }>({});
+  useEffect(() => {
+    if (events.error) toastError(events.error, copy.loadFailed);
+  }, [events.error, copy.loadFailed]);
   const create = useMutation({
     mutationFn: () => createCalendarEvent({ ...form, start: new Date(form.start).toISOString(), end: new Date(form.end).toISOString(), allDay: false }),
     onSuccess: () => {
       setForm({ summary: "", location: "", start: "", end: "" });
       void queryClient.invalidateQueries({ queryKey: ["calendar"] });
     },
+    onError: (value) => toastError(value, copy.loadFailed),
   });
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const missingSummary = !form.summary.trim();
+    const missingStart = !form.start;
+    const missingEnd = !form.end;
+    if (missingSummary || missingStart || missingEnd) {
+      setInvalid({ summary: missingSummary, start: missingStart, end: missingEnd });
+      toast.error(copy.requiredFieldsMissing);
+      return;
+    }
+    setInvalid({});
+    create.mutate();
+  };
 
   return (
     <ScrollArea className="min-w-0 flex-1 bg-background" contentClassName="min-h-full" render={<main />}>
@@ -51,20 +70,17 @@ export function CalendarPage() {
               </article>
             ))}
             {events.isPending && <p>{copy.loading}</p>}
-            {events.error && <p className="text-sm text-destructive">{events.error.message}</p>}
           </div>
         </section>
         <form
           className="grid content-start gap-3 border-t pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8"
-          onSubmit={(event) => {
-            event.preventDefault();
-            create.mutate();
-          }}
+          noValidate
+          onSubmit={submit}
         >
           <h2 className="font-semibold">{copy.newEvent}</h2>
           <Label className="grid gap-1.5">
             {copy.subject}
-            <Input value={form.summary} onChange={(event) => setForm({ ...form, summary: event.target.value })} required />
+            <Input value={form.summary} aria-invalid={invalid.summary} onChange={(event) => { setForm({ ...form, summary: event.target.value }); if (invalid.summary) setInvalid((current) => ({ ...current, summary: false })); }} required />
           </Label>
           <Label className="grid gap-1.5">
             {copy.location}
@@ -72,11 +88,11 @@ export function CalendarPage() {
           </Label>
           <Label className="grid gap-1.5">
             {copy.start}
-            <Input type="datetime-local" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required />
+            <Input type="datetime-local" value={form.start} aria-invalid={invalid.start} onChange={(event) => { setForm({ ...form, start: event.target.value }); if (invalid.start) setInvalid((current) => ({ ...current, start: false })); }} required />
           </Label>
           <Label className="grid gap-1.5">
             {copy.end}
-            <Input type="datetime-local" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required />
+            <Input type="datetime-local" value={form.end} aria-invalid={invalid.end} onChange={(event) => { setForm({ ...form, end: event.target.value }); if (invalid.end) setInvalid((current) => ({ ...current, end: false })); }} required />
           </Label>
           <Button disabled={create.isPending}>{copy.save}</Button>
         </form>

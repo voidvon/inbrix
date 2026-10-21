@@ -351,3 +351,17 @@
 .canvas-document-editor [editor-component="main"] {
   min-height: 1123px;
 }
+
+/* shadcn's Input does not ship aria-invalid styling (unlike Textarea/Select).
+   App forms mark required fields invalid after a failed submit, so give every
+   invalid input the same destructive border and ring used by the other
+   controls. Unlayered so it wins over the utility's border color. */
+input[data-slot="input"][aria-invalid="true"] {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--destructive) 20%, transparent);
+}
+
+input[data-slot="input"][aria-invalid="true"]:focus-visible {
+  border-color: var(--destructive);
+  --tw-ring-color: color-mix(in oklch, var(--destructive) 20%, transparent);
+}

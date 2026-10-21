@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
 import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachmentPreviewURL, type AttachmentPreviewTarget } from "./attachment-preview";
 import { MailSearchResults, type MailSearchState } from "./mail-search-results";
@@ -203,7 +203,6 @@ export function ConversationRow({
   const inputRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(conversation.note || "");
-  const [error, setError] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
   const noteMutation = useSaveConversationNote(conversation.id);
   const cancelRef = useRef(false);
@@ -213,7 +212,6 @@ export function ConversationRow({
   }, [conversation.note, editing]);
 
   const beginEditing = () => {
-    setError("");
     setEditing(true);
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -228,10 +226,9 @@ export function ConversationRow({
     if (note === (conversation.note || "")) return;
     try {
       await noteMutation.mutateAsync(note);
-      setError("");
     } catch {
       setDraft(note);
-      setError(copy.noteSaveFailed);
+      toast.error(copy.noteSaveFailed);
       setEditing(true);
       window.requestAnimationFrame(() => inputRef.current?.focus());
     }
@@ -240,7 +237,6 @@ export function ConversationRow({
   const cancelEditing = () => {
     cancelRef.current = true;
     setDraft(conversation.note || "");
-    setError("");
     setEditing(false);
     inputRef.current?.blur();
   };
@@ -250,7 +246,6 @@ export function ConversationRow({
     setStatusSaving(true);
     try {
       await saveConversationStatus(conversation.id, status);
-      setError("");
       queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) =>
         current
           ? {
@@ -260,7 +255,7 @@ export function ConversationRow({
           : current
       );
     } catch {
-      setError(copy.statusSaveFailed);
+      toast.error(copy.statusSaveFailed);
     } finally {
       setStatusSaving(false);
     }
@@ -349,7 +344,6 @@ export function ConversationRow({
               </div>
             )}
           </div>
-          {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
         </article>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44">
@@ -503,7 +497,6 @@ export function ChatView({
     onReply(latest, body);
   };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
-  const [deleteError, setDeleteError] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const [focusedMessageIds, setFocusedMessageIds] = useState<string[]>([]);
   const [highlightedMessageKey, setHighlightedMessageKey] = useState<string | null>(null);
@@ -563,12 +556,11 @@ export function ChatView({
     },
     onSuccess: async () => {
       setDeleteTarget(null);
-      setDeleteError("");
       if (detail.messages.length === 1) onConversationEmpty();
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["conversations"] }), queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] })]);
       if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
     },
-    onError: (value) => setDeleteError(value instanceof Error ? value.message : copy.deleteEmailFailed),
+    onError: (value) => toastError(value, copy.deleteEmailFailed),
   });
 
   const generateSuggestedReply = (message: ConversationMessage) => {
@@ -730,7 +722,6 @@ export function ChatView({
                     onReplyAll={() => onReplyAll(message)}
                     onNewMail={() => onNewMail(message)}
                     onDelete={() => {
-                      setDeleteError("");
                       setDeleteTarget(message);
                     }}
                     onGenerateReply={canGenerateReply ? () => generateSuggestedReply(message) : undefined}
@@ -776,7 +767,6 @@ export function ChatView({
           onOpenChange={(open) => {
             if (!open && !deleteMutation.isPending) {
               setDeleteTarget(null);
-              setDeleteError("");
             }
           }}
         >
@@ -785,7 +775,6 @@ export function ChatView({
               <DialogTitle>{copy.deleteEmailTitle}</DialogTitle>
               <DialogDescription>{copy.deleteEmailDescription}</DialogDescription>
             </DialogHeader>
-            {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
             <DialogFooter>
               <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>
                 {copy.cancel}
@@ -894,6 +883,7 @@ export function SuggestedReplyBubble({
         return { ...current, conversation: { ...current.conversation, messages } };
       });
     },
+    onError: (value) => toastError(value, copy.suggestedReplyFailed),
   });
 
   useEffect(() => {
@@ -901,6 +891,9 @@ export function SuggestedReplyBubble({
     previousGenerationRef.current = generation;
     suggestion.mutate();
   }, [generation]);
+
+  // A failed generation is reported by toast; there is no reply body to show.
+  if (suggestion.isError && !body) return null;
 
   return (
     <article className="mb-5">
@@ -924,7 +917,6 @@ export function SuggestedReplyBubble({
                 </div>
               )}
               {body && <p className="whitespace-pre-wrap">{body}</p>}
-              {suggestion.error && <p className="text-destructive">{suggestion.error instanceof Error ? suggestion.error.message : copy.suggestedReplyFailed}</p>}
             </div>
           </div>
         </ContextMenuTrigger>
@@ -1328,6 +1320,7 @@ export function MailMessageSummary({
         return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
       });
     },
+    onError: (value) => toastError(value, copy.loadFailed),
   });
 
   const translationMutation = useMutation({
@@ -1352,6 +1345,7 @@ export function MailMessageSummary({
         return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
       });
     },
+    onError: (value) => toastError(value, copy.translateFailed),
   });
 
   const translationAllMutation = useMutation({
@@ -1376,6 +1370,7 @@ export function MailMessageSummary({
         return changed ? { ...current, conversation: { ...current.conversation, messages } } : current;
       });
     },
+    onError: (value) => toastError(value, copy.translateAllFailed),
   });
 
   useEffect(() => {
@@ -1696,9 +1691,6 @@ export function MailMessageSummary({
           </div>
         </div>
       )}
-      {summaryMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{summaryMutation.error instanceof Error ? summaryMutation.error.message : copy.loadFailed}</p>}
-      {translationMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{translationMutation.error instanceof Error ? translationMutation.error.message : copy.translateFailed}</p>}
-      {translationAllMutation.error && <p className="mt-1 px-2 text-xs text-destructive">{translationAllMutation.error instanceof Error ? translationAllMutation.error.message : copy.translateAllFailed}</p>}
     </div>
   );
 }

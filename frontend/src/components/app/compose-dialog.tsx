@@ -18,7 +18,7 @@ import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import { EmailParagraph } from "../../extensions/email-paragraph";
 import { EmailImage } from "../../extensions/email-image";
 import { EmailSignature as EmailSignatureExtension } from "../../extensions/email-signature";
@@ -89,7 +89,6 @@ export function AIAssistantButton({
   const [generatedBody, setGeneratedBody] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
-  const [error, setError] = useState("");
   const chatRef = useRef<HTMLDivElement>(null);
   const messages = conversation || [];
   const hasConversation = messages.length > 0;
@@ -114,9 +113,8 @@ export function AIAssistantButton({
     onSuccess: ({ body }) => {
       setGeneratedBody(body);
       setChatMessages((current) => [...current, { role: "assistant", content: body }]);
-      setError("");
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.aiGenerateFailed),
+    onError: (value) => toastError(value, copy.aiGenerateFailed),
   });
 
   useEffect(() => {
@@ -125,7 +123,6 @@ export function AIAssistantButton({
     setGeneratedBody("");
     setChatMessages([]);
     setCopiedMessage(null);
-    setError("");
   }, [composeOpen, conversation]);
 
   useEffect(() => {
@@ -139,7 +136,6 @@ export function AIAssistantButton({
     const displayedPrompt = prompt || copy.aiGenerateRequest;
     setChatMessages((current) => [...current, { role: "user", content: displayedPrompt }]);
     setInstruction("");
-    setError("");
     mutation.mutate({ prompt, draft: generatedBody || undefined });
   };
 
@@ -158,7 +154,6 @@ export function AIAssistantButton({
     replaceEditorDraft(editor, generatedBody);
     setGeneratedBody("");
     setInstruction("");
-    setError("");
     setOpen(false);
   };
 
@@ -167,7 +162,6 @@ export function AIAssistantButton({
       open={open}
       onOpenChange={(value) => {
         setOpen(value);
-        if (!value) setError("");
       }}
     >
       <PopoverTrigger
@@ -241,7 +235,6 @@ export function AIAssistantButton({
             value={instruction}
             onChange={(event) => {
               setInstruction(event.target.value);
-              setError("");
             }}
             placeholder={generatedBody ? copy.refineInstructionPlaceholder : copy.aiInstructionPlaceholder}
             rows={3}
@@ -254,7 +247,6 @@ export function AIAssistantButton({
             }}
           />
         </Label>
-        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
         <div className="mt-4 flex items-center justify-between gap-3">
           <label className={cn("flex min-w-0 items-center gap-2 text-sm", !hasConversation && "text-muted-foreground")} title={!hasConversation ? copy.noConversationContext : undefined}>
             <input className="size-4 shrink-0 accent-primary" type="checkbox" checked={includeConversation} disabled={!hasConversation || mutation.isPending} onChange={(event) => setIncludeConversation(event.target.checked)} />
@@ -308,6 +300,7 @@ export function RecipientTagInput({
     if (!candidates.length) return true;
     if (candidates.some((value) => !isValidRecipient(value))) {
       setInvalid(true);
+      toast.error(copy.invalidRecipient);
       return false;
     }
     const existing = new Set(recipients.map((value) => value.toLowerCase()));
@@ -387,7 +380,6 @@ export function RecipientTagInput({
           aria-label={label}
         />
       </div>
-      {invalid && <p className="mt-1 text-xs text-destructive">{copy.invalidRecipient}</p>}
     </div>
   );
 }
@@ -458,7 +450,7 @@ export function ComposeDialog({
   const [recipients, setRecipients] = useState<string[]>([]);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
-  const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<{ subject?: boolean; body?: boolean }>({});
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -547,7 +539,10 @@ export function ComposeDialog({
     ],
     content: "",
     immediatelyRender: false,
-    onUpdate: () => scheduleDraftSave(),
+    onUpdate: () => {
+      setInvalid((current) => current.body ? { ...current, body: false } : current);
+      scheduleDraftSave();
+    },
   });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
@@ -751,7 +746,7 @@ export function ComposeDialog({
     setRecipients(splitRecipientValues(to));
     setCcRecipients(splitRecipientValues(cc));
     setSubject(subjectValue);
-    setError("");
+    setInvalid({});
     setSourceMode(false);
     setSourceCode(html);
     setSelectedSignatureId("none");
@@ -788,12 +783,12 @@ export function ComposeDialog({
   const insertInlineImages = async (files: File[], position?: number) => {
     if (!editor || !files.length) return;
     if (files.some((file) => !SUPPORTED_INLINE_IMAGE_TYPES.has(file.type) || file.size <= 0)) {
-      setError(copy.unsupportedImage);
+      toast.error(copy.unsupportedImage);
       return;
     }
     const totalSize = [...attachments, ...inlineImages.map((image) => image.file), ...files].reduce((total, file) => total + file.size, 0);
     if (totalSize > MAX_COMPOSE_ATTACHMENT_BYTES) {
-      setError(copy.attachmentsTooLarge);
+      toast.error(copy.attachmentsTooLarge);
       return;
     }
 
@@ -806,7 +801,7 @@ export function ComposeDialog({
       additions = await Promise.all(previews.map(async (image) => ({ ...image, ...(await inlineImageDimensions(image.previewURL)) })));
     } catch {
       previews.forEach((image) => URL.revokeObjectURL(image.previewURL));
-      setError(copy.unsupportedImage);
+      toast.error(copy.unsupportedImage);
       return;
     }
     replaceInlineImages([...inlineImages, ...additions]);
@@ -821,7 +816,6 @@ export function ComposeDialog({
         })
         .run();
     });
-    setError("");
   };
 
   useEffect(() => {
@@ -858,18 +852,27 @@ export function ComposeDialog({
         .filter(Boolean)
     );
     const submittedInlineImages = inlineImages.filter((image) => referencedContentIds.has(image.contentId));
-    if (!submittedRecipients.length || [...submittedRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
-      setError(copy.invalidRecipient);
+    if (!submittedRecipients.length) {
+      toast.error(copy.recipientRequired);
       return;
     }
-    if (!plainBody) {
-      setError(copy.noBody);
+    if ([...submittedRecipients, ...pendingCcRecipients].some((value) => !isValidRecipient(value))) {
+      toast.error(copy.invalidRecipient);
+      return;
+    }
+    const nextInvalid: { subject?: boolean; body?: boolean } = {};
+    if (!subject.trim()) nextInvalid.subject = true;
+    if (!plainBody) nextInvalid.body = true;
+    if (nextInvalid.subject || nextInvalid.body) {
+      setInvalid(nextInvalid);
+      toast.error(nextInvalid.subject && nextInvalid.body ? copy.requiredFieldsMissing : nextInvalid.subject ? copy.subjectRequired : copy.noBody);
       return;
     }
     if (Array.from(referencedContentIds).some((contentId) => !submittedInlineImages.some((image) => image.contentId === contentId))) {
-      setError(copy.inlineImageMissing);
+      toast.error(copy.inlineImageMissing);
       return;
     }
+    setInvalid({});
     const form = new FormData();
     form.set("to", submittedRecipients.join(", "));
     if (submittedCcRecipients.length) form.set("cc", submittedCcRecipients.join(", "));
@@ -908,7 +911,7 @@ export function ComposeDialog({
         void queryClient.invalidateQueries({ queryKey: ["folder"] });
         void queryClient.invalidateQueries({ queryKey: ["attachments"] });
       },
-      onError: (value) => setError(value instanceof Error ? value.message : copy.loginFailed),
+      onError: (value) => toastError(value, copy.sendFailed),
     });
   };
 
@@ -939,7 +942,7 @@ export function ComposeDialog({
           </Label>
           <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground" htmlFor="compose-subject">
             <span className="whitespace-nowrap">{copy.subject}</span>
-            <Input id="compose-subject" className="h-8" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={copy.noSubject} />
+            <Input id="compose-subject" className="h-8" value={subject} aria-invalid={invalid.subject} onChange={(event) => { setSubject(event.target.value); if (invalid.subject) setInvalid((current) => ({ ...current, subject: false })); }} placeholder={copy.noSubject} />
           </Label>
         </div>
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-muted px-3 py-0.5">
@@ -999,14 +1002,15 @@ export function ComposeDialog({
         </div>
         {sourceMode ? (
           <textarea
-            className="min-h-0 flex-1 resize-none bg-background px-4 py-3 font-mono text-sm leading-6 outline-none"
+            className={cn("min-h-0 flex-1 resize-none bg-background px-4 py-3 font-mono text-sm leading-6 outline-none", invalid.body && "ring-3 ring-destructive/20")}
             value={sourceCode}
-            onChange={(event) => setSourceCode(event.target.value)}
+            onChange={(event) => { setSourceCode(event.target.value); if (invalid.body) setInvalid((current) => ({ ...current, body: false })); }}
             spellCheck={false}
             aria-label={copy.sourceCode}
+            aria-invalid={invalid.body}
           />
         ) : (
-          <ScrollArea data-testid="compose-editor-area" className="min-h-0 flex-1" contentClassName="px-4 py-3">
+          <ScrollArea data-testid="compose-editor-area" className={cn("min-h-0 flex-1", invalid.body && "ring-3 ring-destructive/20")} contentClassName="px-4 py-3">
             <EditorContent
               editor={editor}
               onPaste={(event) => {
@@ -1049,7 +1053,6 @@ export function ComposeDialog({
             ))}
           </div>
         )}
-        {error && <p className="shrink-0 px-3 pb-1.5 text-xs text-destructive">{error}</p>}
         <div className="flex shrink-0 flex-row items-center justify-between gap-2 border-t px-3 py-2">
           <input
             ref={attachmentInputRef}
@@ -1058,15 +1061,12 @@ export function ComposeDialog({
             multiple
             onChange={(event) => {
               const selected = Array.from(event.target.files || []);
-              setAttachments((current) => {
-                const next = [...current, ...selected];
-                if ([...next, ...inlineImages.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) {
-                  setError(copy.attachmentsTooLarge);
-                  return current;
-                }
-                setError("");
-                return next;
-              });
+              const next = [...attachmentsRef.current, ...selected];
+              if ([...next, ...inlineImagesRef.current.map((image) => image.file)].reduce((total, file) => total + file.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) {
+                toast.error(copy.attachmentsTooLarge);
+              } else {
+                setAttachments(next);
+              }
               event.target.value = "";
             }}
           />
@@ -1111,7 +1111,6 @@ export function ComposeDialog({
             if ([...files, ...inlineImagesRef.current.map((image) => image.file)].reduce((total, item) => total + item.size, 0) > MAX_COMPOSE_ATTACHMENT_BYTES) throw new Error(copy.attachmentsTooLarge);
             attachmentsRef.current = files;
             setAttachments(files);
-            setError("");
           }}
         />
       )}

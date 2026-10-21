@@ -6,6 +6,7 @@ import {
   BellOff,
   Bot,
   Check,
+  CircleAlert,
   Code2,
   ExternalLink,
   Info,
@@ -27,7 +28,7 @@ import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import { EmailParagraph } from "../../extensions/email-paragraph";
 import { EmailImage } from "../../extensions/email-image";
 import {
@@ -66,6 +67,8 @@ import {
   type AIAgent,
   type AIErrorLog,
   type AIModel,
+  type AITaskBinding,
+  type AITaskBindingInput,
   type EmailSignature,
   type SystemSettings as SystemSettingsData,
   type UpdateStatus,
@@ -73,7 +76,7 @@ import {
 } from "../../lib/api";
 import { currentPushSubscription, disableWebPush, enableWebPush, supportsWebPush } from "../../lib/push";
 import { cn } from "../../lib/utils";
-import { htmlToPlainText, serializeEmailHTML } from "../../lib/email-format";
+import { htmlToPlainText, isValidRecipient, serializeEmailHTML } from "../../lib/email-format";
 import { type Copy, en } from "../../lib/locale";
 import type { ConnectedAccount } from "../../types";
 import { Badge } from "../ui/badge";
@@ -87,6 +90,7 @@ import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Textarea } from "../ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { RichTextButtons } from "./rich-text-buttons";
 
 export type SettingsSection = "account" | "general" | "signatures" | "ai" | "agents" | "error_logs" | "mailboxes" | "system" | "about";
@@ -261,22 +265,21 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
   const [deleteTarget, setDeleteTarget] = useState<EmailSignature | null>(null);
   const [name, setName] = useState("");
   const [isDefault, setIsDefault] = useState(false);
-  const [contentEmpty, setContentEmpty] = useState(true);
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceCode, setSourceCode] = useState("");
-  const [error, setError] = useState("");
-  const editor = useEditor({ extensions: [StarterKit.configure({ paragraph: false }), EmailParagraph, EmailImage, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: ({ editor: currentEditor }) => setContentEmpty(currentEditor.isEmpty) });
+  const [invalid, setInvalid] = useState<{ name?: boolean; content?: boolean }>({});
+  const editor = useEditor({ extensions: [StarterKit.configure({ paragraph: false }), EmailParagraph, EmailImage, UnderlineExtension, LinkExtension.configure({ openOnClick: false }), Placeholder.configure({ placeholder: copy.signatureContent })], content: "", immediatelyRender: false, onUpdate: () => { setInvalid((current) => current.content ? { ...current, content: false } : current); } });
   const persist = useMutation({
     mutationFn: ({ items }: { items: EmailSignature[]; operation: "create" | "update" | "delete" }) => saveSignatures(items),
     onSuccess: async (_, variables) => {
       setOpen(false);
       setEditing(null);
       setDeleteTarget(null);
-      setError("");
+      setInvalid({});
       toast.success(variables.operation === "create" ? copy.signatureSaved : variables.operation === "update" ? copy.signatureUpdated : copy.signatureDeleted);
       await queryClient.invalidateQueries({ queryKey: ["signatures"] });
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
 
   useEffect(() => {
@@ -285,7 +288,6 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
     setSourceMode(false);
     setSourceCode(html);
     editor.commands.setContent(html);
-    setContentEmpty(editor.isEmpty);
     editor.commands.focus("start");
   }, [open, editing, editor]);
 
@@ -293,13 +295,11 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
     if (!editor) return;
     if (sourceMode) {
       editor.commands.setContent(sourceCode);
-      setContentEmpty(editor.isEmpty);
       setSourceMode(false);
       editor.commands.focus("start");
       return;
     }
     setSourceCode(serializeEmailHTML(editor.getHTML()));
-    setContentEmpty(editor.isEmpty);
     setSourceMode(true);
   };
 
@@ -307,20 +307,27 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
     setEditing(null);
     setName("");
     setIsDefault(!signatures.data?.signatures.length);
-    setError("");
+    setInvalid({});
     setOpen(true);
   };
   const openEdit = (signature: EmailSignature) => {
     setEditing(signature);
     setName(signature.name);
     setIsDefault(Boolean(signature.default));
-    setError("");
+    setInvalid({});
     setOpen(true);
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const html = serializeEmailHTML(sourceMode ? sourceCode : editor?.getHTML() || "");
-    if (!name.trim() || !editor || (sourceMode ? !sourceCode.trim() : editor.isEmpty)) return;
+    const missingName = !name.trim();
+    const missingContent = sourceMode ? !sourceCode.trim() : !editor || editor.isEmpty;
+    if (missingName || missingContent) {
+      setInvalid({ name: missingName, content: missingContent });
+      toast.error(missingName && missingContent ? copy.requiredFieldsMissing : missingName ? copy.signatureNameRequired : copy.signatureContentRequired);
+      return;
+    }
+    setInvalid({});
     const current = signatures.data?.signatures || [];
     const makeDefault = isDefault || current.length === 0;
     const nextItem: EmailSignature = { id: editing?.id || "", name: name.trim(), html, default: makeDefault };
@@ -335,7 +342,6 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
     const next = remaining.length && !remaining.some((item) => item.default)
       ? remaining.map((item, index) => ({ ...item, default: index === 0 }))
       : remaining;
-    setError("");
     persist.mutate({ items: next, operation: "delete" });
   };
 
@@ -348,34 +354,33 @@ export function SignatureSettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[36rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.signatureName}</TableHead><TableHead className="px-4">{copy.signaturePreview}</TableHead><TableHead className="w-24 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{signatures.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <TableRow key={signature.id}><TableCell className="px-4 py-3"><div className="flex items-center gap-2"><span className="truncate font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => { setError(""); setDeleteTarget(signature); }} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</TableCell></TableRow>}</TableBody>
+          <TableBody>{signatures.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : signatures.data?.signatures.length ? signatures.data.signatures.map((signature) => <TableRow key={signature.id}><TableCell className="px-4 py-3"><div className="flex items-center gap-2"><span className="truncate font-medium">{signature.name}</span>{signature.default && <Badge>{copy.defaultSignature}</Badge>}</div></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{htmlToPlainText(signature.html) || "-"}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(signature)} aria-label={copy.editSignature} title={copy.editSignature}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" onClick={() => setDeleteTarget(signature)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noSignatures}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {(signatures.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (signatures.error instanceof Error ? signatures.error.message : copy.loadFailed)}</p>}
+      {signatures.isError && <p className="mt-3 text-xs text-destructive">{signatures.error instanceof Error ? signatures.error.message : copy.loadFailed}</p>}
       <Dialog open={open} onOpenChange={(next) => { if (!persist.isPending) setOpen(next); }}>
         <DialogContent className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-auto flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editSignature : copy.addSignature}</DialogTitle><DialogDescription>{copy.signatureSettingsDescription}</DialogDescription></DialogHeader>
-          <form className="flex min-h-0 flex-1 flex-col" onSubmit={submit}>
+          <form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={submit}>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y">
-              <div className="grid gap-2"><Label htmlFor="signature-name">{copy.signatureName}</Label><Input id="signature-name" value={name} onChange={(event) => setName(event.target.value)} disabled={persist.isPending} required /></div>
+              <div className="grid gap-2"><Label htmlFor="signature-name">{copy.signatureName}</Label><Input id="signature-name" value={name} aria-invalid={invalid.name} onChange={(event) => { setName(event.target.value); if (invalid.name) setInvalid((current) => ({ ...current, name: false })); }} disabled={persist.isPending} required /></div>
               <div className="grid gap-2">
                 <Label>{copy.signatureContent}</Label>
-                <div className="overflow-hidden rounded-lg border bg-background">
+                <div className={cn("overflow-hidden rounded-lg border bg-background", invalid.content && "border-destructive ring-3 ring-destructive/20")}>
                   <div className="flex items-center gap-1 border-b bg-muted px-2 py-1"><Button type="button" variant={sourceMode ? "secondary" : "ghost"} size="icon" disabled={persist.isPending || !editor} onClick={toggleSignatureSource} aria-label={sourceMode ? copy.richText : copy.sourceCode} title={sourceMode ? copy.richText : copy.sourceCode}><Code2 /></Button><Separator orientation="vertical" className="mx-1 h-5" /><RichTextButtons editor={editor} disabled={persist.isPending || sourceMode} /></div>
                   {sourceMode
-                    ? <textarea className="min-h-64 w-full resize-y bg-background px-4 py-3 font-mono text-sm leading-6 outline-none" value={sourceCode} onChange={(event) => { setSourceCode(event.target.value); setContentEmpty(!event.target.value.trim()); }} spellCheck={false} aria-label={copy.sourceCode} />
+                    ? <textarea className="min-h-64 w-full resize-y bg-background px-4 py-3 font-mono text-sm leading-6 outline-none" value={sourceCode} onChange={(event) => { setSourceCode(event.target.value); if (invalid.content) setInvalid((current) => ({ ...current, content: false })); }} spellCheck={false} aria-label={copy.sourceCode} aria-invalid={invalid.content} />
                     : <div className="max-h-72 overflow-y-auto px-4 py-3"><EditorContent editor={editor} /></div>}
                 </div>
               </div>
               <label className="flex items-center gap-2 text-sm"><input className="size-4 accent-primary" type="checkbox" checked={isDefault} disabled={persist.isPending} onChange={(event) => setIsDefault(event.target.checked)} />{copy.defaultSignature}</label>
-              {error && <p className="text-xs text-destructive">{error}</p>}
             </div>
-            <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending || !name.trim() || contentEmpty}>{persist.isPending ? copy.savingSignature : copy.save}</Button></DialogFooter>
+            <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{persist.isPending ? copy.savingSignature : copy.save}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(next) => { if (!next && !persist.isPending) setDeleteTarget(null); }}>
-        <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{copy.deleteSignatureTitle}</DialogTitle><DialogDescription>{copy.deleteSignatureDescription}</DialogDescription></DialogHeader>{error && <p className="text-xs text-destructive">{error}</p>}<DialogFooter><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setDeleteTarget(null)}>{copy.cancel}</Button><Button type="button" variant="destructive" disabled={persist.isPending} onClick={removeSignature}><Trash2 />{persist.isPending ? copy.deleting : copy.remove}</Button></DialogFooter></DialogContent>
+        <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{copy.deleteSignatureTitle}</DialogTitle><DialogDescription>{copy.deleteSignatureDescription}</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => setDeleteTarget(null)}>{copy.cancel}</Button><Button type="button" variant="destructive" disabled={persist.isPending} onClick={removeSignature}><Trash2 />{persist.isPending ? copy.deleting : copy.remove}</Button></DialogFooter></DialogContent>
       </Dialog>
     </section>
   );
@@ -398,6 +403,7 @@ export function AgentOutputLabelInput({ copy, labels, onChange, draftRef, disabl
     if (!candidates.length) return true;
     if (labels.length + candidates.length > 12 || candidates.some((value) => !validOutputLabel(value))) {
       setInvalid(true);
+      toast.error(copy.invalidAgentOutputLabel);
       return false;
     }
     const existing = new Set(labels);
@@ -410,6 +416,7 @@ export function AgentOutputLabelInput({ copy, labels, onChange, draftRef, disabl
     }
     if (next.length > 12) {
       setInvalid(true);
+      toast.error(copy.invalidAgentOutputLabel);
       return false;
     }
     onChange(next);
@@ -436,7 +443,6 @@ export function AgentOutputLabelInput({ copy, labels, onChange, draftRef, disabl
           addValues(splitOutputLabels(value));
         }} onBlur={() => { if (draft.trim()) addValues(splitOutputLabels(draft)); }} placeholder={labels.length ? "" : copy.agentOutputLabelsPlaceholder} aria-invalid={invalid} aria-label={copy.agentOutputLabels} />
       </div>
-      {invalid && <p className="mt-1 text-xs text-destructive">{copy.invalidAgentOutputLabel}</p>}
     </div>
   );
 }
@@ -450,34 +456,41 @@ export function AgentSettings({ copy }: { copy: Copy }) {
   const [prompt, setPrompt] = useState("");
   const [outputLabels, setOutputLabels] = useState<string[]>(["客户", "需求", "要求", "问题"]);
   const outputLabelDraftRef = useRef("");
-  const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<{ name?: boolean; prompt?: boolean }>({});
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
   const create = useMutation({
     mutationFn: addAIAgent,
-    onSuccess: () => { setOpen(false); setEditing(null); setError(""); toast.success(copy.agentSaved); refresh(); },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onSuccess: () => { setOpen(false); setEditing(null); setInvalid({}); toast.success(copy.agentSaved); refresh(); },
+    onError: (value) => toastError(value, copy.loadFailed),
   });
   const update = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateAIAgent>[1] }) => updateAIAgent(id, input),
-    onSuccess: () => { setOpen(false); setEditing(null); setError(""); toast.success(copy.agentUpdated); refresh(); },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onSuccess: () => { setOpen(false); setEditing(null); setInvalid({}); toast.success(copy.agentUpdated); refresh(); },
+    onError: (value) => toastError(value, copy.loadFailed),
   });
-  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setOutputLabels(["客户", "需求", "要求", "问题"]); outputLabelDraftRef.current = ""; setError(""); setOpen(true); };
-  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setOutputLabels(agent.outputLabels); outputLabelDraftRef.current = ""; setError(""); setOpen(true); };
+  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setOutputLabels(["客户", "需求", "要求", "问题"]); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
+  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setOutputLabels(agent.outputLabels); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setError("");
     const pendingLabels = splitOutputLabels(outputLabelDraftRef.current);
     if (pendingLabels.some((label) => !validOutputLabel(label))) {
-      setError(copy.invalidAgentOutputLabel);
+      toast.error(copy.invalidAgentOutputLabel);
       return;
     }
     const submittedLabels = [...outputLabels];
     for (const label of pendingLabels) if (!submittedLabels.includes(label)) submittedLabels.push(label);
     if (submittedLabels.length > 12) {
-      setError(copy.invalidAgentOutputLabel);
+      toast.error(copy.invalidAgentOutputLabel);
       return;
     }
+    const missingName = !name.trim();
+    const missingPrompt = !prompt.trim();
+    if (missingName || missingPrompt) {
+      setInvalid({ name: missingName, prompt: missingPrompt });
+      toast.error(missingName && missingPrompt ? copy.requiredFieldsMissing : missingName ? copy.agentNameRequired : copy.agentPromptRequired);
+      return;
+    }
+    setInvalid({});
     const input = { name: name.trim(), prompt: prompt.trim(), outputLabels: submittedLabels };
     if (editing) update.mutate({ id: editing.id, input });
     else create.mutate(input);
@@ -495,16 +508,15 @@ export function AgentSettings({ copy }: { copy: Copy }) {
           <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {(agents.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (agents.error instanceof Error ? agents.error.message : copy.loadFailed)}</p>}
+      {agents.isError && <p className="mt-3 text-xs text-destructive">{agents.error instanceof Error ? agents.error.message : copy.loadFailed}</p>}
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
-          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" onSubmit={submit}>
-            <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} required /></div>
+          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" noValidate onSubmit={submit}>
+            <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} aria-invalid={invalid.name} onChange={(event) => { setName(event.target.value); if (invalid.name) setInvalid((current) => ({ ...current, name: false })); }} disabled={pending} required /></div>
             <div className="grid gap-2"><div><Label>{copy.agentOutputLabels}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.agentOutputLabelsDescription}</p></div><AgentOutputLabelInput copy={copy} labels={outputLabels} onChange={setOutputLabels} draftRef={outputLabelDraftRef} disabled={pending} /></div>
-            <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-36 sm:min-h-48 resize-y" value={prompt} onChange={(event) => setPrompt(event.target.value)} disabled={pending} required /></div>
-            {(create.isError || update.isError) && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
+            <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-36 sm:min-h-48 resize-y" value={prompt} aria-invalid={invalid.prompt} onChange={(event) => { setPrompt(event.target.value); if (invalid.prompt) setInvalid((current) => ({ ...current, prompt: false })); }} disabled={pending} required /></div>
+            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -715,59 +727,86 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
   );
 }
 
+// The UI presents the wire protocol ("API format") rather than vendor-specific
+// providers. These helpers map it to the legacy provider keys stored in the DB.
+type APIFormat = "chat_completions" | "responses" | "gemini";
+
+function apiFormatForProvider(provider: AIModel["provider"]): APIFormat {
+  if (provider === "openai") return "responses";
+  if (provider === "gemini") return "gemini";
+  return "chat_completions";
+}
+
+function providerForAPIFormat(format: APIFormat, currentProvider?: AIModel["provider"]): AIModel["provider"] {
+  if (format === "responses") return "openai";
+  if (format === "gemini") return "gemini";
+  return currentProvider === "deepseek" ? "deepseek" : "openai-compatible";
+}
+
+function apiFormatLabel(provider: AIModel["provider"]): string {
+  if (provider === "openai") return "Responses";
+  if (provider === "gemini") return "Gemini";
+  return "Chat Completions";
+}
+
 export function AISettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
   const [addOpen, setAddOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
-  const [provider, setProvider] = useState<"openai" | "gemini" | "deepseek">("openai");
+  const [apiFormat, setAPIFormat] = useState<APIFormat>("chat_completions");
   const [baseURL, setBaseURL] = useState("https://api.openai.com/v1");
   const [model, setModel] = useState("gpt-5.6-sol");
   const [apiKey, setAPIKey] = useState("");
-  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("medium");
-  const [error, setError] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
+  const [extraParams, setExtraParams] = useState("");
+  const [invalid, setInvalid] = useState<{ baseUrl?: boolean; model?: boolean; apiKey?: boolean; extraParams?: boolean }>({});
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["ai-models"] });
   };
-  const handleProviderChange = (nextProvider: "openai" | "gemini" | "deepseek") => {
-    setProvider(nextProvider);
-    if (nextProvider === "gemini") {
+  const handleAPIFormatChange = (nextFormat: APIFormat) => {
+    setAPIFormat(nextFormat);
+    if (nextFormat === "gemini") {
       if (baseURL === "https://api.openai.com/v1" || baseURL === "https://api.deepseek.com" || !baseURL) {
         setBaseURL("https://generativelanguage.googleapis.com");
       }
       if (model === "gpt-5.6-sol" || model === "deepseek-chat" || !model) {
         setModel("gemini-3.8-flash");
       }
-    } else if (nextProvider === "deepseek") {
-      if (baseURL === "https://api.openai.com/v1" || baseURL === "https://generativelanguage.googleapis.com" || !baseURL) {
-        setBaseURL("https://api.deepseek.com");
-      }
-      if (model === "gpt-5.6-sol" || model === "gemini-3.8-flash" || !model) {
-        setModel("deepseek-chat");
-      }
-    } else {
+      return;
+    }
+    if (nextFormat === "responses") {
       if (baseURL === "https://generativelanguage.googleapis.com" || baseURL === "https://api.deepseek.com" || !baseURL) {
         setBaseURL("https://api.openai.com/v1");
       }
       if (model === "gemini-3.8-flash" || model === "deepseek-chat" || !model) {
         setModel("gpt-5.6-sol");
       }
+      return;
+    }
+    // Chat Completions is the generic OpenAI-compatible mode. Keep custom
+    // gateway values as-is; only replace Google's native presets.
+    if (baseURL === "https://generativelanguage.googleapis.com") {
+      setBaseURL("https://api.openai.com/v1");
+    }
+    if (model === "gemini-3.8-flash") {
+      setModel("gpt-5.6-sol");
     }
   };
   const add = useMutation({
     mutationFn: addAIModel,
     onSuccess: () => {
       setAPIKey("");
-      setProvider("openai");
+      setAPIFormat("chat_completions");
       setModel("gpt-5.6-sol");
       setBaseURL("https://api.openai.com/v1");
       setReasoningEffort("medium");
       setAddOpen(false);
-      setError("");
+      setInvalid({});
       toast.success(copy.aiSettingsSaved);
       refresh();
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
   const update = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof updateAIModel>[1] }) => updateAIModel(id, input),
@@ -775,47 +814,67 @@ export function AISettings({ copy }: { copy: Copy }) {
       setAPIKey("");
       setEditingModel(null);
       setAddOpen(false);
-      setError("");
+      setInvalid({});
       toast.success(copy.aiModelUpdated);
       refresh();
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
-  const remove = useMutation({ mutationFn: deleteAIModel, onSuccess: () => { setError(""); refresh(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
-  const makeDefault = useMutation({ mutationFn: setDefaultAIModel, onSuccess: () => { setError(""); refresh(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const remove = useMutation({ mutationFn: deleteAIModel, onSuccess: () => refresh(), onError: (value) => toastError(value, copy.loadFailed) });
+  const makeDefault = useMutation({ mutationFn: setDefaultAIModel, onSuccess: () => refresh(), onError: (value) => toastError(value, copy.loadFailed) });
   const test = useMutation({
     mutationFn: ({ input, id }: { input: Parameters<typeof testAIModel>[0]; id?: string }) => id ? testSavedAIModel(id, input) : testAIModel(input),
     onSuccess: (result) => {
-      setError("");
       toast.success(copy.aiModelTestSuccess, { description: `${result.latencyMs} ms · ${result.output}` });
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
+  const validate = () => {
+    const next: { baseUrl?: boolean; model?: boolean; apiKey?: boolean; extraParams?: boolean } = {};
+    const messages: string[] = [];
+    if (!baseURL.trim()) { next.baseUrl = true; messages.push(copy.aiBaseURLRequired); }
+    if (!model.trim()) { next.model = true; messages.push(copy.aiModelNameRequired); }
+    if (!editingModel && !apiKey.trim()) { next.apiKey = true; messages.push(copy.aiAPIKeyRequired); }
+    if (extraParams.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(extraParams);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+      } catch {
+        next.extraParams = true;
+        messages.push(copy.aiExtraParamsInvalid);
+      }
+    }
+    setInvalid(next);
+    if (messages.length) toast.error(messages.length === 1 ? messages[0] : copy.requiredFieldsMissing);
+    return messages.length === 0;
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setError("");
-    const input = { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort };
+    if (!validate()) return;
+    const input = { provider: providerForAPIFormat(apiFormat, editingModel?.provider), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" };
     if (editingModel) update.mutate({ id: editingModel.id, input });
     else add.mutate(input);
   };
   const openAdd = () => {
     setEditingModel(null);
-    setProvider("openai");
+    setAPIFormat("chat_completions");
     setBaseURL("https://api.openai.com/v1");
     setModel("gpt-5.6-sol");
     setReasoningEffort("medium");
+    setExtraParams("");
     setAPIKey("");
-    setError("");
+    setInvalid({});
     setAddOpen(true);
   };
   const openEdit = (item: AIModel) => {
     setEditingModel(item);
-    setProvider(item.provider || "openai");
+    setAPIFormat(apiFormatForProvider(item.provider));
     setBaseURL(item.baseUrl);
     setModel(item.model);
     setReasoningEffort(item.reasoningEffort);
+    setExtraParams(item.extraParams && item.extraParams !== "{}" ? item.extraParams : "");
     setAPIKey("");
-    setError("");
+    setInvalid({});
     setAddOpen(true);
   };
   return (
@@ -826,22 +885,22 @@ export function AISettings({ copy }: { copy: Copy }) {
       </div>
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[46rem] table-fixed">
-          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[19%] px-4">{copy.aiModel}</TableHead><TableHead className="w-[12%] px-4">{copy.aiProvider}</TableHead><TableHead className="w-[16%] px-4">{copy.aiReasoningEffort}</TableHead><TableHead className="px-4">{copy.aiBaseURL}</TableHead><TableHead className="w-52 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">{item.provider === "gemini" ? "Google Gemini" : item.provider === "deepseek" ? "DeepSeek" : "OpenAI"}</TableCell><TableCell className="px-4 py-3">{item.reasoningEffort === "low" ? copy.aiReasoningLow : copy.aiReasoningMedium}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
+          <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[19%] px-4">{copy.aiModel}</TableHead><TableHead className="w-[16%] px-4">{copy.aiAPIFormat}</TableHead><TableHead className="w-[12%] px-4">{copy.aiReasoningEffort}</TableHead><TableHead className="px-4">{copy.aiBaseURL}</TableHead><TableHead className="w-52 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
+          <TableBody>{models.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.loading}</TableCell></TableRow> : models.data?.models.length ? models.data.models.map((item) => <TableRow key={item.id}><TableCell className="px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.model}</span>{item.isDefault && <Badge>{copy.defaultModel}</Badge>}</div></TableCell><TableCell className="px-4 py-3">{apiFormatLabel(item.provider)}</TableCell><TableCell className="px-4 py-3">{apiFormatForProvider(item.provider) === "chat_completions" ? "—" : item.reasoningEffort === "low" ? copy.aiReasoningLow : item.reasoningEffort === "medium" ? copy.aiReasoningMedium : copy.aiReasoningHigh}</TableCell><TableCell className="px-4 py-3 text-muted-foreground"><span className="block truncate" title={item.baseUrl}>{item.baseUrl}</span></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end gap-1">{!item.isDefault && <Button variant="outline" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(item.id)}>{copy.setDefaultModel}</Button>}<Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label={copy.editAIModel} title={copy.editAIModel}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(item.id)} aria-label={copy.remove} title={copy.remove}><Trash2 /></Button></div></TableCell></TableRow>) : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={5}>{copy.noAIModels}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
-      {(models.isError || error) && <p className="mt-3 text-xs text-destructive">{error || (models.error instanceof Error ? models.error.message : copy.loadFailed)}</p>}
+      {models.isError && <p className="mt-3 text-xs text-destructive">{models.error instanceof Error ? models.error.message : copy.loadFailed}</p>}
       <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setEditingModel(null); }}>
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-md flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle><DialogDescription>{copy.aiSettingsDescription}</DialogDescription></DialogHeader>
-          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" onSubmit={submit}>
-            <div className="grid gap-2"><Label htmlFor="add-ai-provider">{copy.aiProvider}</Label><Select value={provider} onValueChange={(val) => handleProviderChange(val as "openai" | "gemini" | "deepseek")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-provider" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="openai">OpenAI</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem><SelectItem value="deepseek">DeepSeek</SelectItem></SelectContent></Select></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setBaseURL(event.target.value)} placeholder={provider === "gemini" ? "https://generativelanguage.googleapis.com" : provider === "deepseek" ? "https://api.deepseek.com" : "https://api.openai.com/v1"} /></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setModel(event.target.value)} placeholder={provider === "gemini" ? "gemini-3.8-flash" : provider === "deepseek" ? "deepseek-chat" : "gpt-5.6-sol"} /></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem></SelectContent></Select></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => setAPIKey(event.target.value)} placeholder={editingModel ? copy.aiAPIKeyKeep : (provider === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
-            {(add.isError || update.isError || test.isError) && error && <p className="text-xs text-destructive">{error}</p>}
-            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { setError(""); test.mutate({ id: editingModel?.id, input: { provider, baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
+          <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle></DialogHeader>
+          <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" noValidate onSubmit={submit}>
+            <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-format">{copy.aiAPIFormat}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiAPIFormatHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiAPIFormatHint}</TooltipContent></Tooltip></div><Select value={apiFormat} onValueChange={(val) => handleAPIFormatChange(val as APIFormat)} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-format" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chat_completions">OpenAI Chat Completions</SelectItem><SelectItem value="responses">OpenAI Responses</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required aria-invalid={invalid.baseUrl} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setBaseURL(event.target.value); if (invalid.baseUrl) setInvalid((current) => ({ ...current, baseUrl: false })); }} placeholder={apiFormat === "gemini" ? "https://generativelanguage.googleapis.com" : apiFormat === "responses" ? "https://api.openai.com/v1" : "https://api.example.com/v1"} /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required aria-invalid={invalid.model} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setModel(event.target.value); if (invalid.model) setInvalid((current) => ({ ...current, model: false })); }} placeholder={apiFormat === "gemini" ? "gemini-3.8-flash" : apiFormat === "responses" ? "gpt-5.6-sol" : "provider/model-name"} /></div>
+            {apiFormat !== "chat_completions" && <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium" | "high")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem><SelectItem value="high">{copy.aiReasoningHigh}</SelectItem></SelectContent></Select></div>}
+            <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} aria-invalid={invalid.apiKey} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setAPIKey(event.target.value); if (invalid.apiKey) setInvalid((current) => ({ ...current, apiKey: false })); }} placeholder={editingModel ? copy.aiAPIKeyKeep : (apiFormat === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
+            <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-extra-params">{copy.aiExtraParams}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiExtraParamsHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiExtraParamsHint}</TooltipContent></Tooltip></div><Textarea id="add-ai-extra-params" className="min-h-24 resize-y font-mono text-xs" value={extraParams} aria-invalid={invalid.extraParams} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setExtraParams(event.target.value); if (invalid.extraParams) setInvalid((current) => ({ ...current, extraParams: false })); }} placeholder={'{"reasoning_effort":"high"}'} /></div>
+            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { if (!validate()) return; test.mutate({ id: editingModel?.id, input: { provider: providerForAPIFormat(apiFormat, editingModel?.provider), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -853,9 +912,8 @@ export function AccountInfoSettings({ copy }: { copy: Copy }) {
   const queryClient = useQueryClient();
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
   const [displayName, setDisplayName] = useState("");
-  const [error, setError] = useState("");
   const [passwords, setPasswords] = useState({ current: "", next: "", confirmation: "" });
-  const [passwordError, setPasswordError] = useState("");
+  const [passwordInvalid, setPasswordInvalid] = useState<{ current?: boolean; next?: boolean; confirmation?: boolean }>({});
   useEffect(() => {
     if (capabilities.data?.currentUser) setDisplayName(capabilities.data.currentUser.displayName);
   }, [capabilities.data?.currentUser]);
@@ -863,10 +921,9 @@ export function AccountInfoSettings({ copy }: { copy: Copy }) {
     mutationFn: (value: string) => updateAccountProfile(value),
     onSuccess: (user) => {
       queryClient.setQueryData(["capabilities"], (current: { notifications: boolean; webPush: boolean; calendar: boolean; role: UserRole; currentUser?: { login: string; displayName: string; role: UserRole } } | undefined) => current ? { ...current, role: user.role, currentUser: { login: user.login, displayName: user.displayName, role: user.role } } : current);
-      setError("");
       toast.success(copy.accountInfoSaved);
     },
-    onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
   const currentUser = capabilities.data?.currentUser;
   const roleLabel = (currentUser?.role || capabilities.data?.role) === "super_admin" ? copy.superAdmin : copy.ordinaryUser;
@@ -874,18 +931,27 @@ export function AccountInfoSettings({ copy }: { copy: Copy }) {
     mutationFn: () => updateAccountPassword(passwords.current, passwords.next, passwords.confirmation),
     onSuccess: () => {
       setPasswords({ current: "", next: "", confirmation: "" });
-      setPasswordError("");
+      setPasswordInvalid({});
       toast.success(copy.passwordUpdated);
     },
-    onError: (value) => setPasswordError(value instanceof Error ? value.message : copy.loadFailed),
+    onError: (value) => toastError(value, copy.loadFailed),
   });
   const submitPassword = (event: FormEvent) => {
     event.preventDefault();
-    setPasswordError("");
-    if (passwords.next !== passwords.confirmation) {
-      setPasswordError(copy.passwordMismatch);
+    const missingCurrent = !passwords.current;
+    const missingNext = passwords.next.length < 8;
+    const missingConfirmation = passwords.confirmation.length < 8;
+    if (missingCurrent || missingNext || missingConfirmation) {
+      setPasswordInvalid({ current: missingCurrent, next: missingNext, confirmation: missingConfirmation });
+      toast.error(missingCurrent || missingConfirmation ? copy.requiredFieldsMissing : copy.passwordRequirements);
       return;
     }
+    if (passwords.next !== passwords.confirmation) {
+      setPasswordInvalid({ next: true, confirmation: true });
+      toast.error(copy.passwordMismatch);
+      return;
+    }
+    setPasswordInvalid({});
     updatePassword.mutate();
   };
   return (
@@ -893,17 +959,15 @@ export function AccountInfoSettings({ copy }: { copy: Copy }) {
       <div><h2 className="flex items-center gap-2 text-lg font-semibold"><UserRound className="size-5" />{copy.accountInfo}</h2><p className="mt-1 text-sm text-muted-foreground">{copy.accountInfoDescription}</p></div>
       <div className="mt-6 grid max-w-md gap-5">
         <div className="grid gap-1"><p className="text-xs text-muted-foreground">{copy.accountLogin}</p><p className="truncate text-sm font-medium">{capabilities.isPending ? copy.loading : currentUser?.login || "-"}</p></div>
-        <div className="grid max-w-xs gap-2"><Label htmlFor="account-nickname">{copy.nickname}</Label><Input id="account-nickname" className="w-64 max-w-full" value={displayName} maxLength={80} disabled={capabilities.isPending || update.isPending} onChange={(event) => { setDisplayName(event.target.value); setError(""); }} onBlur={() => { const next = displayName.trim(); if (next !== (currentUser?.displayName || "").trim()) update.mutate(next); }} /></div>
+        <div className="grid max-w-xs gap-2"><Label htmlFor="account-nickname">{copy.nickname}</Label><Input id="account-nickname" className="w-64 max-w-full" value={displayName} maxLength={80} disabled={capabilities.isPending || update.isPending} onChange={(event) => setDisplayName(event.target.value)} onBlur={() => { const next = displayName.trim(); if (next !== (currentUser?.displayName || "").trim()) update.mutate(next); }} /></div>
         <div className="grid gap-1"><p className="text-xs text-muted-foreground">{copy.role}</p><p className="text-sm font-medium">{capabilities.isPending ? copy.loading : roleLabel}</p></div>
-        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
-      <form className="mt-8 grid max-w-xs gap-4 border-t pt-6" onSubmit={submitPassword}>
+      <form className="mt-8 grid max-w-xs gap-4 border-t pt-6" noValidate onSubmit={submitPassword}>
         <div><h3 className="text-sm font-semibold">{copy.changePassword}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.passwordRequirements}</p></div>
-        <div className="grid gap-2"><Label htmlFor="current-password">{copy.currentPassword}</Label><Input id="current-password" className="w-64 max-w-full" type="password" autoComplete="current-password" value={passwords.current} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, current: event.target.value })); setPasswordError(""); }} required /></div>
-        <div className="grid gap-2"><Label htmlFor="new-password">{copy.newPassword}</Label><Input id="new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.next} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, next: event.target.value })); setPasswordError(""); }} required /></div>
-        <div className="grid gap-2"><Label htmlFor="confirm-new-password">{copy.confirmNewPassword}</Label><Input id="confirm-new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.confirmation} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, confirmation: event.target.value })); setPasswordError(""); }} required /></div>
-        {passwordError && <p className="text-xs text-destructive">{passwordError}</p>}
-        <div><Button type="submit" disabled={updatePassword.isPending || !passwords.current || passwords.next.length < 8 || passwords.confirmation.length < 8}>{updatePassword.isPending ? copy.updatingPassword : copy.changePassword}</Button></div>
+        <div className="grid gap-2"><Label htmlFor="current-password">{copy.currentPassword}</Label><Input id="current-password" className="w-64 max-w-full" type="password" autoComplete="current-password" value={passwords.current} aria-invalid={passwordInvalid.current} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, current: event.target.value })); if (passwordInvalid.current) setPasswordInvalid((current) => ({ ...current, current: false })); }} required /></div>
+        <div className="grid gap-2"><Label htmlFor="new-password">{copy.newPassword}</Label><Input id="new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.next} aria-invalid={passwordInvalid.next} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, next: event.target.value })); if (passwordInvalid.next) setPasswordInvalid((current) => ({ ...current, next: false })); }} required /></div>
+        <div className="grid gap-2"><Label htmlFor="confirm-new-password">{copy.confirmNewPassword}</Label><Input id="confirm-new-password" className="w-64 max-w-full" type="password" autoComplete="new-password" minLength={8} value={passwords.confirmation} aria-invalid={passwordInvalid.confirmation} disabled={updatePassword.isPending} onChange={(event) => { setPasswords((current) => ({ ...current, confirmation: event.target.value })); if (passwordInvalid.confirmation) setPasswordInvalid((current) => ({ ...current, confirmation: false })); }} required /></div>
+        <div><Button type="submit" disabled={updatePassword.isPending}>{updatePassword.isPending ? copy.updatingPassword : copy.changePassword}</Button></div>
       </form>
     </section>
   );
@@ -912,16 +976,14 @@ export function AccountInfoSettings({ copy }: { copy: Copy }) {
 export function GeneralSettings({ copy }: { copy: Copy }) {
   const capabilities = useQuery({ queryKey: ["capabilities"], queryFn: getCapabilities, retry: false });
   const [pushEnabled, setPushEnabled] = useState(false);
-  const [pushMessage, setPushMessage] = useState("");
   useEffect(() => { void currentPushSubscription().then((subscription) => setPushEnabled(Boolean(subscription))); }, []);
   const togglePush = async () => {
-    setPushMessage("");
     try {
       if (pushEnabled) await disableWebPush();
       else await enableWebPush(navigator.language);
       setPushEnabled(!pushEnabled);
     } catch (value) {
-      setPushMessage(value instanceof Error ? value.message : copy.pushUnavailable);
+      toastError(value, copy.pushUnavailable);
     }
   };
   const pushAvailable = supportsWebPush() && capabilities.data?.webPush === true;
@@ -939,7 +1001,6 @@ export function GeneralSettings({ copy }: { copy: Copy }) {
       <section className="mt-7 border-t pt-6">
         <h3 className="text-sm font-semibold">{copy.pushNotifications}</h3>
         <Button className="mt-3 max-w-full whitespace-normal" variant="secondary" disabled={!pushAvailable} onClick={() => void togglePush()}>{pushEnabled ? <BellOff /> : <Bell />}{pushEnabled ? copy.disablePush : copy.enablePush}</Button>
-        {pushMessage && <p className="mt-2 text-xs text-destructive">{pushMessage}</p>}
         {!pushAvailable && !capabilities.isPending && <p className="mt-2 text-xs text-muted-foreground">{copy.pushUnavailable}</p>}
       </section>
     </div>
@@ -951,14 +1012,13 @@ export const emptyAccountForm = { email: "", password: "", label: "", color: "#4
 export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManageAccount: (account: ConnectedAccount | null) => void }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts, retry: false });
-  const [error, setError] = useState("");
   const refreshAccountData = () => {
     void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] });
     void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] });
   };
-  const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => { setError(""); refreshAccountData(); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const remove = useMutation({ mutationFn: deleteAccount, onSuccess: () => refreshAccountData(), onError: (value) => toastError(value, copy.loadFailed) });
   return (
     <section className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -983,22 +1043,117 @@ export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManag
         </Table>
       </div>
       {accounts.error && <p className="py-3 text-sm text-destructive">{accounts.error.message}</p>}
-      {error && <p className="py-2 text-xs text-destructive">{error}</p>}
     </section>
+  );
+}
+
+function AIBindingRow({
+  copy,
+  accountEmail,
+  taskType,
+  label,
+  binding,
+  agents,
+  models,
+  pending,
+  onSave,
+}: {
+  copy: Copy;
+  accountEmail: string;
+  taskType: "mail_summary" | "email_draft" | "reply_suggestion";
+  label: string;
+  binding?: AITaskBinding;
+  agents: AIAgent[];
+  models: AIModel[];
+  pending: boolean;
+  onSave: (input: AITaskBindingInput) => void;
+}) {
+  // The binding only exists on the server once BOTH an agent and a model are
+  // set, so a first selection that would leave the pair incomplete is kept
+  // here until the user picks the other half.
+  const [agentId, setAgentId] = useState(binding?.agentId || "");
+  const [modelId, setModelId] = useState(binding?.modelId || "");
+  const [enabled, setEnabled] = useState(binding?.enabled !== false);
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setAgentId(binding?.agentId || "");
+    setModelId(binding?.modelId || "");
+    setEnabled(binding?.enabled !== false);
+    setInvalid(false);
+  }, [binding?.agentId, binding?.modelId, binding?.enabled]);
+
+  const persist = (next: { agentId: string; modelId: string; enabled: boolean }) => {
+    if (!next.agentId || !next.modelId) {
+      setInvalid(true);
+      toast.error(copy.bindingRequired);
+      return;
+    }
+    setInvalid(false);
+    onSave({ accountEmail, taskType, agentId: next.agentId, modelId: next.modelId, enabled: next.enabled });
+  };
+
+  return (
+    <TableRow>
+      <TableCell className="px-3 py-3 font-medium">{label}</TableCell>
+      <TableCell className="px-3 py-3">
+        <Select
+          value={agentId}
+          disabled={!enabled || !agents.length || pending}
+          onValueChange={(value) => {
+            const nextAgentId = value || "";
+            setAgentId(nextAgentId);
+            persist({ agentId: nextAgentId, modelId, enabled });
+          }}
+        >
+          <SelectTrigger className="w-full" aria-invalid={invalid && !agentId}>
+            <SelectValue>{agents.find((item) => item.id === agentId)?.name || copy.noAgents}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>{agents.map((item) => <SelectItem value={item.id} key={item.id}>{item.name}</SelectItem>)}</SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="px-3 py-3">
+        <Select
+          value={modelId}
+          disabled={!enabled || !models.length || pending}
+          onValueChange={(value) => {
+            const nextModelId = value || "";
+            setModelId(nextModelId);
+            persist({ agentId, modelId: nextModelId, enabled });
+          }}
+        >
+          <SelectTrigger className="w-full" aria-invalid={invalid && !modelId}>
+            <SelectValue>{models.find((item) => item.id === modelId)?.model || copy.noAIModels}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>{models.map((item) => <SelectItem value={item.id} key={item.id}>{item.model}</SelectItem>)}</SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="px-3 py-3 text-center">
+        <Switch
+          aria-label={label}
+          checked={enabled}
+          disabled={!agentId || !modelId || pending}
+          onCheckedChange={(checked) => {
+            setEnabled(checked);
+            persist({ agentId, modelId, enabled: checked });
+          }}
+        />
+      </TableCell>
+    </TableRow>
   );
 }
 
 export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Copy; open: boolean; account: ConnectedAccount | null; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ ...emptyAccountForm });
-  const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<Record<string, boolean>>({});
   const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, enabled: open && Boolean(account), retry: false });
   const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, enabled: open && Boolean(account), retry: false });
   const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, enabled: open && Boolean(account), retry: false });
   const accountIdentifier = account?.id;
   const webhook = useQuery({ queryKey: ["account-feishu-webhook", accountIdentifier], queryFn: () => getAccountFeishuWebhookSettings(accountIdentifier!), enabled: open && Boolean(accountIdentifier), retry: false });
-  const saveBinding = useMutation({ mutationFn: saveAITaskBinding, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
-  const saveWebhook = useMutation({ mutationFn: (value: { enabled: boolean; url: string }) => saveAccountFeishuWebhookSettings(accountIdentifier!, value), onSuccess: (value) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], value), onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const saveBinding = useMutation({ mutationFn: saveAITaskBinding, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); }, onError: (value) => toastError(value, copy.loadFailed) });
+  const saveWebhook = useMutation({ mutationFn: (value: { enabled: boolean; url: string }) => saveAccountFeishuWebhookSettings(accountIdentifier!, value), onSuccess: (value) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], value), onError: (value) => toastError(value, copy.loadFailed) });
   useEffect(() => {
     if (!open) return;
     setForm(account ? {
@@ -1011,34 +1166,110 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
       smtp_server: account.smtpServer || "",
       smtp_port: account.smtpPort || 587,
     } : { ...emptyAccountForm });
-    setError("");
+    setInvalid({});
   }, [account, open]);
   const changeOpen = (value: boolean) => {
-    if (!value) setError("");
+    if (!value) setInvalid({});
     onOpenChange(value);
   };
-  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setError(""); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => setError(value instanceof Error ? value.message : copy.loadFailed) });
+  const persist = useMutation({ mutationFn: () => account ? updateAccount(account.id, form) : addAccount(form), onSuccess: () => { setForm({ ...emptyAccountForm }); setInvalid({}); void queryClient.invalidateQueries({ queryKey: ["accounts"] }); void queryClient.invalidateQueries({ queryKey: ["conversations"] }); void queryClient.invalidateQueries({ queryKey: ["mailbox-shell"] }); void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); onOpenChange(false); if (account) toast.success(copy.accountUpdated); }, onError: (value) => toastError(value, copy.loadFailed) });
+  const clearInvalid = (name: string) => setInvalid((current) => {
+    if (!current[name]) return current;
+    const next = { ...current };
+    delete next[name];
+    return next;
+  });
   const field = (name: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.type === "number" ? Number(event.target.value) : event.target.value;
     setForm((current) => ({ ...current, [name]: value }));
+    clearInvalid(name);
+  };
+  const webhookURL = webhook.data?.url || "";
+  const webhookInvalid = Boolean(invalid.webhook);
+  const validWebhookURL = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+  const setWebhookEnabled = (nextEnabled: boolean) => {
+    if (nextEnabled && !webhookURL.trim()) {
+      setInvalid((current) => ({ ...current, webhook: true }));
+      toast.error(copy.feishuWebhookURLRequired);
+      return;
+    }
+    if (nextEnabled && !validWebhookURL(webhookURL.trim())) {
+      setInvalid((current) => ({ ...current, webhook: true }));
+      toast.error(copy.webhookURLInvalid);
+      return;
+    }
+    clearInvalid("webhook");
+    saveWebhook.mutate({ enabled: nextEnabled, url: webhookURL });
+  };
+  const saveWebhookField = () => {
+    const url = webhookURL.trim();
+    if (webhook.data?.enabled && !url) {
+      setInvalid((current) => ({ ...current, webhook: true }));
+      toast.error(copy.feishuWebhookURLRequired);
+      return;
+    }
+    if (url && !validWebhookURL(url)) {
+      setInvalid((current) => ({ ...current, webhook: true }));
+      toast.error(copy.webhookURLInvalid);
+      return;
+    }
+    clearInvalid("webhook");
+    if (webhook.data) saveWebhook.mutate({ enabled: webhook.data.enabled || false, url });
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const nextInvalid: Record<string, boolean> = {};
+    const messages: string[] = [];
+    if (!form.email.trim()) {
+      nextInvalid.email = true;
+      messages.push(copy.accountEmailRequired);
+    } else if (!isValidRecipient(form.email.trim())) {
+      nextInvalid.email = true;
+      messages.push(copy.invalidRecipient);
+    }
+    if (!account && !form.password.trim()) {
+      nextInvalid.password = true;
+      messages.push(copy.accountPasswordRequired);
+    }
+    for (const port of ["imap_port", "smtp_port"] as const) {
+      const value = Number(form[port]);
+      if (!Number.isInteger(value) || value < 1 || value > 65535) {
+        nextInvalid[port] = true;
+        messages.push(copy.invalidPort);
+      }
+    }
+    if (messages.length) {
+      setInvalid(nextInvalid);
+      toast.error(messages.length === 1 ? messages[0] : copy.requiredFieldsMissing);
+      return;
+    }
+    setInvalid({});
+    persist.mutate();
   };
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="flex h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[calc(100dvh-3rem)] w-[calc(100%-1.5rem)] sm:w-auto flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{account ? copy.editAccount : copy.addAccount}</DialogTitle><DialogDescription>{copy.mailboxDescription}</DialogDescription></DialogHeader>
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); setError(""); persist.mutate(); }}>
+        <form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={submit}>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-5 touch-pan-y">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} onChange={field("email")} autoComplete="email" disabled={Boolean(account)} required /></Label>
-              <Label className="grid gap-1.5">{copy.password}{account && <span className="text-xs font-normal text-muted-foreground">{copy.passwordKeep}</span>}<Input type="password" value={form.password} onChange={field("password")} autoComplete="new-password" required={!account} /></Label>
+              <Label className="grid gap-1.5">{copy.email}<Input type="email" value={form.email} aria-invalid={invalid.email} onChange={field("email")} autoComplete="email" disabled={Boolean(account)} required /></Label>
+              <Label className="grid gap-1.5">{copy.password}{account && <span className="text-xs font-normal text-muted-foreground">{copy.passwordKeep}</span>}<Input type="password" value={form.password} aria-invalid={invalid.password} onChange={field("password")} autoComplete="new-password" required={!account} /></Label>
               <Label className="grid gap-1.5">{copy.displayName} ({copy.optional})<Input value={form.label} onChange={field("label")} /></Label>
               <Label className="grid gap-1.5">{copy.color}<Input className="p-1" type="color" value={form.color} onChange={field("color")} /></Label>
             </div>
             <div className="grid gap-3 border-t pt-5 sm:grid-cols-[minmax(0,1fr)_8rem]">
               <Label className="grid gap-1.5">{copy.imapServer}<Input value={form.imap_server} onChange={field("imap_server")} placeholder="imap.example.com" /></Label>
-              <Label className="grid gap-1.5">{copy.imapPort}<Input type="number" min={1} max={65535} value={form.imap_port} onChange={field("imap_port")} required /></Label>
+              <Label className="grid gap-1.5">{copy.imapPort}<Input type="number" min={1} max={65535} value={form.imap_port} aria-invalid={invalid.imap_port} onChange={field("imap_port")} required /></Label>
               <Label className="grid gap-1.5">{copy.smtpServer}<Input value={form.smtp_server} onChange={field("smtp_server")} placeholder="smtp.example.com" /></Label>
-              <Label className="grid gap-1.5">{copy.smtpPort}<Input type="number" min={1} max={65535} value={form.smtp_port} onChange={field("smtp_port")} required /></Label>
+              <Label className="grid gap-1.5">{copy.smtpPort}<Input type="number" min={1} max={65535} value={form.smtp_port} aria-invalid={invalid.smtp_port} onChange={field("smtp_port")} required /></Label>
             </div>
             {account && <div className="grid gap-4 border-t pt-5">
               <div><h3 className="text-sm font-semibold">{copy.mailboxAIConfiguration}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p></div>
@@ -1055,22 +1286,26 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
                   <TableBody>
                     {(["mail_summary", "email_draft", "reply_suggestion"] as const).map((taskType) => {
                       const binding = bindings.data?.bindings.find((item) => item.accountEmail === account.email && item.taskType === taskType);
-                      const enabled = binding?.enabled !== false;
                       const label = taskType === "mail_summary" ? copy.mailSummaryAgent : taskType === "email_draft" ? copy.emailDraftAgent : copy.replySuggestionAgent;
                       const availableAgents = (agents.data?.agents || []).filter((item) => taskType !== "mail_summary" || item.outputLabels.length > 0);
-                      return <TableRow key={taskType}>
-                        <TableCell className="px-3 py-3 font-medium">{label}</TableCell>
-                        <TableCell className="px-3 py-3"><Select value={binding?.agentId || ""} disabled={!enabled || !availableAgents.length || saveBinding.isPending} onValueChange={(value) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: value || "", modelId: binding.modelId || "", enabled })}><SelectTrigger className="w-full"><SelectValue>{availableAgents.find((item) => item.id === binding?.agentId)?.name || copy.noAgents}</SelectValue></SelectTrigger><SelectContent>{availableAgents.map((item) => <SelectItem value={item.id} key={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></TableCell>
-                        <TableCell className="px-3 py-3"><Select value={binding?.modelId || ""} disabled={!enabled || !models.data?.models.length || saveBinding.isPending} onValueChange={(value) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: binding.agentId || "", modelId: value || "", enabled })}><SelectTrigger className="w-full"><SelectValue>{models.data?.models.find((item) => item.id === binding?.modelId)?.model || copy.noAIModels}</SelectValue></SelectTrigger><SelectContent>{models.data?.models.map((item) => <SelectItem value={item.id} key={item.id}>{item.model}</SelectItem>)}</SelectContent></Select></TableCell>
-                        <TableCell className="px-3 py-3 text-center"><Switch aria-label={label} checked={enabled} disabled={!binding || saveBinding.isPending} onCheckedChange={(checked) => binding && saveBinding.mutate({ accountEmail: account.email, taskType, agentId: binding.agentId || "", modelId: binding.modelId || "", enabled: checked })} /></TableCell>
-                      </TableRow>;
+                      return <AIBindingRow
+                        key={taskType}
+                        copy={copy}
+                        accountEmail={account.email}
+                        taskType={taskType}
+                        label={label}
+                        binding={binding}
+                        agents={availableAgents}
+                        models={models.data?.models || []}
+                        pending={saveBinding.isPending}
+                        onSave={saveBinding.mutate}
+                      />;
                     })}
                   </TableBody>
                 </Table>
               </div>
-              <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={(enabled) => { const url = webhook.data?.url || ""; if (enabled && !url) { setError(copy.feishuWebhookURLRequired); return; } saveWebhook.mutate({ enabled, url }); }} /></div><Input type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhook.data?.url || ""} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value })} onBlur={() => webhook.data && saveWebhook.mutate(webhook.data)} /></div>
+              <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={setWebhookEnabled} /></div><Input type="url" aria-invalid={webhookInvalid} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhookURL} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value }); clearInvalid("webhook"); }} onBlur={saveWebhookField} /></div>
             </div>}
-            {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
           <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>
         </form>

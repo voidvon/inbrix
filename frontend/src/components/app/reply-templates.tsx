@@ -4,7 +4,7 @@ import { closeHistory } from "@tiptap/pm/history";
 import { TextSelection } from "@tiptap/pm/state";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { getReplyTemplates, saveReplyTemplates, type ReplyTemplate } from "../../lib/api";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";

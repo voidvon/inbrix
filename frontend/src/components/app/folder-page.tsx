@@ -9,7 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast, toastError } from "../../lib/toast";
 import {
   getFolderMessages,
   getMessage,
@@ -109,7 +109,6 @@ export function FolderPage({ folder }: { folder: string }) {
   const [detailOpen, setDetailOpen] = useState(() => Boolean(new URL(window.location.href).searchParams.get("message")));
   const [search, setSearch] = useState("");
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<MailMessage | null>(null);
-  const [permanentDeleteError, setPermanentDeleteError] = useState("");
   const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
   const markingReadRef = useRef(new Set<string>());
   const list = useQuery({ queryKey: ["folder", folder], queryFn: () => getFolderMessages(folder), retry: 1 });
@@ -204,10 +203,9 @@ export function FolderPage({ folder }: { folder: string }) {
     mutationFn: (message: MailMessage) => permanentlyDeleteMessage(folder, message.id, message.accountEmail || accountEmail),
     onSuccess: async (_, message) => {
       setPermanentDeleteTarget(null);
-      setPermanentDeleteError("");
       await removeMessageFromView(message);
     },
-    onError: (value) => setPermanentDeleteError(value instanceof Error ? value.message : locale.permanentDeleteFailed),
+    onError: (value) => toastError(value, locale.permanentDeleteFailed),
   });
 
   useEffect(() => {
@@ -292,7 +290,7 @@ export function FolderPage({ folder }: { folder: string }) {
                 actionPending={restoreMutation.isPending || permanentDeleteMutation.isPending}
                 onSelect={() => select(message.id)}
                 onNotSpam={() => restoreMutation.mutate(message)}
-                onPermanentDelete={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(message); }}
+                onPermanentDelete={() => setPermanentDeleteTarget(message)}
               />
             ))}
           </ScrollArea>
@@ -315,7 +313,7 @@ export function FolderPage({ folder }: { folder: string }) {
                   </Button>
                 )}
                 {canPermanentDelete && detail.data && (
-                  <Button variant="ghost" size="icon" title={locale.permanentDelete} aria-label={locale.permanentDelete} disabled={permanentDeleteMutation.isPending} onClick={() => { setPermanentDeleteError(""); setPermanentDeleteTarget(detail.data); }}>
+                  <Button variant="ghost" size="icon" title={locale.permanentDelete} aria-label={locale.permanentDelete} disabled={permanentDeleteMutation.isPending} onClick={() => setPermanentDeleteTarget(detail.data)}>
                     <Trash2 className="size-4" />
                   </Button>
                 )}
@@ -335,13 +333,12 @@ export function FolderPage({ folder }: { folder: string }) {
           </ScrollArea>
         </section>
       </main>
-      <Dialog open={Boolean(permanentDeleteTarget)} onOpenChange={(open) => { if (!open && !permanentDeleteMutation.isPending) { setPermanentDeleteTarget(null); setPermanentDeleteError(""); } }}>
+      <Dialog open={Boolean(permanentDeleteTarget)} onOpenChange={(open) => { if (!open && !permanentDeleteMutation.isPending) setPermanentDeleteTarget(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{locale.permanentDeleteTitle}</DialogTitle>
             <DialogDescription>{locale.permanentDeleteDescription}</DialogDescription>
           </DialogHeader>
-          {permanentDeleteError && <p className="text-sm text-destructive">{permanentDeleteError}</p>}
           <DialogFooter>
             <Button variant="ghost" disabled={permanentDeleteMutation.isPending} onClick={() => setPermanentDeleteTarget(null)}>
               {locale.cancel}

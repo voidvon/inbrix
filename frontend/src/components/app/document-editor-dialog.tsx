@@ -23,7 +23,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import type { CanvasDocumentEditorHandle } from "./canvas-document-editor";
 import { DocumentVariableForm } from "./document-variable-form";
 import { DocumentStampManager } from "./document-stamps";

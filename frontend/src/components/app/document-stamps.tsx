@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Stamp, Upload, Trash2, X, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
