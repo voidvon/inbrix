@@ -137,6 +137,27 @@ based on `[oauth2].mechanism`.
    views read from the mirror. Downloading an attachment, sending, or mutating a
    remote flag still uses IMAP/SMTP and then updates SQLite.
 
+`GET /api/conversations/:id` returns the latest three messages in chronological
+order by default. `limit` changes the page size (maximum 100). `around=<uid>`
+with `folder=<mailbox>` opens a three-message window around a full-text search
+hit; missing targets return 404. `cursor=oldestCursor` loads older messages;
+`after=newestCursor` loads newer ones. Responses include `hasMore`, `hasNewer`,
+and both opaque cursors. Cursor ordering uses timestamp, UID, folder, and
+conversation ID so equal timestamps and mailbox-local UIDs paginate stably.
+Only the selected page is hydrated with bodies, prepared HTML, and saved AI
+results.
+
+The React transcript requests three messages when scrolling towards either
+edge within one viewport (at least 600px), leaving room for continued scrolling
+while the page loads. It preserves the visible message as HTML frames resize;
+search positioning runs once per target rather than again on pagination.
+Realtime refreshes use `through=oldestCursor` and, for a middle window,
+`until=newestCursor`, so updates and deletions refresh only the loaded range.
+Reaching the latest page resumes suffix refreshes that include incoming mail.
+The back-to-latest button replaces the window with the latest three messages,
+cancels pending page requests, clears the search target from the URL, and
+restores bottom following without fetching intervening history.
+
 Full MIME body synchronization is enabled by default because it makes message
 detail reads independent of IMAP. Set `sync_bodies = false` to reduce disk or
 network use, accepting that an uncached first open then needs IMAP. IMAP remains

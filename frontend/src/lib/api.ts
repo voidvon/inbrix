@@ -305,8 +305,17 @@ export function updateRegistrationOpen(registrationOpen: boolean) {
   });
 }
 
-export function getConversation(id: string) {
-  return apiFetch<ConversationDetailResponse>(`/api/conversations/${encodeURIComponent(id)}`);
+export function getConversation(id: string, options: { limit?: number; cursor?: string; after?: string; through?: string; until?: string; around?: string; folder?: string; signal?: AbortSignal } = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.through) params.set("through", options.through);
+  if (options.until) params.set("until", options.until);
+  if (options.after) params.set("after", options.after);
+  if (options.around) params.set("around", options.around);
+  if (options.folder) params.set("folder", options.folder);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return apiFetch<ConversationDetailResponse>(`/api/conversations/${encodeURIComponent(id)}${suffix}`, { signal: options.signal });
 }
 
 export function startConversation(accountEmail: string, to: string) {

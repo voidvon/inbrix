@@ -144,6 +144,13 @@ export type ConversationDetail = {
   accountLabel?: string;
   accountColor?: string;
   messages: ConversationMessage[];
+  /** Whether messages older than this loaded window remain. */
+  hasMore?: boolean;
+  /** Opaque boundary for loading older messages or refreshing this window. */
+  oldestCursor?: string;
+  /** Whether the loaded window stops before the latest message. */
+  hasNewer?: boolean;
+  newestCursor?: string;
 };
 
 export type ConversationListResponse = {
@@ -170,6 +177,8 @@ export type ConversationListResponse = {
 };
 
 export type ConversationDetailResponse = {
+  /** Client-only navigation identity; retained by optimistic cache updates. */
+  windowTarget?: string;
   conversation: ConversationDetail;
 };
 

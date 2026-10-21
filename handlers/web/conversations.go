@@ -286,6 +286,9 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 	for _, group := range groups {
 		sort.SliceStable(group.messages, func(i, j int) bool {
 			if group.messages[i].Date.Equal(group.messages[j].Date) {
+				if group.messages[i].ID == group.messages[j].ID {
+					return group.messages[i].Folder < group.messages[j].Folder
+				}
 				return group.messages[i].ID < group.messages[j].ID
 			}
 			return group.messages[i].Date.Before(group.messages[j].Date)

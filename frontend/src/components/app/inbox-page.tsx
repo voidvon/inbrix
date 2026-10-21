@@ -5,7 +5,6 @@ import { toast, toastError } from "../../lib/toast";
 import {
   ApiError,
   deleteConversation,
-  getConversation,
   markConversationRead,
   markConversationUnread,
   retryOutgoing,
@@ -13,6 +12,7 @@ import {
 } from "../../lib/api";
 import { en } from "../../lib/locale";
 import { useConversationsQuery } from "../../lib/use-conversations";
+import { useConversationMessages } from "../../lib/use-conversation-messages";
 import {
   escapeHTML,
   splitRecipientValues,
@@ -107,12 +107,7 @@ export function InboxPage() {
     retry: 1,
   });
 
-  const detail = useQuery({
-    queryKey: ["conversation", selectedId],
-    queryFn: () => getConversation(selectedId!),
-    enabled: Boolean(selectedId),
-    retry: 1,
-  });
+  const detail = useConversationMessages(selectedId, messageTarget);
 
   useEffect(() => {
     if (!conversations.data) return;
@@ -428,6 +423,19 @@ export function InboxPage() {
           loading={detail.isPending && Boolean(selectedId)}
           error={detail.error}
           focusTarget={messageTarget}
+          onLoadOlder={detail.loadOlder}
+          loadingOlder={detail.loadingOlder}
+          loadOlderError={detail.loadOlderError}
+          onLoadNewer={detail.loadNewer}
+          loadingNewer={detail.loadingNewer}
+          loadNewerError={detail.loadNewerError}
+          loadingLatest={detail.loadingLatest}
+          onGoLatest={async () => {
+            if (!await detail.goLatest()) return false;
+            setMessageTarget(null);
+            setConversationURL(selectedId, "replace");
+            return true;
+          }}
           onBack={closeChat}
           onReply={openReply}
           onReplyAll={openReplyAll}

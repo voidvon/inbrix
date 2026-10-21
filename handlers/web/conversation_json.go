@@ -114,6 +114,10 @@ type ConversationDetailJSON struct {
 	AccountLabel string                    `json:"accountLabel,omitempty"`
 	AccountColor string                    `json:"accountColor,omitempty"`
 	Messages     []ConversationMessageJSON `json:"messages"`
+	HasMore      bool                      `json:"hasMore"`
+	HasNewer     bool                      `json:"hasNewer"`
+	OldestCursor string                    `json:"oldestCursor,omitempty"`
+	NewestCursor string                    `json:"newestCursor,omitempty"`
 }
 
 type ConversationAccountErrorJSON struct {
@@ -611,10 +615,17 @@ func (h *EmailHandler) HandleStartConversationJSON(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error loading local conversations")
 	}
 	if existing := findConversation(conversations, id); existing != nil {
+		page, err := pageConversationMessages(c, existing)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid message cursor")
+		}
 		if err := h.hydrateConversation(c, account.ID, existing); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Error loading conversation messages")
 		}
-		return c.JSON(fiber.Map{"conversation": conversationDetailJSONForLocale(*existing, CurrentLocale(c))})
+		response := conversationDetailJSONForLocale(*existing, CurrentLocale(c))
+		response.HasMore, response.OldestCursor = page.HasMore, page.OldestCursor
+		response.HasNewer, response.NewestCursor = page.HasNewer, page.NewestCursor
+		return c.JSON(fiber.Map{"conversation": response})
 	}
 	draft, err := h.mailDB.SaveDraft(c.UserContext(), ownerID, mailstore.DraftInput{
 		AccountEmail: account.Email, ConversationID: id, Mode: mailstore.DraftModeNew, To: to,
@@ -642,10 +653,19 @@ func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
 	if !accountOK {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
+	page, err := pageConversationMessages(c, selected)
+	if errors.Is(err, errMessageTargetNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found in conversation"})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message cursor"})
+	}
 	if err := h.hydrateConversation(c, account.ID, selected); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
 	response := conversationDetailJSONForLocale(*selected, CurrentLocale(c))
+	response.HasMore, response.OldestCursor = page.HasMore, page.OldestCursor
+	response.HasNewer, response.NewestCursor = page.HasNewer, page.NewestCursor
 	keys := make([]mailstore.MessageSummaryKey, 0, len(selected.Messages))
 	for _, message := range selected.Messages {
 		if message.Email.Folder == "Outbox" {

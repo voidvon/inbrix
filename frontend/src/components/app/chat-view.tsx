@@ -72,6 +72,7 @@ import type {
 import { type Copy, zh } from "../../lib/locale";
 import { AIStatusIndicator } from "./ai-status-indicator";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
+import { captureTranscriptAnchor, preserveTranscriptScroll, registerTranscriptScroll, transcriptAnchorTop, type TranscriptScrollAnchor } from "../../lib/transcript-scroll";
 
 export function ConversationList({
   copy,
@@ -410,6 +411,17 @@ export function ConversationRow({
   );
 }
 
+type TranscriptPaginationProps = {
+  onLoadOlder?: () => void | Promise<void>;
+  loadingOlder?: boolean;
+  loadOlderError?: Error | null;
+  onLoadNewer?: () => void | Promise<void>;
+  loadingNewer?: boolean;
+  loadNewerError?: Error | null;
+  onGoLatest?: () => Promise<boolean>;
+  loadingLatest?: boolean;
+};
+
 export function ChatPanel({
   copy,
   detail,
@@ -424,6 +436,14 @@ export function ChatPanel({
   onConversationEmpty,
   className,
   focusTarget,
+  onLoadOlder,
+  loadingOlder,
+  loadOlderError,
+  onLoadNewer,
+  loadingNewer,
+  loadNewerError,
+  onGoLatest,
+  loadingLatest,
 }: {
   copy: Copy;
   detail?: ConversationDetail;
@@ -439,7 +459,7 @@ export function ChatPanel({
   className?: string;
   /** Message to scroll to and highlight once the conversation is on screen. */
   focusTarget?: MailFocusTarget | null;
-}) {
+} & TranscriptPaginationProps) {
   const panelClass = cn("min-w-0 flex-1 flex-col bg-surface", className);
   if (loading && !detail)
     return (
@@ -465,6 +485,14 @@ export function ChatPanel({
       detail={detail}
       className={className}
       focusTarget={focusTarget}
+      onLoadOlder={onLoadOlder}
+      loadingOlder={loadingOlder}
+      loadOlderError={loadOlderError}
+      onLoadNewer={onLoadNewer}
+      loadingNewer={loadingNewer}
+      loadNewerError={loadNewerError}
+      onGoLatest={onGoLatest}
+      loadingLatest={loadingLatest}
       onBack={onBack}
       onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
       onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
@@ -498,6 +526,14 @@ export function ChatView({
   onConversationEmpty,
   className,
   focusTarget,
+  onLoadOlder,
+  loadingOlder = false,
+  loadOlderError,
+  onLoadNewer,
+  loadingNewer,
+  loadNewerError,
+  onGoLatest,
+  loadingLatest,
 }: {
   copy: Copy;
   detail: ConversationDetail;
@@ -510,9 +546,18 @@ export function ChatView({
   onConversationEmpty: () => void;
   className?: string;
   focusTarget?: MailFocusTarget | null;
-}) {
+} & TranscriptPaginationProps) {
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [latestJump, setLatestJump] = useState(0);
+  const jumpLatestPending = useRef(false);
+  const focusedNavigation = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const scrollAnchor = useRef<TranscriptScrollAnchor | null>(null);
+  const programmaticTop = useRef(-1);
+  const userScrollDelta = useRef(0);
+  const syncScrollRef = useRef<() => void>(() => {});
   const queryClient = useQueryClient();
   const { compose, openCompose, closeCompose, accountEmail: shellAccountEmail } = useShell();
   // The compose window resolves its own account the same way, so both sides of
@@ -551,7 +596,9 @@ export function ChatView({
   // While a search hit is focused, the transcript must not keep snapping to the
   // newest message: the reader asked to land on a specific one.
   const focusActiveRef = useRef(Boolean(focusKey));
-  focusActiveRef.current = Boolean(focusKey);
+  focusActiveRef.current = Boolean(focusKey && focusedNavigation.current !== `${detail.id}\u0000${focusKey}`);
+  const hasNewerRef = useRef(Boolean(detail.hasNewer));
+  hasNewerRef.current = Boolean(detail.hasNewer);
 
   useEffect(() => {
     setFocusedMessageIds([]);
@@ -602,9 +649,9 @@ export function ChatView({
     },
     onSuccess: async () => {
       setDeleteTarget(null);
-      if (detail.messages.length === 1) onConversationEmpty();
+      if (detail.count === 1) onConversationEmpty();
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      if (detail.messages.length > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
+      if (detail.count > 1) await queryClient.invalidateQueries({ queryKey: ["conversation", detail.id] });
     },
     onError: (value) => toastError(value, copy.deleteEmailFailed),
   });
@@ -618,33 +665,178 @@ export function ChatView({
     const scroll = scrollRef.current;
     const content = contentRef.current;
     if (!scroll || !content) return;
-    const stickToBottom = { current: true };
+    stickToBottom.current = !focusActiveRef.current && !detail.hasNewer;
+    scrollAnchor.current = null;
+    programmaticTop.current = -1;
     const jumpToLatest = () => {
       const previousBehavior = scroll.style.scrollBehavior;
       scroll.style.scrollBehavior = "auto";
       scroll.scrollTop = scroll.scrollHeight;
+      programmaticTop.current = scroll.scrollTop;
       scroll.style.scrollBehavior = previousBehavior;
     };
-    const updateStickiness = () => {
-      stickToBottom.current = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+    const captureAnchor = () => {
+      const top = scroll.getBoundingClientRect().top;
+      const anchor = Array.from(content.querySelectorAll<HTMLElement>("[data-message-key]")).find(
+        (element) => element.getBoundingClientRect().bottom > top
+      );
+      scrollAnchor.current = anchor ? captureTranscriptAnchor(scroll, anchor) : null;
+      programmaticTop.current = scroll.scrollTop;
     };
-    const keepLatestVisible = () => {
-      if (stickToBottom.current && !focusActiveRef.current) jumpToLatest();
+    const updateStickiness = () => {
+      // Restoring the viewport can expose part of a newly prepended bubble.
+      // Keep the original anchor until the reader actually scrolls, so a late
+      // iframe resize cannot replace it with that bubble and shift the page.
+      userScrollDelta.current = scroll.scrollTop - programmaticTop.current;
+      if (userScrollDelta.current === 0) return;
+      syncScroll();
+      captureAnchor();
+    };
+    const syncScroll = () => {
+      // Wheel/touch scrolling can move the viewport before its scroll event is
+      // delivered. Carry that movement into the stored anchor before a resize
+      // correction, otherwise a late image load cancels the reader's input.
+      const delta = programmaticTop.current >= 0 ? scroll.scrollTop - programmaticTop.current : 0;
+      // Upward movement always leaves follow mode. Re-enter only at the actual
+      // bottom (allowing pixel rounding), so small wheel steps are never undone.
+      if (delta < 0) stickToBottom.current = false;
+      else if (delta > 0) stickToBottom.current = !hasNewerRef.current && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 2;
+      if (scrollAnchor.current) {
+        scrollAnchor.current.top -= delta;
+      }
+      if (stickToBottom.current && !focusActiveRef.current && !hasNewerRef.current) {
+        jumpToLatest();
+        captureAnchor();
+      } else if (scrollAnchor.current) {
+        const anchor = Array.from(content.querySelectorAll<HTMLElement>("[data-message-key]")).find(
+          (element) => element.dataset.messageKey === scrollAnchor.current?.key
+        );
+        if (anchor) {
+          scroll.scrollTop += transcriptAnchorTop(scroll, anchor, scrollAnchor.current) - scrollAnchor.current.top;
+          programmaticTop.current = scroll.scrollTop;
+        } else captureAnchor();
+      } else captureAnchor();
+      programmaticTop.current = scroll.scrollTop;
+      setAwayFromBottom(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > 80);
+    };
+    syncScrollRef.current = syncScroll;
+    const unregisterScroll = registerTranscriptScroll(scroll, syncScroll);
+
+    // Release following on upward input before the browser scrolls, including
+    // when a frame resizes before the resulting scroll event is delivered.
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 && !event.ctrlKey) stickToBottom.current = false;
+    };
+    let touchY = 0;
+    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY || 0; };
+    const onTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY || 0;
+      if (nextY > touchY) stickToBottom.current = false;
+      touchY = nextY;
     };
 
     scroll.addEventListener("scroll", updateStickiness, { passive: true });
-    const resizeObserver = new ResizeObserver(keepLatestVisible);
+    scroll.addEventListener("wheel", onWheel, { passive: true });
+    scroll.addEventListener("touchstart", onTouchStart, { passive: true });
+    scroll.addEventListener("touchmove", onTouchMove, { passive: true });
+    const resizeObserver = new ResizeObserver(syncScroll);
     if (!focusActiveRef.current) jumpToLatest();
+    captureAnchor();
     resizeObserver.observe(content);
     const frame = window.requestAnimationFrame(() => {
-      if (!focusActiveRef.current) jumpToLatest();
+      syncScroll();
     });
     return () => {
       window.cancelAnimationFrame(frame);
       scroll.removeEventListener("scroll", updateStickiness);
+      scroll.removeEventListener("wheel", onWheel);
+      scroll.removeEventListener("touchstart", onTouchStart);
+      scroll.removeEventListener("touchmove", onTouchMove);
       resizeObserver.disconnect();
+      unregisterScroll();
+      syncScrollRef.current = () => {};
     };
-  }, [detail.id, detail.messages.length]);
+  }, [detail.id]);
+
+  useLayoutEffect(() => {
+    syncScrollRef.current();
+  }, [detail.messages]);
+
+  // Leave a viewport of runway for fetching/rendering before trackpad inertia
+  // reaches the top. Only upward input loads history, so a short initial page
+  // must not automatically drain the whole conversation.
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll || !detail.hasMore || !onLoadOlder || loadingOlder || loadOlderError) return;
+    const load = () => {
+      const preloadDistance = Math.max(600, scroll.clientHeight);
+      if (scroll.scrollTop > preloadDistance) return;
+      stickToBottom.current = false;
+      void onLoadOlder();
+    };
+    const onScroll = () => {
+      if (userScrollDelta.current < 0) load();
+    };
+    const onWheel = (event: WheelEvent) => { if (event.deltaY < 0 && !event.ctrlKey) load(); };
+    let touchY = 0;
+    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY || 0; };
+    const onTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY || 0;
+      if (nextY > touchY + 5) load();
+      touchY = nextY;
+    };
+    scroll.addEventListener("scroll", onScroll, { passive: true });
+    scroll.addEventListener("wheel", onWheel, { passive: true });
+    scroll.addEventListener("touchstart", onTouchStart, { passive: true });
+    scroll.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      scroll.removeEventListener("scroll", onScroll);
+      scroll.removeEventListener("wheel", onWheel);
+      scroll.removeEventListener("touchstart", onTouchStart);
+      scroll.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [detail.id, detail.hasMore, onLoadOlder, loadingOlder, loadOlderError]);
+
+  // A middle window also extends forwards. As with older pages, request with
+  // a screen of runway and only after downward input; appending must not enable
+  // follow mode while there are still newer pages outside the window.
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll || !detail.hasNewer || !onLoadNewer || loadingNewer || loadNewerError) return;
+    const load = () => {
+      if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > Math.max(600, scroll.clientHeight)) return;
+      stickToBottom.current = false;
+      void onLoadNewer();
+    };
+    const onScroll = () => { if (userScrollDelta.current > 0) load(); };
+    const onWheel = (event: WheelEvent) => { if (event.deltaY > 0 && !event.ctrlKey) load(); };
+    let touchY = 0;
+    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY || 0; };
+    const onTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY || 0;
+      if (nextY < touchY - 5) load();
+      touchY = nextY;
+    };
+    scroll.addEventListener("scroll", onScroll, { passive: true });
+    scroll.addEventListener("wheel", onWheel, { passive: true });
+    scroll.addEventListener("touchstart", onTouchStart, { passive: true });
+    scroll.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      scroll.removeEventListener("scroll", onScroll);
+      scroll.removeEventListener("wheel", onWheel);
+      scroll.removeEventListener("touchstart", onTouchStart);
+      scroll.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [detail.id, detail.hasNewer, onLoadNewer, loadingNewer, loadNewerError]);
+
+  useLayoutEffect(() => {
+    if (!jumpLatestPending.current) return;
+    jumpLatestPending.current = false;
+    scrollAnchor.current = null;
+    programmaticTop.current = -1;
+    stickToBottom.current = true;
+    syncScrollRef.current();
+  }, [latestJump]);
 
   // The reply editor is appended to the end of the transcript, so opening one
   // has to bring it into view even when the reader had scrolled back.
@@ -662,9 +854,12 @@ export function ChatView({
   // quotes or NUL-adjacent characters cannot break the query.
   useEffect(() => {
     if (!focusKey) {
+      focusedNavigation.current = "";
       setHighlightedMessageKey(null);
       return;
     }
+    const navigation = `${detail.id}\u0000${focusKey}`;
+    if (focusedNavigation.current === navigation) return;
     const content = contentRef.current;
     if (!content) return;
     const target = Array.from(content.querySelectorAll<HTMLElement>("[data-message-key]")).find(
@@ -673,18 +868,28 @@ export function ChatView({
     if (!target) return;
     setHighlightedMessageKey(focusKey);
     const frame = window.requestAnimationFrame(() => {
-      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      focusedNavigation.current = navigation;
+      focusActiveRef.current = false;
+      target.scrollIntoView({ block: "center", behavior: "auto" });
+      const scroll = scrollRef.current;
+      if (scroll) {
+        stickToBottom.current = false;
+        programmaticTop.current = scroll.scrollTop;
+        scrollAnchor.current = { key: focusKey, top: target.getBoundingClientRect().top - scroll.getBoundingClientRect().top };
+      }
     });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusKey, detail.id, detail.messages]);
+
+  useEffect(() => {
+    if (!highlightedMessageKey) return;
     const timer = window.setTimeout(() => setHighlightedMessageKey(null), MESSAGE_HIGHLIGHT_MS);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [focusKey, detail.id, detail.messages.length]);
+    return () => window.clearTimeout(timer);
+  }, [highlightedMessageKey]);
 
   return (
     <div className={cn("relative flex min-w-0 flex-1 overflow-hidden", className)}>
-      <section data-testid="conversation-detail" className="flex min-w-0 flex-1 flex-col bg-surface">
+      <section data-testid="conversation-detail" className="relative flex min-w-0 flex-1 flex-col bg-surface">
         <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 sm:px-5">
           <div className="flex min-w-0 items-center justify-start">
             <Button
@@ -750,8 +955,15 @@ export function ChatView({
             )}
           </div>
         </header>
-        <ScrollArea className="min-h-0 flex-1" viewportClassName="scroll-smooth" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8" viewportRef={scrollRef}>
+        <ScrollArea className="min-h-0 flex-1" viewportClassName="[overflow-anchor:none]" contentClassName="px-3 sm:px-[5vw] pt-4 sm:pt-6 pb-[max(5rem,calc(env(safe-area-inset-bottom)+3.5rem))] sm:pb-8" viewportRef={scrollRef}>
           <div ref={contentRef}>
+            {detail.hasMore && onLoadOlder && (
+              <div className="flex justify-center pb-4" data-testid="load-older-messages">
+                <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={loadingOlder} onClick={() => { stickToBottom.current = false; void onLoadOlder(); }}>
+                  {loadingOlder ? <><Loader2 className="size-4 animate-spin" />{copy.loading}</> : loadOlderError ? copy.retry : copy.loadOlderMessages}
+                </Button>
+              </div>
+            )}
             {detail.messages.map((message, index) => {
               const messageKey = messageKeyOf(message);
               const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
@@ -791,6 +1003,13 @@ export function ChatView({
                 </Fragment>
               );
             })}
+            {detail.hasNewer && onLoadNewer && (
+              <div className="flex justify-center py-4" data-testid="load-newer-messages">
+                <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={loadingNewer} onClick={() => { stickToBottom.current = false; void onLoadNewer(); }}>
+                  {loadingNewer ? <><Loader2 className="size-4 animate-spin" />{copy.loading}</> : loadNewerError ? copy.retry : copy.loadNewerMessages}
+                </Button>
+              </div>
+            )}
             {composeOpenHere ? (
               <ComposeDialog
                 copy={copy}
@@ -808,6 +1027,27 @@ export function ChatView({
             <ConversationNoteEntry key={detail.id} copy={copy} conversationId={detail.id} note={detail.note || ""} />
           </div>
         </ScrollArea>
+        {onGoLatest && (awayFromBottom || detail.hasNewer || focusKey) && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="absolute bottom-16 right-4 z-10 rounded-full shadow-md sm:bottom-4"
+            data-testid="return-to-latest"
+            disabled={loadingLatest}
+            onClick={() => { void (async () => {
+              try {
+                if (!await onGoLatest()) return;
+                jumpLatestPending.current = true;
+                setLatestJump(value => value + 1);
+              } catch (error) {
+                toastError(error, copy.loadFailed);
+              }
+            })(); }}
+          >
+            {loadingLatest ? <Loader2 className="size-4 animate-spin" /> : <ChevronDown className="size-4" />}
+            {copy.returnToLatest}
+          </Button>
+        )}
         <Dialog
           open={Boolean(deleteTarget)}
           onOpenChange={(open) => {
@@ -1793,7 +2033,7 @@ export function EmailHTMLFrame({
     let documentProbeTimer = 0;
     let lastHeight = 0;
 
-    frame.style.height = "1px";
+    preserveTranscriptScroll(rootRef.current, () => { frame.style.height = "1px"; });
 
     const measureNow = () => {
       if (!mounted) return;
@@ -1803,9 +2043,12 @@ export function EmailHTMLFrame({
       if (!root || !body) return;
 
       const height = Math.max(body.scrollHeight, body.offsetHeight, body.getBoundingClientRect().height, 48);
-      if (height === lastHeight) return;
+      if (height === lastHeight) {
+        preserveTranscriptScroll(rootRef.current, () => {});
+        return;
+      }
       lastHeight = height;
-      frame.style.height = `${height}px`;
+      preserveTranscriptScroll(rootRef.current, () => { frame.style.height = `${height}px`; });
     };
 
     const measure = () => {
@@ -1830,12 +2073,12 @@ export function EmailHTMLFrame({
         if (!doc.head || doc.head.querySelector("[data-inbrix-frame-style]")) return;
         const style = doc.createElement("style");
         style.dataset.inbrixFrameStyle = "";
-        style.textContent = "html, body { background-color: transparent !important; }";
+        style.textContent = "html, body { background-color: transparent !important; overflow-anchor: none; }";
         doc.head.append(style);
       };
 
       installTransparentBackground();
-      resizeObserver = new ResizeObserver(measure);
+      resizeObserver = new ResizeObserver(measureNow);
       resizeObserver.observe(doc.documentElement);
       if (doc.body) resizeObserver.observe(doc.body);
       mutationObserver = new MutationObserver(() => {
@@ -1845,7 +2088,9 @@ export function EmailHTMLFrame({
       mutationObserver.observe(doc, { childList: true, subtree: true, characterData: true });
 
       const onResource = (event: Event) => {
-        if (event.target instanceof HTMLImageElement) measure();
+        // Image nodes belong to the iframe's realm, so instanceof against the
+        // parent window's HTMLImageElement would miss their load events.
+        if ((event.target as Element | null)?.nodeName === "IMG") measureNow();
       };
       const onContextMenu = (event: MouseEvent) => {
         const target = event.target as Element | null;
@@ -1864,13 +2109,33 @@ export function EmailHTMLFrame({
           })
         );
       };
+      // Input inside an iframe does not bubble to the transcript. Forward only
+      // the intent (synthetic wheel events do not perform native scrolling),
+      // so even a short window at its boundary can request the next page.
+      const forwardScrollIntent = (deltaY: number, ctrlKey = false) => {
+        rootRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY, ctrlKey, bubbles: true }));
+      };
+      const onWheel = (event: WheelEvent) => forwardScrollIntent(event.deltaY, event.ctrlKey);
+      let touchY = 0;
+      const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY || 0; };
+      const onTouchMove = (event: TouchEvent) => {
+        const nextY = event.touches[0]?.clientY || 0;
+        if (Math.abs(touchY - nextY) > 5) forwardScrollIntent(touchY - nextY);
+        touchY = nextY;
+      };
       doc.addEventListener("load", onResource, true);
       doc.addEventListener("error", onResource, true);
       doc.addEventListener("contextmenu", onContextMenu);
+      doc.addEventListener("wheel", onWheel, { passive: true });
+      doc.addEventListener("touchstart", onTouchStart, { passive: true });
+      doc.addEventListener("touchmove", onTouchMove, { passive: true });
       resourceCleanup = () => {
         doc.removeEventListener("load", onResource, true);
         doc.removeEventListener("error", onResource, true);
         doc.removeEventListener("contextmenu", onContextMenu);
+        doc.removeEventListener("wheel", onWheel);
+        doc.removeEventListener("touchstart", onTouchStart);
+        doc.removeEventListener("touchmove", onTouchMove);
       };
       void doc.fonts?.ready.then(measure, measure);
       measure();
@@ -1905,7 +2170,7 @@ export function EmailHTMLFrame({
       window.clearTimeout(documentProbeTimer);
       clearDocumentObservers();
     };
-  }, [enabled, html]);
+  }, [enabled, html, rootRef]);
 
   return (
     <div ref={hostRef} className="min-h-12 w-full min-w-0">
