@@ -5,7 +5,10 @@ import clock3Icon from "../../assets/lucide/clock-3.svg?raw";
 import tagIcon from "../../assets/lucide/tag.svg?raw";
 import spiraxQuotationReference from "../../assets/spirax-sarco-quotation-reference.html?raw";
 
+import { collectProductImageValues } from "./product-document-images";
+
 const BLUE = "#005691";
+
 const NAVY = "#13284f";
 const LINE = "#d7dfec";
 const PALE = "#f8fafc";
@@ -114,6 +117,9 @@ function inlineLucideIcon(svg: string, size = 18): IElement[] {
 }
 
 export type ContractItem = {
+  productId?: string;
+  productVersion?: number;
+  picture?: string;
   model: string;
   description: string;
   qty: string;
@@ -152,12 +158,16 @@ export function extractLegacySpiraxContractValues(main: Array<ReturnType<import(
     }
   };
   visit(main);
+  collectProductImageValues(main, values);
 
   const extractedItems: ContractItem[] = [];
   let index = 0;
   while (`item_desc_${index}` in values || `item_model_${index}` in values) {
     extractedItems.push({
       model: values[`item_model_${index}`] || "",
+      picture: values[`item_picture_${index}`],
+      productId: values[`item_product_id_${index}`],
+      productVersion: Number(values[`item_product_version_${index}`]) || undefined,
       description: values[`item_desc_${index}`] || values[`item_description_${index}`] || "",
       qty: values[`item_qty_${index}`] || "",
       price: values[`item_price_${index}`] || "",
@@ -171,6 +181,9 @@ export function extractLegacySpiraxContractValues(main: Array<ReturnType<import(
     values.items = [
       {
         model: values.item_model || "",
+        picture: values.item_picture,
+        productId: values.item_product_id,
+        productVersion: Number(values.item_product_version) || undefined,
         description: values.item_description || "",
         qty: values.item_qty || "",
         price: values.item_price || "",
@@ -218,10 +231,10 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     const descValue = item.description || (item.model ? `Equipment\nModel: ${item.model}` : "");
 
     return {
-      height: itemRowHeight,
+      height: item.picture ? Math.max(itemRowHeight, 100) : itemRowHeight,
       cells: [
         cell([text(String(index + 1), { bold: true, size: 11, rowFlex: RowFlex.CENTER })]),
-        cell([controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 })]),
+        cell([controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 }), ...(item.picture ? [{ value: "\n" }, { type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { productId: item.productId, productVersion: item.productVersion } }] : [])]),
         cell([controlText(qtyId, item.qty || "", "Qty", { size: 11, rowFlex: RowFlex.CENTER })]),
         cell([controlText(priceId, item.price || "", "Unit Price", { size: 11, rowFlex: RowFlex.RIGHT })]),
         cell([controlText(amountId, item.amount || "", "Amount", { bold: true, size: 11.5, rowFlex: RowFlex.RIGHT })]),

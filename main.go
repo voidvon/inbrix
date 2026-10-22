@@ -369,7 +369,7 @@ func main() {
 
 	// React owns every browser page. The shell is public; data endpoints remain
 	// session-gated and return JSON when the user is not authenticated.
-	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/documents", "/price-lists", "/settings", "/calendar", "/calendar/week"} {
+	for _, path := range []string{"/", "/login", "/user-login", "/register", "/inbox", "/attachments", "/documents", "/price-lists", "/products", "/settings", "/calendar", "/calendar/week"} {
 		app.Get(path, csrfMiddleware, serveSPA)
 	}
 	app.Get("/documents/*", csrfMiddleware, serveSPA)
@@ -433,7 +433,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || c.Path() == "/api/automation" || strings.HasPrefix(c.Path(), "/api/automation/") || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || c.Path() == "/api/automation" || strings.HasPrefix(c.Path(), "/api/automation/") || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps") || c.Path() == "/products" || strings.HasPrefix(c.Path(), "/api/products") || strings.HasPrefix(c.Path(), "/api/product-categories") || strings.HasPrefix(c.Path(), "/api/product-images")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -470,6 +470,7 @@ func main() {
 	apiRoutes := protected.Group("/api")
 	web.NewAPIKeysHandler(mailMirror).Register(apiRoutes)
 	api.NewAutomationHandler(store, apiReference).Register(apiRoutes)
+	web.NewProductsHandler(store, mailMirror).Register(apiRoutes)
 	{
 		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
 			role := mailstore.RoleUser

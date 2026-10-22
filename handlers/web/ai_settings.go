@@ -858,11 +858,14 @@ func stripHeavyHTMLForAI(html string) string {
 }
 
 type AIDocumentItem struct {
-	Model       string `json:"model"`
-	Description string `json:"description"`
-	Qty         string `json:"qty"`
-	Price       string `json:"price"`
-	Amount      string `json:"amount"`
+	ProductID      string `json:"productId,omitempty"`
+	ProductVersion int64  `json:"productVersion,omitempty"`
+	Picture        string `json:"picture,omitempty"`
+	Model          string `json:"model"`
+	Description    string `json:"description"`
+	Qty            string `json:"qty"`
+	Price          string `json:"price"`
+	Amount         string `json:"amount"`
 }
 
 func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocumentItem, error) {
@@ -901,11 +904,13 @@ func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocument
 					return ""
 				}
 				items = append(items, AIDocumentItem{
-					Model:       getStr("model"),
-					Description: getStr("description"),
-					Qty:         getStr("qty"),
-					Price:       getStr("price"),
-					Amount:      getStr("amount"),
+					ProductID:      getStr("productId"),
+					ProductVersion: productVersionArg(itMap),
+					Model:          getStr("model"),
+					Description:    getStr("description"),
+					Qty:            getStr("qty"),
+					Price:          getStr("price"),
+					Amount:         getStr("amount"),
 				})
 			}
 		}

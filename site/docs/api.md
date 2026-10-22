@@ -245,6 +245,76 @@ the seam: it is only safe over a trusted transport.
 > scheme — see [SIGNING.md § 0](signing.md#0-inbrix-emits-no-webhooks) for what
 > to use instead (SSE, Web Push, or polling).
 
+## Product knowledge library (`/api/products`)
+
+With the local SQLite mirror enabled, product records, categories and images
+belong to the authenticated application user. They are shared across that
+user's mailboxes and work before a mailbox is attached. `X-Account-ID` does not
+change the library owner. All routes accept browser sessions or API keys;
+browser writes require CSRF. A foreign product, category or image returns `404`.
+
+| Method | Path | Query / body / result |
+|--------|------|-----------------------|
+| GET | `/api/product-categories` | `{categories:[{id,name,productCount}]}` |
+| POST | `/api/product-categories` | `{name}`; returns `{category}` |
+| PUT | `/api/product-categories/:id` | `{name}`; rename an owned category |
+| DELETE | `/api/product-categories/:id` | Uncategorizes its products and advances their versions; `{ok:true}` |
+| GET | `/api/products` | `q`, `categoryId`, `limit` (default 10, 1–20), `offset` (default 0, 0–100000); bounded product search page |
+| GET | `/api/products/search` | Same parameters and response as `/api/products` |
+| POST | `/api/products` | Product input below; `201 {product}` |
+| GET | `/api/products/:id` | `{product}` including complete specification, for the management editor |
+| PUT | `/api/products/:id` | Complete product input including current `version`; `{product}`; stale version `409` |
+| DELETE | `/api/products/:id` | Required query `version`; `{ok:true}`; stale version `409` |
+| GET | `/api/products/:id/read` | `version` (recommended), `offset` (Unicode characters, default 0), `length` (default 2400, 1–4000); bounded specification read; version conflict `409` |
+| GET | `/api/product-images/:id` | Owner-authenticated PNG/JPEG bytes; private, no-store |
+
+Product input is `{name,brand,model,categoryId,specification,version,imageDataUrl?}`.
+`name` is required (max 200 characters), `brand` max 100, `model` max 160.
+`categoryId` is an owned category ID or empty. `specification` is one Markdown
+text field (max 100,000 Unicode characters), including parameters, tables,
+conditions and source references. `version` is required on update. Omit
+`imageDataUrl` to keep the current image, send an empty string to remove it, or
+send a PNG/JPEG base64 data URL (decoded size at most 2 MiB, max 16 megapixels).
+Images are stored in SQLite under immutable owner-scoped IDs. The UI resizes
+uploads. Category names are required, unique per user, max 100 characters.
+
+Search returns `{products,total,hasMore,nextOffset}`. Each hit contains product
+metadata, `version`, `imageId`/`imageUrl`, `section`, `heading`, Unicode `offset`
+and an excerpt of at most 400 characters. Full specifications and image bytes
+are excluded. Empty `q` enumerates products. Nonempty queries use SQLite FTS5
+with Chinese character/bigram tokens, Latin words and normalized model matching
+(e.g. `KE-43` can be found using `ke43`). Terms are ANDed within an indexed
+section; this is **not** semantic search or numerical range filtering. Repeat
+the same query/category and use `nextOffset` to continue. Counts/offset pages
+reflect current data, so concurrent edits may change page boundaries.
+
+Reads return `{product,sections,sectionCount,hasMoreSections,content,offset,
+nextOffset,hasMore,totalLength}` without the full specification in `product`.
+The section directory includes at most 20 sections starting at the section
+containing the requested content offset. Each section has an index, heading,
+Unicode offset and length; use offsets to continue reading sections/table
+headers. The text is retained exactly, including original tables and units.
+Updates rebuild chunks and the full-text index in the same transaction.
+Only the current specification is retained; versions detect changed evidence,
+not a historical specification archive.
+
+The built-in email/document AI gains `list_product_categories`,
+`search_products`, and `read_product`. `read_product` requires the version
+returned by search. Tool results and the existing total context budget are
+bounded. Search only locates candidates: the agent must read limits and
+configuration conditions, distinguish supported/contradicted/unknown
+requirements, cite product/version/section, and state incomplete coverage.
+User-maintained reference text is data, not executable instructions.
+
+AI quotation/contract items can specify `productId` and `productVersion` from
+the library. The server validates ownership/version and resolves `picture`
+to the stored immutable image URL. Images are rendered in quotation picture
+cells and contract description cells. Saved documents retain their text and
+image references when products are changed or deleted. Old image blobs remain
+available to their owner for these references; a product deletion does not
+garbage-collect them. Product specifications do not establish commercial prices;
+the existing price-list and mail tools remain available for the relevant source.
+
 ## Conventions
 
 - **Folders** travel as the `folder` query parameter (default `INBOX`). This

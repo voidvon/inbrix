@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
+  BookOpen,
   CalendarDays,
   Check,
   ChevronDown,
@@ -41,7 +42,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { ScrollArea } from "../ui/scroll-area";
+import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Skeleton } from "../ui/skeleton";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 
@@ -125,7 +126,7 @@ export function Sidebar({
   accountEmail: string;
   calendarEnabled: boolean;
   currentFolder?: string;
-  currentView?: "mail" | "calendar" | "attachments" | "documents" | "prices";
+  currentView?: "mail" | "calendar" | "attachments" | "documents" | "prices" | "products";
   loading?: boolean;
   onCompose: () => void;
   onSettings: () => void;
@@ -146,6 +147,7 @@ export function Sidebar({
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
         <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView === "mail" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView === "mail" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
         <Button nativeButton={false} render={<a href="/documents" onClick={onClose} />} variant={currentView === "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><FilePenLine /><span>{copy.documents}</span></Button>
+        <Button nativeButton={false} render={<a href="/products" onClick={onClose} />} variant={currentView === "products" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "products" && "bg-sidebar-accent text-sidebar-accent-foreground")}><BookOpen /><span>{copy.products}</span></Button>
         <Button nativeButton={false} render={<a href="/price-lists" onClick={onClose} />} variant={currentView === "prices" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "prices" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Table2 /><span>{copy.priceLists}</span></Button>
         <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
         {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
@@ -214,10 +216,12 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   const copy = useLocale(shell.data?.locale);
 
-  let currentView: "mail" | "calendar" | "attachments" | "documents" | "prices" = "mail";
+  let currentView: "mail" | "calendar" | "attachments" | "documents" | "prices" | "products" = "mail";
   let currentFolder: string | undefined = undefined;
 
-  if (path === "/price-lists") {
+  if (path === "/products") {
+    currentView = "products";
+  } else if (path === "/price-lists") {
     currentView = "prices";
   } else if (path === "/documents" || path.startsWith("/documents/")) {
     currentView = "documents";
@@ -244,6 +248,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   const unreadMailCount = shell.data?.unreadCount
     ?? (shell.data?.conversations || []).reduce((total, conversation) => total + (conversation.unreadCount || 0), 0);
   const viewLabel = (() => {
+    if (currentView === "products") return copy.products;
     if (currentView === "prices") return copy.priceLists;
     if (currentView === "documents") return copy.documents;
     if (currentView === "attachments") return copy.attachmentManager;

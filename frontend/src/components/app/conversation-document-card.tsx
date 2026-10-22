@@ -30,6 +30,9 @@ type Props = {
 /** The persisted message keeps loose item fields; the builder wants them all. */
 function toQuotationItems(items: ConversationAIDocumentDraft["items"]) {
   return (items ?? []).map((item) => ({
+    productId: item.productId,
+    productVersion: item.productVersion,
+    picture: item.picture,
     model: item.model ?? "",
     description: item.description ?? "",
     qty: item.qty ?? "",

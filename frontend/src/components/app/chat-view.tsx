@@ -38,7 +38,7 @@ import { Button } from "../ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { ScrollArea } from "../ui/scroll-area";
+import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Separator } from "../ui/separator";
 import { Switch } from "../ui/switch";
 import {

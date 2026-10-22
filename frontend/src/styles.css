@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 /* Match the theme selected by theme.js and AppLayout, including manual overrides. */
 @custom-variant dark (&:where(.dark, .dark *));

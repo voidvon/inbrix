@@ -102,7 +102,7 @@ export type ConversationAIDocumentDraft = {
   counterparty: string;
   contact?: string;
   currency?: string;
-  items?: Array<{ model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  items?: Array<{ productId?: string; productVersion?: number; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
   terms?: string[];
   notes?: string;
   total?: string;
@@ -117,7 +117,7 @@ export type ConversationAIDocumentAction = {
   name?: string;
   company?: string;
   values?: Record<string, string>;
-  items?: Array<{ model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  items?: Array<{ productId?: string; productVersion?: number; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
   summary?: string;
 };
 

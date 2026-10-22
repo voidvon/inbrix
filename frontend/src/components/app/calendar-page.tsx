@@ -10,7 +10,7 @@ import { useShell } from "./shell-context";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ScrollArea } from "../ui/scroll-area";
+import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 
 export function CalendarPage() {
   const queryClient = useQueryClient();

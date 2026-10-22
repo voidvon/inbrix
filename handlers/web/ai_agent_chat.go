@@ -318,6 +318,9 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 
 	if generatedDocument != nil {
+		if err := h.resolveProductPictures(c.UserContext(), owner, generatedDocument.Items); err != nil {
+			return productError(err)
+		}
 		hydrateDocumentCard(generatedDocument)
 	}
 	if mailContext != nil {
@@ -364,6 +367,7 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
 		sb.WriteString(fmt.Sprintf("ACTIVE DOCUMENT IN WORKSPACE:\n- Type: %s\n- Title: %s\n- Counterparty: %s\n- Line Items: %d items\n\n", activeDoc.Type, activeDoc.Title, activeDoc.Counterparty, len(activeDoc.Items)))
 	}
 
+	sb.WriteString(productToolInstructions)
 	sb.WriteString(`AVAILABLE TOOLS:
 1. search_emails:
    Keyword/filter search of synchronized headers and bodies (ASCII case-insensitive), newest first. Space-separated terms are ANDed; this is not semantic search. Defaults to the CURRENT CONVERSATION when one is supplied; otherwise the current account. Empty query lists mail. Returns previews, hasMore and nextCursor, not full bodies.
@@ -704,6 +708,8 @@ func parseStringArg(args map[string]any, keys ...string) string {
 
 func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
 	switch call.Name {
+	case "search_products", "read_product", "list_product_categories":
+		return h.executeProductTool(ctx, owner, call)
 	case "search_emails":
 		return h.searchAgentEmails(ctx, accountID, nil, call.Args)
 
@@ -720,7 +726,11 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 		return h.executeReadDocument(ctx, owner, call.Args)
 
 	case "update_document":
-		return h.executeUpdateDocument(ctx, owner, call.Args, model, apiKey)
+		result, summary, err := h.executeUpdateDocument(ctx, owner, call.Args, model, apiKey)
+		if action, ok := result.(*AIDocumentAction); ok && err == nil {
+			err = h.resolveProductPictures(ctx, owner, action.Items)
+		}
+		return result, summary, err
 
 	case "delete_document":
 		return h.executeDeleteDocument(ctx, owner, call.Args)
@@ -729,7 +739,11 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 		return executeCalculatePricing(call.Args)
 
 	case "generate_document":
-		return executeGenerateDocument(call.Args)
+		result, summary, err := executeGenerateDocument(call.Args)
+		if card, ok := result.(*AIDocumentCard); ok && err == nil {
+			err = h.resolveProductPictures(ctx, owner, card.Items)
+		}
+		return result, summary, err
 
 	default:
 		return nil, "", fmt.Errorf("unknown tool: %q", call.Name)
@@ -811,11 +825,14 @@ func parseItemsArg(args map[string]any, keys ...string) []AIDocumentItem {
 				return ""
 			}
 			item := AIDocumentItem{
-				Model:       text("model", "sku", "name"),
-				Description: text("description", "desc", "item"),
-				Qty:         text("qty", "quantity"),
-				Price:       text("price", "unit_price", "unitPrice"),
-				Amount:      text("amount", "total"),
+				ProductID:      text("productId"),
+				ProductVersion: productVersionArg(object),
+				Picture:        text("picture"),
+				Model:          text("model", "sku", "name"),
+				Description:    text("description", "desc", "item"),
+				Qty:            text("qty", "quantity"),
+				Price:          text("price", "unit_price", "unitPrice"),
+				Amount:         text("amount", "total"),
 			}
 			if !itemIsEmpty(item) {
 				items = append(items, item)
@@ -949,6 +966,13 @@ func (h *AISettingsHandler) executeUpdateDocument(ctx context.Context, owner str
 	}
 	sort.Strings(changed)
 	if len(updatedItems) > 0 {
+		// Quantity/price edits must not discard an existing product image merely
+		// because the model omitted the optional picture field.
+		for i := range updatedItems {
+			if i < len(items) && updatedItems[i].ProductID == "" && updatedItems[i].Picture == "" && updatedItems[i].Model == items[i].Model {
+				updatedItems[i].Picture = items[i].Picture
+			}
+		}
 		items = updatedItems
 		changed = append(changed, fmt.Sprintf("items(%d)", len(updatedItems)))
 	}
@@ -1199,11 +1223,13 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 				}
 
 				items = append(items, AIDocumentItem{
-					Model:       model,
-					Description: desc,
-					Qty:         qty,
-					Price:       price,
-					Amount:      amount,
+					ProductID:      parseStringArg(itemMap, "productId"),
+					ProductVersion: productVersionArg(itemMap),
+					Model:          model,
+					Description:    desc,
+					Qty:            qty,
+					Price:          price,
+					Amount:         amount,
 				})
 			}
 		}

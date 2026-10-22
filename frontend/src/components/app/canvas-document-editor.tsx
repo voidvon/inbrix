@@ -4,6 +4,8 @@ import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
 import { controlText, createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, SPIRAX_CONTRACT_SELLER_COMPANY, type SpiraxContractValues } from "./spirax-contract-canvas";
 
+import { collectProductImageValues } from "./product-document-images";
+
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 
@@ -113,6 +115,7 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
     }
   };
   visit(main);
+  collectProductImageValues(main, values);
 
   const extractedItems: QuotationItem[] = [];
   let index = 0;
@@ -120,6 +123,8 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
     extractedItems.push({
       model: values[`item_model_${index}`] || "",
       picture: values[`item_picture_${index}`],
+      productId: values[`item_product_id_${index}`],
+      productVersion: Number(values[`item_product_version_${index}`]) || undefined,
       description: values[`item_description_${index}`] || "",
       qty: values[`item_qty_${index}`] || "",
       price: values[`item_price_${index}`] || "",
@@ -134,6 +139,8 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
       {
         model: values.item_model,
         picture: values.item_picture,
+        productId: values.item_product_id,
+        productVersion: Number(values.item_product_version) || undefined,
         description: values.item_description || "",
         qty: values.item_qty || "",
         price: values.item_price || "",
@@ -914,6 +921,9 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
             if (contractValues.items && contractValues.items.length > 0) {
               items = contractValues.items.map((it) => ({
                 model: it.model,
+                picture: it.picture,
+                productId: it.productId,
+                productVersion: it.productVersion,
                 description: it.description,
                 qty: it.qty,
                 price: it.price,

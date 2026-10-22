@@ -101,6 +101,7 @@ try {
   await chooseRecipient('ALICE@example.com');
   assert.equal(new URL(page.url()).searchParams.get('conversation'), existing.id);
   await page.getByTestId('conversation-detail').getByText('Original message', { exact: true }).waitFor({ state: 'attached' });
+  await inline.getByLabel('主题', { exact: true }).fill('New message to Alice');
   await inline.locator('.tiptap').fill('A new email in the existing conversation');
   await inline.getByRole('button', { name: '发送', exact: true }).click();
   await inline.waitFor({ state: 'hidden' });

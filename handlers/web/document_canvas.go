@@ -20,6 +20,7 @@ type canvasControl struct {
 }
 
 type canvasElement struct {
+	Type    string         `json:"type"`
 	Value   string         `json:"value"`
 	Control *canvasControl `json:"control"`
 	TrList  []canvasRow    `json:"trList"`
@@ -93,6 +94,7 @@ var itemFieldConcept = map[string]string{
 	"item_qty":         "qty",
 	"item_price":       "price",
 	"item_amount":      "amount",
+	"item_picture":     "picture",
 }
 
 // canvasDocumentItems rebuilds the line items from the flat control map, keeping
@@ -166,11 +168,13 @@ func assignItemField(item *AIDocumentItem, field, value string) {
 		item.Price = value
 	case "amount":
 		item.Amount = value
+	case "picture":
+		item.Picture = value
 	}
 }
 
 func itemIsEmpty(item AIDocumentItem) bool {
-	return strings.TrimSpace(item.Model) == "" && strings.TrimSpace(item.Description) == "" &&
+	return strings.TrimSpace(item.ProductID) == "" && strings.TrimSpace(item.Model) == "" && strings.TrimSpace(item.Description) == "" &&
 		strings.TrimSpace(item.Qty) == "" && strings.TrimSpace(item.Price) == "" && strings.TrimSpace(item.Amount) == ""
 }
 
@@ -184,6 +188,7 @@ func canvasDocumentContent(body string) (map[string]string, []AIDocumentItem, bo
 	}
 	values := make(map[string]string)
 	collectCanvasControls(payload.Data.Main, values)
+	collectCanvasProductImages(payload.Data.Main, values)
 	// Empty controls are noise for the model; drop them so a variable list stays
 	// readable and an update cannot "clear" a field by accident.
 	for key, value := range values {
@@ -192,6 +197,43 @@ func canvasDocumentContent(body string) (map[string]string, []AIDocumentItem, bo
 		}
 	}
 	return values, canvasDocumentItems(values), true
+}
+
+func collectCanvasProductImages(elements []canvasElement, values map[string]string) {
+	for _, element := range elements {
+		for _, row := range element.TrList {
+			var suffix, picture string
+			foundItem := false
+			for _, cell := range row.TdList {
+				for _, run := range cell.Value {
+					if run.Control != nil {
+						for _, prefix := range []string{"item_model", "item_description", "item_desc"} {
+							id := run.Control.ConceptID
+							if id == prefix {
+								suffix = ""
+								foundItem = true
+								break
+							}
+							if rest := strings.TrimPrefix(id, prefix+"_"); rest != id {
+								if _, err := strconv.Atoi(rest); err == nil {
+									suffix = "_" + rest
+									foundItem = true
+									break
+								}
+							}
+						}
+					}
+					if run.Type == "image" && strings.HasPrefix(run.Value, "/api/product-images/") {
+						picture = run.Value
+					}
+				}
+				collectCanvasProductImages(cell.Value, values)
+			}
+			if foundItem && picture != "" {
+				values["item_picture"+suffix] = picture
+			}
+		}
+	}
 }
 
 // documentValueKeys returns the field names in a stable order for prompts.

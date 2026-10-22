@@ -590,6 +590,8 @@ export type GenerateDocumentInput = {
 };
 
 export type QuotationItem = {
+  productId?: string;
+  productVersion?: number;
   model: string;
   picture?: string;
   description: string;

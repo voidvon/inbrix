@@ -46,7 +46,8 @@ type Store struct {
 	// a time, so several small write transactions can arrive together; SQLite
 	// resolves overlapping read-then-write transactions with SQLITE_BUSY rather
 	// than by waiting, so they are queued here instead.
-	priceMu sync.Mutex
+	priceMu   sync.Mutex
+	productMu sync.Mutex
 	// draftMu serializes draft upserts. Autosave resolves "does a draft for this
 	// conversation already exist?" with a read followed by a write, and two
 	// concurrent saves for the same conversation would otherwise race past each
@@ -680,6 +681,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("mailstore: migrate: %w", err)
 		}
+	}
+	if err := s.migrateProducts(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureAIAgentPurposeColumn(ctx); err != nil {
 		return err

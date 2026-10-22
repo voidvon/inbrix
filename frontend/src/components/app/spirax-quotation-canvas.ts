@@ -116,6 +116,8 @@ function sectionTitleCells(title: string, iconIndex: number) {
 }
 
 export type QuotationItem = {
+  productId?: string;
+  productVersion?: number;
   model: string;
   picture?: string;
   description: string;
@@ -158,7 +160,7 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
 
     const pictureCellContent: IElement[] = item.picture
-      ? [{ type: ElementType.IMAGE, value: item.picture, width: 80, height: 60 }]
+      ? [{ type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { productId: item.productId, productVersion: item.productVersion } }]
       : [text(" ", { size: 10 })];
 
     return {
