@@ -125,6 +125,8 @@ export type ConversationAIChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Source references allow later turns to re-read mail without saving bodies in chat. */
+  sources?: Array<{ uid: string; folder: string }>;
   createdAt: string;
   toolCalls?: ConversationAIToolCall[];
   /** Set when the agent drafted a document to save. */

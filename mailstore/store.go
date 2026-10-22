@@ -275,6 +275,29 @@ func (s *Store) migrate(ctx context.Context) error {
 			value TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS user_api_keys (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			key_prefix TEXT NOT NULL,
+			key_hash TEXT NOT NULL UNIQUE,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			revoked_at INTEGER NOT NULL DEFAULT 0,
+			last_used_at INTEGER NOT NULL DEFAULT 0,
+			last_used_ip TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_api_keys_owner ON user_api_keys(owner_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS user_api_key_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			api_key_id TEXT NOT NULL REFERENCES user_api_keys(id) ON DELETE CASCADE,
+			event_type TEXT NOT NULL,
+			client_ip TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			related_key_id TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_api_key_events_key ON user_api_key_events(api_key_id, id DESC)`,
 		`INSERT OR IGNORE INTO system_settings(key, value, updated_at) VALUES('registration_open', 'true', 0)`,
 		`CREATE TABLE IF NOT EXISTS mail_accounts (
 			id TEXT PRIMARY KEY,
@@ -530,6 +553,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			messages TEXT NOT NULL DEFAULT '[]',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id, conversation_id),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS conversation_ai_context (
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			history_hash TEXT NOT NULL DEFAULT '',
+			history_count INTEGER NOT NULL DEFAULT 0,
+			history_summary TEXT NOT NULL DEFAULT '',
+			mail_keys TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
@@ -813,7 +846,7 @@ func (s *Store) SaveConversationAIChat(ctx context.Context, accountID, conversat
 		if err != nil {
 			return fmt.Errorf("mailstore: delete conversation ai chat: %w", err)
 		}
-		return nil
+		return s.DeleteAIChatContext(ctx, accountID, conversationID)
 	}
 	now := time.Now().Unix()
 	_, err := s.db.ExecContext(ctx, `
@@ -837,7 +870,7 @@ func (s *Store) DeleteConversationAIChat(ctx context.Context, accountID, convers
 	if err != nil {
 		return fmt.Errorf("mailstore: delete conversation ai chat: %w", err)
 	}
-	return nil
+	return s.DeleteAIChatContext(ctx, accountID, conversationID)
 }
 
 type ConversationStatusRecord struct {

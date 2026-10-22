@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import React from "react";
 import type { Editor } from "@tiptap/react";
 import { linkifyText, splitQuotedText } from "./utils";
-import type { ConversationDetail, ConversationMessage } from "../types";
+import type { ConversationMessage } from "../types";
 import type { EmailSignature } from "./api";
 
 export const MAX_COMPOSE_ATTACHMENT_BYTES = 18 * 1024 * 1024;
@@ -339,77 +339,6 @@ export function aiConversationContext(messages: ConversationMessage[]) {
       content,
     ].filter(Boolean).join("\n");
   }).join("\n\n---\n\n");
-}
-
-/**
- * 提取单封邮件的核心正文，提前过滤并剔除历史邮件引用内容（> 引用、原始邮件分割线等）
- */
-export function extractCleanEmailBody(message: ConversationMessage): string {
-  let text = (message.body || "").trim();
-  if (!text && message.html) {
-    text = htmlToPlainText(message.html).trim();
-  }
-  if (!text && message.preview) {
-    text = message.preview.trim();
-  }
-  if (!text) return "";
-
-  const split = splitQuotedText(text);
-  const clean = split.visible.trim();
-  return clean || text;
-}
-
-/**
- * 将邮件会话（或用户选中的特定邮件）构建为 AI 讨论用的上下文，已自动剔除冗余的历史引用
- */
-export function buildConversationAIContext(detail: ConversationDetail, focusedIds?: string[]): string {
-  const allMessages = detail.messages || [];
-  if (allMessages.length === 0) return "";
-
-  const isFocused = Boolean(focusedIds && focusedIds.length > 0);
-  const targetMessages = isFocused
-    ? allMessages.filter((m) => focusedIds!.includes(m.id))
-    : allMessages;
-
-  const messagesToFormat = targetMessages.length > 0 ? targetMessages : allMessages;
-
-  const formattedMessages = messagesToFormat.map((msg, index) => {
-    const sender = msg.fromName ? `${msg.fromName} <${msg.from}>` : msg.from;
-    const cleanBody = extractCleanEmailBody(msg);
-    const summary = msg.mailSummary?.status === "ready" && msg.mailSummary.text.trim()
-      ? `\nAI摘要: ${msg.mailSummary.text.trim()}`
-      : "";
-
-    return [
-      isFocused ? `--- 关注的重点邮件 ${index + 1} ---` : `--- 第 ${index + 1} 封邮件 ---`,
-      `发件人: ${sender}`,
-      `收件人: ${msg.to || "-"}`,
-      msg.cc ? `抄送: ${msg.cc}` : "",
-      `发送时间: ${msg.date || "-"}`,
-      `主题: ${msg.subject || "-"}`,
-      summary,
-      `正文（已过滤引用）:\n${cleanBody || "(无正文内容)"}`,
-    ].filter(Boolean).join("\n");
-  }).join("\n\n");
-
-  if (isFocused) {
-    return [
-      `【会话背景主题】: ${detail.subject || detail.title || "无主题"}`,
-      `【联系人】: ${detail.peerEmail || detail.title || "-"}`,
-      `【注意】: 用户已指定重点针对以下 ${messagesToFormat.length} 封邮件进行定向问答与讨论，请优先围绕以下邮件内容进行深入回答：`,
-      "",
-      formattedMessages,
-    ].join("\n");
-  }
-
-  return [
-    `【会话主题】: ${detail.subject || detail.title || "无主题"}`,
-    `【联系人】: ${detail.peerEmail || detail.title || "-"}`,
-    `【邮件数量】: 共 ${allMessages.length} 封往来邮件`,
-    "",
-    "【邮件往来记录（已提前过滤掉历史重复引用内容）】:",
-    formattedMessages,
-  ].join("\n");
 }
 
 export function generatedEmailHTML(body: string) {

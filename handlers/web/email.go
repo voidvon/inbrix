@@ -104,7 +104,7 @@ func (h *EmailHandler) mailAccountOptions(c *fiber.Ctx) []mailAccountOption {
 	}
 
 	if h.mailDB != nil {
-		sess, err := h.store.Get(c)
+		sess, err := requestSession(c, h.store)
 		if err == nil {
 			owner, _ := sess.Get("user_id").(string)
 			if owner != "" {
@@ -136,7 +136,7 @@ func (h *EmailHandler) currentMirrorAccount(c *fiber.Ctx) (mailstore.Account, bo
 	if h.mailDB == nil {
 		return mailstore.Account{}, false
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return mailstore.Account{}, false
 	}
@@ -192,7 +192,7 @@ func (h *EmailHandler) mirrorAccounts(c *fiber.Ctx) ([]mailstore.Account, bool, 
 	if h.mailDB == nil {
 		return nil, false, nil
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return nil, false, err
 	}
@@ -245,7 +245,7 @@ func (h *EmailHandler) localUserWithoutMailbox(c *fiber.Ctx) bool {
 	if h.mailDB == nil {
 		return false
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return false
 	}
@@ -261,7 +261,7 @@ func (h *EmailHandler) mirrorAccountForEmail(c *fiber.Ctx, email string) (mailst
 	if h.mailDB == nil || strings.TrimSpace(email) == "" {
 		return mailstore.Account{}, false
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return mailstore.Account{}, false
 	}

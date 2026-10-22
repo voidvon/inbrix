@@ -12,6 +12,48 @@ export class ApiError extends Error {
   }
 }
 
+export type UserAPIKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  status: "active" | "expired" | "revoked";
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedIP: string;
+};
+
+export type UserAPIKeyWithSecret = UserAPIKey & { key: string };
+export type UserAPIKeyEvent = {
+  id: number;
+  type: "created" | "rotated" | "revoked";
+  clientIP: string;
+  reason?: string;
+  relatedKeyId?: string;
+  createdAt: string;
+};
+
+export function getUserAPIKeys() {
+  return apiFetch<{ keys: UserAPIKey[] }>("/api/settings/api-keys");
+}
+
+export function createUserAPIKey(input: { name: string; expiresAt: string | null }) {
+  return apiFetch<UserAPIKeyWithSecret>("/api/settings/api-keys", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function rotateUserAPIKey(id: string) {
+  return apiFetch<UserAPIKeyWithSecret>(`/api/settings/api-keys/${encodeURIComponent(id)}/rotate`, { method: "POST" });
+}
+
+export function revokeUserAPIKey(id: string) {
+  return apiFetch<{ ok: boolean }>(`/api/settings/api-keys/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+}
+
+export function getUserAPIKeyEvents(id: string) {
+  return apiFetch<{ events: UserAPIKeyEvent[] }>(`/api/settings/api-keys/${encodeURIComponent(id)}/events`);
+}
+
 async function fetchCSRFToken(signal?: AbortSignal | null) {
   const response = await fetch("/csrf", {
     headers: { Accept: "application/json" },
@@ -599,11 +641,14 @@ export type AIAgentDocumentCard = {
 
 export type AIAgentChatRequest = {
   accountEmail: string;
+  conversationId?: string;
+  focusedMessages?: Array<{ uid: string; folder: string }>;
   agentId?: string;
   modelId?: string;
   messages: Array<{
     role: "user" | "assistant";
     content: string;
+    sources?: Array<{ uid: string; folder: string }>;
     toolCalls?: AIToolCall[];
     document?: AIAgentDocumentCard;
   }>;
@@ -630,6 +675,7 @@ export type AIAgentDocumentAction = {
 
 export type AIAgentChatResponse = {
   content: string;
+  sources?: Array<{ uid: string; folder: string }>;
   toolCalls: AIToolCall[];
   document?: AIAgentDocumentCard;
   documentAction?: AIAgentDocumentAction;

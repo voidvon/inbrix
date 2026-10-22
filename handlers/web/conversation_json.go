@@ -733,7 +733,7 @@ func (h *EmailHandler) HandleConversationNoteJSON(c *fiber.Ctx) error {
 	if len([]rune(body.Note)) > 200 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Conversation note must not exceed 200 characters"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation note"})
 	}
@@ -761,7 +761,7 @@ func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
 	if selected == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not get user session"})
 	}
@@ -804,7 +804,7 @@ func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid messages payload"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation AI chat"})
 	}
@@ -832,7 +832,7 @@ func (h *EmailHandler) HandleDeleteConversationAIChatJSON(c *fiber.Ctx) error {
 	if selected == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation AI chat"})
 	}
@@ -869,7 +869,7 @@ func (h *EmailHandler) HandleConversationStatusJSON(c *fiber.Ctx) error {
 	if body.Status != "answered" && body.Status != "unanswered" && body.Status != "no_action" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid conversation status"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation status"})
 	}

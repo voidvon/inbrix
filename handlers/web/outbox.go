@@ -256,7 +256,7 @@ func (h *EmailHandler) ownedOutgoing(c *fiber.Ctx) (mailstore.OutgoingMessage, b
 		_ = c.Status(501).JSON(fiber.Map{"error": "Server outbox is unavailable"})
 		return mailstore.OutgoingMessage{}, false
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		_ = c.SendStatus(401)
 		return mailstore.OutgoingMessage{}, false

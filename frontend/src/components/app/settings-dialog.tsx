@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Info,
   Languages,
+  KeyRound,
   Mail,
   Pencil,
   Plus,
@@ -93,8 +94,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Textarea } from "../ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { RichTextButtons } from "./rich-text-buttons";
+import { APIKeysSettings } from "./api-keys-settings";
 
-export type SettingsSection = "account" | "general" | "signatures" | "ai" | "agents" | "error_logs" | "mailboxes" | "system" | "about";
+export type SettingsSection = "api_keys" | "account" | "general" | "signatures" | "ai" | "agents" | "error_logs" | "mailboxes" | "system" | "about";
 
 export function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [accountEditor, setAccountEditor] = useState<ConnectedAccount | null | undefined>(undefined);
@@ -132,6 +134,7 @@ export function SettingsContent({ copy, section, onSectionChange, onManageAccoun
     <div className="grid md:min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
       <nav className="flex gap-1 overflow-x-auto border-b pb-3 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:pr-4 shrink-0 scrollbar-none touch-pan-x" aria-label={copy.settings}>
         <Button className="shrink-0 justify-start" variant={section === "account" ? "secondary" : "ghost"} onClick={() => onSectionChange("account")}><UserRound />{copy.accountInfo}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "api_keys" ? "secondary" : "ghost"} onClick={() => onSectionChange("api_keys")}><KeyRound />{copy.apiKeys}</Button>
         <Button className="shrink-0 justify-start" variant={section === "general" ? "secondary" : "ghost"} onClick={() => onSectionChange("general")}><Settings />{copy.generalSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "mailboxes" ? "secondary" : "ghost"} onClick={() => onSectionChange("mailboxes")}><Mail />{copy.mailboxManagement}</Button>
         <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => onSectionChange("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
@@ -142,7 +145,7 @@ export function SettingsContent({ copy, section, onSectionChange, onManageAccoun
         <Button className="shrink-0 justify-start" variant={section === "about" ? "secondary" : "ghost"} onClick={() => onSectionChange("about")}><Info />{copy.about}</Button>
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "error_logs" ? <AIErrorLogsSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
+        {section === "api_keys" ? <APIKeysSettings copy={copy} /> : section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "error_logs" ? <AIErrorLogsSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
       </div>
     </div>
   );

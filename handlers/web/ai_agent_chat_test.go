@@ -250,23 +250,22 @@ func TestAgentPromptDemandsCompleteDocuments(t *testing.T) {
 			t.Fatalf("prompt does not require %q", want)
 		}
 	}
-	// Completeness must not weaken the no-invention rule.
-	if !strings.Contains(prompt, "NEVER invent, guess, or recall a price") {
-		t.Fatal("pricing rule was lost")
+	// Completeness must not weaken the general evidence rule.
+	if !strings.Contains(prompt, "Do not invent facts") {
+		t.Fatal("evidence rule was lost")
 	}
 }
 
-func TestExecuteSearchEmailsEmptyQuery(t *testing.T) {
-	h := &AISettingsHandler{}
-	res, summary, err := h.executeSearchEmails(context.Background(), "acc1", "")
+func TestExecuteSearchEmailsEmptyQueryListsRecentMail(t *testing.T) {
+	emailHandler, _, account, _ := outboxTestApp(t)
+	h := &AISettingsHandler{mailDB: emailHandler.mailDB}
+	res, _, err := h.searchAgentEmails(context.Background(), account.ID, nil, map[string]any{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if summary != "搜索关键词为空" {
-		t.Errorf("expected '搜索关键词为空', got %q", summary)
-	}
-	if res != "搜索关键词不能为空" {
-		t.Errorf("expected '搜索关键词不能为空', got %v", res)
+	page := res.(agentMailSearchResult)
+	if len(page.Messages) != 1 || page.Messages[0].UID != "1" || page.HasMore {
+		t.Errorf("expected recent mail page, got %+v", page)
 	}
 }
 
@@ -418,114 +417,24 @@ func TestExecuteLookupPrice(t *testing.T) {
 	}
 }
 
-func TestPriceLookupCandidates(t *testing.T) {
-	texts := []string{
-		"客户问 DN50-BV 和 SN-100 的交期，另外 A-1 也报一下",
-		"请参考 “不锈钢球阀” 的价格",
-		"订单号 20260119 与电话 13800138000，日期 2026-10-19",
-	}
-	candidates := priceLookupCandidates(texts, 10)
-	joined := strings.Join(candidates, ",")
-	for _, want := range []string{"DN50-BV", "SN-100", "A-1", "不锈钢球阀"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("candidate %q missing from %v", want, candidates)
-		}
-	}
-	// Pure numbers and pure words are not model numbers.
-	if strings.Contains(joined, "13800138000") || strings.Contains(joined, "2026-10-19") {
-		t.Fatalf("non-model tokens leaked in: %v", candidates)
-	}
-	if len(candidates) > 10 {
-		t.Fatalf("limit not applied: %d", len(candidates))
-	}
-	if got := priceLookupCandidates(nil, 5); len(got) != 0 {
-		t.Fatalf("empty input produced %v", got)
-	}
-	// Duplicates collapse regardless of case.
-	deduped := priceLookupCandidates([]string{"dn50-bv DN50-BV"}, 5)
-	if len(deduped) != 1 {
-		t.Fatalf("dedupe failed: %v", deduped)
-	}
-}
-
-func TestFormatPriceContext(t *testing.T) {
-	block := formatPriceContext([]mailstore.PriceLookupEntry{
-		{Model: "DN50-BV", Name: "DN50 球阀", PriceText: "1280", Currency: "CNY", Unit: "台", TaxRate: 0.13, MOQ: "1", LeadTime: "15", ListName: "阀门价目表"},
-	})
-	if !strings.Contains(block, "【价格表匹配】") || !strings.Contains(block, "不得改写或另编") {
-		t.Fatalf("block lacks provenance wording: %q", block)
-	}
-	for _, want := range []string{"型号 DN50-BV", "单价 1280", "币种 CNY", "单位 台", "税率 0.13", "起订量 1", "交期 15", "来源 阀门价目表"} {
-		if !strings.Contains(block, want) {
-			t.Fatalf("block missing %q: %q", want, block)
-		}
-	}
-}
-
-func TestAgentPromptCoversPriceLookup(t *testing.T) {
+func TestAgentPromptExposesToolsWithoutQuestionSpecificRouting(t *testing.T) {
 	conversation := buildAgentSystemPrompt(agentModeConversation, "销售助手", "", nil)
 	if !strings.Contains(conversation, "email conversation") {
 		t.Fatal("conversation mode is not framed as an email conversation")
 	}
-	if !strings.Contains(conversation, "lookup_price") {
-		t.Fatal("conversation prompt does not advertise lookup_price")
+	for _, tool := range []string{"search_emails", "read_email", "lookup_price", "calculate_pricing"} {
+		if !strings.Contains(conversation, tool) {
+			t.Fatalf("tool %s is not exposed", tool)
+		}
 	}
-	if !strings.Contains(conversation, "【价格表匹配】") {
-		t.Fatal("conversation prompt does not explain the prefetched price block")
-	}
-	if !strings.Contains(conversation, "NEVER invent") {
-		t.Fatal("conversation prompt lacks the no-invention rule")
+	for _, forbidden := range []string{"FT14", "ft14", "斯派莎克", "PRICING RULES", "WHEN TO LOOK UP PRICES", "【价格表匹配】", "HISTORICAL MAIL PRICES"} {
+		if strings.Contains(conversation, forbidden) {
+			t.Errorf("global prompt contains question-specific routing: %s", forbidden)
+		}
 	}
 	document := buildAgentSystemPrompt(agentModeDocument, "", "", &AIAgentChatDocContext{Type: "quotation", Title: "报价单"})
 	if !strings.Contains(document, "ACTIVE DOCUMENT IN WORKSPACE") || strings.Contains(document, "email conversation (邮件会话)") {
 		t.Fatal("document mode framing is wrong")
-	}
-}
-
-func TestPrefetchPriceContext(t *testing.T) {
-	ctx := context.Background()
-	db, err := mailstore.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	user, err := db.CreateUser(ctx, "prefetch", "Prefetch", "hash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	list, _, err := db.CreatePriceList(ctx, user.ID, "阀门价目表", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.SavePriceRows(ctx, user.ID, list.ID, []mailstore.PriceRow{
-		{Data: map[string]string{"model": "DN50-BV", "name": "DN50 球阀", "price": "1280", "currency": "CNY", "unit": "台", "lead_time": "15"}},
-	}, nil); err != nil {
-		t.Fatal(err)
-	}
-	handler := NewAISettingsHandler(nil, &config.Config{}, db)
-
-	// A thread that names a model gets its authoritative price up front.
-	block, entries := handler.prefetchPriceContext(ctx, user.ID, []string{"客户询价：DN50-BV 要 10 台，请报价"}, 8)
-	if len(entries) != 1 || entries[0].Model != "DN50-BV" {
-		t.Fatalf("entries = %+v", entries)
-	}
-	if !strings.Contains(block, "单价 1280") || !strings.Contains(block, "DN50-BV") {
-		t.Fatalf("block = %q", block)
-	}
-
-	// A thread with nothing model-shaped injects nothing.
-	block, entries = handler.prefetchPriceContext(ctx, user.ID, []string{"你好，请问在吗？"}, 8)
-	if block != "" || len(entries) != 0 {
-		t.Fatalf("unexpected prefetch: %q %+v", block, entries)
-	}
-
-	// Another user's price list is never visible.
-	other, err := db.CreateUser(ctx, "other-prefetch", "Other", "hash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if block, entries := handler.prefetchPriceContext(ctx, other.ID, []string{"DN50-BV"}, 8); block != "" || len(entries) != 0 {
-		t.Fatalf("cross-owner prefetch leaked: %q %+v", block, entries)
 	}
 }
 

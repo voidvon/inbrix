@@ -91,13 +91,14 @@ func (h *Handler) Register(app *fiber.App) {
 
 // RegisterWithMiddleware mounts the JSON API and accepts optional middleware
 // that runs after broker validation but before session authentication. This is
-// where the browser's double-submit CSRF check belongs: brokered requests have
-// no cookie session and must be allowed through, while ordinary session clients
+// where API key authentication and the browser's CSRF check belong: verified
+// keys and broker requests skip CSRF, while ordinary session clients
 // need the same protection as the React-facing /api routes.
 func (h *Handler) RegisterWithMiddleware(app *fiber.App, middleware ...fiber.Handler) {
 	// brokerMiddleware runs first: it validates the broker secret and, if valid,
 	// parses the X-Vulos-Mail-* headers into a connection spec for this request.
-	// requireAuth then accepts either a brokered request or a valid session.
+	// Additional middleware may establish a request-local key session before
+	// requireAuth accepts it, a browser session, or validated broker credentials.
 	groupMiddleware := []fiber.Handler{h.brokerMiddleware}
 	groupMiddleware = append(groupMiddleware, middleware...)
 	groupMiddleware = append(groupMiddleware, h.requireAuth)

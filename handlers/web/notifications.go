@@ -460,7 +460,7 @@ func (nh *NotificationsHandler) HandleSSE(c *fiber.Ctx) error {
 	}
 	accountID := ""
 	if nh.hub.store != nil {
-		if sess, err := nh.hub.store.Get(c); err == nil {
+		if sess, err := requestSession(c, nh.hub.store); err == nil {
 			accountID, _ = sess.Get("account_id").(string)
 		}
 	}

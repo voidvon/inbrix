@@ -18,7 +18,7 @@ func (h *AuthHandler) HandleOAuthLogin(c *fiber.Ctx) error {
 		return c.Status(404).SendString("OAuth2 is not enabled")
 	}
 
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(500).SendString("Session error")
 	}
@@ -54,7 +54,7 @@ func (h *AuthHandler) HandleOAuthCallback(c *fiber.Ctx) error {
 		return c.Status(404).SendString("OAuth2 is not enabled")
 	}
 
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(500).SendString("Session error")
 	}
@@ -149,7 +149,7 @@ func (h *AuthHandler) oauthError(c *fiber.Ctx, msg string) error {
 // validOAuthToken returns a valid access token for the current session,
 // transparently refreshing and re-persisting it when expired.
 func (h *AuthHandler) validOAuthToken(c *fiber.Ctx) (username, accessToken string, err error) {
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get session: %v", err)
 	}

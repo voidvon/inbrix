@@ -32,7 +32,7 @@ func (h *PriceListHandler) owner(c *fiber.Ctx) string {
 		return strings.TrimSpace(userID)
 	}
 	if h.store != nil {
-		sess, err := h.store.Get(c)
+		sess, err := requestSession(c, h.store)
 		if err == nil {
 			owner, _ := sess.Get("user_id").(string)
 			return strings.TrimSpace(owner)

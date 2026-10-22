@@ -279,7 +279,7 @@ func (h *CalendarHandler) HandleRSVP(c *fiber.Ctx) error {
 	}
 
 	// Derive attendee email from session.
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "session error"})
 	}

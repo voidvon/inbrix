@@ -32,7 +32,7 @@ func requestOwnerID(c *fiber.Ctx, sessions *session.Store) string {
 		return strings.TrimSpace(userID)
 	}
 	if sessions != nil {
-		if sess, err := sessions.Get(c); err == nil {
+		if sess, err := requestSession(c, sessions); err == nil {
 			if owner, _ := sess.Get("user_id").(string); strings.TrimSpace(owner) != "" {
 				return strings.TrimSpace(owner)
 			}

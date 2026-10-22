@@ -2,6 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- Blocking script: resolve the theme before styles or the app can paint. -->
+    <script src="/theme.js"></script>
+    <style>
+      html { color-scheme: light; background-color: #fff; }
+      html.dark { color-scheme: dark; background-color: oklch(0.145 0 0); }
+    </style>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <meta name="description" content="Inbrix AI conversations" />

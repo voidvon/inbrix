@@ -18,10 +18,11 @@ import (
 )
 
 type AIAgentChatMessage struct {
-	Role      string          `json:"role"` // "user", "assistant"
-	Content   string          `json:"content"`
-	ToolCalls []AIToolCall    `json:"toolCalls,omitempty"`
-	Document  *AIDocumentCard `json:"document,omitempty"`
+	Role      string               `json:"role"` // "user", "assistant"
+	Content   string               `json:"content"`
+	ToolCalls []AIToolCall         `json:"toolCalls,omitempty"`
+	Document  *AIDocumentCard      `json:"document,omitempty"`
+	Sources   []AgentMailReference `json:"sources,omitempty"`
 }
 
 type AIToolCall struct {
@@ -60,17 +61,20 @@ type AIAgentChatDocContext struct {
 }
 
 type AIAgentChatRequest struct {
-	AccountEmail   string                 `json:"accountEmail"`
-	AgentID        string                 `json:"agentId,omitempty"`
-	ModelID        string                 `json:"modelId,omitempty"`
-	Messages       []AIAgentChatMessage   `json:"messages"`
-	ActiveDocument *AIAgentChatDocContext `json:"activeDocument,omitempty"`
+	AccountEmail    string                 `json:"accountEmail"`
+	ConversationID  string                 `json:"conversationId,omitempty"`
+	FocusedMessages []AgentMailReference   `json:"focusedMessages,omitempty"`
+	AgentID         string                 `json:"agentId,omitempty"`
+	ModelID         string                 `json:"modelId,omitempty"`
+	Messages        []AIAgentChatMessage   `json:"messages"`
+	ActiveDocument  *AIAgentChatDocContext `json:"activeDocument,omitempty"`
 }
 
 type AIAgentChatResponse struct {
-	Content   string          `json:"content"`
-	ToolCalls []AIToolCall    `json:"toolCalls,omitempty"`
-	Document  *AIDocumentCard `json:"document,omitempty"`
+	Content   string               `json:"content"`
+	ToolCalls []AIToolCall         `json:"toolCalls,omitempty"`
+	Document  *AIDocumentCard      `json:"document,omitempty"`
+	Sources   []AgentMailReference `json:"sources,omitempty"`
 	// DocumentAction is a change to a stored document that the user confirms in
 	// the UI. The agent never deletes or overwrites a saved document itself.
 	DocumentAction *AIDocumentAction `json:"documentAction,omitempty"`
@@ -107,11 +111,23 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	input.AccountEmail = strings.TrimSpace(input.AccountEmail)
+	input.ConversationID = strings.TrimSpace(input.ConversationID)
 	if input.AccountEmail == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "accountEmail is required")
 	}
 	if len(input.Messages) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "messages cannot be empty")
+	}
+	for _, message := range input.Messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			return fiber.NewError(fiber.StatusBadRequest, "message role must be user or assistant")
+		}
+		if len(message.Sources) > 50 {
+			return fiber.NewError(fiber.StatusBadRequest, "too many email source references in a message")
+		}
+	}
+	if input.Messages[len(input.Messages)-1].Role != "user" {
+		return fiber.NewError(fiber.StatusBadRequest, "last message must be a user question")
 	}
 
 	account, err := h.mailDB.GetAccountByEmail(c.UserContext(), owner, input.AccountEmail)
@@ -120,6 +136,10 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 	if err != nil {
 		return fiber.ErrInternalServerError
+	}
+	mailContext, err := h.loadAgentMailContext(c, account, input)
+	if err != nil {
+		return err
 	}
 
 	// 1. Resolve AI Model
@@ -180,40 +200,28 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 	instructions := buildAgentSystemPrompt(promptMode, agentName, agentCustomPrompt, input.ActiveDocument)
 
-	// 4. Run Agent Execution Loop (up to 5 rounds of tool calling)
+	// 4. Resolve bounded current context, then run the tool loop.
 	executedToolCalls := make([]AIToolCall, 0)
 	var generatedDocument *AIDocumentCard
 	var documentAction *AIDocumentAction
 
-	historyPrompt := buildConversationTranscript(input.Messages)
+	historyPrompt, err := h.agentHistory(c.UserContext(), input.Messages, mailContext, model, apiKey)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+	}
 	currentTurnInput := historyPrompt
-
-	// Resolve anything model-shaped the user (or the open document) mentions
-	// before the first model call, so price questions are answered from the
-	// user's own price list even when the model would not call the tool itself.
-	prefetchTexts := make([]string, 0, len(input.Messages)+2)
-	for _, message := range input.Messages {
-		prefetchTexts = append(prefetchTexts, message.Content)
-	}
-	if input.ActiveDocument != nil {
-		for _, item := range input.ActiveDocument.Items {
-			prefetchTexts = append(prefetchTexts, item.Model, item.Description)
-		}
-	}
-	priceContext, priceEntries := h.prefetchPriceContext(c.UserContext(), owner, prefetchTexts, maxPrefetchedPrices)
-	if priceContext != "" {
-		currentTurnInput = priceContext + "\n\n" + currentTurnInput
-		executedToolCalls = append(executedToolCalls, AIToolCall{
-			ID:      "call_price_prefetch",
-			Name:    "lookup_price",
-			Args:    map[string]any{"auto": true},
-			Status:  "success",
-			Summary: fmt.Sprintf("价格表预匹配 %d 条", len(priceEntries)),
-		})
+	if mailContext != nil {
+		currentTurnInput = mailContext.bootstrap() + "\n\n" + currentTurnInput
 	}
 
-	maxToolTurns := 5
+	inputBudget := maxAgentInputBytes - len(instructions)
+	if len(currentTurnInput) > inputBudget-maxAgentToolResultBytes {
+		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "AI 上下文过长，请缩短问题或减少重点邮件")
+	}
+	maxToolTurns := 12
 	finalReply := ""
+	var sources []AgentMailReference
+	seenSources := make(map[string]bool)
 
 	for turn := 0; turn < maxToolTurns; turn++ {
 		rawResponse, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
@@ -230,9 +238,14 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		}
 
 		// Execute all parsed tool calls in this turn
-		for _, call := range calls {
+		stopReason := ""
+		for index, call := range calls {
+			if index >= 4 || len(executedToolCalls) >= 32 || len(currentTurnInput) > inputBudget-maxAgentToolResultBytes-4096 {
+				stopReason = "Tool/context budget reached. Some requested tools were NOT executed."
+				break
+			}
 			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-			result, summary, err := h.executeTool(c.UserContext(), owner, account.ID, call, model, apiKey)
+			result, summary, err := h.executeScopedAgentTool(c.UserContext(), owner, account.ID, mailContext, call, model, apiKey)
 			if err != nil {
 				call.Status = "error"
 				call.Result = map[string]string{"error": err.Error()}
@@ -241,6 +254,14 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 				call.Status = "success"
 				call.Result = result
 				call.Summary = summary
+				if call.Name == "read_email" {
+					ref := AgentMailReference{UID: parseStringArg(call.Args, "uid", "email_id", "id", "message_id"), Folder: parseStringArg(call.Args, "folder", "mailbox")}
+					key := agentMailKey(ref.Folder, ref.UID)
+					if !seenSources[key] {
+						sources = append(sources, ref)
+						seenSources[key] = true
+					}
+				}
 			}
 
 			if call.Name == "generate_document" && call.Status == "success" {
@@ -255,20 +276,29 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 				}
 			}
 
-			executedToolCalls = append(executedToolCalls, call)
-
 			// Feed tool result back to the model for next turn
 			resBytes, _ := json.Marshal(call.Result)
-			currentTurnInput += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%v)\n[Tool Result (%s)]: %s", call.Name, call.Args, call.Name, string(resBytes))
+			if len(resBytes) > maxAgentToolResultBytes {
+				call.Result = map[string]any{"outputOmitted": true, "summary": clipRunes(call.Summary, 500), "notice": "Result exceeded the output budget. Request a smaller page or narrower data. Do not claim to have read the omitted data."}
+				resBytes, _ = json.Marshal(call.Result)
+			}
+			executedToolCalls = append(executedToolCalls, call)
+			argsBytes, _ := json.Marshal(call.Args)
+			if len(argsBytes) > 2048 {
+				argsBytes = []byte(`{"argumentsOmitted":true}`)
+			}
+			currentTurnInput += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%s)\n[Tool Result (%s)]: %s", clipRunes(call.Name, 80), string(argsBytes), clipRunes(call.Name, 80), string(resBytes))
 		}
 
 		// If this was the last tool turn allowed, ask model for final synthesis
-		if turn == maxToolTurns-1 {
-			currentTurnInput += "\n\n[System]: You have completed the maximum number of tool executions. You must NOT call any more tools or output any tool_call code blocks. Based on all the gathered information and tool results above, provide your final, comprehensive, and polite response to the user now in Markdown."
+		if turn == maxToolTurns-1 || stopReason != "" {
+			currentTurnInput += "\n\n[System]: " + stopReason + " No more tools are available for this response. Give a final answer from the evidence actually read. Explicitly state any unread pages, missing mail bodies, or incomplete coverage; never claim to have reviewed the whole thread unless you did."
 			synthesisResponse, synErr := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
-			if synErr == nil && strings.TrimSpace(synthesisResponse) != "" {
-				finalReply = synthesisResponse
+			if synErr != nil {
+				h.recordError(c.UserContext(), owner, "agent_chat", input.AccountEmail, model.Model, agentName, synErr)
+				return fiber.NewError(fiber.StatusUnprocessableEntity, synErr.Error())
 			}
+			finalReply = synthesisResponse
 			break
 		} else {
 			currentTurnInput += "\n\nBased on the tool results above, continue answering the user or call another tool if needed."
@@ -290,9 +320,15 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	if generatedDocument != nil {
 		hydrateDocumentCard(generatedDocument)
 	}
+	if mailContext != nil {
+		if err := h.mailDB.SaveAIChatContext(c.UserContext(), account.ID, input.ConversationID, mailContext.memory); err != nil {
+			h.recordError(c.UserContext(), owner, "agent_chat_context", input.AccountEmail, model.Model, agentName, err)
+		}
+	}
 
 	return c.JSON(AIAgentChatResponse{
 		Content:        strings.TrimSpace(cleanedContent),
+		Sources:        sources,
 		ToolCalls:      executedToolCalls,
 		Document:       generatedDocument,
 		DocumentAction: documentAction,
@@ -309,12 +345,12 @@ const (
 
 func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIAgentChatDocContext) string {
 	var sb strings.Builder
-	sb.WriteString("You are the Inbrix Intelligent Business Agent (Inbrix 智能商业助理).\n")
+	sb.WriteString("You are the Inbrix assistant.\n")
 	if mode == agentModeConversation {
-		sb.WriteString("You are assisting the user inside an email conversation (邮件会话). The email thread below is your context: the user is asking about it, and may ask you to price something, prepare a quotation, or draft a reply.\n")
-		sb.WriteString("You can search the mailbox, read a message in full, look up the user's own price list, compute pricing and taxes, and draft or revise business documents (Quotations / Sales Contracts).\n\n")
+		sb.WriteString("You are assisting the user inside an email conversation (邮件会话). Current conversation metadata, notes and a few previews are supplied separately from the discussion. Mail bodies are available on demand through tools.\n")
+		sb.WriteString("Use the available tools to investigate the user's request and work with their data.\n\n")
 	} else {
-		sb.WriteString("You help the user search emails, extract quotation/order requirements, compute pricing & taxes accurately, and draft or revise business documents (Quotations / Sales Contracts).\n\n")
+		sb.WriteString("You are assisting the user inside the document workspace. Use the available tools to investigate their request and work with their data.\n\n")
 	}
 
 	if agentName != "" {
@@ -330,12 +366,14 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
 
 	sb.WriteString(`AVAILABLE TOOLS:
 1. search_emails:
-   Search the user's mailbox for relevant emails (by customer name, product requirements, inquiry, order number, or quotation request).
-   Arguments schema: {"query": "keywords to search"}
+   Keyword/filter search of synchronized headers and bodies (ASCII case-insensitive), newest first. Space-separated terms are ANDed; this is not semantic search. Defaults to the CURRENT CONVERSATION when one is supplied; otherwise the current account. Empty query lists mail. Returns previews, hasMore and nextCursor, not full bodies.
+   Arguments schema: {"query": "keywords or from:/to:/subject:/before:/after: filters (optional)", "cursor": "nextCursor from previous page (optional)", "limit": 10, "scope": "conversation | mailbox (optional)"}
+   Keep the same query and scope when following nextCursor. Use scope=mailbox only when the user's request needs other conversations in this account. Pending Outbox messages are referenced in the current context, not in synchronized search.
 
 2. read_email:
-   Read the full content and details of a specific email found in search.
-   Arguments schema: {"uid": "message uid", "folder": "INBOX"}
+   Read a segment of an email by its EXACT folder and UID from context/search. Offsets and lengths count Unicode characters, not bytes. Returns hasMore, nextOffset, totalLength and bodyAvailable.
+   Arguments schema: {"uid": "message uid", "folder": "exact source folder", "offset": 0, "length": 2400, "scope": "conversation | mailbox (optional)"}
+   Follow nextOffset to continue reading; maximum length is 4000. Use scope=mailbox when reading a result explicitly searched outside the current conversation. Never guess a UID or try another folder for the same UID.
 
 3. calculate_pricing:
    Perform deterministic math calculation for product line items, subtotals, tax amounts, and totals with currency formatting.
@@ -390,21 +428,14 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
    Arguments schema: {"id": "document id"}
 
 9. lookup_price:
-   Look up the user's own price list for authoritative product prices, units, currencies, tax rates, minimum order quantities, and lead times.
+   Search the user's stored price lists. Returns listed values and their list_name source; this tool does not search mail or establish what another source said.
    Arguments schema: {"query": "model / SKU / product name keywords", "qty": 10}
    Returns: [{"sku", "name", "unit", "currency", "unit_price", "price_text", "tax_rate", "moq", "lead_time", "list_name"}]
 
-PRICING RULES (ABSOLUTE, NEVER VIOLATE):
-- Every price, tax rate, unit, MOQ, or lead time you output MUST come from a lookup_price result, or from a ` + "`【价格表匹配】`" + ` block supplied with the request.
-- NEVER invent, guess, or recall a price from memory. When lookup_price returns no match, say plainly that the price list has no entry for that model, ask the user to confirm the model number or add it to the price list, and do NOT propose a number.
-- Treat unit_price / tax_rate / currency / lead_time from those sources as authoritative and quote them unchanged.
-- Use calculate_pricing for arithmetic (line totals, tax, discounts) on prices that lookup_price returned.
-- A ` + "`【价格表匹配】`" + ` block, when present, is the user's own price list already resolved for this request. Use it directly and do not re-look-up the same models.
-
-WHEN TO LOOK UP PRICES:
-- Any question about price, cost, quote, quotation, discount, lead time, MOQ, or availability.
-- Whenever the user asks you to draft a reply, an offer, or a quotation that will contain numbers, even if they did not say the word "price".
-- Before quoting, check the email thread for model numbers or product names and look those up; the mailbox context is where the customer's request lives.
+EVIDENCE RULES:
+- Do not invent facts. Choose the data source and tools needed for the user's actual request; no source is universally authoritative for every question.
+- Keep each fact tied to its source and time. When sources differ, explain the difference instead of silently substituting one for another. Missing data in one source does not establish absence in other sources.
+- Use tools to resolve missing evidence and deterministic tools for calculations. Distinguish retrieved facts, calculations, and assumptions; state what remains unknown.
 
 DOCUMENT RULES (QUOTATIONS & CONTRACTS):
 - The user's saved quotations and contracts live in the document library. Use list_documents to find one and read_document to see its current fields and line items.
@@ -412,13 +443,12 @@ DOCUMENT RULES (QUOTATIONS & CONTRACTS):
 - update_document and delete_document only PROPOSE the change: the user confirms it in the UI. After calling one, tell the user exactly what you proposed and that they need to confirm it. Never claim a document was changed or deleted by you.
 - Read a document before updating it when you are not certain of its current values, and put concrete values (names, quantities, prices, dates, terms) in the instruction.
 - Deleting is irreversible and needs the user's explicit intent. If the request is ambiguous, ask which document first.
-- Every number written into a quotation or contract follows the pricing rules below.
 
 DOCUMENT COMPLETENESS (QUOTATIONS & CONTRACTS):
 - A document is filled from the WHOLE thread, not from the user's last sentence. Re-read the conversation before calling generate_document and collect: the buyer's full company name, contact person, email, phone and address; the customer's PO or reference number; the currency; every product model, description and quantity discussed; payment terms, lead time, validity and any delivery or packing note.
 - Buyer details come from the thread itself. The sender's signature usually carries the company name, phone and address, and the From/Cc headers carry the email address. Copy the company name exactly as it is written. Never leave the buyer blank when anyone in the thread names the company.
 - Line items: ONE ROW PER PRODUCT. If the mail lists or tabulates products, reproduce every row in the same order with model, description, quantity and unit price, and let the amount be quantity x price. Never collapse several products into one summary row, and never drop a row the thread discusses.
-- Prices still follow the pricing rules: when lookup_price has no entry for a model, leave its price and amount empty and say so. Quantities, descriptions, buyer details and terms are never left empty when the thread has them.
+- Fill fields only from verified sources or explicit user input. Preserve source values and units, use calculate_pricing for amounts, and leave unsupported fields empty while identifying the missing information.
 - Everything without a dedicated argument goes into "values", keyed by these concept ids: customer_po, validity, commercial_validity, lead_time, payment_terms, trade_term, origin, port_of_loading, remarks, notes, item_model, contract_title, seller_company, seller_contact, seller_email, seller_phone, seller_address, bank_account_name, bank_account_no, bank_swift, bank_name, bank_address, bank_country, payment_method, order_note_1, order_note_2, order_note_3, order_note_4. Fill seller and bank details only when the thread or the user's own signature states them; never invent a bank account.
 - A field the document needs but the thread does not contain stays empty AND is named in your reply, so the user can supply it. Do not silently hand over a half-empty document.
 
@@ -431,7 +461,13 @@ You may output multiple ` + "```tool_call```" + ` blocks in a single turn if mul
 Do NOT output commentary before or after the tool_call code fence during a tool call.
 
 EFFICIENCY & TOOL SELECTION GUIDELINES:
-- When search_emails returns candidate emails, review their subject and snippet. If any candidate appears relevant, call read_email with its uid to read the full body rather than repeatedly searching with slight keyword variations.
+- Current context/notes are refreshed from the database EVERY request. Notes are user-provided background; previews and old discussion summaries are not complete or necessarily current mail facts.
+- If newMessageCountSinceLastDiscussion is positive, consider those new emails before relying on old answers. Prioritize focusedMailReferences when provided (only the first few have previews), but fetch related mail when needed.
+- For factual mail questions, read the relevant source bodies with read_email before concluding. A preview or bodyAvailable=false cannot establish that the full message was reviewed.
+- When search_emails returns relevant candidates, read them with the exact folder and uid, rather than repeatedly searching with slight keyword variations. Continue at nextOffset if the needed details are beyond the first segment.
+- For whole-conversation reviews, list ALL pages (empty query and nextCursor), then read the necessary bodies/segments, including pending Outbox references. Do not equate the newest page or previews with the complete thread. State incomplete coverage if any pages/bodies remain unread.
+- Cite supporting email dates/subjects and folder/UID references so the user can verify factual conclusions. If newer and older emails conflict, explain the chronology.
+- At most four tool calls per response. Tool results and total context are bounded; request smaller pages/segments if an output is omitted.
 - Avoid looping on search_emails with redundant queries.
 
 FINAL ANSWER:
@@ -474,6 +510,10 @@ func buildConversationTranscript(messages []AIAgentChatMessage) string {
 			} else if len(m.ToolCalls) > 0 {
 				sb.WriteString("Assistant: [Executed tool calls to assist user]\n\n")
 			}
+		}
+		if len(m.Sources) > 0 {
+			refs, _ := json.Marshal(m.Sources)
+			sb.WriteString("[Email source references; re-read if needed]: " + string(refs) + "\n\n")
 		}
 		if i == len(messages)-1 && role == "user" {
 			// Prompt assistant to proceed
@@ -665,13 +705,10 @@ func parseStringArg(args map[string]any, keys ...string) string {
 func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
 	switch call.Name {
 	case "search_emails":
-		query := parseStringArg(call.Args, "query", "q", "keyword", "keywords")
-		return h.executeSearchEmails(ctx, accountID, query)
+		return h.searchAgentEmails(ctx, accountID, nil, call.Args)
 
 	case "read_email":
-		uid := parseStringArg(call.Args, "uid", "email_id", "id", "message_id")
-		folder := parseStringArg(call.Args, "folder", "mailbox")
-		return h.executeReadEmail(ctx, accountID, folder, uid)
+		return h.readAgentEmail(ctx, accountID, nil, call.Args)
 
 	case "lookup_price":
 		return h.executeLookupPrice(ctx, owner, call.Args)
@@ -697,150 +734,6 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 	default:
 		return nil, "", fmt.Errorf("unknown tool: %q", call.Name)
 	}
-}
-
-// maxPrefetchedPrices bounds how many price rows are resolved before the agent
-// runs, so a long thread cannot turn into a large prompt.
-const maxPrefetchedPrices = 8
-
-var (
-	// Model numbers look like DN50-BV, SN-100, A-1: letters, digits, and the
-	// separators part numbers actually use.
-	priceCandidatePattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._/-]*`)
-	priceQuotedPattern    = regexp.MustCompile(`["“”'\x60]([^"“”'\x60]{2,40})["“”'\x60]`)
-)
-
-func priceCandidateHasLetter(value string) bool {
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-			return true
-		}
-	}
-	return false
-}
-
-func priceCandidateHasDigit(value string) bool {
-	for _, r := range value {
-		if r >= '0' && r <= '9' {
-			return true
-		}
-	}
-	return false
-}
-
-// priceLookupCandidates pulls model-number-shaped tokens and quoted product
-// names out of what the user just sent. Resolving these before the model runs
-// means the agent starts with the user's own prices even when it would not have
-// thought to call lookup_price itself.
-func priceLookupCandidates(texts []string, limit int) []string {
-	if limit <= 0 {
-		return nil
-	}
-	seen := make(map[string]bool)
-	out := make([]string, 0, limit)
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" || len(out) >= limit {
-			return
-		}
-		key := strings.ToLower(value)
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		out = append(out, value)
-	}
-	for _, text := range texts {
-		for _, match := range priceQuotedPattern.FindAllStringSubmatch(text, -1) {
-			add(match[1])
-		}
-		for _, token := range priceCandidatePattern.FindAllString(text, -1) {
-			if len(token) < 3 || len(token) > 40 {
-				continue
-			}
-			if !priceCandidateHasLetter(token) || !priceCandidateHasDigit(token) {
-				continue
-			}
-			add(token)
-		}
-	}
-	return out
-}
-
-// prefetchPriceContext resolves candidates against the user's price lists and
-// renders the matches as an authoritative block for the prompt.
-func (h *AISettingsHandler) prefetchPriceContext(ctx context.Context, owner string, texts []string, limit int) (string, []mailstore.PriceLookupEntry) {
-	if h == nil || h.mailDB == nil || strings.TrimSpace(owner) == "" || limit <= 0 {
-		return "", nil
-	}
-	candidates := priceLookupCandidates(texts, limit)
-	if len(candidates) == 0 {
-		return "", nil
-	}
-	seen := make(map[string]bool)
-	entries := make([]mailstore.PriceLookupEntry, 0, limit)
-	for _, candidate := range candidates {
-		found, err := h.mailDB.LookupPrices(ctx, owner, candidate, 3)
-		if err != nil {
-			continue
-		}
-		for _, entry := range found {
-			if seen[entry.RowID] {
-				continue
-			}
-			seen[entry.RowID] = true
-			entries = append(entries, entry)
-			if len(entries) >= limit {
-				break
-			}
-		}
-		if len(entries) >= limit {
-			break
-		}
-	}
-	if len(entries) == 0 {
-		return "", nil
-	}
-	return formatPriceContext(entries), entries
-}
-
-// formatPriceContext renders matches compactly. It is deliberately explicit
-// about provenance so the model treats the numbers as facts, not suggestions.
-func formatPriceContext(entries []mailstore.PriceLookupEntry) string {
-	var sb strings.Builder
-	sb.WriteString("【价格表匹配】以下条目来自用户自己的价格表，是权威价格；回答价格、报价、交期、起订量时必须直接使用，不得改写或另编：\n")
-	for _, entry := range entries {
-		parts := make([]string, 0, 8)
-		if entry.Model != "" {
-			parts = append(parts, "型号 "+entry.Model)
-		}
-		if entry.Name != "" {
-			parts = append(parts, "名称 "+entry.Name)
-		}
-		if entry.PriceText != "" {
-			parts = append(parts, "单价 "+entry.PriceText)
-		}
-		if entry.Currency != "" {
-			parts = append(parts, "币种 "+entry.Currency)
-		}
-		if entry.Unit != "" {
-			parts = append(parts, "单位 "+entry.Unit)
-		}
-		if entry.TaxRate > 0 {
-			parts = append(parts, fmt.Sprintf("税率 %.4g", entry.TaxRate))
-		}
-		if entry.MOQ != "" {
-			parts = append(parts, "起订量 "+entry.MOQ)
-		}
-		if entry.LeadTime != "" {
-			parts = append(parts, "交期 "+entry.LeadTime)
-		}
-		if entry.ListName != "" {
-			parts = append(parts, "来源 "+entry.ListName)
-		}
-		sb.WriteString("- " + strings.Join(parts, "；") + "\n")
-	}
-	return strings.TrimRight(sb.String(), "\n")
 }
 
 // aiDocumentSummary is one entry in the agent's document list.
@@ -1111,8 +1004,7 @@ type aiPriceHit struct {
 }
 
 // executeLookupPrice resolves a model or product name against the user's price
-// lists. It is the only way the agent can obtain a price, and an empty result
-// is reported as such so the model has no room to invent one.
+// lists. An empty result means no matching entry in this data source.
 func (h *AISettingsHandler) executeLookupPrice(ctx context.Context, owner string, args map[string]any) (any, string, error) {
 	query := parseStringArg(args, "query", "model", "sku", "keyword", "product", "name")
 	if strings.TrimSpace(query) == "" {
@@ -1154,96 +1046,6 @@ func (h *AISettingsHandler) executeLookupPrice(ctx context.Context, owner string
 		payload["requested_qty"] = qty
 	}
 	return payload, fmt.Sprintf("价格表匹配到 %d 条（关键词: %s）", len(hits), query), nil
-}
-
-func (h *AISettingsHandler) executeSearchEmails(ctx context.Context, accountID, query string) (any, string, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return "搜索关键词不能为空", "搜索关键词为空", nil
-	}
-
-	emails, _, err := h.mailDB.SearchMessages(ctx, accountID, "", query, 6)
-	if err != nil {
-		return fmt.Sprintf("检索邮件出错: %v", err), "检索邮件出错", nil
-	}
-
-	if len(emails) == 0 {
-		return "未找到包含该关键词的邮件。", fmt.Sprintf("检索【%s】未找到邮件", query), nil
-	}
-
-	type emailSummary struct {
-		UID     string `json:"uid"`
-		Folder  string `json:"folder"`
-		Date    string `json:"date"`
-		From    string `json:"from"`
-		Subject string `json:"subject"`
-		Snippet string `json:"snippet"`
-	}
-
-	list := make([]emailSummary, 0, len(emails))
-	for _, e := range emails {
-		snippet := e.Preview
-		if snippet == "" && e.Body != "" {
-			snippet = e.Body
-		}
-		snippetRunes := []rune(snippet)
-		if len(snippetRunes) > 120 {
-			snippet = string(snippetRunes[:120]) + "..."
-		}
-		list = append(list, emailSummary{
-			UID:     e.ID,
-			Folder:  e.Folder,
-			Date:    e.Date.Format("2006-01-02 15:04"),
-			From:    e.From,
-			Subject: e.Subject,
-			Snippet: snippet,
-		})
-	}
-
-	summary := fmt.Sprintf("检索到 %d 封相关邮件 (关键词: %s)", len(list), query)
-	return list, summary, nil
-}
-
-func (h *AISettingsHandler) executeReadEmail(ctx context.Context, accountID, folder, uid string) (any, string, error) {
-	uid = strings.TrimSpace(uid)
-	if uid == "" {
-		return "邮件 uid 不能为空", "邮件 uid 为空", nil
-	}
-	if folder == "" {
-		folder = "INBOX"
-	}
-
-	msg, err := h.mailDB.GetMessage(ctx, accountID, folder, uid)
-	if err != nil {
-		// If not in specified folder, try search across folders by UID
-		emails, _, searchErr := h.mailDB.SearchMessages(ctx, accountID, "", uid, 1)
-		if searchErr == nil && len(emails) > 0 {
-			msg = emails[0]
-		} else {
-			return "未能读取该邮件，可能已被删除或移入其他文件夹", "读取邮件失败", nil
-		}
-	}
-
-	body := msg.Body
-	if body == "" && msg.Preview != "" {
-		body = msg.Preview
-	}
-	bodyRunes := []rune(body)
-	if len(bodyRunes) > 1800 {
-		body = string(bodyRunes[:1800]) + "\n[...内容过长已截断...]"
-	}
-
-	result := map[string]any{
-		"uid":     msg.ID,
-		"from":    msg.From,
-		"to":      msg.To,
-		"subject": msg.Subject,
-		"date":    msg.Date.Format("2006-01-02 15:04"),
-		"body":    body,
-	}
-
-	summary := fmt.Sprintf("已读取邮件: %s", msg.Subject)
-	return result, summary, nil
 }
 
 func executeCalculatePricing(args map[string]any) (any, string, error) {

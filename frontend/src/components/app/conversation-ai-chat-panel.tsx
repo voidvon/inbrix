@@ -24,7 +24,6 @@ import {
   type AIAgentChatRequest,
 } from "../../lib/api";
 import {
-  buildConversationAIContext,
   copyToClipboard,
   markdownToPlainText,
 } from "../../lib/email-format";
@@ -151,12 +150,6 @@ export function ConversationAIChatPanel({
     scrollToBottom();
   }, [displayMessages.length]);
 
-  // Build context from email messages with quotes filtered out
-  const emailContext = useMemo(
-    () => buildConversationAIContext(detail, focusedMessageIds),
-    [detail, focusedMessageIds]
-  );
-
   const focusedMessages = useMemo(() => {
     if (!focusedMessageIds.length) return [];
     const idSet = new Set(focusedMessageIds);
@@ -179,30 +172,20 @@ export function ConversationAIChatPanel({
         throw new Error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
       }
 
-      // Build message payload for backend
-      const apiMessages: AIAgentChatRequest["messages"] = [];
-
-      if (messages.length === 0) {
-        // First message: prepend filtered email context as background
-        const firstTurnWithContext = `【背景信息：以下是当前讨论的邮件往来记录（已自动过滤掉冗余重复的历史引用）】\n${emailContext}\n\n---\n【用户问题】：\n${text}`;
-        apiMessages.push({ role: "user", content: firstTurnWithContext });
-      } else {
-        // Multi-turn conversation: keep context in the first user message
-        for (let i = 0; i < messages.length; i++) {
-          const m = messages[i];
-          if (i === 0 && m.role === "user") {
-            const firstTurnWithContext = `【背景信息：以下是当前讨论的邮件往来记录（已自动过滤掉冗余重复的历史引用）】\n${emailContext}\n\n---\n【用户问题】：\n${m.content}`;
-            apiMessages.push({ role: "user", content: firstTurnWithContext });
-          } else {
-            apiMessages.push({ role: m.role, content: m.content });
-          }
-        }
-        apiMessages.push({ role: "user", content: text });
-      }
+      // The server resolves current notes/mail from the conversation identity.
+      // Send discussion and source references, independent of the UI mail window.
+      const apiMessages: AIAgentChatRequest["messages"] = messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+        sources: message.sources,
+      }));
+      apiMessages.push({ role: "user", content: text });
 
       return await aiState.run(async () => {
         const res = await chatWithAIAgent({
           accountEmail,
+          conversationId: detail.id,
+          focusedMessages: focusedMessages.map((message) => ({ uid: message.id, folder: message.folder || "INBOX" })),
           agentId: selectedAgentId,
           messages: apiMessages,
         });
@@ -229,6 +212,7 @@ export function ConversationAIChatPanel({
         id: `assistant-${Date.now() + 1}`,
         role: "assistant",
         content: data.res.content || "已处理完成。",
+        sources: data.res.sources,
         createdAt: now,
         // Keep the tools the agent used, so "did it read the price list?" is
         // answerable after the fact instead of only during the status spinner.

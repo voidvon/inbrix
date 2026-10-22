@@ -4,12 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { AppToaster } from "./components/app/app-toaster";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { applyTheme, prefersDarkMode } from "./lib/theme";
 import "./styles.css";
-
-// Apply the saved theme before React renders so public pages share the same
-// appearance and do not flash the light theme during navigation.
-applyTheme(prefersDarkMode());
 
 const queryClient = new QueryClient({
   defaultOptions: {

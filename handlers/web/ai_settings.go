@@ -87,7 +87,7 @@ func (h *AISettingsHandler) owner(c *fiber.Ctx) string {
 	if h == nil || h.sessions == nil {
 		return ""
 	}
-	sess, err := h.sessions.Get(c)
+	sess, err := requestSession(c, h.sessions)
 	if err != nil {
 		return ""
 	}

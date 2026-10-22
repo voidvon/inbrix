@@ -197,7 +197,11 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
-    window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
+    try {
+      window.localStorage.setItem("inbrix-theme", darkMode ? "dark" : "light");
+    } catch {
+      // Keep theme switching usable when browser storage is unavailable.
+    }
   }, [darkMode]);
 
   const shell = useConversationsQuery(showAllConversations ? "all" : "open");

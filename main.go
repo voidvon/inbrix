@@ -53,6 +53,9 @@ var frontendFS embed.FS
 //go:embed THIRD-PARTY-NOTICES.txt
 var thirdPartyNotices string
 
+//go:embed docs/API.md
+var apiReference string
+
 var store *session.Store
 
 // Helper function to determine if request is an API request
@@ -317,9 +320,8 @@ func main() {
 		return nil
 	})
 
-	// Browser mutations use the double-submit cookie pattern. The same handler
-	// is composed into /v1 below; its Next hook skips requests that the JSON API's
-	// broker middleware has already authenticated with the shared broker secret.
+	// Cookie-authenticated mutations require double-submit CSRF tokens.
+	// Only verified API keys and validated broker credentials skip this check.
 	csrfMiddleware := csrf.New(csrf.Config{
 		KeyLookup:      "header:X-CSRF-Token",
 		CookieName:     "_csrf",
@@ -327,8 +329,10 @@ func main() {
 		CookieSameSite: "Lax",
 		CookieSecure:   config.Server.SecureCookies,
 		Expiration:     24 * time.Hour,
-		Next:           jsonapi.IsBrokerRequest,
-		ContextKey:     "csrfToken",
+		Next: func(c *fiber.Ctx) bool {
+			return api.IsAPIKeyRequest(c) || jsonapi.IsBrokerRequest(c)
+		},
+		ContextKey: "csrfToken",
 	})
 
 	// JSON/REST API (/v1/*) — machine-readable contract used by the React client
@@ -342,10 +346,10 @@ func main() {
 	// the rest of the API keeps working (only send-later is unavailable).
 	if durableKV == nil {
 		log.Printf("scheduled send unavailable (durable store unavailable)")
-		jsonapi.New(store, config, webAuthHandler).RegisterWithMiddleware(app, csrfMiddleware)
+		jsonapi.New(store, config, webAuthHandler).RegisterWithMiddleware(app, webAuthHandler.APIKeyMiddleware(), csrfMiddleware)
 	} else {
 		jsonAPI := jsonapi.NewWithStore(store, config, webAuthHandler, durableKV)
-		jsonAPI.RegisterWithMiddleware(app, csrfMiddleware)
+		jsonAPI.RegisterWithMiddleware(app, webAuthHandler.APIKeyMiddleware(), csrfMiddleware)
 		defer jsonAPI.StopScheduler()
 	}
 
@@ -405,31 +409,6 @@ func main() {
 		return c.SendString("OK")
 	})
 
-	// CSRF middleware for all web (cookie-session) protected routes.
-	// Uses the double-submit cookie pattern:
-	//   1. Middleware sets a JS-readable "_csrf" cookie on GET responses.
-	//   2. React's API client reads the cookie and sends its value as
-	//      "X-CSRF-Token" on every mutating request.
-	//   3. Middleware validates header == cookie value before the handler runs.
-	// WebPush subscribe/unsubscribe routes use the same cookie session as all
-	// other browser mutations and are covered by this middleware as well.
-	//
-	// CORRECTION (found while typechecking assets/js/push.js, 2026-08-06): the
-	// skip comment used to justify this as "they carry Authorization: Bearer
-	// headers which already prevent cross-origin CSRF". That is not what
-	// happens — handlers/web/push.go's HandleSubscribe/HandleUnsubscribe never
-	// read the Authorization header at all; they authorize purely from
-	// c.Locals("username"), set below by SessionMiddleware from the session
-	// cookie. The Authorization: Bearer header push.js sends on these routes
-	// is therefore inert on the server. What actually keeps these two routes
-	// safe from cross-origin CSRF today is CookieSameSite: "Lax" below — a
-	// forged cross-site POST/DELETE does not carry the session cookie at all,
-	// so SessionMiddleware has nothing to authorize — the same protection
-	// every other protected route relies on. This exemption is not currently
-	// exploitable, but it rests on an inaccurate premise and should be
-	// resolved deliberately (either validate the Bearer token server-side to
-	// match the comment's original intent, or drop the exemption and the now-
-	// pointless header) rather than left as accidentally-correct.
 	// When the SQLite mirror is enabled it is the canonical account system. Do
 	// not let an old direct-mailbox session fall through to the legacy IMAP
 	// handlers: that makes the inbox look slow and defeats the local mirror.
@@ -439,7 +418,7 @@ func main() {
 		if mailMirror == nil || c.Path() == "/logout" {
 			return c.Next()
 		}
-		sess, err := store.Get(c)
+		sess, err := api.RequestSession(c, store)
 		if err != nil {
 			if isAPIRequest(c) {
 				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Application account required"})
@@ -454,7 +433,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || c.Path() == "/api/automation" || strings.HasPrefix(c.Path(), "/api/automation/") || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -480,8 +459,8 @@ func main() {
 		return c.Next()
 	}
 
-	// Protected routes group — session-gated, mirror-session-gated, and CSRF-protected.
-	protected := app.Group("", api.SessionMiddleware(store), mirrorSessionMiddleware, csrfMiddleware, web.MailMutationEvents(notificationHub))
+	// API keys and browser sessions share mailbox, ownership and role checks.
+	protected := app.Group("", webAuthHandler.APIKeyMiddleware(), api.SessionMiddleware(store), mirrorSessionMiddleware, csrfMiddleware, web.MailMutationEvents(notificationHub))
 
 	// Logout MUST be POST to prevent forced-logout via a crafted GET link
 	// (CSRF attack). Placed in the protected group so CSRF middleware covers it.
@@ -489,6 +468,8 @@ func main() {
 
 	// JSON endpoints used by the React client during the /v1 migration.
 	apiRoutes := protected.Group("/api")
+	web.NewAPIKeysHandler(mailMirror).Register(apiRoutes)
+	api.NewAutomationHandler(store, apiReference).Register(apiRoutes)
 	{
 		apiRoutes.Get("/capabilities", func(c *fiber.Ctx) error {
 			role := mailstore.RoleUser

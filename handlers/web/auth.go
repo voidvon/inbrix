@@ -74,7 +74,7 @@ func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
 	if h.mirror != nil {
 		return c.Redirect("/user-login")
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err == nil {
 		authenticated := sess.Get("authenticated")
 		if authenticated == true {
@@ -109,7 +109,7 @@ func (h *AuthHandler) HandleUserLogin(c *fiber.Ctx) error {
 	if err != nil {
 		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Failed to load mail accounts"})
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return RenderStatus(c, 500, "user-login", fiber.Map{"Error": "Session error"})
 	}
@@ -208,7 +208,7 @@ func (h *AuthHandler) HandleRegister(c *fiber.Ctx) error {
 		user.Role = mailstore.RoleSuperAdmin
 	}
 
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return RenderStatus(c, 500, "register", fiber.Map{"Error": "Session error"})
 	}
@@ -236,7 +236,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 	if h.mirror != nil {
 		return c.Redirect("/user-login")
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(500).SendString("Session error")
 	}
@@ -373,7 +373,7 @@ func (h *AuthHandler) HandleLogin(c *fiber.Ctx) error {
 // CSRF-triggered forced-logout attacks on GET. JSON callers receive a small
 // success object; the legacy redirect response remains for embedders.
 func (h *AuthHandler) HandleLogout(c *fiber.Ctx) error {
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Redirect("/login")
 	}
@@ -467,7 +467,7 @@ func (h *AuthHandler) fetchInitialData(client *api.Client, cacheFolder string) e
 // is safe to call from a goroutine.
 func (h *AuthHandler) MailClientFactory(c *fiber.Ctx) (func() (api.MailClient, error), error) {
 	// Get credentials from session
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %v", err)
 	}
@@ -577,7 +577,7 @@ func (h *AuthHandler) HandleDemoLogin(c *fiber.Ctx) error {
 		return c.Status(404).SendString("Demo mode is not enabled")
 	}
 
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return c.Status(500).SendString("Session error")
 	}
@@ -736,7 +736,7 @@ func (h *AuthHandler) CreateSMTPClientForAccount(entry AccountEntry) (*api.SMTPC
 // single CalDAV client-construction path shared by the browser and JSON
 // calendar APIs.
 func (h *AuthHandler) CalDAVClient(c *fiber.Ctx) (*api.CalDAVClient, error) {
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return nil, fmt.Errorf("calendar: failed to get session: %w", err)
 	}
@@ -756,7 +756,7 @@ func (h *AuthHandler) CalDAVClient(c *fiber.Ctx) (*api.CalDAVClient, error) {
 // GetSessionEmail returns the authenticated user's email address from the
 // session, or an empty string if the session is unavailable.
 func (h *AuthHandler) GetSessionEmail(c *fiber.Ctx) string {
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return ""
 	}
@@ -776,7 +776,7 @@ func (h *AuthHandler) CreateSMTPClient(c *fiber.Ctx) (*api.SMTPClient, error) {
 	smtpPort := h.config.SMTP.GetPort()
 
 	// Get credentials from session
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %v", err)
 	}

@@ -64,7 +64,7 @@ func (h *AccountsHandler) SetMailMirror(db *mailstore.Store, syncer *mailstore.S
 }
 
 func (h *AccountsHandler) mirrorOwner(c *fiber.Ctx) string {
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return ""
 	}
@@ -143,7 +143,7 @@ func (h *AccountsHandler) HandleResyncAttachments(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -448,7 +448,7 @@ func (h *AccountsHandler) handleAddMirrorAccount(c *fiber.Ctx) error {
 	if owner == "" {
 		return fiber.ErrUnauthorized
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -653,7 +653,7 @@ func (h *AccountsHandler) handleUpdateMirrorAccount(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -702,7 +702,7 @@ func (h *AccountsHandler) HandleDeleteAccount(c *fiber.Ctx) error {
 		if h.syncer != nil {
 			h.syncer.StopAccount(account.ID)
 		}
-		sess, sessErr := h.store.Get(c)
+		sess, sessErr := requestSession(c, h.store)
 		if sessErr != nil {
 			return fiber.ErrInternalServerError
 		}
@@ -813,7 +813,7 @@ func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
 
 	// Persist the current session account as an additional account under the new owner
 	// (so the user can switch back).  We need the current password from the session.
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err == nil {
 		currentEmail, _ := sess.Get("email").(string)
 		currentEncCreds, _ := sess.Get("credentials").(string)
@@ -842,7 +842,7 @@ func (h *AccountsHandler) HandleSwitchAccount(c *fiber.Ctx) error {
 
 	// Overwrite session with new identity.
 	if sess == nil {
-		sess, err = h.store.Get(c)
+		sess, err = requestSession(c, h.store)
 		if err != nil {
 			return fiber.ErrInternalServerError
 		}
@@ -876,7 +876,7 @@ func (h *AccountsHandler) handleSwitchMirrorAccount(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	sess, err := h.store.Get(c)
+	sess, err := requestSession(c, h.store)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -948,7 +948,7 @@ func (h *AccountsHandler) HandleSettings(c *fiber.Ctx) error {
 	}
 
 	// Load token from session.
-	sess, _ := h.store.Get(c)
+	sess, _ := requestSession(c, h.store)
 	token, _ := sess.Get("token").(string)
 
 	return c.JSON(fiber.Map{
@@ -968,7 +968,7 @@ func (h *AccountsHandler) handleMirrorSettings(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).SendString("Failed to load mail accounts")
 	}
-	sess, _ := h.store.Get(c)
+	sess, _ := requestSession(c, h.store)
 	token, _ := sess.Get("token").(string)
 	return c.JSON(fiber.Map{
 		"Title":             "Settings",

@@ -30,29 +30,71 @@ inbrix can be used without an application account through direct mailbox login.
 With the local SQLite mirror enabled, it also provides a local application
 account (`/register` and `/user-login`) whose password is separate from mailbox
 passwords. A user can attach several own mailboxes and switch the active one;
-every `/v1` route remains owner-scoped by the server-side session and there is
-no account/tenant/user path segment or caller-controlled mailbox selector. The
+every `/v1` route remains owner-scoped by the authenticated user. There is no
+account/tenant/user path segment; API keys may select an owned mailbox through
+the validated `X-Account-ID` header described below. The
 *only* remote credentials are still the user's own IMAP/SMTP password or an
 OAuth2 access token for their provider.
 
-There are exactly **two** ways a request can be authenticated:
+Requests can authenticate in three ways:
 
 | Mode | How the caller proves itself | Who uses it |
 |------|------------------------------|-------------|
+| **User API key** | `Authorization: Bearer inbrix_live_…` or `X-API-Key: inbrix_live_…` | scripts and integrations acting as a local application user |
 | **Session cookie** (default) | The cookie set by `POST /login`, `POST /user-login`, or the OAuth2 callback | browsers, `curl -b cookies.txt`, inbrix's React client |
 | **Injected credentials** (opt-in, off by default) | `X-Vulos-Broker-Auth` + `X-Vulos-Mail-*` headers | an embedding host that already holds the user's mailbox credentials |
 
-Both resolve to the same thing — one mailbox connection for the duration of one
-request. There is no API-key or bearer-token scheme, no refresh endpoint of
-inbrix's own, and no way to mint a long-lived credential from `/v1`.
+User API keys are available when local application accounts are enabled. A key
+inherits all of its owner's current backend permissions, including API key
+management. Existing ownership checks and super-administrator restrictions apply
+unchanged, and role changes take effect on the next request. A key never grants
+access to another user's mailbox or private data.
 
-The API reuses inbrix's session cookie — the **same** session established by
-`POST /login`, `POST /user-login`, or the OAuth2 flow. There is no separate API
-token scheme. The local SQLite mirror is used by the HTML inbox path; `/v1`
-continues to expose the live mail engine contract and is not a second database
-API.
+Create and manage keys under **Settings → API Keys**. Complete secrets are shown
+only when created or rotated; the database stores only SHA-256 hashes and public
+prefixes. Keys may expire, can be revoked immediately, and support rotation that
+atomically invalidates the previous key. The UI lists recent usage time/IP and
+creation, rotation, and revocation events.
 
-When the session is missing or unauthenticated, the API responds **`401` with a
+```sh
+# INBRIX_API_KEY contains the secret copied when the key was created.
+curl http://localhost:3001/api/capabilities \
+  -H "Authorization: Bearer $INBRIX_API_KEY"
+
+curl http://localhost:3001/v1/me \
+  -H "X-API-Key: $INBRIX_API_KEY"
+```
+
+Key authentication works on the existing protected backend routes (including
+`/api/*` and `/v1/*`); a separate copy of the API is not needed. Requests use the
+owner's default mailbox unless `X-Account-ID` selects another mailbox owned by
+the same user. Selection is request-local and does not switch any browser
+session. An explicit invalid, expired, or revoked key returns `401`, even if a
+valid browser cookie is also present. Keys are accepted only in headers.
+
+Only **verified** key requests skip browser CSRF checks. Cookie-authenticated
+mutations still require a valid CSRF cookie and matching `X-CSRF-Token`. API key
+requests do not create persistent login sessions or issue login cookies.
+
+API key management endpoints (all scoped to the authenticated user):
+
+| Method | Path | Body / result |
+|--------|------|---------------|
+| GET | `/api/settings/api-keys` | `{ "keys": [...] }`, metadata only |
+| POST | `/api/settings/api-keys` | `{ "name": "automation", "expiresAt": null }`; returns metadata and one-time `key` |
+| POST | `/api/settings/api-keys/:id/rotate` | Returns a new key, preserving name and expiration; old key stops working |
+| POST | `/api/settings/api-keys/:id/revoke` | Optional `{ "reason": "..." }`; returns `{ "ok": true }` |
+| GET | `/api/settings/api-keys/:id/events` | `{ "events": [...] }`, latest 100 operations |
+
+`expiresAt` may be null (no expiration) or a future RFC3339 timestamp. Names are
+required and limited to 120 characters. Key-management responses use `no-store`.
+There is no API-key refresh endpoint; expired or revoked keys cannot be rotated.
+
+Browser and broker requests continue using their existing authentication. The
+local SQLite mirror is used by the inbox path; `/v1` continues to expose the live
+mail engine contract.
+
+When no valid authentication is provided, the API responds **`401` with a
 JSON body**, so a `fetch()`-based client can react in code:
 
 ```json
@@ -60,6 +102,76 @@ JSON body**, so a `fetch()`-based client can react in code:
 ```
 
 Send requests with credentials included (e.g. `fetch(url, { credentials: 'include' })`).
+
+### Automation discovery and application mailboxes
+
+An AI client can start with `GET /api/automation` using its API key. This returns
+authentication and mailbox-selection instructions, the selected mailbox, a link
+to `/api/capabilities`, and a paginated list of the running server's registered
+`/api/*` and `/v1/*` operations. The list comes from the actual router, so disabled
+calendar/contact routes are absent. Discovery requires authentication and works
+even before the user has attached a mailbox.
+
+Each operation has `method`, `path` (a Fiber route template such as `:uid`),
+`pathParameters`, and `readOnly`. Where this document contains an endpoint table,
+`reference` includes its section, table header and row with query/body/response
+hints. These hints are **not OpenAPI/JSON Schema**. An absent reference means
+the parameter contract is not documented in this catalog; clients should not
+guess request bodies. Listing a route does not grant permission to execute it;
+ordinary users still receive `403` on administrator-only operations. Registered
+features can also return `501`/`503` when their backing services are unavailable.
+
+Filter by `q` (case-insensitive substring of method, path or reference), `method`,
+or exact route-template `path`. `limit` defaults to 50 (maximum 100), `offset`
+defaults to zero, and `nextOffset` is null when there are no further results.
+Fetch detailed prose/examples using
+`/api/automation/reference?section=<reference.section>` (URL-encoded). Omit
+`section` to download the complete Markdown reference embedded in this build.
+
+For **application mailboxes**, first call `GET /api/accounts`: it returns a JSON
+array including each owned mailbox's stable `id`, `email`, `label` and
+`is_default`, without credentials. Send that `id` in `X-Account-ID` on **every**
+mailbox request, including search, pagination, detail, attachments and writes.
+The API key is user-level: the same key can operate all mailboxes owned by that
+user. Foreign or unknown IDs return `404`. Without the header, every request
+uses the user's current default mailbox. `/api/accounts/:id/switch` only changes
+the current request for key authentication; it cannot persist selection between
+requests. Explicit headers allow concurrent automation against different
+mailboxes without changing a browser's active mailbox.
+
+Message UIDs are only unique within a folder of one mailbox: keep
+`(accountId, folder, uid)` together. To search across all application mailboxes,
+enumerate `/api/accounts`, search each with its explicit `X-Account-ID`, and
+retain those identifiers in merged results. `/v1/accounts` and `/v1/unified`
+use the **separate legacy connected-account store**; they do not enumerate or
+aggregate the SQLite application's mailbox list.
+
+| Method | Path | Query | Body | Returns |
+|--------|------|-------|------|---------|
+| `GET` | `/api/automation` | `q?`, `method?`, `path?`, `limit?`, `offset?` | — | `{ version, authentication, mailboxes, capabilitiesEndpoint, referenceEndpoint, instructions, total, limit, offset, nextOffset, operations }` |
+| `GET` | `/api/automation/reference` | `section?` | — | Markdown reference or one section; unknown section is `404` |
+| `GET` | `/api/capabilities` | — | — | `{ notifications, webPush, calendar, role, currentUser }` |
+| `GET` | `/api/accounts` | — | — | Owned application mailbox array: `[{ id, email, label, color?, is_default, imap_server, imap_port, smtp_server, smtp_port }]` |
+| `GET` | `/api/mail/folders` | — | — | Locally mirrored folders for the selected mailbox |
+| `GET` | `/api/mail/messages` | `folder` (required), `limit?`, `offset?` | — | `{ folder, messages, limit, offset, nextOffset, syncComplete, syncError?, lastSyncAt? }` |
+| `GET` | `/api/mail/messages/:uid` | `folder` (required) | — | `Email` with optional `mailSummary`, `mailTranslation`, `mailTranslationAll`; `409` if body is not cached yet |
+| `PATCH` | `/api/mail/messages/:uid/read` | `folder` (required) | — | `{ ok, updated, sync }`; queues a read-status update for the selected mailbox |
+| `GET` | `/api/mail/search` | `q` (required), `limit?` | — | `{ query, terms, hasMore, results }`; searches the selected mailbox's cached conversation mail (inbox/sent and pending/draft sends) |
+
+Example startup and mailbox-specific read:
+
+```sh
+curl "$INBRIX_URL/api/automation?q=messages&limit=20" \
+  -H "Authorization: Bearer $INBRIX_API_KEY"
+
+curl "$INBRIX_URL/api/accounts" \
+  -H "Authorization: Bearer $INBRIX_API_KEY"
+
+# INBRIX_ACCOUNT_ID is an id returned by /api/accounts.
+curl "$INBRIX_URL/api/mail/messages?folder=INBOX&limit=20" \
+  -H "Authorization: Bearer $INBRIX_API_KEY" \
+  -H "X-Account-ID: $INBRIX_ACCOUNT_ID"
+```
 
 ### Injected-credential mode (embedding hosts)
 

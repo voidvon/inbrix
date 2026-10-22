@@ -141,7 +141,7 @@ func DecryptJSON(enc string, v any, key string) error {
 
 // GetSessionToken safely retrieves JWT token from session
 func GetSessionToken(c *fiber.Ctx, store *session.Store) (string, error) {
-	sess, err := store.Get(c)
+	sess, err := RequestSession(c, store)
 	if err != nil {
 		return "", err
 	}
@@ -161,7 +161,7 @@ func GetSessionToken(c *fiber.Ctx, store *session.Store) (string, error) {
 
 // ValidateSession checks if the current session is valid
 func ValidateSession(c *fiber.Ctx, store *session.Store) (*session.Session, error) {
-	sess, err := store.Get(c)
+	sess, err := RequestSession(c, store)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func ValidateSession(c *fiber.Ctx, store *session.Store) (*session.Session, erro
 // SessionMiddleware checks if the user is authenticated
 func SessionMiddleware(store *session.Store) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		sess, err := store.Get(c)
+		sess, err := RequestSession(c, store)
 		if err != nil {
 			return sessionAuthFailure(c)
 		}
