@@ -1,5 +1,7 @@
 import { getCookie } from "./utils";
 import { CLIENT_ID } from "./client-id";
+import { readAIChatStream, type AIChatStreamEvent } from "./ai-chat-stream";
+import type { ConversationAIChatPart } from "../types";
 import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
 
 export class ApiError extends Error {
@@ -65,9 +67,9 @@ async function fetchCSRFToken(signal?: AbortSignal | null) {
   return payload.token || getCookie("_csrf");
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}) {
+async function apiRequest(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Client-Id", CLIENT_ID);
   const method = (init.method || "GET").toUpperCase();
   const mutates = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
@@ -93,6 +95,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
     if (csrf) headers.set("X-CSRF-Token", csrf);
     response = await send();
   }
+  return response;
+}
+
+async function parseAPIResponse<T>(response: Response): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
   const payload: unknown = contentType.includes("application/json") ? await response.json() as unknown : await response.text();
   if (!response.ok) {
@@ -102,6 +108,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
     throw new ApiError(message, response.status);
   }
   return payload as T;
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}) {
+  return parseAPIResponse<T>(await apiRequest(path, init));
 }
 
 export function getConversations(options: {
@@ -641,9 +651,12 @@ export type AIAgentDocumentCard = {
   html?: string;
 };
 
+export type AIAgentEmailDraft = Pick<ComposeDraftResponse["draft"], "to" | "cc" | "subject" | "bodyText">;
+
 export type AIAgentChatRequest = {
   accountEmail: string;
   conversationId?: string;
+  activeDraft?: AIAgentEmailDraft;
   focusedMessages?: Array<{ uid: string; folder: string }>;
   agentId?: string;
   modelId?: string;
@@ -677,17 +690,27 @@ export type AIAgentDocumentAction = {
 
 export type AIAgentChatResponse = {
   content: string;
+  parts?: ConversationAIChatPart[];
   sources?: Array<{ uid: string; folder: string }>;
   toolCalls: AIToolCall[];
   document?: AIAgentDocumentCard;
   documentAction?: AIAgentDocumentAction;
 };
 
-export function chatWithAIAgent(payload: AIAgentChatRequest) {
-  return apiFetch<AIAgentChatResponse>("/api/ai/agent-chat", {
+export async function chatWithAIAgent(payload: AIAgentChatRequest, options?: {
+  signal?: AbortSignal;
+  onEvent: (event: AIChatStreamEvent) => void;
+}) {
+  const response = await apiRequest("/api/ai/agent-chat", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal: options?.signal,
+    headers: { Accept: options ? "text/event-stream" : "application/json" },
   });
+  if (!response.ok || !options || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    return parseAPIResponse<AIAgentChatResponse>(response);
+  }
+  return readAIChatStream(response, options.onEvent);
 }
 
 export type MailSummaryResult = {

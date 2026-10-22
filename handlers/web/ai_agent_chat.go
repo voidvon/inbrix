@@ -63,6 +63,7 @@ type AIAgentChatDocContext struct {
 type AIAgentChatRequest struct {
 	AccountEmail    string                 `json:"accountEmail"`
 	ConversationID  string                 `json:"conversationId,omitempty"`
+	ActiveDraft     *AIAgentEmailDraft     `json:"activeDraft,omitempty"`
 	FocusedMessages []AgentMailReference   `json:"focusedMessages,omitempty"`
 	AgentID         string                 `json:"agentId,omitempty"`
 	ModelID         string                 `json:"modelId,omitempty"`
@@ -70,7 +71,23 @@ type AIAgentChatRequest struct {
 	ActiveDocument  *AIAgentChatDocContext `json:"activeDocument,omitempty"`
 }
 
+// ActiveDraft is the unsent editor snapshot, separate from sent mail and chat history.
+type AIAgentEmailDraft struct {
+	To       string `json:"to"`
+	Cc       string `json:"cc"`
+	Subject  string `json:"subject"`
+	BodyText string `json:"bodyText"`
+}
+
+// AIAgentChatPart records visible activity in execution order without tool payloads.
+type AIAgentChatPart struct {
+	Type    string      `json:"type"`
+	Content string      `json:"content,omitempty"`
+	Tool    *AIToolCall `json:"tool,omitempty"`
+}
+
 type AIAgentChatResponse struct {
+	Parts     []AIAgentChatPart    `json:"parts,omitempty"`
 	Content   string               `json:"content"`
 	ToolCalls []AIToolCall         `json:"toolCalls,omitempty"`
 	Document  *AIDocumentCard      `json:"document,omitempty"`
@@ -200,14 +217,30 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 	instructions := buildAgentSystemPrompt(promptMode, agentName, agentCustomPrompt, input.ActiveDocument)
 
+	ctx := c.UserContext()
+	if strings.Contains(c.Get("Accept"), "text/event-stream") {
+		return streamAgentChat(c, func(ctx context.Context, emit func(agentChatEvent) error) (*AIAgentChatResponse, error) {
+			return h.runAgentChat(ctx, owner, account, input, model, apiKey, agentName, instructions, mailContext, emit)
+		})
+	}
+	response, err := h.runAgentChat(ctx, owner, account, input, model, apiKey, agentName, instructions, mailContext, nil)
+	if err != nil {
+		return err
+	}
+	return c.JSON(response)
+}
+
+// runAgentChat uses only captured request values, never a Fiber context: stream
+// writers outlive the handler and Fiber reuses its context after it returns.
+func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, account mailstore.Account, input AIAgentChatRequest, model mailstore.AIModelRecord, apiKey, agentName, instructions string, mailContext *agentMailContext, emit func(agentChatEvent) error) (*AIAgentChatResponse, error) {
 	// 4. Resolve bounded current context, then run the tool loop.
 	executedToolCalls := make([]AIToolCall, 0)
 	var generatedDocument *AIDocumentCard
 	var documentAction *AIDocumentAction
 
-	historyPrompt, err := h.agentHistory(c.UserContext(), input.Messages, mailContext, model, apiKey)
+	historyPrompt, err := h.agentHistory(ctx, input.Messages, mailContext, model, apiKey)
 	if err != nil {
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	currentTurnInput := historyPrompt
 	if mailContext != nil {
@@ -216,18 +249,55 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 
 	inputBudget := maxAgentInputBytes - len(instructions)
 	if len(currentTurnInput) > inputBudget-maxAgentToolResultBytes {
-		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "AI 上下文过长，请缩短问题或减少重点邮件")
+		return nil, fiber.NewError(fiber.StatusRequestEntityTooLarge, "AI 上下文过长，请缩短问题或减少重点邮件")
 	}
 	maxToolTurns := 12
 	finalReply := ""
 	var sources []AgentMailReference
 	seenSources := make(map[string]bool)
 
+	parts := make([]AIAgentChatPart, 0)
+	lastTextPart := -1
+	respond := func(prompt string) (string, error) {
+		lastTextPart = -1
+		var response string
+		var err error
+		if emit == nil {
+			response, err = h.createAIResponseWithInstructions(ctx, model, apiKey, instructions, prompt, 4096)
+		} else {
+			if err := emit(agentChatEvent{Type: "text_reset"}); err != nil {
+				return "", err
+			}
+			var raw strings.Builder
+			visible := ""
+			response, err = mailstore.CreateAIResponseStream(ctx, h.client, model, apiKey, instructions, prompt, 4096, model.ReasoningEffort, func(delta string) error {
+				raw.WriteString(delta)
+				next := agentVisibleText(raw.String())
+				if next == visible {
+					return nil
+				}
+				addition := strings.TrimPrefix(next, visible)
+				visible = next
+				return emit(agentChatEvent{Type: "text_delta", Delta: addition})
+			})
+		}
+		if err == nil {
+			if text := strings.TrimSpace(agentVisibleText(response)); text != "" {
+				lastTextPart = len(parts)
+				parts = append(parts, AIAgentChatPart{Type: "text", Content: text})
+			}
+		}
+		return response, err
+	}
+
 	for turn := 0; turn < maxToolTurns; turn++ {
-		rawResponse, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rawResponse, err := respond(currentTurnInput)
 		if err != nil {
-			h.recordError(c.UserContext(), owner, "agent_chat", input.AccountEmail, model.Model, agentName, err)
-			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+			h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, err)
+			return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 		}
 
 		calls := parseToolCalls(rawResponse)
@@ -245,7 +315,10 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 				break
 			}
 			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-			result, summary, err := h.executeScopedAgentTool(c.UserContext(), owner, account.ID, mailContext, call, model, apiKey)
+			if err := sendToolEvent(emit, "tool_start", call); err != nil {
+				return nil, err
+			}
+			result, summary, err := h.executeScopedAgentTool(ctx, owner, account.ID, mailContext, call, model, apiKey)
 			if err != nil {
 				call.Status = "error"
 				call.Result = map[string]string{"error": err.Error()}
@@ -282,6 +355,10 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 				call.Result = map[string]any{"outputOmitted": true, "summary": clipRunes(call.Summary, 500), "notice": "Result exceeded the output budget. Request a smaller page or narrower data. Do not claim to have read the omitted data."}
 				resBytes, _ = json.Marshal(call.Result)
 			}
+			if err := sendToolEvent(emit, "tool_end", call); err != nil {
+				return nil, err
+			}
+			parts = append(parts, AIAgentChatPart{Type: "tool", Tool: &AIToolCall{ID: call.ID, Name: call.Name, Summary: call.Summary, Status: call.Status}})
 			executedToolCalls = append(executedToolCalls, call)
 			argsBytes, _ := json.Marshal(call.Args)
 			if len(argsBytes) > 2048 {
@@ -293,10 +370,10 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		// If this was the last tool turn allowed, ask model for final synthesis
 		if turn == maxToolTurns-1 || stopReason != "" {
 			currentTurnInput += "\n\n[System]: " + stopReason + " No more tools are available for this response. Give a final answer from the evidence actually read. Explicitly state any unread pages, missing mail bodies, or incomplete coverage; never claim to have reviewed the whole thread unless you did."
-			synthesisResponse, synErr := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, currentTurnInput, 4096)
+			synthesisResponse, synErr := respond(currentTurnInput)
 			if synErr != nil {
-				h.recordError(c.UserContext(), owner, "agent_chat", input.AccountEmail, model.Model, agentName, synErr)
-				return fiber.NewError(fiber.StatusUnprocessableEntity, synErr.Error())
+				h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, synErr)
+				return nil, fiber.NewError(fiber.StatusUnprocessableEntity, synErr.Error())
 			}
 			finalReply = synthesisResponse
 			break
@@ -318,24 +395,32 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 
 	if generatedDocument != nil {
-		if err := h.resolveProductPictures(c.UserContext(), owner, generatedDocument.Items); err != nil {
-			return productError(err)
+		if err := h.resolveProductPictures(ctx, owner, generatedDocument.Items); err != nil {
+			return nil, productError(err)
 		}
 		hydrateDocumentCard(generatedDocument)
 	}
 	if mailContext != nil {
-		if err := h.mailDB.SaveAIChatContext(c.UserContext(), account.ID, input.ConversationID, mailContext.memory); err != nil {
-			h.recordError(c.UserContext(), owner, "agent_chat_context", input.AccountEmail, model.Model, agentName, err)
+		if err := h.mailDB.SaveAIChatContext(ctx, account.ID, input.ConversationID, mailContext.memory); err != nil {
+			h.recordError(ctx, owner, "agent_chat_context", input.AccountEmail, model.Model, agentName, err)
 		}
 	}
 
-	return c.JSON(AIAgentChatResponse{
+	// Replace only the final model block with the authoritative cleaned answer.
+	// Earlier commentary and tools retain their original positions.
+	if lastTextPart >= 0 {
+		parts[lastTextPart].Content = strings.TrimSpace(cleanedContent)
+	} else {
+		parts = append(parts, AIAgentChatPart{Type: "text", Content: strings.TrimSpace(cleanedContent)})
+	}
+	return &AIAgentChatResponse{
+		Parts:          parts,
 		Content:        strings.TrimSpace(cleanedContent),
 		Sources:        sources,
 		ToolCalls:      executedToolCalls,
 		Document:       generatedDocument,
 		DocumentAction: documentAction,
-	})
+	}, nil
 }
 
 // Agent prompt modes. The tool set is shared; what differs is how the agent is

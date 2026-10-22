@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -33,6 +32,27 @@ var reservedAIExtraParamKeys = map[string]struct{}{
 
 // CreateAIResponse calls the configured model backend (OpenAI or Gemini) and returns the output text.
 func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+	return createAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, nil)
+}
+
+// CreateAIResponseStream emits text as the provider generates it. JSON-only
+// gateways remain supported, while other callers keep the non-streaming API.
+func CreateAIResponseStream(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+	if onDelta == nil {
+		return CreateAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+	}
+	emitted := false
+	text, err := createAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, func(delta string) error {
+		emitted = true
+		return onDelta(delta)
+	})
+	if err == nil && !emitted && text != "" {
+		err = onDelta(text)
+	}
+	return text, err
+}
+
+func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	provider := strings.ToLower(strings.TrimSpace(model.Provider))
 	if provider == "" {
 		provider = "openai"
@@ -48,13 +68,13 @@ func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 	}
 	switch provider {
 	case "gemini":
-		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	case "deepseek":
-		return createDeepSeekResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+		return createDeepSeekResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	case "openai":
-		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	case "openai-compatible":
-		return createOpenAICompatibleResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+		return createOpenAICompatibleResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	default:
 		return "", fmt.Errorf("unsupported AI provider: %q", model.Provider)
 	}
@@ -163,8 +183,11 @@ type geminiRequest struct {
 	GenerationConfig  geminiGenerationConfig `json:"generationConfig"`
 }
 
-func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	endpoint := BuildGeminiURL(model.BaseURL, model.Model)
+	if onDelta != nil {
+		endpoint = strings.TrimSuffix(endpoint, ":generateContent") + ":streamGenerateContent?alt=sse"
+	}
 
 	doReq := func(includeThinking bool) (*http.Response, []byte, error) {
 		reqBody := geminiRequest{
@@ -207,7 +230,7 @@ func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelR
 		}
 		defer resp.Body.Close()
 
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
+		raw, err := readAIResponse(resp, "gemini", onDelta)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read Gemini response: %w", err)
 		}
@@ -322,8 +345,9 @@ func geminiResponseText(raw []byte) (string, error) {
 	return strings.Join(parts, "\n"), nil
 }
 
-func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	payload := map[string]any{
+		"stream":       onDelta != nil,
 		"model":        model.Model,
 		"instructions": instructions,
 		"input":        input,
@@ -348,7 +372,7 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 		return "", fmt.Errorf("OpenAI request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
+	raw, err := readAIResponse(resp, "openai", onDelta)
 	if err != nil {
 		return "", fmt.Errorf("read OpenAI response: %w", err)
 	}
@@ -495,7 +519,7 @@ func truncateForError(s string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
-func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	endpoint := BuildOpenAICompatibleURL(model.BaseURL)
 
 	var msgs []openAICompatibleMessage
@@ -510,9 +534,8 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 		Model:     model.Model,
 		Messages:  msgs,
 		MaxTokens: maxOutputTokens,
-		// Cline and several other gateways stream by default; force a single
-		// JSON response so the result can be parsed uniformly.
-		Stream: false,
+		// Only interactive chat requests opt into streaming.
+		Stream: onDelta != nil,
 	}
 	bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
 	if err != nil {
@@ -532,7 +555,7 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
+	raw, err := readAIResponse(resp, "openai-compatible", onDelta)
 	if err != nil {
 		return "", fmt.Errorf("read OpenAI-compatible response: %w", err)
 	}
@@ -621,7 +644,7 @@ type deepSeekResponse struct {
 	} `json:"error"`
 }
 
-func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
+func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	endpoint := BuildDeepSeekURL(model.BaseURL)
 
 	var msgs []deepSeekChatMessage
@@ -645,7 +668,7 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 		Model:     model.Model,
 		Messages:  msgs,
 		MaxTokens: maxOutputTokens,
-		Stream:    false,
+		Stream:    onDelta != nil,
 	}
 
 	bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
@@ -666,7 +689,7 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBytes))
+	raw, err := readAIResponse(resp, "deepseek", onDelta)
 	if err != nil {
 		return "", fmt.Errorf("read DeepSeek response: %w", err)
 	}

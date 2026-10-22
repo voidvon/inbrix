@@ -95,6 +95,11 @@ export type ConversationAIToolCall = {
   status?: "success" | "error";
 };
 
+/** Ordered visible events from one assistant turn, retained in saved history. */
+export type ConversationAIChatPart =
+  | { type: "text"; content: string }
+  | { type: "tool"; tool: ConversationAIToolCall };
+
 /** A quotation/contract the conversation agent drafted, awaiting the user's save. */
 export type ConversationAIDocumentDraft = {
   type: "quotation" | "contract";
@@ -129,6 +134,7 @@ export type ConversationAIChatMessage = {
   sources?: Array<{ uid: string; folder: string }>;
   createdAt: string;
   toolCalls?: ConversationAIToolCall[];
+  parts?: ConversationAIChatPart[];
   /** Set when the agent drafted a document to save. */
   document?: ConversationAIDocumentDraft;
   /** Set when the agent proposed changing a saved document. */

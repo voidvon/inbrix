@@ -11,6 +11,9 @@ const existing = { id: 'existing', title: 'Alice', peerEmail: 'alice@example.com
 const message = { id: '1', from: existing.peerEmail, to: accountEmail, subject: existing.subject, body: existing.preview, preview: existing.preview, date: now, outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'] };
 const conversations = [{ ...existing, messages: [message] }];
 const drafts = new Map();
+const aiChats = new Map();
+const aiRequests = [];
+const aiReply = '已核对 TD62LM 产品资料，请进一步确认入口压力和背压。';
 const errors = [];
 let sent = '';
 page.on('pageerror', error => errors.push(error.stack));
@@ -31,6 +34,13 @@ await page.route('**/api/**', async route => {
     json = { conversation };
   } else if (path === '/api/conversations') {
     json = { locale: 'zh-CN', accountEmail, conversations: conversations.map(conversation => ({ ...conversation, status: drafts.has(conversation.id) ? 'draft' : conversation.status })), folders: [], accounts: [{ id: 'account', email: accountEmail, label: accountEmail, isActive: true }] };
+  } else if (path.endsWith('/ai-chat')) {
+    const id = path.split('/')[3];
+    if (request.method() === 'PUT') aiChats.set(id, request.postDataJSON().messages);
+    json = { ok: true, messages: aiChats.get(id) || [] };
+  } else if (path === '/api/ai/agent-chat') {
+    aiRequests.push(request.postDataJSON());
+    json = { content: aiReply, toolCalls: [{ name: 'search_products', status: 'success', summary: 'TD62LM' }, { name: 'read_product', status: 'success', summary: '使用限制' }] };
   } else if (path.startsWith('/api/conversations/')) {
     json = { conversation: conversations.find(item => item.id === path.split('/')[3]) };
   } else if (path === '/api/drafts' && request.method() === 'POST') {
@@ -68,6 +78,17 @@ async function chooseRecipient(email) {
     return compose.parentElement === note.parentElement && Boolean(compose.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING) && getComputedStyle(note).position === 'static';
   }), 'The note follows the compose editor inside the same scrolling transcript');
 }
+async function askDraftAI(question) {
+  await page.getByRole('button', { name: 'AI对话', exact: true }).click();
+  const input = page.getByRole('textbox', { name: '询问邮件、草稿或产品资料… (Enter 发送)', exact: true });
+  await input.fill(question);
+  const saved = page.waitForResponse(response => response.url().endsWith('/ai-chat') && response.request().method() === 'PUT');
+  await input.press('Enter');
+  await saved;
+  await page.getByRole('button', { name: '写入草稿', exact: true }).last().waitFor();
+  await page.locator('span:visible').filter({ hasText: /^检索产品资料$/ }).last().waitFor();
+  await page.locator('span:visible').filter({ hasText: /^读取产品规格$/ }).last().waitFor();
+}
 try {
   await page.goto(`${base}/inbox`);
   await chooseRecipient('new@example.com');
@@ -77,6 +98,17 @@ try {
   assert.equal(await page.getByTestId('conversation-detail').locator('[data-testid="compose-inline"]').count(), 1);
   await inline.getByLabel('主题', { exact: true }).fill('New subject');
   await inline.locator('.tiptap').fill('Draft body');
+  assert.equal(await page.getByTestId('conversation-detail').getByRole('button', { name: '回复', exact: true }).count(), 0, 'A draft-only conversation has AI chat without reply controls');
+  await askDraftAI('核对草稿里的产品');
+  assert.equal(aiRequests.at(-1).conversationId, newId);
+  assert.deepEqual(aiRequests.at(-1).activeDraft, { to: 'new@example.com', cc: '', subject: 'New subject', bodyText: 'Draft body' });
+  assert.equal(aiChats.get(newId).length, 2, 'Draft-only AI discussion must persist');
+  await page.getByRole('button', { name: '写入草稿', exact: true }).click();
+  await inline.locator('.tiptap').getByText(aiReply, { exact: true }).waitFor();
+  assert.equal(await inline.getByLabel('主题', { exact: true }).inputValue(), 'New subject', 'AI insertion preserves the unsaved subject');
+  assert.equal(sent, '', 'Writing AI output into a draft must not send email');
+  await inline.locator('.tiptap').fill('Draft body');
+  await page.getByRole('button', { name: '关闭 AI 对话', exact: true }).click();
   await inline.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByTestId('thread-draft-entry').waitFor();
   await page.getByTestId('thread-draft-entry').getByText('Draft body', { exact: true }).waitFor();
@@ -85,6 +117,16 @@ try {
   assert.equal(drafts.get(newId).bodyText, 'Draft body');
   assert.equal(drafts.get(newId).mode, 'new');
   await page.reload();
+  await page.getByTestId('thread-draft-entry').waitFor();
+  await askDraftAI('继续核对已保存的草稿');
+  assert.equal(aiRequests.at(-1).activeDraft.bodyText, 'Draft body');
+  assert.equal(aiRequests.at(-1).messages.length, 3, 'Restored discussion includes the previous turn');
+  await page.getByRole('button', { name: '写入草稿', exact: true }).last().click();
+  await inline.locator('.tiptap').getByText(aiReply, { exact: true }).waitFor();
+  assert.equal(await inline.getByLabel('主题', { exact: true }).inputValue(), 'New subject');
+  await inline.locator('.tiptap').fill('Draft body');
+  await page.getByRole('button', { name: '关闭 AI 对话', exact: true }).click();
+  await inline.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByTestId('thread-draft-entry').getByRole('button').click();
   await inline.waitFor();
   await inline.locator('.tiptap').getByText('Draft body').waitFor();
@@ -134,8 +176,15 @@ try {
   await inline.waitFor();
   await inline.locator('.tiptap').getByText('Draft body').waitFor();
   assert.equal(await inline.isVisible(), true, 'Mobile transcript must show the draft');
+  const previousSend = sent;
+  await askDraftAI('手机端核对产品资料');
+  assert.equal(aiRequests.at(-1).activeDraft.bodyText, 'Draft body');
+  await page.getByRole('button', { name: '写入草稿', exact: true }).last().click();
+  await inline.locator('.tiptap').getByText(aiReply, { exact: true }).waitFor();
+  assert.equal(await inline.isVisible(), true, 'Mobile AI insertion returns to the draft');
+  assert.equal(sent, previousSend);
   assert.deepEqual(errors, []);
-  console.log('Passed: new and existing recipients, draft restore and status, send clears draft status, cross-page navigation, mobile.');
+  console.log('Passed: draft-only AI chat and history, live/saved draft context, product tool labels, AI draft insertion, recipient/reply/send flows, cross-page navigation and mobile.');
 } finally {
   await browser.close();
 }

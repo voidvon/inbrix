@@ -78,6 +78,78 @@ func TestEmailAgentProductResearchAndDocumentImage(t *testing.T) {
 	}
 }
 
+func TestDraftOnlyAgentProductResearch(t *testing.T) {
+	ctx := context.Background()
+	var requests []agentTestRequest
+	var product mailstore.Product
+	h, app, account, other := agentContextTestApp(t, func(request agentTestRequest) string {
+		requests = append(requests, request)
+		switch len(requests) {
+		case 1:
+			return "```tool_call\n" + `{"name":"search_products","arguments":{"query":"TD62LM"}}` + "\n```"
+		case 2:
+			return fmt.Sprintf("```tool_call\n{\"name\":\"read_product\",\"arguments\":{\"id\":%q,\"version\":1}}\n```", product.ID)
+		default:
+			return "TD62LM 最低工作压力为 8 barg，草稿中的 3 barg 工况不符合。"
+		}
+	})
+	var err error
+	product, err = h.mailDB.SaveProduct(ctx, account.OwnerID, "", mailstore.ProductInput{Name: "TD62LM", Model: "TD62LM", Specification: "## 使用限制\n最低工作压力 8 barg。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := conversationID(account.ID, []string{"new@example.com"})
+	if _, err := h.mailDB.SaveDraft(ctx, account.OwnerID, mailstore.DraftInput{AccountEmail: account.Email, ConversationID: id, To: "new@example.com", Subject: "数据库旧主题", BodyText: "旧草稿"}); err != nil {
+		t.Fatal(err)
+	}
+	input := AIAgentChatRequest{
+		AccountEmail: account.Email, ConversationID: id,
+		ActiveDraft: &AIAgentEmailDraft{To: "new@example.com", Cc: "cc@example.com", Subject: "TD62LM 选型确认", BodyText: "请确认 TD62LM 是否适用于入口压力 3 barg。"},
+		Messages:    []AIAgentChatMessage{{Role: "user", Content: "核对我正在写的邮件与产品资料"}},
+	}
+	status, result, raw := postAgentContext(t, app, input)
+	if status != 200 || len(result.ToolCalls) != 2 || !strings.Contains(result.Content, "不符合") {
+		t.Fatalf("draft product research: %d %s", status, raw)
+	}
+	for _, want := range []string{`"messageCount":0`, `"status":"unsent"`, `"source":"editor"`, "TD62LM 选型确认", "入口压力 3 barg", "cc@example.com"} {
+		if !strings.Contains(requests[0].Input, want) {
+			t.Errorf("missing draft context %q", want)
+		}
+	}
+	if strings.Contains(requests[0].Input, "旧草稿") || strings.Contains(requests[0].Input, "最低工作压力 8 barg") || !strings.Contains(requests[2].Input, "最低工作压力 8 barg") {
+		t.Fatal("draft freshness or on-demand product evidence failed")
+	}
+	input.ActiveDraft = nil
+	if status, _, raw := postAgentContext(t, app, input); status != 200 {
+		t.Fatalf("stored draft: %d %s", status, raw)
+	}
+	if !strings.Contains(requests[3].Input, `"source":"database"`) || !strings.Contains(requests[3].Input, "旧草稿") {
+		t.Fatal("closed editor did not use stored draft")
+	}
+	input.ActiveDraft = &AIAgentEmailDraft{Subject: "清空正文"}
+	if status, _, raw := postAgentContext(t, app, input); status != 200 {
+		t.Fatalf("empty live draft: %d %s", status, raw)
+	}
+	if !strings.Contains(requests[4].Input, `"bodyText":""`) || strings.Contains(requests[4].Input, "旧草稿") {
+		t.Fatal("empty live editor was replaced by stale saved content")
+	}
+	input.ActiveDraft.BodyText = strings.Repeat("长草稿", 10000) + "不应进入上下文的结尾"
+	if status, _, raw := postAgentContext(t, app, input); status != 200 {
+		t.Fatalf("long draft: %d %s", status, raw)
+	}
+	if !strings.Contains(requests[5].Input, `"bodyTruncated":true`) || strings.Contains(requests[5].Input, "不应进入上下文的结尾") {
+		t.Fatal("long draft was not bounded and marked truncated")
+	}
+	input.AccountEmail = other.Email
+	if status, _, _ := postAgentContext(t, app, input); status != 404 {
+		t.Fatalf("foreign draft conversation returned %d", status)
+	}
+	input.AccountEmail, input.ConversationID = account.Email, ""
+	if status, _, _ := postAgentContext(t, app, input); status != 400 {
+		t.Fatalf("unscoped active draft returned %d", status)
+	}
+}
+
 func TestProductToolsRejectForeignAndStaleReferences(t *testing.T) {
 	h, _, account, other := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()

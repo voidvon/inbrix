@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type FormEvent, type MutableRefObject, type Ref } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -28,7 +28,7 @@ import { ReplyTemplates } from "./reply-templates";
 import { ComposeDocumentAttachment } from "./document-editor-dialog";
 import { ComposeBubble, type ComposeBubbleSize, type ComposeDraftStatus, type ComposeVariant } from "./compose-bubble";
 import { usePersistedPaneHeight, viewportHeightLimit } from "./resize-handle";
-import { deleteDraft, generateEmail, getSignatures, saveDraft, sendMessage } from "../../lib/api";
+import { deleteDraft, generateEmail, getSignatures, saveDraft, sendMessage, type AIAgentEmailDraft } from "../../lib/api";
 import { composeDraftKey, useComposeDraft } from "../../lib/compose-draft";
 import { cn, formatSize } from "../../lib/utils";
 import {
@@ -437,6 +437,7 @@ export function ComposeDialog({
   defaults,
   accountEmail,
   onOpenChange,
+  aiDraftRef,
 }: {
   copy: Copy;
   open: boolean;
@@ -445,6 +446,8 @@ export function ComposeDialog({
   defaults: ComposeDefaults;
   accountEmail: string;
   onOpenChange: (value: boolean) => void;
+  /** Read the current editor only when asking AI, including edits not autosaved yet. */
+  aiDraftRef?: Ref<() => AIAgentEmailDraft | undefined>;
 }) {
   const queryClient = useQueryClient();
   const [recipients, setRecipients] = useState<string[]>([]);
@@ -543,6 +546,15 @@ export function ComposeDialog({
       setInvalid((current) => current.body ? { ...current, body: false } : current);
       scheduleDraftSave();
     },
+  });
+  useImperativeHandle(aiDraftRef, () => () => {
+    if (!open || !editor || activeWindowRef.current?.conversationId !== conversationId) return undefined;
+    return {
+      to: recipients.join(", "),
+      cc: [...ccRecipients, ccDraftRef.current].filter(Boolean).join(", "),
+      subject,
+      bodyText: htmlToPlainText(draftBodyForStorage(sourceMode ? sourceCode : editor.getHTML())),
+    };
   });
   const signatures = useQuery({ queryKey: ["signatures", accountEmail], queryFn: getSignatures, enabled: open, retry: false });
   const mutation = useMutation({ mutationFn: sendMessage });
@@ -724,6 +736,8 @@ export function ComposeDialog({
     if (previous && sameComposeWindow(previous.defaults, defaults) && defaults.replaceBody?.trim()) {
       activeWindowRef.current = { defaults, conversationId };
       replaceEditorDraft(editor, defaults.replaceBody);
+      setSourceCode(editor.getHTML());
+      setSourceMode(false);
       return;
     }
     if (!draftLoaded) return;

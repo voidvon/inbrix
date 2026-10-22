@@ -49,8 +49,9 @@ import { AIChatInput } from "./ai-chat-input";
 import { AIStatusIndicator } from "./ai-status-indicator";
 import { ConversationDocumentCard } from "./conversation-document-card";
 import { MarkdownContent } from "./markdown-content";
+import { appendAIChatText, finishAIChatParts, getAIChatParts, upsertAIChatTool } from "../../lib/ai-chat-parts";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
-import type { ConversationAIChatMessage, ConversationDetail } from "../../types";
+import type { ConversationAIChatMessage, ConversationAIChatPart, ConversationDetail } from "../../types";
 
 /** Localized label for a tool the agent ran, so the chip reads as an action. */
 function toolDisplayName(name: string, isZh: boolean) {
@@ -61,6 +62,12 @@ function toolDisplayName(name: string, isZh: boolean) {
       return isZh ? "读取邮件正文" : "Read email";
     case "lookup_price":
       return isZh ? "查询价格表" : "Looked up price list";
+    case "list_product_categories":
+      return isZh ? "查看产品分类" : "Listed product categories";
+    case "search_products":
+      return isZh ? "检索产品资料" : "Searched product library";
+    case "read_product":
+      return isZh ? "读取产品规格" : "Read product specifications";
     case "calculate_pricing":
       return isZh ? "核算价格与税费" : "Calculated pricing";
     case "generate_document":
@@ -79,6 +86,7 @@ export function ConversationAIChatPanel({
   onRemoveFocusedMessage,
   onClearFocusedMessages,
   onWriteDraft,
+  getActiveDraft,
   className,
 }: {
   copy: Copy;
@@ -90,6 +98,7 @@ export function ConversationAIChatPanel({
   onClearFocusedMessages?: () => void;
   /** Puts an answer into the reply draft in the transcript, creating it if needed. */
   onWriteDraft?: (body: string) => void;
+  getActiveDraft?: () => AIAgentChatRequest["activeDraft"];
   className?: string;
 }) {
   const queryClient = useQueryClient();
@@ -98,6 +107,10 @@ export function ConversationAIChatPanel({
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const activeConversationRef = useRef(detail.id);
+  activeConversationRef.current = detail.id;
+  const followOutputRef = useRef(true);
 
   // Query conversation AI chat messages from backend SQLite database
   const chatQuery = useQuery({
@@ -111,9 +124,18 @@ export function ConversationAIChatPanel({
   const messages: ConversationAIChatMessage[] = chatQuery.data || [];
 
   const [pendingUserText, setPendingUserText] = useState<string | null>(null);
+  const [pendingAssistant, setPendingAssistant] = useState<ConversationAIChatMessage | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   useEffect(() => {
     setPendingUserText(null);
+    setPendingAssistant(null);
+    setStreamError(null);
+    followOutputRef.current = true;
+    return () => {
+      requestRef.current?.abort();
+      requestRef.current = null;
+    };
   }, [detail.id]);
 
   const displayMessages = useMemo(() => {
@@ -124,8 +146,8 @@ export function ConversationAIChatPanel({
       content: pendingUserText,
       createdAt: new Date().toISOString(),
     };
-    return [...messages, pendingMsg];
-  }, [messages, pendingUserText]);
+    return [...messages, pendingMsg, ...(pendingAssistant ? [pendingAssistant] : [])];
+  }, [messages, pendingUserText, pendingAssistant]);
 
   // Query available AI agents from backend
   const { data: agentsData } = useQuery({
@@ -140,7 +162,7 @@ export function ConversationAIChatPanel({
   // Auto-scroll to bottom on messages update
   const scrollToBottom = () => {
     window.requestAnimationFrame(() => {
-      if (scrollRef.current) {
+      if (scrollRef.current && followOutputRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
     });
@@ -148,7 +170,7 @@ export function ConversationAIChatPanel({
 
   useEffect(() => {
     scrollToBottom();
-  }, [displayMessages.length]);
+  }, [displayMessages.length, pendingAssistant, streamError]);
 
   const focusedMessages = useMemo(() => {
     if (!focusedMessageIds.length) return [];
@@ -160,6 +182,13 @@ export function ConversationAIChatPanel({
   const aiState = useAIStateMachine({
     taskType: "chat",
     locale: isZh ? "zh" : "en",
+    autoProgress: false,
+    customLabels: {
+      generating: {
+        statusText: isZh ? "正在回复" : "Writing reply",
+        detailText: isZh ? "内容正在逐步显示…" : "The reply is appearing as it is generated…",
+      },
+    },
   });
 
   const mutation = useMutation({
@@ -181,26 +210,73 @@ export function ConversationAIChatPanel({
       }));
       apiMessages.push({ role: "user", content: text });
 
-      return await aiState.run(async () => {
-        const res = await chatWithAIAgent({
-          accountEmail,
-          conversationId: detail.id,
-          focusedMessages: focusedMessages.map((message) => ({ uid: message.id, folder: message.folder || "INBOX" })),
-          agentId: selectedAgentId,
-          messages: apiMessages,
+      const controller = new AbortController();
+      requestRef.current = controller;
+      const conversationId = detail.id;
+      let parts: ConversationAIChatPart[] = [];
+      let newTextBlock = true;
+      let currentText = "";
+      const updatePending = () => {
+        const snapshot = { content: currentText, parts, toolCalls: parts.flatMap((part) => part.type === "tool" ? [part.tool] : []) };
+        setPendingAssistant((previous) => ({
+          id: "streaming-assistant", role: "assistant",
+          createdAt: previous?.createdAt || new Date().toISOString(),
+          ...snapshot,
+        }));
+      };
+      const isCurrent = () => activeConversationRef.current === conversationId && requestRef.current === controller && !controller.signal.aborted;
+      try {
+        return await aiState.run(async () => {
+          const res = await chatWithAIAgent({
+            accountEmail,
+            conversationId,
+            activeDraft: getActiveDraft?.(),
+            focusedMessages: focusedMessages.map((message) => ({ uid: message.id, folder: message.folder || "INBOX" })),
+            agentId: selectedAgentId,
+            messages: apiMessages,
+          }, {
+            signal: controller.signal,
+            onEvent: (event) => {
+              if (!isCurrent()) return;
+              if (event.type === "started" || event.type === "text_reset") {
+                aiState.transition("thinking");
+                if (event.type === "text_reset") {
+                  newTextBlock = true;
+                  currentText = "";
+                }
+              } else if (event.type === "text_delta") {
+                aiState.transition("generating");
+                parts = appendAIChatText(parts, event.delta, newTextBlock);
+                newTextBlock = false;
+                currentText += event.delta;
+                updatePending();
+              } else if (event.type === "tool_start" || event.type === "tool_end") {
+                aiState.setToolCall(toolDisplayName(event.tool.name, isZh), event.tool.summary);
+                parts = upsertAIChatTool(parts, event.tool);
+                updatePending();
+              }
+            },
+          });
+          return { res, text, conversationId, previousMessages: messages, controller, parts: finishAIChatParts(parts, res) };
         });
-
-        if (res.toolCalls && res.toolCalls.length > 0) {
-          const first = res.toolCalls[0];
-          aiState.setToolCall(first.name, first.summary);
+      } catch (err) {
+        if (isCurrent()) {
+          const message = err instanceof Error ? err.message : (isZh ? "AI 回复失败" : "AI reply failed");
+          setStreamError(message);
+          setInput(text);
+          toast.error(message);
         }
-
-        return { res, text };
-      });
+        throw err;
+      }
     },
     onSuccess: async (data) => {
-      setPendingUserText(null);
-      if (!data?.res) return;
+      if (!data?.res || data.controller.signal.aborted) return;
+      const isCurrent = () => activeConversationRef.current === data.conversationId && requestRef.current === data.controller;
+      if (isCurrent()) {
+        setPendingUserText(null);
+        setPendingAssistant(null);
+        setStreamError(null);
+      }
       const now = new Date().toISOString();
       const userMsg: ConversationAIChatMessage = {
         id: `user-${Date.now()}`,
@@ -213,6 +289,7 @@ export function ConversationAIChatPanel({
         role: "assistant",
         content: data.res.content || "已处理完成。",
         sources: data.res.sources,
+        parts: data.parts,
         createdAt: now,
         // Keep the tools the agent used, so "did it read the price list?" is
         // answerable after the fact instead of only during the status spinner.
@@ -250,34 +327,36 @@ export function ConversationAIChatPanel({
             }
           : undefined,
       };
-      const nextMessages = [...messages, userMsg, assistantMsg];
+      const nextMessages = [...data.previousMessages, userMsg, assistantMsg];
 
       // Optimistically update React Query cache
       queryClient.setQueryData<ConversationAIChatMessage[]>(
-        ["conversation-ai-chat", detail.id],
+        ["conversation-ai-chat", data.conversationId],
         nextMessages
       );
 
       // Persist to SQLite database
       try {
-        await saveConversationAIChat(detail.id, nextMessages);
+        await saveConversationAIChat(data.conversationId, nextMessages);
       } catch {
         toast.error("保存对话记录到数据库失败");
       }
 
-      setInput("");
-      window.setTimeout(scrollToBottom, 50);
-    },
-    onError: (err) => {
-      setPendingUserText(null);
-      toast.error(err instanceof Error ? err.message : "AI 回复失败");
+      if (isCurrent()) window.setTimeout(scrollToBottom, 50);
     },
   });
 
   const handleSend = (textToSend?: string) => {
     const text = (textToSend ?? input).trim();
     if (!text || mutation.isPending) return;
+    if (!detail.accountEmail) {
+      toast.error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
+      return;
+    }
+    followOutputRef.current = true;
     setInput("");
+    setStreamError(null);
+    setPendingAssistant(null);
     setPendingUserText(text);
     window.setTimeout(scrollToBottom, 20);
     mutation.mutate(text);
@@ -293,8 +372,11 @@ export function ConversationAIChatPanel({
   };
 
   const handleConfirmClear = async () => {
+    if (mutation.isPending) return;
     setClearDialogOpen(false);
     setPendingUserText(null);
+    setPendingAssistant(null);
+    setStreamError(null);
     queryClient.setQueryData<ConversationAIChatMessage[]>(
       ["conversation-ai-chat", detail.id],
       []
@@ -378,6 +460,7 @@ export function ConversationAIChatPanel({
               variant="ghost"
               size="icon"
               className="size-7 text-muted-foreground hover:text-destructive"
+              disabled={mutation.isPending}
               onClick={() => setClearDialogOpen(true)}
               title={copy.aiChatClearHistory}
               aria-label={copy.aiChatClearHistory}
@@ -401,7 +484,14 @@ export function ConversationAIChatPanel({
       </header>
 
       {/* Messages Scroll Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          followOutputRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+        }}
+        className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-4"
+      >
         {chatQuery.isPending ? (
           <div className="flex h-full min-h-[200px] items-center justify-center text-xs text-muted-foreground gap-2">
             <Loader2 className="size-4 animate-spin text-primary" />
@@ -464,9 +554,15 @@ export function ConversationAIChatPanel({
         ) : (
           displayMessages.map((message) => {
             const isUser = message.role === "user";
+            const isStreaming = message.id === "streaming-assistant";
+            const parts = isUser ? [{ type: "text" as const, content: message.content }] : getAIChatParts(message);
+            const lastTextIndex = parts.reduce((last, part, index) => part.type === "text" ? index : last, -1);
             return (
               <div
                 key={message.id}
+                data-testid={isStreaming ? "ai-streaming-message" : undefined}
+                data-ai-message-role={message.role}
+                aria-busy={isStreaming && mutation.isPending}
                 className={cn("group flex flex-col gap-1", isUser ? "items-end" : "items-start")}
               >
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1 select-none">
@@ -479,75 +575,105 @@ export function ConversationAIChatPanel({
                   <span>·</span>
                   <span>{formatTime(message.createdAt)}</span>
                 </div>
-                <div
-                  className={cn(
-                    "flex items-end gap-1.5 max-w-[92%] sm:max-w-[88%]",
-                    isUser ? "flex-row-reverse" : "flex-row"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "min-w-0 rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed break-words shadow-xs select-text cursor-text",
-                      isUser
-                        ? "bg-primary text-primary-foreground rounded-tr-xs whitespace-pre-wrap selection:bg-primary-foreground/30 selection:text-primary-foreground"
-                        : "bg-secondary text-secondary-foreground rounded-tl-xs"
-                    )}
-                  >
-                    {isUser ? (
-                      <span className="select-text">{message.content}</span>
-                    ) : (
-                      <MarkdownContent
-                        content={message.content}
-                        copyLabels={{
-                          copy: copy.copyAIContent,
-                          copied: copy.aiChatCopySuccess,
-                        }}
-                      />
-                    )}
-                  </div>
-                  {!isUser && onWriteDraft ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
+                {parts.map((part, partIndex) => {
+                  if (part.type === "tool") {
+                    const call = part.tool;
+                    return (
+                      <div key={`tool-${call.id ?? partIndex}`} className="max-w-full px-1">
+                        <span
+                          data-ai-part="tool"
+                          data-tool-id={call.id}
+                          className={cn(
+                            "inline-flex max-w-full items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-4",
+                            call.status === "error"
+                              ? "border-destructive/30 bg-destructive/10 text-destructive"
+                              : "border-border bg-muted/60 text-muted-foreground"
+                          )}
+                          title={call.summary}
+                        >
+                          {isStreaming && mutation.isPending && !call.status ? <Loader2 className="size-2.5 shrink-0 animate-spin" /> : call.name === "lookup_price" ? <Tags className="size-2.5 shrink-0 text-cyan-600" /> : <Wrench className="size-2.5 shrink-0" />}
+                          <span className="shrink-0">{toolDisplayName(call.name, isZh)}</span>
+                          {call.summary ? <span className="min-w-0 truncate opacity-80">· {call.summary}</span> : null}
+                        </span>
+                      </div>
+                    );
+                  }
+                  if (!part.content) return null;
+                  return (
+                    <div
+                      key={`text-${partIndex}`}
+                      data-ai-part="text"
                       className={cn(
-                        "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
-                        "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                        "flex min-w-0 items-end gap-1.5",
+                        isUser ? "max-w-[92%] flex-row-reverse sm:max-w-[88%]" : "w-full flex-row"
                       )}
-                      onClick={() => {
-                        const body = markdownToPlainText(message.content);
-                        if (!body) return;
-                        onWriteDraft(body);
-                        // On mobile the panel covers the transcript, and the
-                        // point of the click is to see the draft it filled.
-                        if (isMobile) onClose();
-                      }}
-                      title={copy.draftWriteFromAI}
-                      aria-label={copy.draftWriteFromAI}
-                      data-testid="ai-message-write-draft"
                     >
-                      <PenLine className="size-3" />
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                      "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
-                      "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
-                    )}
-                    onClick={() => void handleCopy(message.id, message.content)}
-                    title={copy.copyAIContent}
-                    aria-label={copy.copyAIContent}
-                  >
-                    {copiedId === message.id ? (
-                      <Check className="size-3 text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                      <CopyIcon className="size-3" />
-                    )}
-                  </Button>
-                </div>
+                      <div
+                        className={cn(
+                          "min-w-0 text-xs sm:text-sm leading-relaxed break-words select-text cursor-text",
+                          isUser
+                            ? "rounded-2xl rounded-tr-xs bg-primary px-3.5 py-2.5 text-primary-foreground shadow-xs whitespace-pre-wrap selection:bg-primary-foreground/30 selection:text-primary-foreground"
+                            : "flex-1 text-foreground"
+                        )}
+                      >
+                        {isUser ? (
+                          <span className="select-text">{part.content}</span>
+                        ) : (
+                          <MarkdownContent
+                            content={part.content}
+                            copyLabels={{
+                              copy: copy.copyAIContent,
+                              copied: copy.aiChatCopySuccess,
+                            }}
+                          />
+                        )}
+                      </div>
+                      {!isUser && partIndex === lastTextIndex && onWriteDraft ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
+                            "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                          )}
+                          disabled={isStreaming}
+                          onClick={() => {
+                            const body = markdownToPlainText(message.content);
+                            if (!body) return;
+                            onWriteDraft(body);
+                            // On mobile the panel covers the transcript, and the
+                            // point of the click is to see the draft it filled.
+                            if (isMobile) onClose();
+                          }}
+                          title={copy.draftWriteFromAI}
+                          aria-label={copy.draftWriteFromAI}
+                          data-testid="ai-message-write-draft"
+                        >
+                          <PenLine className="size-3" />
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-opacity",
+                          "opacity-70 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                        )}
+                        onClick={() => void handleCopy(`${message.id}-${partIndex}`, part.content)}
+                        title={copy.copyAIContent}
+                        aria-label={copy.copyAIContent}
+                      >
+                        {copiedId === `${message.id}-${partIndex}` ? (
+                          <Check className="size-3 text-emerald-600 dark:text-emerald-400" />
+                        ) : (
+                          <CopyIcon className="size-3" />
+                        )}
+                      </Button>
+                    </div>
+                  );
+                })}
                 {!isUser && (message.document || message.documentAction) ? (
                   <ConversationDocumentCard
                     copy={copy}
@@ -557,36 +683,22 @@ export function ConversationAIChatPanel({
                     action={message.documentAction}
                   />
                 ) : null}
-                {!isUser && message.toolCalls?.length ? (
-                  <div className="flex max-w-full flex-wrap items-center gap-1 px-1">
-                    {message.toolCalls.map((call, index) => (
-                      <span
-                        key={call.id ?? `${call.name}-${index}`}
-                        className={cn(
-                          "inline-flex max-w-full items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] leading-4",
-                          call.status === "error"
-                            ? "border-destructive/30 bg-destructive/10 text-destructive"
-                            : "border-border bg-muted/60 text-muted-foreground"
-                        )}
-                        title={call.summary}
-                      >
-                        {call.name === "lookup_price" ? <Tags className="size-2.5 shrink-0 text-cyan-600" /> : <Wrench className="size-2.5 shrink-0" />}
-                        <span className="shrink-0">{toolDisplayName(call.name, isZh)}</span>
-                        {call.summary ? <span className="min-w-0 truncate opacity-80">· {call.summary}</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             );
           })
+        )}
+
+        {streamError && (
+          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+            {isZh ? "回复未完成，已保留收到的内容。可重新发送问题。" : "Reply incomplete. Received text is preserved; you can resend your question."} {streamError}
+          </p>
         )}
 
         {/* State Machine Status Feedback Indicator */}
         {mutation.isPending && (
           <AIStatusIndicator
             snapshot={aiState.snapshot}
-            variant="bubble"
+            variant="inline"
             agentName={currentAgent?.name || copy.aiChatDefaultAgent}
             showTimer
           />

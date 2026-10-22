@@ -126,8 +126,8 @@ export function ProductsPage() {
         if (editorDirty.current) { details.cancel(); setDiscardOpen(true); }
         else closeEditor();
       }}>
-        <DialogContent className="flex max-h-[92dvh] flex-col sm:max-w-3xl">
-          <DialogHeader><DialogTitle>{selected === "new" ? copy.productNew : copy.productEdit}</DialogTitle><DialogDescription>{copy.productEditorHint}</DialogDescription></DialogHeader>
+        <DialogContent className="flex h-[92dvh] flex-col overflow-hidden sm:max-w-3xl">
+          <DialogHeader className="shrink-0 pr-8"><DialogTitle>{selected === "new" ? copy.productNew : copy.productEdit}</DialogTitle><DialogDescription>{copy.productEditorHint}</DialogDescription></DialogHeader>
           {selected === "new" || detail.data ? <ProductEditor key={`${selected}-${detail.data?.product.version || "new"}`} copy={copy} product={selected === "new" ? undefined : detail.data?.product} categories={categoryItems} onDirtyChange={value => { editorDirty.current = value; }} onSaved={() => { closeEditor(); refresh(); }} /> : detail.isError ? <ErrorState copy={copy} onRetry={() => void detail.refetch()} /> : <ListSkeleton />}
           <ProductConfirmation open={discardOpen} onOpenChange={setDiscardOpen} title={copy.productDiscardChanges} description={copy.productDiscardConfirm} cancelLabel={copy.cancel} actionLabel={copy.productDiscardChanges} onConfirm={closeEditor} />
         </DialogContent>
@@ -206,7 +206,7 @@ function ProductEditor({ copy, product, categories, onSaved, onDirtyChange }: { 
         </div>
         {product && <p className="text-xs text-muted-foreground">v{product.version} · {new Date(product.updatedAt).toLocaleString()}</p>}
       </div></ScrollArea>
-      <DialogFooter><Button type="submit" disabled={pending || imagePending || !input.name.trim()}>{pending && <LoaderCircle className="animate-spin" />}{copy.save}</Button></DialogFooter>
+      <DialogFooter className="shrink-0"><Button type="submit" disabled={pending || imagePending || !input.name.trim()}>{pending && <LoaderCircle className="animate-spin" />}{copy.save}</Button></DialogFooter>
     </form>
   );
 }

@@ -50,6 +50,7 @@ import {
   saveConversationStatus,
   summarizeMailMessage,
   translateMailMessage,
+  type AIAgentEmailDraft,
 } from "../../lib/api";
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
 import {
@@ -565,6 +566,12 @@ export function ChatView({
   const draftAccountEmail = detail.accountEmail || shellAccountEmail || "";
   const composeOpenHere = compose.open && compose.defaults.conversationId === detail.id;
   const conversationDraft = useComposeDraft(draftAccountEmail, detail.id, { enabled: Boolean(detail.id) });
+  const aiDraftRef = useRef<(() => AIAgentEmailDraft | undefined) | null>(null);
+  const getActiveDraft = (): AIAgentEmailDraft | undefined => {
+    if (composeOpenHere) return aiDraftRef.current?.();
+    const draft = conversationDraft.data;
+    return draft ? { to: draft.to, cc: draft.cc, subject: draft.subject, bodyText: draft.bodyText } : undefined;
+  };
   const openReplyToLatest = () => {
     const draft = conversationDraft.data;
     if (draft) {
@@ -584,8 +591,22 @@ export function ChatView({
   // — instead of in a second compose surface of its own.
   const writeDraftToLatest = (body: string) => {
     const latest = detail.messages.at(-1);
-    if (!latest) return;
-    onReply(latest, body);
+    if (latest) {
+      onReply(latest, body);
+      return;
+    }
+    const draft = conversationDraft.data;
+    openCompose({
+      ...(composeOpenHere ? compose.defaults : {
+        accountEmail: draftAccountEmail,
+        conversationId: detail.id,
+        conversation: detail.messages,
+        to: draft?.to || detail.peerEmail || detail.title,
+        cc: draft?.cc || "",
+        subject: draft?.subject || detail.subject || "",
+      }),
+      replaceBody: body,
+    });
   };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
@@ -912,23 +933,25 @@ export function ChatView({
             </p>
           </div>
           <div className="flex min-w-0 items-center justify-end gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 gap-1.5 text-xs transition-colors",
+                isAIChatOpen
+                  ? "bg-primary/10 text-primary font-medium hover:bg-primary/15 dark:bg-primary/20"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              onClick={() => setIsAIChatOpen((prev) => !prev)}
+              title={copy.openAIChat}
+              aria-label={copy.openAIChat}
+              aria-expanded={isAIChatOpen}
+            >
+              <Bot className="size-3.5" />
+              <span className="hidden sm:inline">{copy.openAIChat}</span>
+            </Button>
             {detail.messages.length > 0 && (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    "h-8 gap-1.5 text-xs transition-colors",
-                    isAIChatOpen
-                      ? "bg-primary/10 text-primary font-medium hover:bg-primary/15 dark:bg-primary/20"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => setIsAIChatOpen((prev) => !prev)}
-                  title={copy.openAIChat}
-                >
-                  <Bot className="size-3.5" />
-                  <span className="hidden sm:inline">{copy.openAIChat}</span>
-                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1016,6 +1039,7 @@ export function ChatView({
                 open
                 variant="inline"
                 defaults={compose.defaults}
+                aiDraftRef={aiDraftRef}
                 accountEmail={draftAccountEmail}
                 onOpenChange={(value) => {
                   if (!value) closeCompose();
@@ -1097,6 +1121,7 @@ export function ChatView({
               onClearFocusedMessages={handleClearFocusedMessages}
               onClose={() => setIsAIChatOpen(false)}
               onWriteDraft={writeDraftToLatest}
+              getActiveDraft={getActiveDraft}
             />
           </aside>
         </>
@@ -1114,6 +1139,7 @@ export function ChatView({
             onClearFocusedMessages={handleClearFocusedMessages}
             onClose={() => setIsAIChatOpen(false)}
             onWriteDraft={writeDraftToLatest}
+            getActiveDraft={getActiveDraft}
           />
         </div>
       )}
