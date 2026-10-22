@@ -147,7 +147,7 @@ try {
   await inline.locator('.tiptap').fill('A new email in the existing conversation');
   await inline.getByRole('button', { name: '发送', exact: true }).click();
   await inline.waitFor({ state: 'hidden' });
-  await page.getByTestId('conversation-row').filter({ hasText: 'alice@example.com' }).getByRole('button', { name: '未回复', exact: true }).waitFor();
+  await page.getByTestId('conversation-row').filter({ hasText: 'alice@example.com' }).getByRole('button', { name: '待回复', exact: true }).waitFor();
   assert.ok(sent.includes('name="conversation_id"\r\n\r\nexisting'));
   assert.ok(sent.includes('name="to"\r\n\r\nalice@example.com'));
   assert.ok(!sent.includes('name="in_reply_to"'), 'A new email must not acquire reply headers');

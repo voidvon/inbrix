@@ -103,7 +103,7 @@ try {
   await input.press('Enter');
   await bob.getByRole('button', { name: 'Updated note', exact: true }).waitFor();
   assert.deepEqual(notes, ['Updated note']);
-  await bob.getByRole('button', { name: '未回复', exact: true }).click();
+  await bob.getByRole('button', { name: '待回复', exact: true }).click();
   await page.getByRole('menuitem', { name: '无需处理', exact: true }).click();
   await bob.getByRole('button', { name: '无需处理', exact: true }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('conversation'), 'alice', 'Changing status must not navigate');
@@ -160,8 +160,8 @@ try {
   assert.deepEqual(await rowIds(), ['alice', 'doris'], 'Drafts stay visible alongside unanswered conversations');
   assert.equal(new URL(page.url()).searchParams.get('conversation'), 'bob', 'Filtering keeps the current conversation open');
   // Status updates immediately remove completed items from the filtered list.
-  await row('alice').getByRole('button', { name: '未回复', exact: true }).click();
-  await page.getByRole('menuitem', { name: '已回复', exact: true }).click();
+  await row('alice').getByRole('button', { name: '待回复', exact: true }).click();
+  await page.getByRole('menuitem', { name: '已发送', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="conversation-row"]').length === 1);
   assert.deepEqual(await rowIds(), ['doris']);
   await page.getByTestId('mail-search').fill('Subject');
