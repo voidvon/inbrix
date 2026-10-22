@@ -67,7 +67,7 @@ func (h *AISettingsHandler) agentHistory(ctx context.Context, messages []AIAgent
 	start := 0
 	cached := scope.memory
 	if cached.HistoryCount > 0 && cached.HistoryCount <= split && cached.HistoryHash == agentHistoryHash(messages[:cached.HistoryCount]) && len(cached.HistorySummary) <= maxAgentSummaryBytes {
-		start, summary = cached.HistoryCount, cached.HistorySummary
+		start, summary = cached.HistoryCount, stripResidualToolCalls(cached.HistorySummary)
 	}
 	if start < split {
 		remaining := buildConversationTranscript(messages[start:split])

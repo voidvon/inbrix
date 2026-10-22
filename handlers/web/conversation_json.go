@@ -778,6 +778,7 @@ func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
 	if err := json.Unmarshal([]byte(rawMessages), &messages); err != nil {
 		messages = []any{}
 	}
+	sanitizeDSMLChatMessages(messages)
 	return c.JSON(fiber.Map{"ok": true, "messages": messages})
 }
 

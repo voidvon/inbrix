@@ -300,7 +300,11 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 			return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 		}
 
-		calls := parseToolCalls(rawResponse)
+		calls, parseErr := parseToolCallsChecked(rawResponse)
+		if parseErr != nil {
+			h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, parseErr)
+			return nil, fiber.NewError(fiber.StatusUnprocessableEntity, parseErr.Error())
+		}
 		if len(calls) == 0 {
 			// No tool call requested; model gave its natural language response
 			finalReply = rawResponse
@@ -383,6 +387,13 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 	}
 
 	// 5. Parse Final Output (extract Document Card if present & sanitize residual tool blocks)
+	// Synthesis must also be a final answer, not another tool request after the
+	// budget is exhausted. Never turn an unexecuted invocation into success.
+	if calls, err := parseToolCallsChecked(finalReply); err != nil || len(calls) > 0 {
+		err := errors.New("AI 未完成处理，请重试 / AI requested tools without completing the reply")
+		h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, err)
+		return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+	}
 	cleanedContent, docFromFence := extractDocumentFromResponse(finalReply)
 	if docFromFence != nil {
 		generatedDocument = docFromFence
@@ -613,6 +624,19 @@ func buildConversationTranscript(messages []AIAgentChatMessage) string {
 }
 
 func parseToolCalls(output string) []AIToolCall {
+	calls, _ := parseToolCallsChecked(output)
+	return calls
+}
+
+func parseToolCallsChecked(output string) ([]AIToolCall, error) {
+	normalized, err := normalizeDSMLToolCalls(output)
+	if err != nil {
+		return nil, err
+	}
+	return parseJSONToolCalls(normalized), nil
+}
+
+func parseJSONToolCalls(output string) []AIToolCall {
 	var calls []AIToolCall
 
 	// 1. Match all ```tool_call, ```json:tool_call, ```toolCall code fences
@@ -715,7 +739,7 @@ func parseToolCall(output string) (AIToolCall, bool) {
 }
 
 func stripResidualToolCalls(content string) string {
-	cleaned := toolCallRegex.ReplaceAllString(content, "")
+	cleaned := toolCallRegex.ReplaceAllString(stripDSMLToolMarkup(content), "")
 	trimmed := strings.TrimSpace(cleaned)
 	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
 		var call struct {

@@ -103,6 +103,10 @@ func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent
 // when their delimiters arrive one byte at a time. Ordinary Markdown code blocks
 // are streamed after their language line is known.
 func agentVisibleText(raw string) string {
+	// Strip before processing Markdown so DSML cannot leak from an ordinary
+	// code fence either. Hold even a partially received UTF-8 marker prefix.
+	keep := dsmlPartialPrefix(raw)
+	raw = stripDSMLToolMarkup(raw[:len(raw)-keep])
 	var out strings.Builder
 	for raw != "" {
 		// Some gateways ignore the requested fence and return a bare JSON

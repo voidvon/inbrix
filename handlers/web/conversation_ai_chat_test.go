@@ -170,6 +170,43 @@ func TestConversationAIChatEndpoints(t *testing.T) {
 		t.Fatalf("unexpected messages: %v", getBody2.Messages)
 	}
 
+	t.Run("legacy DSML is hidden without rewriting stored history", func(t *testing.T) {
+		protocol := `<｜｜DSML｜｜ invoke name="list_documents"></｜｜DSML｜｜ invoke>`
+		legacy := []map[string]any{
+			{"role": "user", "content": protocol},
+			{"role": "assistant", "content": protocol, "parts": []map[string]any{
+				{"type": "tool", "tool": map[string]string{"name": "read_email", "status": "success"}},
+				{"type": "text", "content": protocol},
+			}},
+		}
+		encoded, _ := json.Marshal(legacy)
+		if err := db.SaveConversationAIChat(ctx, account.ID, convID, string(encoded)); err != nil {
+			t.Fatal(err)
+		}
+		response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/conversations/"+convID+"/ai-chat", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || len(body.Messages) != 2 || body.Messages[0]["content"] != protocol {
+			t.Fatalf("history or user content changed: %+v", body)
+		}
+		assistant, _ := json.Marshal(body.Messages[1])
+		if strings.Contains(string(assistant), "DSML") || !strings.Contains(string(assistant), "incomplete") || !strings.Contains(string(assistant), "read_email") {
+			t.Fatalf("legacy reply still exposes DSML or lost tool history: %s", assistant)
+		}
+		stored, err := db.GetConversationAIChat(ctx, account.ID, convID)
+		if err != nil || stored != string(encoded) {
+			t.Fatalf("reading history rewrote stored data: %q, %v", stored, err)
+		}
+	})
+
 	// 5. DELETE to clear AI chat messages
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/conversations/"+convID+"/ai-chat", nil)
 	delResp, err := app.Test(delReq)
