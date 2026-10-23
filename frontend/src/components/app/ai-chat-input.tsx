@@ -1,9 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, ImagePlus, Loader2, X } from "lucide-react";
 import { Button } from "../ui/button";
+import type { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
 import { cn } from "../../lib/utils";
 
 export interface AIChatInputProps {
+  imageAttachments?: ReturnType<typeof useAIChatAttachments>;
+  isZh?: boolean;
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
@@ -29,6 +32,8 @@ export interface AIChatInputProps {
  * - Automatically snaps back to single-row layout when text is deleted back to 1 line.
  */
 export function AIChatInput({
+  imageAttachments,
+  isZh = true,
   value,
   onChange,
   onSend,
@@ -42,6 +47,8 @@ export function AIChatInput({
   textareaRef: externalTextareaRef,
   autoFocus = false,
 }: AIChatInputProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = externalTextareaRef || internalTextareaRef;
@@ -62,8 +69,8 @@ export function AIChatInput({
     if (containerWidth <= 0) return false;
 
     // In single-line mode:
-    // available width = containerWidth - sendButton(32px) - gap(8px) - paddingX(24px) - safety(8px) = containerWidth - 72px
-    const availableWidth = Math.max(60, containerWidth - 72);
+    // Reserve space for send/upload buttons, gaps and padding.
+    const availableWidth = Math.max(60, containerWidth - (imageAttachments ? 112 : 72));
 
     try {
       const style = window.getComputedStyle(textarea);
@@ -126,7 +133,7 @@ export function AIChatInput({
     textarea.style.height = `${clamped}px`;
   }, [value, isMultiLine, textareaRef]);
 
-  const canSend = !disabled && !isPending && value.trim().length > 0;
+  const canSend = !disabled && !isPending && !imageAttachments?.blocked && (value.trim().length > 0 || Boolean(imageAttachments?.attachments.length));
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Send on Enter without shift (and not during IME composition)
@@ -164,14 +171,43 @@ export function AIChatInput({
   return (
     <div
       ref={containerRef}
+      onDragOver={event => {
+        if (!imageAttachments || disabled || isPending || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault(); setDragging(true);
+      }}
+      onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={event => {
+        if (!imageAttachments) return;
+        event.preventDefault(); setDragging(false);
+        if (!disabled && !isPending) imageAttachments.addFiles(Array.from(event.dataTransfer.files));
+      }}
+      onPaste={event => {
+        if (!imageAttachments || disabled || isPending) return;
+        const files = Array.from(event.clipboardData.files);
+        if (files.length) { event.preventDefault(); imageAttachments.addFiles(files); }
+      }}
       className={cn(
         "relative rounded-2xl border border-input/70 bg-background shadow-xs transition-all focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/15",
-        isMultiLine
-          ? "flex flex-col gap-1.5 px-3 pt-2.5 pb-2"
-          : "flex flex-row items-center gap-2 px-3 py-1.5 sm:py-2",
+        "flex flex-col gap-1.5 px-3 py-2",
+        dragging && "border-primary ring-2 ring-primary/30",
         className
       )}
     >
+      {imageAttachments && <>
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" aria-label={isZh ? "选择聊天图片" : "Choose chat images"} disabled={disabled || isPending} onChange={event => { imageAttachments.addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
+        {imageAttachments.items.length > 0 && <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto py-1" data-testid="ai-image-uploads">
+          {imageAttachments.items.map(item => <div key={item.key} className="relative w-20 rounded-lg border bg-muted p-1">
+            <img src={item.preview} alt={item.filename} className="h-16 w-full rounded object-cover" />
+            {!item.attachment && !item.error && <span className="absolute inset-0 flex items-center justify-center rounded bg-background/60"><Loader2 className="size-5 animate-spin" /></span>}
+            <Button type="button" size="icon" variant="secondary" className="absolute -right-1 -top-1 size-5 rounded-full" disabled={disabled || isPending} aria-label={`${isZh ? "移除图片" : "Remove image"}: ${item.filename}`} onClick={() => imageAttachments.remove(item.key)}><X className="size-3" /></Button>
+            <p className="truncate pt-1 text-[10px]" title={item.filename}>{item.filename}</p>
+            {item.error && <p role="alert" className="max-h-16 overflow-auto break-words text-[10px] text-destructive">{item.error}</p>}
+          </div>)}
+        </div>}
+        {imageAttachments.error && <p role="alert" className="text-xs text-destructive">{imageAttachments.error}</p>}
+      </>}
+      <div className={cn("flex gap-2", isMultiLine ? "flex-col" : "items-center")}>
+      {imageAttachments && !isMultiLine && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加图片" : "Add images"} title={isZh ? "添加图片，也可粘贴或拖入（最多 6 张，每张 10 MB）" : "Add, paste or drop images (6 max, 10 MB each)"}><ImagePlus className="size-4" /></Button>}
       <textarea
         ref={textareaRef}
         value={value}
@@ -193,7 +229,8 @@ export function AIChatInput({
       />
 
       {isMultiLine ? (
-        <div className="flex items-center justify-between pt-0.5 shrink-0 border-t border-border/30">
+        <div className="flex items-center justify-between gap-2 pt-0.5 shrink-0 border-t border-border/30">
+          {imageAttachments && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加图片" : "Add images"}><ImagePlus className="size-4" /></Button>}
           <div className="min-w-0 flex-1 pr-2">
             {hint && (
               <span className="block truncate text-[10px] sm:text-[11px] text-muted-foreground select-none">
@@ -206,6 +243,7 @@ export function AIChatInput({
       ) : (
         sendButton
       )}
+      </div>
     </div>
   );
 }

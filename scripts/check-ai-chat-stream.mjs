@@ -56,6 +56,7 @@ const conversation = { id: 'stream-test', title: 'Alice', peerEmail: 'alice@exam
 const mail = { id: '1', from: conversation.peerEmail, to: accountEmail, subject: conversation.subject, body: conversation.preview, preview: conversation.preview, date: now, outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'] };
 let savedMessages = [];
 let saveCount = 0;
+let version = 0;
 const errors = [];
 page.on('pageerror', error => errors.push(error.stack));
 await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token' } }));
@@ -65,11 +66,8 @@ await page.route('**/api/**', async route => {
   if (path === '/api/conversations') {
     json = { locale: 'zh-CN', accountEmail, conversations: [conversation], folders: [], accounts: [{ id: 'account', email: accountEmail, label: accountEmail, isActive: true }] };
   } else if (path.endsWith('/ai-chat')) {
-    if (route.request().method() === 'PUT') {
-      savedMessages = route.request().postDataJSON().messages;
-      saveCount++;
-    }
-    json = { ok: true, messages: savedMessages };
+    assert.notEqual(route.request().method(), 'PUT', 'Browser must never overwrite history');
+    json = { ok: true, sessionId: 'stream-session', version, messages: savedMessages };
   } else if (path.startsWith('/api/conversations/')) {
     json = { conversation: { ...conversation, messages: [mail] } };
   } else if (path === '/api/drafts') json = { drafts: [] };
@@ -135,6 +133,7 @@ try {
     { id: 'call_3', name: 'read_product', status: 'success', summary: '第二部分' },
   ];
   const response = {
+    sessionId: 'stream-session', requestId: await page.evaluate(() => window.aiStreamRequests[0].requestId), version: 2, userMessageId: 'user-1', assistantMessageId: 'assistant-1',
     content: '已核对，规格正确。', toolCalls: tools,
     parts: [
       { type: 'text', content: '我先检索产品。' }, { type: 'tool', tool: tools[0] },
@@ -143,7 +142,11 @@ try {
       { type: 'text', content: '已核对，规格正确。' },
     ],
   };
-  const saved = page.waitForResponse(response => response.url().endsWith('/ai-chat') && response.request().method() === 'PUT');
+  savedMessages = [
+    { id: 'user-1', role: 'user', content: '请核对产品', createdAt: now },
+    { ...response, id: 'assistant-1', role: 'assistant', createdAt: now },
+  ]; version = 2; saveCount++;
+  const saved = page.waitForResponse(response => response.url().endsWith('/ai-chat') && response.request().method() === 'GET');
   await emit({ type: 'done', response });
   await saved;
   await pending.waitFor({ state: 'hidden' });
@@ -178,7 +181,8 @@ try {
   // Retry uses completed history only; close cancels the active fetch.
   await input.press('Enter');
   await page.waitForFunction(() => window.aiStreamRequests.length === 2);
-  assert.equal(await page.evaluate(() => window.aiStreamRequests.at(-1).messages.length), 3);
+  assert.equal(await page.evaluate(() => window.aiStreamRequests.at(-1).messages.length), 1);
+  assert.equal(await page.evaluate(() => window.aiStreamRequests[0].requestId === window.aiStreamRequests[1].requestId), true, 'Stream retry keeps its request ID');
   await emit({ type: 'text_delta', delta: '重试中' });
   await pending.getByText('重试中', { exact: true }).waitFor();
   await page.getByRole('button', { name: '关闭 AI 对话', exact: true }).click();

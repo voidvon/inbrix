@@ -1,6 +1,8 @@
 package web
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 
 	"inbrix/mailstore"
@@ -83,11 +85,13 @@ func (h *DocumentsHandler) HandleGetDocument(c *fiber.Ctx) error {
 }
 
 type saveDocumentInput struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Name    string `json:"name"`
-	Company string `json:"company"`
-	HTML    string `json:"html"`
+	AIOrigin *mailstore.AIChatDocumentOrigin `json:"aiOrigin"`
+	Revision int64                           `json:"revision"`
+	ID       string                          `json:"id"`
+	Type     string                          `json:"type"`
+	Name     string                          `json:"name"`
+	Company  string                          `json:"company"`
+	HTML     string                          `json:"html"`
 }
 
 // HandleSaveDocument inserts or updates a document.
@@ -104,14 +108,18 @@ func (h *DocumentsHandler) HandleSaveDocument(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Document content cannot be empty")
 	}
 	record := mailstore.DocumentRecord{
-		ID:      strings.TrimSpace(input.ID),
-		OwnerID: owner,
-		Type:    input.Type,
-		Name:    input.Name,
-		Company: input.Company,
-		HTML:    input.HTML,
+		AIOrigin: input.AIOrigin,
+		ID:       strings.TrimSpace(input.ID),
+		OwnerID:  owner,
+		Type:     input.Type,
+		Name:     input.Name,
+		Company:  input.Company,
+		HTML:     input.HTML,
 	}
-	saved, err := h.mailDB.SaveDocument(c.UserContext(), record)
+	saved, err := h.mailDB.SaveDocument(c.UserContext(), record, input.Revision)
+	if errors.Is(err, mailstore.ErrDocumentConflict) {
+		return fiber.NewError(409, err.Error())
+	}
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to save document: "+err.Error())
 	}
@@ -128,8 +136,20 @@ func (h *DocumentsHandler) HandleDeleteDocument(c *fiber.Ctx) error {
 	if id == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Document ID is required")
 	}
-	if err := h.mailDB.DeleteDocuments(c.UserContext(), owner, []string{id}); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete document: "+err.Error())
+	if raw := c.Query("revision"); raw != "" {
+		revision, e := strconv.ParseInt(raw, 10, 64)
+		if e != nil || revision < 1 {
+			return fiber.NewError(400, "有效的文档版本是必需的 / Valid revision required")
+		}
+		err = h.mailDB.DeleteDocumentRevision(c.UserContext(), owner, id, revision)
+	} else {
+		err = h.mailDB.DeleteDocuments(c.UserContext(), owner, []string{id})
+	}
+	if errors.Is(err, mailstore.ErrDocumentConflict) {
+		return fiber.NewError(409, err.Error())
+	}
+	if err != nil {
+		return fiber.NewError(500, "Failed to delete document: "+err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }

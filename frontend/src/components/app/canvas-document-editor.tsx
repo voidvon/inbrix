@@ -1,8 +1,9 @@
+import { collectBusinessControlValues, createDocumentBusiness, readDocumentBusiness } from "../../lib/document-business";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
-import { controlText, createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, SPIRAX_CONTRACT_SELLER_COMPANY, type SpiraxContractValues } from "./spirax-contract-canvas";
+import { controlText, createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, SPIRAX_CONTRACT_SELLER_COMPANY } from "./spirax-contract-canvas";
 
 import { collectProductImageValues } from "./product-document-images";
 
@@ -13,6 +14,7 @@ export type DocumentTemplateKind = "spirax-quotation" | "spirax-contract" | "doc
 
 type StoredCanvasDocument = {
   template?: DocumentTemplateKind;
+  business?: unknown;
   data: ReturnType<CanvasEditor["command"]["getValue"]>["data"];
   options?: ReturnType<CanvasEditor["command"]["getValue"]>["options"];
 };
@@ -125,6 +127,8 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
       picture: values[`item_picture_${index}`],
       productId: values[`item_product_id_${index}`],
       productVersion: Number(values[`item_product_version_${index}`]) || undefined,
+ variantId: values[`item_variant_id_${index}`],
+ priceId: values[`item_price_id_${index}`],
       description: values[`item_description_${index}`] || "",
       qty: values[`item_qty_${index}`] || "",
       price: values[`item_price_${index}`] || "",
@@ -141,6 +145,8 @@ function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"
         picture: values.item_picture,
         productId: values.item_product_id,
         productVersion: Number(values.item_product_version) || undefined,
+ variantId: values.item_variant_id,
+ priceId: values.item_price_id,
         description: values.item_description || "",
         qty: values.item_qty || "",
         price: values.item_price || "",
@@ -285,7 +291,6 @@ export type CanvasDocumentEditorHandle = {
   print: () => Promise<void>;
   getControls: () => Array<{ conceptId: string; placeholder?: string; value?: string }>;
   setControlValues: (values: Array<{ conceptId: string; value: string }>) => boolean;
-  applyDocumentUpdates: (payload: { values?: Record<string, string>; items?: QuotationItem[] }) => boolean;
   getDocumentData: () => DocumentDataPayload;
 };
 
@@ -398,6 +403,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const storedDocument = parseStoredCanvasDocument(initialHTML);
   const initialTemplateKind = resolveDocumentTemplateKind(initialHTML, storedDocument);
   const templateRef = useRef<DocumentTemplateKind>(initialTemplateKind);
+  const businessRef = useRef<unknown>(storedDocument?.business);
 
   useEffect(() => {
     readyRef.current = onReady;
@@ -442,6 +448,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     };
     editorRef.current = editor;
     templateRef.current = initialTemplateKind;
+    businessRef.current = storedDocument?.business;
     if (storedDocument) {
       if (storedDocument.options) editor.command.executeUpdateOptions(storedDocument.options);
       editor.command.executeSetValue(
@@ -473,7 +480,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (!editor) return "";
       const { data, options } = editor.command.getValue();
       const currentTemplate = templateRef.current !== "document" ? templateRef.current : "document";
-      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options })}`;
+      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options, business: createDocumentBusiness(collectBusinessControlValues(data, readDocumentBusiness(businessRef.current))) })}`;
     },
     importDocx: async (file) => {
       const editor = editorRef.current;
@@ -484,6 +491,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.command.executeUpdateOptions(snapshot.options);
       editor.command.executeSetValue(snapshot.data);
       templateRef.current = "document";
+      businessRef.current = undefined;
     },
     exportDocx: async (name) => {
       const editor = editorRef.current;
@@ -562,6 +570,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       }
 
       templateRef.current = nextTemplate;
+      businessRef.current = stored?.business;
       editor.command.executeUpdateOptions(getCanvasEditorOptions(nextTemplate));
 
       if (stored) {
@@ -733,120 +742,6 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
       return anyApplied;
     },
-    applyDocumentUpdates: (payload) => {
-      const editor = editorRef.current;
-      if (!editor) return false;
-      const { values = {}, items } = payload;
-      let applied = false;
-
-      // Normalize counterparty and document aliases across quotation and contract
-      if (values.customer_company && !values.buyer_company) values.buyer_company = values.customer_company;
-      if (values.buyer_company && !values.customer_company) values.customer_company = values.buyer_company;
-      if (values.customer_contact && !values.buyer_contact) values.buyer_contact = values.customer_contact;
-      if (values.buyer_contact && !values.customer_contact) values.customer_contact = values.buyer_contact;
-      if (values.customer_email && !values.buyer_email) values.buyer_email = values.customer_email;
-      if (values.buyer_email && !values.customer_email) values.customer_email = values.buyer_email;
-      if (values.customer_address && !values.buyer_address) values.buyer_address = values.customer_address;
-      if (values.buyer_address && !values.customer_address) values.customer_address = values.buyer_address;
-      if (values.quote_number && !values.contract_number) values.contract_number = values.quote_number;
-      if (values.contract_number && !values.quote_number) values.quote_number = values.contract_number;
-      if (values.issue_date && !values.contract_date) values.contract_date = values.issue_date;
-      if (values.contract_date && !values.issue_date) values.issue_date = values.contract_date;
-
-      if (templateRef.current === "spirax-quotation" && items && items.length > 0) {
-        try {
-          const snapshot = editor.command.getValue();
-          const existing = extractLegacySpiraxValues(snapshot.data.main);
-          const merged: SpiraxQuotationValues = { ...existing, ...values };
-          const newMain = createSpiraxQuotationCanvasDocument(
-            merged.issue_date || "",
-            merged.quote_number || "",
-            merged,
-            items
-          );
-          editor.command.executeSetValue({ main: newMain });
-          applied = true;
-          return applied;
-        } catch (err) {
-          console.error("Failed to apply quotation document items", err);
-        }
-      } else if (templateRef.current === "spirax-contract" && items && items.length > 0) {
-        try {
-          const snapshot = editor.command.getValue();
-          const existing = extractLegacySpiraxContractValues(snapshot.data.main);
-          const merged: SpiraxContractValues = { ...existing, ...values };
-          const newMain = createSpiraxContractCanvasDocument(
-            merged.contract_date || "",
-            merged.contract_number || "",
-            merged,
-            items
-          );
-          editor.command.executeSetValue({ main: newMain });
-          applied = true;
-          return applied;
-        } catch (err) {
-          console.error("Failed to apply contract document items", err);
-        }
-      }
-
-      if (Object.keys(values).length > 0) {
-        const nativeUpdates = Object.entries(values).map(([conceptId, value]) => ({ conceptId, value: String(value) }));
-        const nativeFiltered = nativeUpdates.filter((v) => !v.conceptId.startsWith("["));
-        const bracketUpdates = nativeUpdates.filter((v) => v.conceptId.startsWith("[") && v.conceptId.endsWith("]"));
-
-        if (nativeFiltered.length > 0) {
-          try {
-            editor.command.executeSetControlValueList(
-              nativeFiltered.map((item) => ({
-                conceptId: item.conceptId,
-                value: item.value,
-                isSubmitHistory: true,
-              }))
-            );
-            applied = true;
-          } catch (error) {
-            console.error("executeSetControlValueList failed", error);
-          }
-        }
-
-        if (bracketUpdates.length > 0) {
-          try {
-            const snapshot = editor.command.getValue();
-            const repMap = new Map<string, string>(bracketUpdates.map((u) => [u.conceptId, u.value]));
-            const replaceInElements = (elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>) => {
-              for (const el of elements) {
-                if (el.value && typeof el.value === "string") {
-                  for (const [tag, replacement] of repMap.entries()) {
-                    if (el.value.includes(tag)) {
-                      el.value = el.value.replaceAll(tag, replacement);
-                      applied = true;
-                    }
-                  }
-                }
-                if (el.trList) {
-                  for (const tr of el.trList) {
-                    for (const td of tr.tdList || []) {
-                      if (td.value) replaceInElements(td.value);
-                    }
-                  }
-                }
-                if (el.valueList) {
-                  replaceInElements(el.valueList);
-                }
-              }
-            };
-            if (snapshot.data?.main) {
-              replaceInElements(snapshot.data.main);
-              editor.command.executeSetValue(snapshot.data);
-            }
-          } catch (error) {
-            console.error("bracket replacement failed", error);
-          }
-        }
-      }
-
-      return applied;
-    },
     getDocumentData: () => {
       const editor = editorRef.current;
       const currentTemplate: DocumentTemplateKind = templateRef.current || "document";
@@ -897,12 +792,14 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           }
         };
         if (snapshot?.data?.main) traverse(snapshot.data.main);
+        if (snapshot?.data?.header) traverse(snapshot.data.header);
+        if (snapshot?.data?.footer) traverse(snapshot.data.footer);
       } catch {
         // ignore
       }
       controls.push(...Array.from(map.values()));
 
-      let values: Record<string, string> = {};
+      let values: Record<string, string> = readDocumentBusiness(businessRef.current);
       let items: QuotationItem[] = [];
 
       try {
@@ -910,20 +807,22 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         if (snapshot?.data?.main) {
           if (currentTemplate === "spirax-quotation") {
             const quotationValues = extractLegacySpiraxValues(snapshot.data.main);
-            values = { ...quotationValues };
+            values = { ...values, ...quotationValues };
             if (quotationValues.items && quotationValues.items.length > 0) {
               items = quotationValues.items;
               delete (values as { items?: unknown }).items;
             }
           } else if (currentTemplate === "spirax-contract") {
             const contractValues = extractLegacySpiraxContractValues(snapshot.data.main);
-            values = { ...contractValues };
+            values = { ...values, ...contractValues };
             if (contractValues.items && contractValues.items.length > 0) {
               items = contractValues.items.map((it) => ({
                 model: it.model,
                 picture: it.picture,
                 productId: it.productId,
                 productVersion: it.productVersion,
+ variantId: it.variantId,
+ priceId: it.priceId,
                 description: it.description,
                 qty: it.qty,
                 price: it.price,
@@ -938,7 +837,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       }
 
       for (const c of controls) {
-        if (c.conceptId && !(c.conceptId in values)) {
+        if (c.conceptId) {
           values[c.conceptId] = c.value || "";
         }
       }

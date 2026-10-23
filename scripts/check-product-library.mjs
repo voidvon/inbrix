@@ -12,7 +12,7 @@ page.on('pageerror', error => errors.push(error.message));
 try {
   assert.equal((await (await page.request.get(`${base}/api/capabilities`)).json()).productTestHarness, true, 'An isolated product test harness is required');
   await page.goto(`${base}/products`);
-  await page.getByRole('heading', { name: '产品资料库', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '产品库', exact: true }).waitFor();
   await page.getByRole('button', { name: '分类管理', exact: true }).click();
   await page.getByRole('textbox', { name: '分类名称' }).fill('控制阀');
   await page.getByRole('button', { name: '新增分类', exact: true }).click();
@@ -36,7 +36,7 @@ try {
   await page.locator('input[type=file]').setInputFiles({ name: 'product.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
   await page.getByRole('tab', { name: '预览', exact: true }).click();
   await page.getByRole('cell', { name: '蒸汽', exact: true }).waitFor();
-  assert.equal(await page.locator('[data-slot=tabs]').evaluate(element => getComputedStyle(element).flexDirection), 'column', 'Official shadcn orientation styles must be loaded');
+  assert.equal(await page.locator('[data-slot=tabs]').last().evaluate(element => getComputedStyle(element).flexDirection), 'column', 'Official shadcn orientation styles must be loaded');
   // Tabs and nested discard confirmation preserve the draft and keyboard focus.
   await page.getByRole('tab', { name: '预览', exact: true }).press('ArrowLeft');
   await page.keyboard.press('Space');
@@ -44,6 +44,7 @@ try {
   assert.equal(await page.getByRole('textbox', { name: '产品说明与技术规格' }).inputValue(), specification);
   await page.keyboard.press('Escape');
   await page.getByRole('alertdialog').waitFor();
+  await page.waitForFunction(() => document.querySelector('[role=alertdialog] [data-slot=alert-dialog-cancel]') === document.activeElement, null, { timeout: 3000 });
   assert.equal(await page.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).evaluate(element => element === document.activeElement), true);
   await page.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('alertdialog').waitFor({ state: 'hidden' });
@@ -51,13 +52,13 @@ try {
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
   await page.getByRole('img', { name: '测试控制阀', exact: true }).waitFor();
-  const categoryFilter = page.getByRole('combobox', { name: '分类', exact: true });
-  await categoryFilter.focus();
-  await categoryFilter.press('ArrowDown');
-  await page.getByRole('option', { name: '控制阀 (1)', exact: true }).press('Enter');
-  assert.equal(await categoryFilter.innerText(), '控制阀 (1)');
-  await categoryFilter.click();
-  await page.getByRole('option', { name: '全部分类', exact: true }).click();
+  const navigation = page.getByRole('navigation', { name: '品牌与分类', exact: true });
+  const brand = navigation.getByRole('button').filter({ hasText: /^测试品牌/ });
+  await brand.focus(); await brand.press('Enter');
+  const categoryNode = navigation.getByRole('button').filter({ hasText: /^控制阀/ });
+  await categoryNode.click();
+  assert.equal(await categoryNode.getAttribute('aria-current'), 'page');
+  await navigation.getByRole('button').filter({ hasText: '全部产品' }).click();
   const search = page.getByRole('textbox', { name: '搜索型号、名称或规格关键词' });
   await search.fill('qa42');
   await page.waitForResponse(response => response.url().includes('/api/products?') && response.url().includes('qa42'));
@@ -148,13 +149,49 @@ try {
   const next = page.locator('[data-slot=pagination-link][aria-label="下一页"]');
   assert.equal(await previous.getAttribute('aria-disabled'), 'true');
   assert.equal(await page.getByRole('button', { name: /^删除 分页产品/ }).count(), 12);
+  // The product table owns scrolling; its header, page tools and pagination stay put.
+  const tableScroll = page.getByTestId('products-table-scroll').locator('[data-slot=scroll-area-viewport]');
+  const table = page.getByRole('table', { name: '产品库', exact: true });
+  assert.deepEqual(await table.getByRole('columnheader').allTextContents(), ['缩略图', '产品名称', '操作']);
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 600 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    const titleBounds = await page.getByRole('heading', { name: '产品库', exact: true }).boundingBox();
+    assert(titleBounds.height < 40 && titleBounds.width > 100, 'Header actions must not squeeze the title into a vertical column');
+    await tableScroll.evaluate(element => { element.scrollTop = 0; });
+    const bounds = await tableScroll.boundingBox();
+    const footer = page.getByTestId('products-page').locator('footer');
+    const footerBefore = await footer.boundingBox();
+    const headingBefore = await table.getByRole('columnheader').first().boundingBox();
+    assert(bounds && bounds.height > 100, 'The table must fill the remaining page height');
+    assert(footerBefore && Math.abs(bounds.y + bounds.height - footerBefore.y) <= 2, 'Pagination must sit directly below the table viewport');
+    assert(Math.abs(footerBefore.y + footerBefore.height - viewport.height) <= 2, 'Pagination must remain at the bottom of the page');
+    assert(await tableScroll.evaluate(element => element.scrollHeight > element.clientHeight), 'Overflowing rows must scroll inside the table');
+    // Wait for the application sidebar's responsive slide-out animation.
+    await page.waitForFunction(({ x, y }) => document.querySelector('[data-testid=products-table-scroll]').contains(document.elementFromPoint(x, y)), { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.wheel(0, 500);
+    await page.waitForFunction(() => document.querySelector('[data-testid=products-table-scroll] [data-slot=scroll-area-viewport]').scrollTop > 0);
+    const headingAfter = await table.getByRole('columnheader').first().boundingBox();
+    const footerAfter = await footer.boundingBox();
+    assert(Math.abs(headingBefore.y - headingAfter.y) <= 2, 'Table headings must remain visible while rows scroll');
+    assert.equal(footerBefore.y, footerAfter.y, 'The pagination must not scroll with the rows');
+    assert.equal(await page.evaluate(() => window.scrollY), 0, 'The page must not scroll');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'The table must fit narrow screens');
+    await page.mouse.wheel(0, -500);
+    await page.waitForFunction(() => document.querySelector('[data-testid=products-table-scroll] [data-slot=scroll-area-viewport]').scrollTop === 0);
+    await page.screenshot({ animations: 'disabled', path: `/tmp/inbrix-products-table-${viewport.width}-${viewport.height}.png` });
+  }
+  const nextPageResponse = page.waitForResponse(response => response.url().includes('/api/products?') && response.url().includes('offset=12'));
   await next.click();
-  await page.waitForResponse(response => response.url().includes('/api/products?') && response.url().includes('offset=12'));
-  await page.locator('[aria-current=page]').filter({ hasText: '2' }).waitFor();
+  await nextPageResponse;
+  await page.locator('[data-slot=pagination-link][aria-current=page]').filter({ hasText: '2' }).waitFor();
   assert.equal(await page.getByRole('button', { name: /^删除 分页产品/ }).count(), 1);
+  const shortPageBounds = await tableScroll.boundingBox();
+  const shortPageFooter = await page.getByTestId('products-page').locator('footer').boundingBox();
+  assert(Math.abs(shortPageBounds.y + shortPageBounds.height - shortPageFooter.y) <= 2, 'The table must still fill the remaining height with a single row');
   assert.equal(await next.getAttribute('aria-disabled'), 'true');
   await previous.click();
-  await page.locator('[aria-current=page]').filter({ hasText: '1' }).waitFor();
+  await page.locator('[data-slot=pagination-link][aria-current=page]').filter({ hasText: '1' }).waitFor();
   assert.equal(await page.getByRole('button', { name: /^删除 分页产品/ }).count(), 12);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   for (const item of paginationProducts) {

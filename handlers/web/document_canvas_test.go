@@ -40,13 +40,48 @@ func tableElement(rows [][]map[string]any) map[string]any {
 	return map[string]any{"type": "table", "trList": trList}
 }
 
+func TestCanvasProductIdentitySurvivesEditorControlSerialization(t *testing.T) {
+	for _, location := range []string{"element", "control", "run"} {
+		t.Run(location, func(t *testing.T) {
+			description := controlElement("item_description_0", "Valve")
+			control := description["control"].(map[string]any)
+			extension := map[string]any{"model": "M1", "productId": "product", "productVersion": 2, "variantId": "variant", "priceId": "price"}
+			switch location {
+			case "element":
+				description["extension"] = extension
+			case "control":
+				control["extension"] = extension
+			case "run":
+				control["value"].([]map[string]any)[0]["extension"] = extension
+			}
+			body := canvasBody(t, "spirax-contract", []map[string]any{tableElement([][]map[string]any{{description, controlElement("item_qty_0", "1"), controlElement("item_price_0", "100"), controlElement("item_amount_0", "100")}})})
+			_, items, ok := canvasDocumentContent(body)
+			if !ok || len(items) != 1 || items[0].Model != "M1" || items[0].ProductID != "product" || items[0].ProductVersion != 2 || items[0].VariantID != "variant" || items[0].PriceID != "price" {
+				t.Fatal("lost catalog identity", items)
+			}
+			if err := validateDocumentCurrency(&AIDocumentCard{Currency: "USD", Items: items}); err == nil {
+				t.Fatal("serialized catalog price bypassed currency validation")
+			}
+			patched, err := patchStoredCanvasDocument(body, nil, items, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, _ := parseStoredCanvasDocument(patched)
+			saved := payload.Data.Main[0].TrList[0].TdList[0].Value[0].Control.Extension
+			if saved == nil || saved.PriceID != "price" {
+				t.Fatal("patch did not store metadata on serializable control", saved)
+			}
+		})
+	}
+}
+
 func TestCanvasDocumentContentReadsFieldsAndItems(t *testing.T) {
 	body := canvasBody(t, "spirax-quotation", []map[string]any{
 		controlElement("quote_number", "SQ-202610"),
 		controlElement("buyer_company", "上海宝钢"),
 		controlElement("buyer_contact", "王工"),
 		controlElement("total_amount", "14,464.00"),
-		// A control that was never filled in must not surface as a field.
+		// Empty controls remain discoverable so AI can fill or explicitly clear them.
 		controlElement("seller_bank", ""),
 		tableElement([][]map[string]any{
 			{
@@ -73,8 +108,8 @@ func TestCanvasDocumentContentReadsFieldsAndItems(t *testing.T) {
 	if values["buyer_company"] != "上海宝钢" || values["quote_number"] != "SQ-202610" {
 		t.Fatalf("fields = %+v", values)
 	}
-	if _, present := values["seller_bank"]; present {
-		t.Fatalf("empty control leaked into fields: %+v", values)
+	if value, present := values["seller_bank"]; !present || value != "" {
+		t.Fatalf("empty editable control was lost: %+v", values)
 	}
 	if len(items) != 2 {
 		t.Fatalf("items = %+v", items)

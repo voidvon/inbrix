@@ -230,6 +230,8 @@ func main() {
 		// Stop workers before closing SQLite so an in-flight sync cannot
 		// write through a closed database handle during shutdown.
 		defer mailMirror.Close()
+		stopAttachmentGC := mailMirror.StartAIChatAttachmentGC()
+		defer stopAttachmentGC()
 		defer mailSync.Stop()
 	}
 	webAuthHandler := web.NewAuthHandler(store, config)
@@ -293,7 +295,6 @@ func main() {
 		systemSettings = web.NewSystemSettingsHandler(mailMirror, Version)
 	}
 	webDocumentsHandler := web.NewDocumentsHandler(store, mailMirror)
-	webPriceListHandler := web.NewPriceListHandler(store, mailMirror)
 	webDraftHandler := web.NewDraftHandler(store, mailMirror)
 	updateHandler := web.NewUpdateHandler(Version, func() error {
 		if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -433,7 +434,7 @@ func main() {
 			return c.Redirect("/user-login")
 		}
 		accountID, _ := sess.Get("account_id").(string)
-		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || c.Path() == "/api/automation" || strings.HasPrefix(c.Path(), "/api/automation/") || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps") || c.Path() == "/products" || strings.HasPrefix(c.Path(), "/api/products") || strings.HasPrefix(c.Path(), "/api/product-categories") || strings.HasPrefix(c.Path(), "/api/product-images")
+		optionalMailboxPath := c.Path() == "/settings" || c.Path() == "/api/capabilities" || c.Path() == "/api/realtime/metrics" || c.Path() == "/api/automation" || strings.HasPrefix(c.Path(), "/api/automation/") || strings.HasPrefix(c.Path(), "/api/accounts") || strings.HasPrefix(c.Path(), "/api/account/") || strings.HasPrefix(c.Path(), "/api/settings/") || strings.HasPrefix(c.Path(), "/api/system/") || strings.HasPrefix(c.Path(), "/api/update") || strings.HasPrefix(c.Path(), "/api/documents") || strings.HasPrefix(c.Path(), "/api/document-templates") || strings.HasPrefix(c.Path(), "/api/document-stamps") || c.Path() == "/products" || strings.HasPrefix(c.Path(), "/api/products") || strings.HasPrefix(c.Path(), "/api/product-categories") || c.Path() == "/api/product-navigation" || strings.HasPrefix(c.Path(), "/api/product-dimensions") || strings.HasPrefix(c.Path(), "/api/product-images") || strings.HasPrefix(c.Path(), "/api/product-price-imports")
 		if accountID == "" {
 			if optionalMailboxPath {
 				return c.Next()
@@ -563,23 +564,7 @@ func main() {
 		apiRoutes.Post("/document-stamps", webDocumentsHandler.HandleSaveStamp)
 		apiRoutes.Delete("/document-stamps/:id", webDocumentsHandler.HandleDeleteStamp)
 
-		// Price lists: user-defined spreadsheet tables that quotations and the
-		// AI tools price against. /lookup is registered before :id so the
-		// literal path wins.
-		apiRoutes.Get("/price-lists", webPriceListHandler.HandleListPriceLists)
-		apiRoutes.Post("/price-lists", webPriceListHandler.HandleCreatePriceList)
-		apiRoutes.Post("/price-lists/lookup", webPriceListHandler.HandleLookupPrices)
-		apiRoutes.Get("/price-lists/:id", webPriceListHandler.HandleGetPriceList)
-		apiRoutes.Put("/price-lists/:id", webPriceListHandler.HandleUpdatePriceList)
-		apiRoutes.Delete("/price-lists/:id", webPriceListHandler.HandleDeletePriceList)
-		apiRoutes.Put("/price-lists/:id/columns", webPriceListHandler.HandleSavePriceColumns)
-		apiRoutes.Get("/price-lists/:id/rows", webPriceListHandler.HandleListPriceRows)
-		apiRoutes.Post("/price-lists/:id/rows", webPriceListHandler.HandleSavePriceRows)
-		apiRoutes.Post("/price-lists/:id/rows/append", webPriceListHandler.HandleAppendPriceRow)
-		apiRoutes.Patch("/price-lists/:id/rows/:rowId", webPriceListHandler.HandleUpdatePriceRowCells)
-		apiRoutes.Delete("/price-lists/:id/rows/:rowId", webPriceListHandler.HandleDeletePriceRow)
-		apiRoutes.Post("/price-lists/:id/import", webPriceListHandler.HandleImportPriceRows)
-		apiRoutes.Get("/price-lists/:id/export", webPriceListHandler.HandleExportPriceRows)
+		// Legacy price tables are retained only as source data for product migration.
 
 		if systemSettings != nil {
 			apiRoutes.Patch("/account/profile", systemSettings.HandleUpdateProfile)
@@ -630,6 +615,14 @@ func main() {
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)
 	apiRoutes.Post("/ai/agent-chat", userAIHandler.HandleAgentChat)
+	apiRoutes.Get("/ai/chat-sessions", userAIHandler.HandleAIChatSessions)
+	apiRoutes.Post("/ai/chat-sessions", userAIHandler.HandleAIChatSessions)
+	apiRoutes.Get("/ai/chat-sessions/:id", userAIHandler.HandleAIChatSession)
+	apiRoutes.Patch("/ai/chat-sessions/:id", userAIHandler.HandleAIChatSession)
+	apiRoutes.Delete("/ai/chat-sessions/:id", userAIHandler.HandleAIChatSession)
+	apiRoutes.Post("/ai/attachments", userAIHandler.HandleUploadAIChatAttachment)
+	apiRoutes.Get("/ai/attachments/:id", userAIHandler.HandleAIChatAttachment)
+	apiRoutes.Delete("/ai/attachments/:id", userAIHandler.HandleAIChatAttachment)
 	// Build the completion backend before registering. With [ai] enabled = false
 	// this builds nothing at all; with mode = "embedded" it constructs the
 	// in-process llmux gateway and fails startup on a configuration that could
@@ -671,6 +664,8 @@ func main() {
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
+		protected.Get("/api/accounts/:id/brands", acctHandler.HandleAccountBrands)
+		protected.Put("/api/accounts/:id/brands", acctHandler.HandleAccountBrands)
 		protected.Get("/api/accounts/:id/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
 		protected.Put("/api/accounts/:id/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
 		protected.Delete("/api/accounts/:id", acctHandler.HandleDeleteAccount)
@@ -688,6 +683,8 @@ func main() {
 		protected.Get("/api/settings/feishu-webhook", acctHandler.HandleGetWebhookSettings)
 		protected.Put("/api/settings/feishu-webhook", acctHandler.HandlePutWebhookSettings)
 		protected.Post("/api/settings/feishu-webhook/test", acctHandler.HandleTestWebhook)
+		protected.Get("/api/accounts/:id/brands", acctHandler.HandleAccountBrands)
+		protected.Put("/api/accounts/:id/brands", acctHandler.HandleAccountBrands)
 		protected.Get("/api/accounts/:id/feishu-webhook", acctHandler.HandleGetAccountWebhookSettings)
 		protected.Put("/api/accounts/:id/feishu-webhook", acctHandler.HandlePutAccountWebhookSettings)
 		protected.Delete("/api/accounts/:id", acctHandler.HandleDeleteAccount)

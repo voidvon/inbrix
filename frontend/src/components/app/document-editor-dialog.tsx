@@ -28,7 +28,7 @@ import type { CanvasDocumentEditorHandle } from "./canvas-document-editor";
 import { DocumentVariableForm } from "./document-variable-form";
 import { DocumentStampManager } from "./document-stamps";
 import { createDocumentPDF, exportDocumentPages } from "./document-export";
-import { generateDocument } from "../../lib/api";
+import { updateEditorDocument } from "../../lib/document-mutations";
 import { createDocumentNumber, extractDocumentCompany, extractDocumentNumber, numberDocumentTemplate } from "../../lib/document-number";
 import { type Copy, zh } from "../../lib/locale";
 import { cn, formatTime } from "../../lib/utils";
@@ -38,7 +38,6 @@ import {
   type DocumentEditorTarget,
   type DocumentTemplate,
   documentTemplateHTML,
-  isSellerConcept,
   readStoredDocuments,
   readStoredTemplates,
   persistServerDocument,
@@ -55,17 +54,6 @@ import { MarkdownContent } from "./markdown-content";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
 
 const CanvasDocumentEditor = lazy(() => import("./canvas-document-editor").then((module) => ({ default: module.CanvasDocumentEditor })));
-
-// 与 canvas-document-editor.tsx 中 applyDocumentUpdates 的别名归一化保持一致：
-// AI 有时返回旧别名 key（如 customer_company），实际控件是 buyer_company，归一化后仍可应用。
-const DOCUMENT_VARIABLE_ALIASES: Array<[string, string]> = [
-  ["customer_company", "buyer_company"],
-  ["customer_contact", "buyer_contact"],
-  ["customer_email", "buyer_email"],
-  ["customer_address", "buyer_address"],
-  ["quote_number", "contract_number"],
-  ["issue_date", "contract_date"],
-];
 
 export function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; editor: CanvasDocumentEditorHandle | null; disabled: boolean }) {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -102,22 +90,6 @@ export function DocumentEditorButtons({ copy, editor, disabled }: { copy: Copy; 
       </DropdownMenu>
     </>
   );
-}
-
-function sanitizeResult(html: string) {
-  let clean = html.trim();
-  const match = clean.match(/```(?:html)?\s*([\s\S]*?)```/i);
-  if (match) {
-    clean = match[1].trim();
-  }
-  const parsed = new DOMParser().parseFromString(clean, "text/html");
-  parsed.body.querySelectorAll("script, style, iframe, object, embed").forEach((element) => element.remove());
-  parsed.body.querySelectorAll<HTMLElement>("*").forEach((element) => {
-    Array.from(element.attributes).forEach((attribute) => {
-      if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name);
-    });
-  });
-  return parsed.body.innerHTML;
 }
 
 export function DocumentAISidebar({
@@ -169,107 +141,18 @@ export function DocumentAISidebar({
   const mutation = useMutation({
     mutationFn: async (text: string) => {
       return await aiState.run(async () => {
-        const rawHTML = editor?.getHTML() || "";
-        const currentHTML = rawHTML
-          .replace(/data:[^;]+;base64,[a-zA-Z0-9/+=]+/g, "[image]")
-          .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, "[svg-graphic]");
-        const activeControls = editor?.getControls() || [];
-        if (activeControls.length > 0) {
-          return generateDocument({
-            accountEmail,
-            mode: "variables",
-            documentType: type,
-            title,
-            instruction: text,
-            currentHTML,
-            variables: activeControls.map((c) => {
-              const isStart = messages.length <= 1;
-              const isSeller = isSellerConcept(c.conceptId);
-              const val = isStart && !isSeller ? "" : (c.value || "");
-              return {
-                conceptId: c.conceptId,
-                label: c.placeholder || c.conceptId,
-                currentValue: val,
-              };
-            }),
-          });
-        }
-        return generateDocument({ accountEmail, mode: "rewrite", documentType: type, title, instruction: text, currentHTML });
+        if (!editor) throw new Error(isZh ? "编辑器尚未就绪" : "Editor is not ready");
+        return updateEditorDocument(editor, accountEmail, type, title, { instruction: text });
       });
     },
     onSuccess: (value) => {
-      if (value.mode === "variables" && (value.values || value.items)) {
-        const activeControls = editor?.getControls() || [];
-        const knownIds = new Set(activeControls.map((c) => c.conceptId));
-        for (const [a, b] of DOCUMENT_VARIABLE_ALIASES) {
-          if (knownIds.has(a) || knownIds.has(b)) {
-            knownIds.add(a);
-            knownIds.add(b);
-          }
-        }
-        const values: Record<string, string> = {};
-        for (const [key, val] of Object.entries(value.values || {})) {
-          if (knownIds.has(key)) values[key] = val;
-        }
-        const hasValues = Object.keys(values).length > 0;
-        const hasItems = value.items && value.items.length > 0;
-        if (!hasValues && !hasItems) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `asst-${Date.now()}`,
-              role: "assistant",
-              content: isZh ? "AI 未发现需要变更的变量。请提供更明确的修改指示。" : "No variable updates detected.",
-              time: new Date().toISOString(),
-            },
-          ]);
-          return;
-        }
-        editor?.applyDocumentUpdates({
-          values,
-          items: value.items,
-        });
-        editor?.focus();
-        const itemCount = value.items?.length || 0;
-        const varCount = Object.keys(values).length;
-        const replyText = isZh
-          ? `已成功为您应用修改：\n${itemCount > 0 ? `• 更新了 ${itemCount} 项产品明细\n` : ""}• 更新了 ${varCount} 处文档变量`
-          : `Applied updates: ${itemCount} items, ${varCount} variables`;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `asst-${Date.now()}`,
-            role: "assistant",
-            content: replyText,
-            time: new Date().toISOString(),
-            hasUpdate: true,
-          },
-        ]);
-        toast.success(isZh ? "文档已智能更新" : "Document updated");
-        return;
-      }
-      if (value.html) {
-        const nextHTML = sanitizeResult(value.html);
-        if (!nextHTML) {
-          toast.error(copy.aiDocumentFailed);
-          return;
-        }
-        editor?.setHTML(nextHTML);
-        editor?.focus();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `asst-${Date.now()}`,
-            role: "assistant",
-            content: isZh ? "已根据要求完成文档改写并应用至编辑器。" : "Document rewritten and applied.",
-            time: new Date().toISOString(),
-            hasUpdate: true,
-          },
-        ]);
-        toast.success(copy.aiDocumentRewritten);
-        return;
-      }
-      toast.error(copy.aiDocumentFailed);
+      editor?.focus();
+      setMessages((prev) => [...prev, {
+        id: `asst-${Date.now()}`, role: "assistant",
+        content: value.summary || (isZh ? "文档已更新" : "Document updated"),
+        time: new Date().toISOString(), hasUpdate: true,
+      }]);
+      toast.success(isZh ? "文档已智能更新" : "Document updated");
     },
     onError: (error) => {
       const errMsg = error instanceof Error ? error.message : copy.aiDocumentFailed;
@@ -573,6 +456,8 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     try {
       await onSave(target.kind, {
         id: target.record?.id || crypto.randomUUID(),
+        revision: target.record?.revision,
+        aiOrigin: target.record?.aiOrigin,
         type,
         name: name.trim() || defaultDocNumber || (target.kind === "template" ? copy.newTemplate : copy.newDocument),
         company,
@@ -916,6 +801,9 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
                 {activeTab === "variables" && (
                   <div className="min-h-0 flex-1 overflow-hidden flex flex-col bg-background">
                     <DocumentVariableForm
+                      accountEmail={accountEmail}
+                      documentType={type}
+                      title={name}
                       copy={copy}
                       editor={editorRef.current}
                       aiSidebarOpen={aiSidebarOpen}
@@ -998,7 +886,10 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
         const next = [record, ...readStoredTemplates(copy).filter((item) => item.id !== record.id)];
         setTemplates(next);
       } else {
-        await persistServerDocument(record);
+        const saved = await persistServerDocument(record);
+        setTarget({ kind, record: saved });
+        toast.success(copy.documentSaved);
+        return;
       }
       setTarget({ kind, record });
       toast.success(copy.documentSaved);

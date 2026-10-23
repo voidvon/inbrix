@@ -1,3 +1,4 @@
+import { updateEditorDocument } from "../../lib/document-mutations";
 import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
@@ -70,6 +71,11 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
   payment_memo: { zh: "付款备注标识", en: "Payment Memo", group: "terms" },
   total_amount: { zh: "总计金额", en: "Total Amount", group: "terms" },
   subtotal: { zh: "小计金额", en: "Subtotal", group: "terms" },
+  tax_rate: { zh: "商品税率（如 13%）", en: "Goods tax rate (e.g. 13%)", group: "terms" },
+  tax_mode: { zh: "商品含税口径（included / excluded）", en: "Goods tax mode (included / excluded)", group: "terms" },
+  discount: { zh: "商品折扣金额", en: "Goods discount amount", group: "terms" },
+  freight_tax_rate: { zh: "运费税率（如 0%）", en: "Freight tax rate (e.g. 0%)", group: "terms" },
+  freight_tax_mode: { zh: "运费含税口径（included / excluded）", en: "Freight tax mode (included / excluded)", group: "terms" },
   inland_freight: { zh: "内陆运费", en: "Inland Freight", group: "terms" },
   say_total: { zh: "大写总额", en: "Say Total in Words", group: "terms" },
   order_note_1: { zh: "条款 1: 排产交期", en: "Clause 1: Production Schedule", group: "terms" },
@@ -90,12 +96,18 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
 
 export function DocumentVariableForm({
   copy,
+  accountEmail,
+  documentType,
+  title,
   editor,
   onApplyComplete,
   aiSidebarOpen = true,
   onToggleAi,
 }: {
   copy: Copy;
+  accountEmail: string;
+  documentType: "quotation" | "contract";
+  title: string;
   editor: CanvasDocumentEditorHandle | null;
   onApplyComplete?: (switchToDocument: boolean) => void;
   aiSidebarOpen?: boolean;
@@ -105,6 +117,7 @@ export function DocumentVariableForm({
   const [data, setData] = useState<DocumentDataPayload | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [items, setItems] = useState<QuotationItem[]>([]);
+  const [applying, setApplying] = useState(false);
   const [query, setQuery] = useState("");
   const [activeGroup, setActiveGroup] = useState<string>("all");
 
@@ -133,24 +146,8 @@ export function DocumentVariableForm({
       const next = [...prev];
       const cur = { ...next[index], [field]: val };
 
-      // Auto-compute amount if qty & price are updated
-      if (field === "qty" || field === "price") {
-        const q = parseFloat(cur.qty.replace(/[^0-9.]/g, ""));
-        const p = parseFloat(cur.price.replace(/[^0-9.]/g, ""));
-        if (!isNaN(q) && !isNaN(p)) {
-          cur.amount = (q * p).toFixed(2);
-        }
-      }
+      if (field === "qty" || field === "price") cur.amount = "";
       next[index] = cur;
-
-      // Auto calculate total
-      const total = next.reduce((sum, it) => {
-        const amt = parseFloat(it.amount.replace(/[^0-9.]/g, ""));
-        return sum + (isNaN(amt) ? 0 : amt);
-      }, 0);
-      if (total > 0) {
-        setValues((v) => ({ ...v, total_amount: total.toFixed(2), subtotal: total.toFixed(2) }));
-      }
 
       return next;
     });
@@ -173,19 +170,22 @@ export function DocumentVariableForm({
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleApply = (switchToDocument: boolean) => {
-    if (!editor) return;
+  const handleApply = async (switchToDocument: boolean) => {
+    if (!editor || applying || !data) return;
+    setApplying(true);
     try {
-      editor.applyDocumentUpdates({
-        values,
-        items: items.length > 0 ? items : undefined,
+      const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => !key.startsWith("item_") && value !== (data.values[key] || "")));
+      const itemsChanged = JSON.stringify(items) !== JSON.stringify(data.items);
+      if (itemsChanged && items.length === 0) throw new Error(isZh ? "请至少保留一项产品明细" : "Keep at least one line item");
+      const result = await updateEditorDocument(editor, accountEmail, documentType, title, {
+        values: changed, items: itemsChanged ? items : undefined,
       });
-      toast.success(isZh ? "变量已成功填充到文档！" : "Variables applied to document!");
+      loadFromDocument();
+      toast.success(result.summary || (isZh ? "变量已成功填充到文档！" : "Variables applied to document!"));
       onApplyComplete?.(switchToDocument);
     } catch (err) {
-      console.error("Failed to apply variables", err);
-      toast.error(isZh ? "填充失败，请检查填写内容" : "Failed to apply variables");
-    }
+      toast.error(err instanceof Error ? err.message : (isZh ? "填充失败，请检查填写内容" : "Failed to apply variables"));
+    } finally { setApplying(false); }
   };
 
   // Group the variables
@@ -198,7 +198,7 @@ export function DocumentVariableForm({
     const other: Array<{ key: string; label: string; value: string }> = [];
 
     // All known variables or keys currently in values
-    const allKeys = new Set([...Object.keys(values)]);
+    const allKeys = new Set([...Object.keys(values), "tax_rate", "tax_mode", "discount", "freight_tax_rate", "freight_tax_mode"]);
 
     // Also include template-typical keys even if currently empty
     const templateKind = data?.template || "document";
@@ -283,7 +283,8 @@ export function DocumentVariableForm({
             variant="secondary"
             size="sm"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => handleApply(false)}
+            disabled={applying}
+            onClick={() => void handleApply(false)}
           >
             <Check className="size-3.5 text-primary" />
             {isZh ? "仅填充数据" : "Apply Values"}
@@ -292,7 +293,8 @@ export function DocumentVariableForm({
             type="button"
             size="sm"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => handleApply(true)}
+            disabled={applying}
+            onClick={() => void handleApply(true)}
           >
             <FileText className="size-3.5" />
             {isZh ? "填充并查看文档" : "Apply & View Document"}
@@ -648,7 +650,8 @@ export function DocumentVariableForm({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => handleApply(false)}
+            disabled={applying}
+            onClick={() => void handleApply(false)}
             className="text-xs"
           >
             {isZh ? "仅填充数据" : "Apply Values"}
@@ -656,7 +659,8 @@ export function DocumentVariableForm({
           <Button
             type="button"
             size="sm"
-            onClick={() => handleApply(true)}
+            disabled={applying}
+            onClick={() => void handleApply(true)}
             className="text-xs gap-1.5"
           >
             <Check className="size-3.5" />

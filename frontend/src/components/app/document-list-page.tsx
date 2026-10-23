@@ -1,6 +1,8 @@
+import { AIDocumentChatPanel } from "./ai-document-chat-panel";
 import { useEffect, useRef, useState } from "react";
 import {
   FilePenLine,
+  Sparkles,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -64,6 +66,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
   const { copy, accountEmail, openMobileMenu } = useShell();
   const [documents, setDocuments] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   const [loading, setLoading] = useState(true);
+  const [showAIChat, setShowAIChat] = useState(() => window.location.pathname === "/ai-document");
   const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(() => new Set());
   const [documentPage, setDocumentPage] = useState(1);
@@ -135,7 +138,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
 
   const closeEditor = () => {
     setEditorTarget(null);
-    if (window.location.pathname !== "/documents") window.history.replaceState(window.history.state, "", "/documents");
+    if (!showAIChat && window.location.pathname !== "/documents") window.history.replaceState(window.history.state, "", "/documents");
   };
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -228,6 +231,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
   return (
     <>
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {showAIChat ? <AIDocumentChatPanel copy={copy} accountEmail={accountEmail} onBack={() => { setShowAIChat(false); void fetchServerDocuments("all").then(setDocuments); }} onOpenDocument={record => setEditorTarget({ kind: "document", record })} className="min-h-0 flex-1" /> : <>
         <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
           <FilePenLine className="size-4 shrink-0 text-muted-foreground" />
@@ -238,6 +242,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
           <div className="inline-flex h-8 items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label={copy.documentType}>
             {(["all", "quotation", "contract"] as const).map((filter) => <Button key={filter} type="button" variant={documentFilter === filter ? "secondary" : "ghost"} size="sm" className="h-7 px-3 text-xs shadow-none" aria-pressed={documentFilter === filter} onClick={() => changeDocumentFilter(filter)}>{filter === "all" ? copy.allDocumentTypes : filter === "quotation" ? copy.quotation : copy.contract}</Button>)}
           </div>
+          <Button size="sm" variant="outline" onClick={() => setShowAIChat(true)}><Sparkles />{copy === zh ? "AI 起草" : "Draft with AI"}</Button>
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button size="sm" />}>
               <Plus />{copy.newDocument}
@@ -330,6 +335,7 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
             </PaginationContent>
           </Pagination>
         </div>}
+        </>}
       </main>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <DialogContent className="sm:max-w-md">

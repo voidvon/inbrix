@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const aiAgentColumns = `id, owner_id, name, prompt, purpose, output_labels_json, created_at`
+const aiAgentColumns = `id, owner_id, name, prompt, purpose, output_labels_json, business_profile_json, created_at`
 
 var defaultAIAgentOutputLabels = []string{"客户", "需求", "要求", "问题"}
 
@@ -39,11 +39,20 @@ func NormalizeAIAgentOutputLabels(labels []string) ([]string, error) {
 
 func scanAIAgent(scanner interface{ Scan(...any) error }) (AIAgentRecord, error) {
 	var agent AIAgentRecord
-	var outputLabelsJSON string
+	var outputLabelsJSON, profileJSON string
 	var createdAt int64
-	err := scanner.Scan(&agent.ID, &agent.OwnerID, &agent.Name, &agent.Prompt, &agent.Purpose, &outputLabelsJSON, &createdAt)
+	err := scanner.Scan(&agent.ID, &agent.OwnerID, &agent.Name, &agent.Prompt, &agent.Purpose, &outputLabelsJSON, &profileJSON, &createdAt)
 	if err == nil {
 		err = json.Unmarshal([]byte(outputLabelsJSON), &agent.OutputLabels)
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(profileJSON), &agent.BusinessProfile)
+	}
+	if agent.BusinessProfile.Brands == nil {
+		agent.BusinessProfile.Brands = []string{}
+	}
+	if agent.BusinessProfile.BrandMode == "" {
+		agent.BusinessProfile.BrandMode = "prefer"
 	}
 	agent.CreatedAt = time.Unix(createdAt, 0)
 	return agent, err
@@ -71,6 +80,10 @@ func (s *Store) CreateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Prompt = strings.TrimSpace(agent.Prompt)
 	var err error
+	agent.BusinessProfile, err = s.ValidateAIBusinessProfile(ctx, agent.OwnerID, agent.BusinessProfile)
+	if err != nil {
+		return AIAgentRecord{}, err
+	}
 	agent.OutputLabels, err = NormalizeAIAgentOutputLabels(agent.OutputLabels)
 	if err != nil {
 		return AIAgentRecord{}, err
@@ -87,7 +100,8 @@ func (s *Store) CreateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	}
 	now := time.Now().Unix()
 	labelsJSON, _ := json.Marshal(agent.OutputLabels)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_agents(id, owner_id, name, prompt, purpose, output_labels_json, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.OwnerID, agent.Name, agent.Prompt, agent.Purpose, string(labelsJSON), now, now); err != nil {
+	profileJSON, _ := json.Marshal(agent.BusinessProfile)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_agents(id, owner_id, name, prompt, purpose, output_labels_json, business_profile_json, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.OwnerID, agent.Name, agent.Prompt, agent.Purpose, string(labelsJSON), string(profileJSON), now, now); err != nil {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: create AI agent: %w", err)
 	}
 	agent.CreatedAt = time.Unix(now, 0)
@@ -100,6 +114,10 @@ func (s *Store) UpdateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	agent.Name = strings.TrimSpace(agent.Name)
 	agent.Prompt = strings.TrimSpace(agent.Prompt)
 	var err error
+	agent.BusinessProfile, err = s.ValidateAIBusinessProfile(ctx, agent.OwnerID, agent.BusinessProfile)
+	if err != nil {
+		return AIAgentRecord{}, err
+	}
 	agent.OutputLabels, err = NormalizeAIAgentOutputLabels(agent.OutputLabels)
 	if err != nil {
 		return AIAgentRecord{}, err
@@ -120,7 +138,8 @@ func (s *Store) UpdateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 		}
 	}
 	labelsJSON, _ := json.Marshal(agent.OutputLabels)
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_agents SET name = ?, prompt = ?, output_labels_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?`, agent.Name, agent.Prompt, string(labelsJSON), time.Now().Unix(), agent.OwnerID, agent.ID)
+	profileJSON, _ := json.Marshal(agent.BusinessProfile)
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_agents SET name = ?, prompt = ?, output_labels_json = ?, business_profile_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?`, agent.Name, agent.Prompt, string(labelsJSON), string(profileJSON), time.Now().Unix(), agent.OwnerID, agent.ID)
 	if err != nil {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: update AI agent: %w", err)
 	}

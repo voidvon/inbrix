@@ -119,6 +119,8 @@ function inlineLucideIcon(svg: string, size = 18): IElement[] {
 export type ContractItem = {
   productId?: string;
   productVersion?: number;
+  variantId?: string;
+  priceId?: string;
   picture?: string;
   model: string;
   description: string;
@@ -162,12 +164,14 @@ export function extractLegacySpiraxContractValues(main: Array<ReturnType<import(
 
   const extractedItems: ContractItem[] = [];
   let index = 0;
-  while (`item_desc_${index}` in values || `item_model_${index}` in values) {
+  while (`item_desc_${index}` in values || `item_description_${index}` in values || `item_model_${index}` in values) {
     extractedItems.push({
       model: values[`item_model_${index}`] || "",
       picture: values[`item_picture_${index}`],
       productId: values[`item_product_id_${index}`],
       productVersion: Number(values[`item_product_version_${index}`]) || undefined,
+ variantId: values[`item_variant_id_${index}`],
+ priceId: values[`item_price_id_${index}`],
       description: values[`item_desc_${index}`] || values[`item_description_${index}`] || "",
       qty: values[`item_qty_${index}`] || "",
       price: values[`item_price_${index}`] || "",
@@ -184,6 +188,8 @@ export function extractLegacySpiraxContractValues(main: Array<ReturnType<import(
         picture: values.item_picture,
         productId: values.item_product_id,
         productVersion: Number(values.item_product_version) || undefined,
+ variantId: values.item_variant_id,
+ priceId: values.item_price_id,
         description: values.item_description || "",
         qty: values.item_qty || "",
         price: values.item_price || "",
@@ -203,8 +209,8 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     cell([text("Item", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.CENTER })], BLUE),
     cell([text("Description & Specification", { bold: true, color: "#ffffff", size: 11 })], BLUE),
     cell([text("Qty", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.CENTER })], BLUE),
-    cell([text("Unit Price (USD)", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT })], BLUE),
-    cell([text("Amount (USD)", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT })], BLUE),
+    cell([text("Unit Price (", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT }), controlText("currency", values?.currency || "", "Currency", { bold: true, color: "#ffffff", size: 11 }), text(")", { bold: true, color: "#ffffff", size: 11 })], BLUE),
+    cell([text("Amount", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT })], BLUE),
   ];
 
   const activeItems: ContractItem[] = (items && items.length > 0)
@@ -229,12 +235,14 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
 
     const descValue = item.description || (item.model ? `Equipment\nModel: ${item.model}` : "");
+    const descriptionControl = controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 });
+    descriptionControl.control!.extension = { model: item.model, productId: item.productId, productVersion: item.productVersion, variantId: item.variantId, priceId: item.priceId };
 
     return {
       height: item.picture ? Math.max(itemRowHeight, 100) : itemRowHeight,
       cells: [
         cell([text(String(index + 1), { bold: true, size: 11, rowFlex: RowFlex.CENTER })]),
-        cell([controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 }), ...(item.picture ? [{ value: "\n" }, { type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { productId: item.productId, productVersion: item.productVersion } }] : [])]),
+        cell([descriptionControl, ...(item.picture ? [{ value: "\n" }, { type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { model: item.model, productId: item.productId, productVersion: item.productVersion, variantId: item.variantId, priceId: item.priceId } }] : [])]),
         cell([controlText(qtyId, item.qty || "", "Qty", { size: 11, rowFlex: RowFlex.CENTER })]),
         cell([controlText(priceId, item.price || "", "Unit Price", { size: 11, rowFlex: RowFlex.RIGHT })]),
         cell([controlText(amountId, item.amount || "", "Amount", { bold: true, size: 11.5, rowFlex: RowFlex.RIGHT })]),
@@ -244,7 +252,7 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
 
   const subtotalVal = values?.subtotal || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
   const freightVal = values?.inland_freight || "";
-  const totalVal = values?.total_amount || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
+  const totalVal = values?.total_amount ?? (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
   const sayTotalVal = values?.say_total || "";
 
   return table(widths, [

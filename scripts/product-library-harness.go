@@ -36,6 +36,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	legacy, _, err := db.CreatePriceList(context.Background(), user.ID, "旧阀门价格", "", []mailstore.PriceColumn{
+		{Key: "model", Label: "型号", Type: "text", Role: "model"}, {Key: "name", Label: "名称", Type: "text", Role: "name"}, {Key: "connection", Label: "连接方式", Type: "text"}, {Key: "price", Label: "单价", Type: "number", Role: "price"}, {Key: "currency", Label: "币种", Type: "text", Role: "currency"}, {Key: "unit", Label: "单位", Type: "text", Role: "unit"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err = db.SavePriceRows(context.Background(), user.ID, legacy.ID, []mailstore.PriceRow{{Data: map[string]string{"model": "LEGACY-50", "name": "待关联球阀", "connection": "法兰", "price": "88.50", "currency": "CNY", "unit": "台"}}}, nil); err != nil {
+		log.Fatal(err)
+	}
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", user.ID); return c.Next() })
 	app.Get("/csrf", func(c *fiber.Ctx) error {

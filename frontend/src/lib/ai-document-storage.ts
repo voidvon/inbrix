@@ -1,11 +1,19 @@
-import type { AIToolCall, QuotationItem } from "./api";
+import { createDocumentBusiness } from "./document-business";
+import type { AIChatAttachment } from "../types";
+import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCall, QuotationItem } from "./api";
 import type { DocumentTemplate, StoredDocument } from "./document-storage";
 import { documentTemplateHTML } from "./document-storage";
 import { type Copy, zh } from "./locale";
 import { createSpiraxQuotationCanvasDocument } from "../components/app/spirax-quotation-canvas";
 import { createSpiraxContractCanvasDocument } from "../components/app/spirax-contract-canvas";
+import { ApiError, getDocument } from "./api";
 
 export type AIDocumentGeneratedData = {
+  savedDocumentId?: string;
+  aiOrigin?: StoredDocument["aiOrigin"];
+  templateId?: string;
+  sourceQuotationId?: string;
+  sourceQuotationRevision?: number;
   id: string;
   type: DocumentTemplate;
   name: string;
@@ -23,6 +31,8 @@ export type AIDocumentGeneratedData = {
 };
 
 export type AIDocumentMessage = {
+  attachments?: AIChatAttachment[];
+  documentAction?: AIAgentDocumentAction;
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -33,6 +43,8 @@ export type AIDocumentMessage = {
 };
 
 export type AIDocumentSession = {
+  version: number;
+  businessContext?: AIBusinessContext;
   id: string;
   title: string;
   documentType: DocumentTemplate;
@@ -42,60 +54,20 @@ export type AIDocumentSession = {
   messages: AIDocumentMessage[];
 };
 
-const AI_DOCUMENT_STORAGE_KEY = "inbrix-ai-document-sessions";
-const ACTIVE_SESSION_STORAGE_KEY = "inbrix-ai-document-active-session";
-
-export function readAIDocumentSessions(copy: Copy): AIDocumentSession[] {
-  try {
-    const raw = window.localStorage.getItem(AI_DOCUMENT_STORAGE_KEY);
-    if (!raw) return [createInitialSession(copy)];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return [createInitialSession(copy)];
-    }
-    return parsed as AIDocumentSession[];
-  } catch {
-    return [createInitialSession(copy)];
-  }
-}
-
-export function writeAIDocumentSessions(sessions: AIDocumentSession[]) {
-  try {
-    window.localStorage.setItem(AI_DOCUMENT_STORAGE_KEY, JSON.stringify(sessions));
-  } catch (err) {
-    console.error("Failed to persist AI document sessions", err);
-  }
-}
-
-export function getActiveSessionId(): string | null {
-  try {
-    return window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setActiveSessionId(id: string) {
-  try {
-    window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
-  } catch {
-    // ignore
-  }
-}
-
 export function createInitialSession(copy: Copy): AIDocumentSession {
   const isZh = copy === zh;
   const initialMessage: AIDocumentMessage = {
     id: "welcome-msg",
     role: "assistant",
     content: isZh
-      ? "您好！我是您的 AI 文档助手。\n\n我可以帮您快速起草、修改和润色各类商业报价单与购销合同，精准填充变量、计算价格，并直接在编辑器中排版、导出 PDF 或添加至邮件附件。\n\n请在下方告诉我您的需求，例如：“帮我起草一份斯派莎克减压阀报价单，买方为上海宝钢…”"
-      : "Hello! I am your AI Document Assistant.\n\nI can help you draft, modify, and polish business quotations and contracts with precise variable filling, price calculation, and direct editor canvas integration.\n\nTell me what you need below, for example: 'Draft a quotation for Spirax Sarco valves for Baosteel...'",
+      ? "您好！我是您的 AI 文档助手。\n\n我可以帮您快速起草、修改和润色各类商业报价单与购销合同，精准填充变量、计算价格，并直接在编辑器中排版、导出 PDF 或添加至邮件附件。\n\n请在下方告诉我您的需求，例如：“分析客户需求，核对产品规格与价格，然后制作报价草稿。”"
+      : "Hello! I am your AI Document Assistant.\n\nI can help you draft, modify, and polish business quotations and contracts with precise variable filling, price calculation, and direct editor canvas integration.\n\nTell me what you need below, for example: 'Analyze the requirements, verify catalog specifications and prices, then draft a quotation.'",
     createdAt: new Date().toISOString(),
   };
 
   return {
-    id: "default-ai-session",
+    id: "",
+    version: 0,
     title: isZh ? "文档助手对话" : "Document Assistant",
     documentType: "quotation",
     createdAt: new Date().toISOString(),
@@ -104,128 +76,38 @@ export function createInitialSession(copy: Copy): AIDocumentSession {
   };
 }
 
-export function createNewAIDocumentSession(
-  copy: Copy,
-  type: DocumentTemplate = "quotation",
-  title?: string
-): AIDocumentSession {
-  const isZh = copy === zh;
-  const newSession: AIDocumentSession = {
-    id: `ai-session-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    title: title || (isZh ? `新${type === "quotation" ? "报价单" : "合同"}对话` : `New ${type} Chat`),
-    documentType: type,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    messages: [
-      {
-        id: `welcome-${Date.now()}`,
-        role: "assistant",
-        content: isZh
-          ? `已开启关于【${type === "quotation" ? "报价单" : "销售合同"}】的新对话。请告诉我有关于客户、产品清单、价格、交货期等具体需求。`
-          : `Started a new chat for 【${type}】. Please provide customer details, product items, pricing, delivery terms, etc.`,
-        createdAt: new Date().toISOString(),
-      },
-    ],
+// Server cards use title/counterparty; the document canvas uses name/company.
+export function toAIDocumentSession(session: AIChatSession, copy: Copy): AIDocumentSession {
+  return {
+    ...session,
+    agentId: session.businessContext.agentId || undefined,
+    messages: session.messages.map(message => ({
+      ...message,
+      toolCalls: message.toolCalls?.map(call => ({ ...call, args: {} })),
+      document: message.document ? {
+        ...message.document,
+        id: message.id,
+        aiOrigin: { sessionId: session.id, messageId: message.id },
+        name: message.document.title,
+        company: message.document.counterparty,
+        html: message.document.html || documentTemplateHTML(message.document.type, copy),
+        updatedAt: message.createdAt,
+      } : undefined,
+    })),
   };
-
-  const sessions = readAIDocumentSessions(copy);
-  const next = [newSession, ...sessions];
-  writeAIDocumentSessions(next);
-  setActiveSessionId(newSession.id);
-  return newSession;
 }
 
-export function saveMessageToSession(
-  copy: Copy,
-  sessionId: string,
-  message: AIDocumentMessage
-): AIDocumentSession[] {
-  const sessions = readAIDocumentSessions(copy);
-  let found = false;
-  const next = sessions.map((session) => {
-    if (session.id === sessionId) {
-      found = true;
-      const updatedMessages = [...session.messages, message];
-      let newTitle = session.title;
-      // If title is default, rename using first user message summary
-      if (session.messages.length <= 2 && message.role === "user") {
-        const clean = message.content.trim().slice(0, 18);
-        if (clean) newTitle = clean;
-      }
-      return {
-        ...session,
-        title: newTitle,
-        updatedAt: new Date().toISOString(),
-        messages: updatedMessages,
-      };
-    }
-    return session;
-  });
-
-  if (!found) {
-    // create and prepend
-    const newSession: AIDocumentSession = {
-      id: sessionId,
-      title: message.role === "user" ? message.content.slice(0, 18) : "文档对话",
-      documentType: message.document?.type || "quotation",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messages: [message],
-    };
-    next.unshift(newSession);
-  }
-
-  writeAIDocumentSessions(next);
-  return next;
+// Old browser records have no owner/mailbox identity. They are retained for
+// explicit recovery, never shown or imported as the current user's history.
+export function hasLegacyAIDocumentSessions(): boolean {
+  try { return !!window.localStorage.getItem("inbrix-ai-document-sessions"); } catch { return false; }
 }
-
-export function deleteAIDocumentSession(copy: Copy, sessionId: string): AIDocumentSession[] {
-  const sessions = readAIDocumentSessions(copy);
-  const next = sessions.filter((s) => s.id !== sessionId);
-  if (next.length === 0) {
-    const initial = createInitialSession(copy);
-    writeAIDocumentSessions([initial]);
-    setActiveSessionId(initial.id);
-    return [initial];
-  }
-  writeAIDocumentSessions(next);
-  if (getActiveSessionId() === sessionId) {
-    setActiveSessionId(next[0].id);
-  }
-  return next;
-}
-
-export function clearSessionHistory(copy: Copy, sessionId: string): AIDocumentSession[] {
-  const sessions = readAIDocumentSessions(copy);
-  const initial = createInitialSession(copy);
-  const next = sessions.map((s) => {
-    if (s.id === sessionId) {
-      return {
-        ...s,
-        updatedAt: new Date().toISOString(),
-        messages: [initial.messages[0]],
-      };
-    }
-    return s;
-  });
-  writeAIDocumentSessions(next);
-  return next;
-}
-
-export function updateSessionAgent(copy: Copy, sessionId: string, agentId?: string): AIDocumentSession[] {
-  const sessions = readAIDocumentSessions(copy);
-  const next = sessions.map((s) => {
-    if (s.id === sessionId) {
-      return {
-        ...s,
-        agentId,
-        updatedAt: new Date().toISOString(),
-      };
-    }
-    return s;
-  });
-  writeAIDocumentSessions(next);
-  return next;
+export function exportLegacyAIDocumentSessions() {
+  const raw = window.localStorage.getItem("inbrix-ai-document-sessions");
+  if (!raw) return;
+  const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+  const link = document.createElement("a"); link.href = url; link.download = "inbrix-legacy-ai-chats.json"; link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedData): StoredDocument {
@@ -244,6 +126,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : "spirax-contract",
           data: { main },
+          business: createDocumentBusiness(generated.values),
         };
         html = `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify(canvasDoc)}`;
       } catch (e) {
@@ -253,6 +136,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
   }
 
   return {
+    aiOrigin: generated.aiOrigin,
     id: generated.id || crypto.randomUUID(),
     type: generated.type,
     name: generated.name,
@@ -260,4 +144,21 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
     html: html || documentTemplateHTML(generated.type, zh),
     updatedAt: new Date().toISOString(),
   };
+}
+
+// Opening or saving an already saved card resolves the latest library content.
+// Never attach a freshly fetched revision to the old generated fields.
+export async function resolveGeneratedDocument(generated: AIDocumentGeneratedData): Promise<StoredDocument> {
+  const draft = convertGeneratedToStoredDocument(generated);
+  if (!draft.aiOrigin) return draft;
+  try {
+    const { document } = await getDocument(draft.id);
+    return document;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      if (generated.savedDocumentId) throw new Error("此卡片关联的文档已删除，请重新起草 / The linked document was deleted; start a new draft");
+      return draft;
+    }
+    throw error;
+  }
 }

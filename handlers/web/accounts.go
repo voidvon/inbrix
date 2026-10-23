@@ -980,3 +980,35 @@ func (h *AccountsHandler) handleMirrorSettings(c *fiber.Ctx) error {
 		"MailMirrorEnabled": true,
 	})
 }
+
+// HandleAccountBrands reads or updates owner-scoped mailbox brand defaults.
+func (h *AccountsHandler) HandleAccountBrands(c *fiber.Ctx) error {
+	if h.mailDB == nil {
+		return fiber.ErrNotImplemented
+	}
+	owner := h.mirrorOwner(c)
+	if owner == "" {
+		return fiber.ErrUnauthorized
+	}
+	account, err := h.accountByID(c, owner)
+	if errors.Is(err, mailstore.ErrNotFound) {
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if c.Method() == fiber.MethodPut {
+		var input mailstore.AccountBrands
+		if err = c.BodyParser(&input); err != nil {
+			return fiber.ErrBadRequest
+		}
+		if err = h.mailDB.SaveAccountBrands(c.UserContext(), owner, account.ID, input); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+	}
+	value, err := h.mailDB.GetAccountBrands(c.UserContext(), owner, account.ID)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(value)
+}

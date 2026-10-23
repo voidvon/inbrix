@@ -27,22 +27,24 @@ const MaxProductImageBytes = 2 * 1024 * 1024
 type ProductCategory struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
+	ParentID     string `json:"parentId"`
 	ProductCount int    `json:"productCount"`
 }
 
 type Product struct {
-	ID            string    `json:"id"`
-	OwnerID       string    `json:"-"`
-	Name          string    `json:"name"`
-	Brand         string    `json:"brand"`
-	Model         string    `json:"model"`
-	CategoryID    string    `json:"categoryId"`
-	CategoryName  string    `json:"categoryName"`
-	Specification string    `json:"specification,omitempty"`
-	ImageID       string    `json:"imageId"`
-	ImageURL      string    `json:"imageUrl,omitempty"`
-	Version       int64     `json:"version"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID            string          `json:"id"`
+	OwnerID       string          `json:"-"`
+	Name          string          `json:"name"`
+	Brand         string          `json:"brand"`
+	Model         string          `json:"model"`
+	CategoryID    string          `json:"categoryId"`
+	CategoryName  string          `json:"categoryName"`
+	Specification string          `json:"specification,omitempty"`
+	ImageID       string          `json:"imageId"`
+	ImageURL      string          `json:"imageUrl,omitempty"`
+	Version       int64           `json:"version"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+	Catalog       *ProductCatalog `json:"catalog,omitempty"`
 }
 
 type ProductInput struct {
@@ -52,8 +54,11 @@ type ProductInput struct {
 	CategoryID    string `json:"categoryId"`
 	Specification string `json:"specification"`
 	// nil keeps the existing image; empty explicitly removes it.
-	ImageDataURL *string `json:"imageDataUrl,omitempty"`
-	Version      int64   `json:"version"`
+	ImageDataURL            *string         `json:"imageDataUrl,omitempty"`
+	Version                 int64           `json:"version"`
+	Catalog                 *ProductCatalog `json:"catalog,omitempty"`
+	legacyPriceRowID        string
+	legacyPriceVariantIndex int
 }
 
 type ProductSection struct {
@@ -108,82 +113,13 @@ func (s *Store) migrateProducts(ctx context.Context) error {
 			return fmt.Errorf("mailstore: migrate products: %w", err)
 		}
 	}
-	return nil
+	if err := s.migrateProductCategoryTree(ctx); err != nil {
+		return err
+	}
+	return s.migrateProductCatalog(ctx)
 }
 
 func invalidProduct(message string) error { return fmt.Errorf("%w: %s", ErrProductInvalid, message) }
-
-func (s *Store) ListProductCategories(ctx context.Context, owner string) ([]ProductCategory, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.name,count(p.id) FROM product_categories c LEFT JOIN products p ON p.category_id=c.id AND p.owner_id=c.owner_id WHERE c.owner_id=? GROUP BY c.id ORDER BY c.name,c.id`, owner)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := []ProductCategory{}
-	for rows.Next() {
-		var c ProductCategory
-		if err := rows.Scan(&c.ID, &c.Name, &c.ProductCount); err != nil {
-			return nil, err
-		}
-		result = append(result, c)
-	}
-	return result, rows.Err()
-}
-
-func (s *Store) SaveProductCategory(ctx context.Context, owner, id, name string) (ProductCategory, error) {
-	name = strings.TrimSpace(name)
-	if owner == "" || name == "" || utf8.RuneCountInString(name) > 100 {
-		return ProductCategory{}, invalidProduct("category name is required (max 100 characters)")
-	}
-	s.productMu.Lock()
-	defer s.productMu.Unlock()
-	if id == "" {
-		var err error
-		id, err = newID("pcat")
-		if err != nil {
-			return ProductCategory{}, err
-		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO product_categories(id,owner_id,name) VALUES(?,?,?)`, id, owner, name)
-		if err != nil {
-			return ProductCategory{}, invalidProduct("category name already exists or could not be saved")
-		}
-	} else {
-		result, err := s.db.ExecContext(ctx, `UPDATE product_categories SET name=? WHERE id=? AND owner_id=?`, name, id, owner)
-		if err != nil {
-			return ProductCategory{}, invalidProduct("category name already exists or could not be saved")
-		}
-		if n, _ := result.RowsAffected(); n == 0 {
-			return ProductCategory{}, ErrNotFound
-		}
-	}
-	category := ProductCategory{ID: id, Name: name}
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM products WHERE owner_id=? AND category_id=?`, owner, id).Scan(&category.ProductCount); err != nil {
-		return ProductCategory{}, err
-	}
-	return category, nil
-}
-
-func (s *Store) DeleteProductCategory(ctx context.Context, owner, id string) error {
-	s.productMu.Lock()
-	defer s.productMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `DELETE FROM product_categories WHERE id=? AND owner_id=?`, id, owner)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE products SET category_id='',version=version+1,updated_at=? WHERE category_id=? AND owner_id=?`, time.Now().UnixMilli(), id, owner)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
-}
 
 const productColumns = `p.id,p.owner_id,p.name,p.brand,p.model,p.category_id,coalesce(c.name,'') AS category_name,p.image_id,p.version,p.updated_at`
 const productJoin = ` FROM products p LEFT JOIN product_categories c ON c.id=p.category_id AND c.owner_id=p.owner_id `
@@ -205,8 +141,20 @@ func scanProduct(row interface{ Scan(...any) error }, p *Product, extra ...any) 
 
 func (s *Store) GetProduct(ctx context.Context, owner, id string) (Product, error) {
 	var p Product
-	err := scanProduct(s.db.QueryRowContext(ctx, `SELECT `+productColumns+`,p.specification`+productJoin+`WHERE p.owner_id=? AND p.id=?`, owner, id), &p, &p.Specification)
-	return p, err
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback()
+	err = scanProduct(tx.QueryRowContext(ctx, `SELECT `+productColumns+`,p.specification`+productJoin+`WHERE p.owner_id=? AND p.id=?`, owner, id), &p, &p.Specification)
+	if err != nil {
+		return p, err
+	}
+	p.Catalog, err = s.readProductCatalog(ctx, tx, id)
+	if err != nil {
+		return p, err
+	}
+	return p, tx.Commit()
 }
 
 func productImage(dataURL string) ([]byte, string, error) {
@@ -304,10 +252,20 @@ func (s *Store) SaveProduct(ctx context.Context, owner, id string, in ProductInp
 	if err != nil {
 		return Product{}, err
 	}
+	if in.Catalog != nil {
+		if err = saveProductCatalog(ctx, tx, id, in.Catalog); err != nil {
+			return Product{}, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM product_chunks WHERE product_id=?`, id); err != nil {
 		return Product{}, err
 	}
 	metadata := strings.Join(productTokens(in.Name+" "+in.Brand+" "+in.Model), " ") + " " + productModelKey(in.Model)
+	var catalogText string
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT search_text FROM product_catalogs WHERE product_id=?),'')`, id).Scan(&catalogText); err != nil {
+		return Product{}, err
+	}
+	metadata += " " + strings.Join(productTokens(catalogText), " ")
 	runes := []rune(in.Specification)
 	for _, section := range splitProductSections(in.Specification) {
 		content := string(runes[section.Offset : section.Offset+section.Length])
@@ -321,6 +279,11 @@ func (s *Store) SaveProduct(ctx context.Context, owner, id string, in ProductInp
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO product_chunks_fts(rowid,metadata,body) VALUES(?,?,?)`, rowID, metadata, strings.Join(productTokens(content), " ")); err != nil {
 			return Product{}, err
+		}
+	}
+	if in.legacyPriceRowID != "" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO product_price_migrations(row_id,owner_id,product_id,variant_id,imported_at) VALUES(?,?,?,?,?)`, in.legacyPriceRowID, owner, id, in.Catalog.Variants[in.legacyPriceVariantIndex].ID, now); err != nil {
+			return Product{}, invalidProduct("legacy row already imported; refresh pending prices")
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -456,7 +419,7 @@ func splitProductSections(s string) []ProductSection {
 	return sections
 }
 
-func (s *Store) SearchProducts(ctx context.Context, owner, query, category string, limit, offset int) (ProductSearchPage, error) {
+func (s *Store) SearchProducts(ctx context.Context, owner, query, category string, limit, offset int, filters ...ProductSearchFilter) (ProductSearchPage, error) {
 	page := ProductSearchPage{Products: []ProductHit{}}
 	if limit < 1 || limit > 20 || offset < 0 || offset > 100000 || utf8.RuneCountInString(query) > 200 {
 		return page, invalidProduct("limit must be 1–20; offset 0–100000; query at most 200 characters")
@@ -464,8 +427,31 @@ func (s *Store) SearchProducts(ctx context.Context, owner, query, category strin
 	where := `p.owner_id=?`
 	args := []any{owner}
 	if category != "" {
-		where += ` AND p.category_id=?`
-		args = append(args, category)
+		where += ` AND p.category_id IN (WITH RECURSIVE subtree(id) AS (SELECT id FROM product_categories WHERE owner_id=? AND id=? UNION SELECT c.id FROM product_categories c JOIN subtree t ON c.parent_id=t.id WHERE c.owner_id=?) SELECT id FROM subtree)`
+		args = append(args, owner, category, owner)
+	}
+	if len(filters) > 0 {
+		filter := filters[0]
+		if filter.Brands != nil {
+			if len(filter.Brands) == 0 {
+				where += ` AND 0=1`
+			} else {
+				where += ` AND p.brand IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.Brands)), ",") + `)`
+				for _, b := range filter.Brands {
+					args = append(args, b)
+				}
+			}
+		}
+		if filter.Brand != nil {
+			if utf8.RuneCountInString(*filter.Brand) > 100 {
+				return page, invalidProduct("brand must be at most 100 characters")
+			}
+			where += ` AND p.brand=?`
+			args = append(args, *filter.Brand)
+		}
+		if filter.Uncategorized {
+			where += ` AND p.category_id=''`
+		}
 	}
 	from := productJoin
 	query = strings.TrimSpace(query)
@@ -559,6 +545,8 @@ func (s *Store) ReadProduct(ctx context.Context, owner, id string, version int64
 	result.Sections = sections[start:sectionEnd]
 	result.HasMoreSections = sectionEnd < len(sections)
 	p.Specification = ""
+	// Structured configurations are queried separately with bounded pagination.
+	p.Catalog = nil
 	result.Product = p
 	return result, nil
 }

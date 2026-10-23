@@ -18,10 +18,18 @@ func NewProductsHandler(store *session.Store, db *mailstore.Store) *ProductsHand
 }
 
 func (h *ProductsHandler) Register(router fiber.Router) {
+	router.Get("/product-dimensions", h.listDimensions)
+	router.Post("/product-dimensions", h.saveDimension)
+	router.Put("/product-dimensions/:key", h.saveDimension)
+	router.Delete("/product-dimensions/:key", h.deleteDimension)
 	router.Get("/product-categories", h.listCategories)
 	router.Post("/product-categories", h.saveCategory)
 	router.Put("/product-categories/:id", h.saveCategory)
 	router.Delete("/product-categories/:id", h.deleteCategory)
+	router.Get("/product-navigation", h.navigation)
+	router.Post("/products/query-prices", h.queryPrices)
+	router.Get("/product-price-imports", h.pendingPrices)
+	router.Post("/product-price-imports/:id", h.importPrice)
 	router.Get("/products", h.search)
 	router.Get("/products/search", h.search)
 	router.Post("/products", h.save)
@@ -81,12 +89,17 @@ func (h *ProductsHandler) saveCategory(c *fiber.Ctx) error {
 		return err
 	}
 	var in struct {
-		Name string `json:"name"`
+		Name     string  `json:"name"`
+		ParentID *string `json:"parentId"`
 	}
 	if c.BodyParser(&in) != nil {
 		return fiber.NewError(400, "Invalid JSON body")
 	}
-	item, err := h.mailDB.SaveProductCategory(c.UserContext(), owner, c.Params("id"), in.Name)
+	var parents []string
+	if in.ParentID != nil {
+		parents = append(parents, *in.ParentID)
+	}
+	item, err := h.mailDB.SaveProductCategory(c.UserContext(), owner, c.Params("id"), in.Name, parents...)
 	if err != nil {
 		return productError(err)
 	}
@@ -118,11 +131,29 @@ func (h *ProductsHandler) search(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	page, err := h.mailDB.SearchProducts(c.UserContext(), owner, c.Query("q"), c.Query("categoryId"), limit, offset)
+	filter := mailstore.ProductSearchFilter{Uncategorized: c.Query("uncategorized") == "true"}
+	if c.Request().URI().QueryArgs().Has("brand") {
+		brand := c.Query("brand")
+		filter.Brand = &brand
+	}
+	page, err := h.mailDB.SearchProducts(c.UserContext(), owner, c.Query("q"), c.Query("categoryId"), limit, offset, filter)
 	if err != nil {
 		return productError(err)
 	}
 	return c.JSON(page)
+}
+
+func (h *ProductsHandler) navigation(c *fiber.Ctx) error {
+	owner, err := h.ready(c)
+	if err != nil {
+		return err
+	}
+	c.Set("Cache-Control", "no-store")
+	result, err := h.mailDB.ProductNavigation(c.UserContext(), owner)
+	if err != nil {
+		return productError(err)
+	}
+	return c.JSON(result)
 }
 
 func (h *ProductsHandler) get(c *fiber.Ctx) error {

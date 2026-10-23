@@ -2,12 +2,13 @@ import { useState } from "react";
 import { BookmarkCheck, Eye, FileSignature, FileText, Loader2, Trash2, Wand2 } from "lucide-react";
 import { toast } from "../../lib/toast";
 import { Button } from "../ui/button";
-import { convertGeneratedToStoredDocument } from "../../lib/ai-document-storage";
+import { resolveGeneratedDocument } from "../../lib/ai-document-storage";
+import { getDocument } from "../../lib/api";
 import {
   type DocumentEditorTarget,
   type StoredDocument,
   type StoredTemplate,
-  deleteServerDocuments,
+  deleteServerDocumentRevision,
   persistServerDocument,
   readStoredTemplates,
 } from "../../lib/document-storage";
@@ -17,6 +18,7 @@ import { cn } from "../../lib/utils";
 import { DocumentEditorDialog } from "./document-editor-dialog";
 
 type Props = {
+  origin?: StoredDocument["aiOrigin"];
   copy: Copy;
   accountEmail: string;
   /** The conversation's other side — the buyer, so their address is never blank. */
@@ -32,6 +34,8 @@ function toQuotationItems(items: ConversationAIDocumentDraft["items"]) {
   return (items ?? []).map((item) => ({
     productId: item.productId,
     productVersion: item.productVersion,
+    variantId: item.variantId,
+    priceId: item.priceId,
     picture: item.picture,
     model: item.model ?? "",
     description: item.description ?? "",
@@ -57,17 +61,18 @@ function documentTypeLabel(type: string | undefined, isZh: boolean) {
  * saved — the proposed fields for an update, the generated content for a new
  * one — and saving from the editor writes it to the library.
  */
-export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail, draft, action }: Props) {
+export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail, draft, action, origin }: Props) {
   const isZh = copy === zh;
   const [busy, setBusy] = useState<"save" | "apply" | "delete" | null>(null);
+  const [savedRecord, setSavedRecord] = useState<StoredDocument | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  // One id per card, so re-opening the editor edits the same document instead of
-  // minting a second copy of it.
+  // Legacy callers without a persisted message retain a local fallback id.
   const [draftId] = useState(() => crypto.randomUUID());
   const [editor, setEditor] = useState<{ record: StoredDocument; templates: StoredTemplate[] } | null>(null);
 
   /** The document this card stands for, as the editor and the library see it. */
-  const buildRecord = (): StoredDocument | null => {
+  const buildRecord = async (): Promise<StoredDocument | null> => {
+    if (savedRecord) return (await getDocument(savedRecord.id)).document;
     if (draft) {
       // The buyer's address is the one field the conversation itself knows for
       // certain, so it stands in when the agent did not extract one.
@@ -76,8 +81,10 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
         values.customer_email = counterpartyEmail;
         values.buyer_email = counterpartyEmail;
       }
-      return convertGeneratedToStoredDocument({
-        id: draftId,
+      return resolveGeneratedDocument({
+        savedDocumentId: draft.savedDocumentId,
+        id: origin?.messageId || draftId,
+        aiOrigin: origin,
         type: draft.type,
         name: draft.title || documentTypeLabel(draft.type, isZh),
         company: draft.counterparty,
@@ -91,30 +98,37 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
       });
     }
     if (action && action.kind !== "delete") {
-      return convertGeneratedToStoredDocument({
+      if (!action.baseRevision) throw new Error(isZh ? "此方案缺少文档版本，请让 AI 重新生成" : "Regenerate this proposal to include its document revision");
+      if (!action.html?.startsWith("__INBRIX_CANVAS_DOCUMENT__:")) throw new Error(isZh ? "此方案缺少原文档内容，请让 AI 重新生成" : "Regenerate this proposal to preserve the original document");
+      return {
         id: action.documentId,
+        revision: action.baseRevision,
         type: action.type === "contract" ? "contract" : "quotation",
         name: action.name || documentTypeLabel(action.type, isZh),
         company: action.company,
-        html: "",
-        values: action.values,
-        items: toQuotationItems(action.items),
+        html: action.html,
         updatedAt: new Date().toISOString(),
-      });
+      };
     }
     return null;
   };
 
-  const openDocument = () => {
-    const record = buildRecord();
-    if (!record) return;
-    setEditor({ record, templates: readStoredTemplates(copy) });
+  const openDocument = async () => {
+    try {
+      const record = await buildRecord();
+      if (!record) return;
+      setEditor({ record, templates: readStoredTemplates(copy) });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : copy.loadFailed);
+    }
   };
 
   const saveFromEditor = async (kind: DocumentEditorTarget["kind"], record: StoredDocument) => {
     if (kind !== "document") return;
     try {
+      if (action && !action.baseRevision) throw new Error(isZh ? "此方案缺少文档版本，请让 AI 重新生成" : "Regenerate this proposal to include its document revision");
       const saved = await persistServerDocument(record);
+      setSavedRecord(saved);
       setEditor({ record: saved, templates: readStoredTemplates(copy) });
       setDone(isZh ? `已保存《${saved.name}》` : `Saved "${saved.name}"`);
       toast.success(isZh ? "已保存到报价单与合同" : "Saved to quotations & contracts");
@@ -127,9 +141,10 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
     if (!draft || busy) return;
     setBusy("save");
     try {
-      const stored = buildRecord();
+      const stored = await buildRecord();
       if (!stored) return;
-      const saved = await persistServerDocument(stored);
+      const saved = stored.revision ? stored : await persistServerDocument(stored);
+      setSavedRecord(saved);
       setDone(isZh ? `已保存《${saved.name}》` : `Saved "${saved.name}"`);
       toast.success(isZh ? "已保存到报价单与合同" : "Saved to quotations & contracts");
     } catch (error) {
@@ -143,11 +158,13 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
     if (!action || action.kind !== "update" || busy) return;
     setBusy("apply");
     try {
-      // Rebuild the canvas document from the merged fields the server returned,
-      // keeping the original document id so the library entry is replaced.
-      const rebuilt = buildRecord();
+      if (!action.baseRevision) throw new Error(isZh ? "此方案缺少文档版本，请让 AI 重新生成" : "Regenerate this proposal to include its document revision");
+      // The server patched the original canvas at baseRevision. Saving uses
+      // that same revision so a concurrent edit cannot be overwritten.
+      const rebuilt = await buildRecord();
       if (!rebuilt) return;
       const saved = await persistServerDocument({ ...rebuilt, id: action.documentId });
+      setSavedRecord(saved);
       setDone(isZh ? `已更新《${saved.name}》` : `Updated "${saved.name}"`);
       toast.success(isZh ? "文档已更新" : "Document updated");
     } catch (error) {
@@ -161,7 +178,8 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
     if (!action || action.kind !== "delete" || busy) return;
     setBusy("delete");
     try {
-      await deleteServerDocuments([action.documentId]);
+      if (!action.baseRevision) throw new Error(isZh ? "此方案缺少文档版本，请让 AI 重新生成" : "Regenerate this proposal to include its document revision");
+      await deleteServerDocumentRevision(action.documentId, action.baseRevision);
       setDone(isZh ? `已删除《${action.name}》` : `Deleted "${action.name}"`);
       toast.success(isZh ? "文档已删除" : "Document deleted");
     } catch (error) {
@@ -285,7 +303,7 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
             variant="outline"
             size="sm"
             className="h-7 gap-1 px-2.5 text-xs shadow-none"
-            onClick={openDocument}
+            onClick={() => void openDocument()}
             title={copy.viewDocument}
             data-testid="conversation-document-view"
           >

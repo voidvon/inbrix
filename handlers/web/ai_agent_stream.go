@@ -46,9 +46,6 @@ func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent
 			}
 			return w.Flush()
 		}
-		if err := write(agentChatEvent{Type: "started"}); err != nil {
-			return
-		}
 		events := make(chan agentChatEvent, 16)
 		emit := func(event agentChatEvent) error {
 			select {
@@ -72,6 +69,9 @@ func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent
 			}
 			_ = emit(agentChatEvent{Type: "done", Response: response})
 		}()
+		if err := write(agentChatEvent{Type: "started"}); err != nil {
+			return
+		}
 		heartbeat := time.NewTicker(10 * time.Second)
 		defer heartbeat.Stop()
 		for {

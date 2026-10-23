@@ -363,13 +363,8 @@ func TestExecuteLookupPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, _, err := db.CreatePriceList(ctx, user.ID, "阀门价目表", "", nil)
+	_, err = db.SaveProduct(ctx, user.ID, "", mailstore.ProductInput{Name: "DN50 球阀", Model: "DN50-BV", Catalog: &mailstore.ProductCatalog{Dimensions: []mailstore.ProductDimension{}, Variants: []mailstore.ProductVariant{{SKU: "DN50-BV", Attributes: map[string]string{}, Prices: []mailstore.ProductPrice{{Amount: "1280", Currency: "CNY", TaxRate: "0.13", LeadTime: "15", Source: "阀门价目表"}}}}}})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.SavePriceRows(ctx, user.ID, list.ID, []mailstore.PriceRow{
-		{Data: map[string]string{"model": "DN50-BV", "name": "DN50 球阀", "price": "1280", "currency": "CNY", "unit": "台", "tax": "13%", "lead_time": "15"}},
-	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewAISettingsHandler(nil, &config.Config{}, db)
@@ -389,7 +384,7 @@ func TestExecuteLookupPrice(t *testing.T) {
 	if len(matches) != 1 || matches[0].UnitPrice != 1280 || matches[0].TaxRate != 0.13 {
 		t.Fatalf("matches = %+v", matches)
 	}
-	if matches[0].SKU != "DN50-BV" || matches[0].Unit != "台" || matches[0].LeadTime != "15" {
+	if matches[0].SKU != "DN50-BV" || matches[0].Currency != "CNY" || matches[0].LeadTime != "15" {
 		t.Fatalf("roled fields = %+v", matches[0])
 	}
 	if payload["requested_qty"] != "10" {
@@ -407,13 +402,13 @@ func TestExecuteLookupPrice(t *testing.T) {
 	if !strings.Contains(summary, "未找到") {
 		t.Fatalf("miss summary = %q", summary)
 	}
-	if text, ok := result.(string); !ok || !strings.Contains(text, "不要推测价格") {
+	if payload, ok := result.(map[string]any); !ok || payload["status"] != "no_match" {
 		t.Fatalf("miss result = %#v", result)
 	}
 
 	// An empty query is rejected rather than matching everything.
-	if _, summary, _ := handler.executeLookupPrice(ctx, user.ID, nil); !strings.Contains(summary, "为空") {
-		t.Fatalf("empty query summary = %q", summary)
+	if _, _, err := handler.executeLookupPrice(ctx, user.ID, nil); err == nil {
+		t.Fatal("empty query accepted")
 	}
 }
 
@@ -454,11 +449,15 @@ func documentToolsFixture(t *testing.T) (*mailstore.Store, string, string) {
 	body := canvasBody(t, "spirax-quotation", []map[string]any{
 		controlElement("quote_number", "SQ-202610"),
 		controlElement("buyer_company", "上海宝钢"),
+		controlElement("customer_contact", "王经理"),
+		controlElement("delivery_time", "30 天"),
 		controlElement("total_amount", "12,800.00"),
 		tableElement([][]map[string]any{{
 			controlElement("item_model", "DN50-BV"),
+			controlElement("item_description", "DN50 球阀"),
 			controlElement("item_qty", "10"),
 			controlElement("item_price", "1280.00"),
+			controlElement("item_amount", "12800.00"),
 		}}),
 	})
 	record, err := db.SaveDocument(ctx, mailstore.DocumentRecord{

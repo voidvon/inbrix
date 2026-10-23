@@ -58,6 +58,8 @@ export function cleanDocumentVariablesForConversation<T extends { values?: Recor
 }
 
 export type StoredDocument = {
+  aiOrigin?: { sessionId: string; messageId: string };
+  revision?: number;
   id: string;
   type: DocumentTemplate;
   name: string;
@@ -75,6 +77,7 @@ export type DocumentEditorTarget = {
 };
 
 export const DOCUMENT_STORAGE_KEY = "inbrix-documents";
+export const DOCUMENT_CHANGED_EVENT = "inbrix-documents-changed";
 export const TEMPLATE_STORAGE_KEY = "inbrix-document-templates";
 export const DELETED_TEMPLATE_STORAGE_KEY = "inbrix-deleted-document-templates";
 export const DOCUMENT_PAGE_SIZE = 20;
@@ -209,6 +212,7 @@ export async function persistServerDocument(record: StoredDocument): Promise<Sto
   const saved = (res.document as StoredDocument) || record;
   const current = readStoredDocuments();
   writeStoredDocuments([saved, ...current.filter((d) => d.id !== saved.id)]);
+  window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
   return saved;
 }
 
@@ -228,6 +232,7 @@ export async function deleteServerDocuments(ids: string[]): Promise<void> {
   const idSet = new Set(ids);
   const current = readStoredDocuments();
   writeStoredDocuments(current.filter((d) => !idSet.has(d.id)));
+  window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
 }
 
 export async function deleteServerTemplate(id: string, copy?: Copy): Promise<void> {
@@ -238,3 +243,10 @@ export async function deleteServerTemplate(id: string, copy?: Copy): Promise<voi
   writeStoredTemplates(current.filter((t) => t.id !== id));
 }
 
+
+export async function deleteServerDocumentRevision(id: string, revision: number): Promise<void> {
+  const { deleteDocument } = await import("./api");
+  await deleteDocument(id, revision);
+  writeStoredDocuments(readStoredDocuments().filter(document => document.id !== id));
+  window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
+}

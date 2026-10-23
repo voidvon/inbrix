@@ -217,13 +217,7 @@ func TestAgentHistoricalFT14QuoteFromHundredEmails(t *testing.T) {
 			})
 			ctx := context.Background()
 			if withCurrentPrice {
-				list, _, err := h.mailDB.CreatePriceList(ctx, account.OwnerID, "当前价格表", "", nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				_, err = h.mailDB.SavePriceRows(ctx, account.OwnerID, list.ID, []mailstore.PriceRow{
-					{Data: map[string]string{"model": "FT14", "price": "1600", "currency": "CNY"}},
-				}, nil)
+				_, err := h.mailDB.SaveProduct(ctx, account.OwnerID, "", mailstore.ProductInput{Name: "FT14", Model: "FT14", Catalog: &mailstore.ProductCatalog{Dimensions: []mailstore.ProductDimension{}, Variants: []mailstore.ProductVariant{{Attributes: map[string]string{}, Prices: []mailstore.ProductPrice{{Amount: "1600", Currency: "CNY", Source: "当前价格表"}}}}}})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -7,7 +7,6 @@ import { FolderPage } from "./components/app/folder-page";
 import { AttachmentsPage } from "./components/app/attachments-page";
 import { DocumentListPage } from "./components/app/document-list-page";
 import { ProductsPage } from "./components/app/products-page";
-import { PriceListPage } from "./components/app/price-list-page";
 import { CalendarPage } from "./components/app/calendar-page";
 
 export function App() {
@@ -58,7 +57,7 @@ export function App() {
   } else if (path === "/products") {
     content = <ProductsPage />;
   } else if (path === "/price-lists") {
-    content = <PriceListPage />;
+    content = <ProductsPage />;
   } else if (path === "/documents") {
     content = <DocumentListPage />;
   } else if (path === "/documents/new") {

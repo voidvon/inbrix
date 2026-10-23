@@ -14,16 +14,27 @@ import (
 const canvasDocumentPrefix = "__INBRIX_CANVAS_DOCUMENT__:"
 
 type canvasControl struct {
-	ConceptID   string          `json:"conceptId"`
-	Placeholder string          `json:"placeholder"`
-	Value       []canvasElement `json:"value"`
+	ConceptID   string                  `json:"conceptId"`
+	Placeholder string                  `json:"placeholder"`
+	Value       []canvasElement         `json:"value"`
+	Extension   *canvasProductExtension `json:"extension"`
+}
+
+type canvasProductExtension struct {
+	Model          string `json:"model"`
+	ProductID      string `json:"productId"`
+	ProductVersion int64  `json:"productVersion"`
+	VariantID      string `json:"variantId"`
+	PriceID        string `json:"priceId"`
 }
 
 type canvasElement struct {
-	Type    string         `json:"type"`
-	Value   string         `json:"value"`
-	Control *canvasControl `json:"control"`
-	TrList  []canvasRow    `json:"trList"`
+	Extension *canvasProductExtension `json:"extension"`
+	Type      string                  `json:"type"`
+	Value     string                  `json:"value"`
+	Control   *canvasControl          `json:"control"`
+	ValueList []canvasElement         `json:"valueList"`
+	TrList    []canvasRow             `json:"trList"`
 }
 
 type canvasRow struct {
@@ -35,9 +46,12 @@ type canvasCell struct {
 }
 
 type canvasPayload struct {
-	Template string `json:"template"`
+	Template string            `json:"template"`
+	Business *documentBusiness `json:"business,omitempty"`
 	Data     struct {
-		Main []canvasElement `json:"main"`
+		Main   []canvasElement `json:"main"`
+		Header []canvasElement `json:"header"`
+		Footer []canvasElement `json:"footer"`
 	} `json:"data"`
 }
 
@@ -52,7 +66,7 @@ func parseStoredCanvasDocument(body string) (canvasPayload, bool) {
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(body, canvasDocumentPrefix)), &payload); err != nil {
 		return canvasPayload{}, false
 	}
-	if len(payload.Data.Main) == 0 {
+	if (payload.Business != nil && (payload.Business.Version != 1 || payload.Business.Values == nil)) || len(payload.Data.Main) == 0 {
 		return canvasPayload{}, false
 	}
 	return payload, true
@@ -64,7 +78,43 @@ func collectCanvasControls(elements []canvasElement, out map[string]string) {
 	for _, element := range elements {
 		if element.Control != nil && strings.TrimSpace(element.Control.ConceptID) != "" {
 			out[element.Control.ConceptID] = canvasControlText(element.Control)
+			extension := element.Control.Extension
+			if extension == nil {
+				extension = element.Extension
+			}
+			// Older editor snapshots moved element extensions into text runs.
+			if extension == nil {
+				for _, run := range element.Control.Value {
+					if run.Extension != nil {
+						extension = run.Extension
+						break
+					}
+				}
+			}
+			if extension != nil {
+				suffix := ""
+				parts := strings.Split(element.Control.ConceptID, "_")
+				if _, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+					suffix = "_" + parts[len(parts)-1]
+				}
+				if extension.Model != "" && out["item_model"+suffix] == "" {
+					out["item_model"+suffix] = extension.Model
+				}
+				if extension.ProductID != "" {
+					out["item_product_id"+suffix] = extension.ProductID
+				}
+				if extension.ProductVersion != 0 {
+					out["item_product_version"+suffix] = strconv.FormatInt(extension.ProductVersion, 10)
+				}
+				if extension.VariantID != "" {
+					out["item_variant_id"+suffix] = extension.VariantID
+				}
+				if extension.PriceID != "" {
+					out["item_price_id"+suffix] = extension.PriceID
+				}
+			}
 		}
+		collectCanvasControls(element.ValueList, out)
 		for _, row := range element.TrList {
 			for _, cell := range row.TdList {
 				collectCanvasControls(cell.Value, out)
@@ -89,12 +139,17 @@ func canvasControlText(control *canvasControl) string {
 // itemField describes the concept ids a template uses for one line item. Single
 // item documents drop the numeric suffix.
 var itemFieldConcept = map[string]string{
-	"item_model":       "model",
-	"item_description": "description",
-	"item_qty":         "qty",
-	"item_price":       "price",
-	"item_amount":      "amount",
-	"item_picture":     "picture",
+	"item_model":           "model",
+	"item_product_id":      "productId",
+	"item_product_version": "productVersion",
+	"item_variant_id":      "variantId",
+	"item_price_id":        "priceId",
+	"item_description":     "description",
+	"item_desc":            "description",
+	"item_qty":             "qty",
+	"item_price":           "price",
+	"item_amount":          "amount",
+	"item_picture":         "picture",
 }
 
 // canvasDocumentItems rebuilds the line items from the flat control map, keeping
@@ -158,6 +213,14 @@ func canvasDocumentItems(values map[string]string) []AIDocumentItem {
 
 func assignItemField(item *AIDocumentItem, field, value string) {
 	switch field {
+	case "productId":
+		item.ProductID = value
+	case "productVersion":
+		item.ProductVersion, _ = strconv.ParseInt(value, 10, 64)
+	case "variantId":
+		item.VariantID = value
+	case "priceId":
+		item.PriceID = value
 	case "model":
 		item.Model = value
 	case "description":
@@ -187,14 +250,17 @@ func canvasDocumentContent(body string) (map[string]string, []AIDocumentItem, bo
 		return nil, nil, false
 	}
 	values := make(map[string]string)
-	collectCanvasControls(payload.Data.Main, values)
-	collectCanvasProductImages(payload.Data.Main, values)
-	// Empty controls are noise for the model; drop them so a variable list stays
-	// readable and an update cannot "clear" a field by accident.
-	for key, value := range values {
-		if strings.TrimSpace(value) == "" {
-			delete(values, key)
+	if payload.Business != nil {
+		for key, value := range payload.Business.Values {
+			if documentBusinessKeys[key] {
+				values[key] = value
+			}
 		}
+	}
+	// Visible controls, including explicitly empty ones, override saved metadata.
+	for _, elements := range [][]canvasElement{payload.Data.Main, payload.Data.Header, payload.Data.Footer} {
+		collectCanvasControls(elements, values)
+		collectCanvasProductImages(elements, values)
 	}
 	return values, canvasDocumentItems(values), true
 }

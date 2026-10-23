@@ -9,16 +9,20 @@ import (
 	"time"
 )
 
+var ErrDocumentConflict = errors.New("文档已修改或删除，请重新打开最新文档，或让 AI 重新生成修改方案 / Document changed or was deleted; reopen it or regenerate the proposal")
+
 // DocumentRecord represents a user-created quotation or contract document.
 type DocumentRecord struct {
-	ID        string    `json:"id"`
-	OwnerID   string    `json:"ownerId,omitempty"`
-	Type      string    `json:"type"` // "quotation" | "contract"
-	Name      string    `json:"name"`
-	Company   string    `json:"company"`
-	HTML      string    `json:"html"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	AIOrigin  *AIChatDocumentOrigin `json:"aiOrigin,omitempty"`
+	Revision  int64                 `json:"revision"`
+	ID        string                `json:"id"`
+	OwnerID   string                `json:"ownerId,omitempty"`
+	Type      string                `json:"type"` // "quotation" | "contract"
+	Name      string                `json:"name"`
+	Company   string                `json:"company"`
+	HTML      string                `json:"html"`
+	CreatedAt time.Time             `json:"createdAt"`
+	UpdatedAt time.Time             `json:"updatedAt"`
 }
 
 // DocumentTemplateRecord represents a user-customized document template.
@@ -62,14 +66,14 @@ func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType strin
 	var err error
 	if docType == "" || docType == "all" {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, owner_id, type, name, company, html, created_at, updated_at
+			SELECT id, owner_id, type, name, company, html, created_at, updated_at, revision
 			FROM documents
 			WHERE owner_id = ?
 			ORDER BY updated_at DESC, id DESC
 		`, ownerID)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, owner_id, type, name, company, html, created_at, updated_at
+			SELECT id, owner_id, type, name, company, html, created_at, updated_at, revision
 			FROM documents
 			WHERE owner_id = ? AND type = ?
 			ORDER BY updated_at DESC, id DESC
@@ -84,7 +88,7 @@ func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType strin
 	for rows.Next() {
 		var r DocumentRecord
 		var createdAtMs, updatedAtMs int64
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Type, &r.Name, &r.Company, &r.HTML, &createdAtMs, &updatedAtMs); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Type, &r.Name, &r.Company, &r.HTML, &createdAtMs, &updatedAtMs, &r.Revision); err != nil {
 			return nil, fmt.Errorf("mailstore: scan document: %w", err)
 		}
 		r.CreatedAt = time.UnixMilli(createdAtMs)
@@ -111,10 +115,10 @@ func (s *Store) GetDocument(ctx context.Context, ownerID, id string) (*DocumentR
 	var r DocumentRecord
 	var createdAtMs, updatedAtMs int64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, owner_id, type, name, company, html, created_at, updated_at
+		SELECT id, owner_id, type, name, company, html, created_at, updated_at, revision
 		FROM documents
 		WHERE owner_id = ? AND id = ?
-	`, ownerID, id).Scan(&r.ID, &r.OwnerID, &r.Type, &r.Name, &r.Company, &r.HTML, &createdAtMs, &updatedAtMs)
+	`, ownerID, id).Scan(&r.ID, &r.OwnerID, &r.Type, &r.Name, &r.Company, &r.HTML, &createdAtMs, &updatedAtMs, &r.Revision)
 	if err != nil {
 		return nil, err
 	}
@@ -124,13 +128,27 @@ func (s *Store) GetDocument(ctx context.Context, ownerID, id string) (*DocumentR
 }
 
 // SaveDocument inserts or updates a document for the owner.
-func (s *Store) SaveDocument(ctx context.Context, doc DocumentRecord) (*DocumentRecord, error) {
+func (s *Store) SaveDocument(ctx context.Context, doc DocumentRecord, expectedRevision ...int64) (*DocumentRecord, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("mailstore: database unavailable")
 	}
 	ownerID := strings.TrimSpace(doc.OwnerID)
 	if ownerID == "" {
 		return nil, errors.New("mailstore: owner_id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	// Acquire the write lock before validating the origin or revision.
+	if _, err = tx.ExecContext(ctx, `UPDATE documents SET revision=revision WHERE id=? AND owner_id=?`, doc.ID, ownerID); err != nil {
+		return nil, err
+	}
+	if doc.AIOrigin != nil {
+		if err = validateAIChatDocumentOrigin(ctx, tx, ownerID, doc.ID, *doc.AIOrigin, len(expectedRevision) > 0 && expectedRevision[0] > 0); err != nil {
+			return nil, err
+		}
 	}
 	docID := strings.TrimSpace(doc.ID)
 	if docID == "" {
@@ -152,33 +170,44 @@ func (s *Store) SaveDocument(ctx context.Context, doc DocumentRecord) (*Document
 	now := time.Now()
 	nowMs := now.UnixMilli()
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO documents (id, owner_id, type, name, company, html, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			type = excluded.type,
-			name = excluded.name,
-			company = excluded.company,
-			html = excluded.html,
-			updated_at = excluded.updated_at
-		WHERE documents.owner_id = excluded.owner_id
-	`, docID, ownerID, docType, name, strings.TrimSpace(doc.Company), doc.HTML, nowMs, nowMs)
+	var query string
+	args := []any{docID, ownerID, docType, name, strings.TrimSpace(doc.Company), doc.HTML, nowMs, nowMs}
+	if len(expectedRevision) > 0 && expectedRevision[0] < 0 {
+		return nil, ErrDocumentConflict
+	}
+	if len(expectedRevision) > 0 && expectedRevision[0] > 0 {
+		query = `UPDATE documents SET type=?,name=?,company=?,html=?,updated_at=?,revision=revision+1 WHERE id=? AND owner_id=? AND revision=?`
+		args = []any{docType, name, strings.TrimSpace(doc.Company), doc.HTML, nowMs, docID, ownerID, expectedRevision[0]}
+	} else {
+		query = `INSERT INTO documents (id,owner_id,type,name,company,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`
+		// Internal legacy callers can still upsert. HTTP callers always supply a
+		// revision: zero creates only, positive revisions update existing rows only.
+		if len(expectedRevision) == 0 {
+			query = `INSERT INTO documents (id,owner_id,type,name,company,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,name=excluded.name,company=excluded.company,html=excluded.html,updated_at=excluded.updated_at,revision=documents.revision+1 WHERE documents.owner_id=excluded.owner_id`
+		}
+	}
+	// RETURNING keeps the returned content/version tied to this exact write.
+	saved := &DocumentRecord{}
+	var created, updated int64
+	err = tx.QueryRowContext(ctx, query+` RETURNING id,owner_id,type,name,company,html,created_at,updated_at,revision`, args...).Scan(&saved.ID, &saved.OwnerID, &saved.Type, &saved.Name, &saved.Company, &saved.HTML, &created, &updated, &saved.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrDocumentConflict
+	}
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: save document: %w", err)
 	}
-
-	saved, err := s.GetDocument(ctx, ownerID, docID)
-	if err != nil {
-		return &DocumentRecord{
-			ID:        docID,
-			OwnerID:   ownerID,
-			Type:      docType,
-			Name:      name,
-			Company:   strings.TrimSpace(doc.Company),
-			HTML:      doc.HTML,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}, nil
+	saved.CreatedAt = time.UnixMilli(created)
+	saved.UpdatedAt = time.UnixMilli(updated)
+	if doc.AIOrigin != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO ai_chat_document_links(message_id,document_id) VALUES(?,?) ON CONFLICT(message_id) DO NOTHING`, doc.AIOrigin.MessageID, saved.ID); err != nil {
+			return nil, err
+		}
+	}
+	if err = invalidateAIChatDocumentReaders(ctx, tx, ownerID, []string{saved.ID}); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
 	}
 	return saved, nil
 }
@@ -213,11 +242,19 @@ func (s *Store) DeleteDocuments(ctx context.Context, ownerID string, ids []strin
 	}
 
 	query := fmt.Sprintf("DELETE FROM documents WHERE owner_id = ? AND id IN (%s)", strings.Join(placeholders, ","))
-	_, err := s.db.ExecContext(ctx, query, args...)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("mailstore: delete documents: %w", err)
 	}
-	return nil
+	if err = invalidateAIChatDocumentReaders(ctx, tx, ownerID, validIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListDocumentTemplates returns all custom templates for an owner.
@@ -442,5 +479,57 @@ func (s *Store) DeleteDocumentStamp(ctx context.Context, ownerID, id string) err
 		DELETE FROM document_stamps
 		WHERE owner_id = ? AND id = ?
 	`, ownerID, id)
+	return err
+}
+
+// DeleteDocumentRevision atomically rejects stale proposals, including missing documents.
+func (s *Store) DeleteDocumentRevision(ctx context.Context, ownerID, id string, revision int64) error {
+	if revision < 1 {
+		return ErrDocumentConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM documents WHERE owner_id=? AND id=? AND revision=?`, ownerID, id, revision)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return ErrDocumentConflict
+	}
+	if err = invalidateAIChatDocumentReaders(ctx, tx, ownerID, []string{id}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) migrateDocumentRevision(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(documents)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, required, pk int
+		var name, typ string
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &required, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "revision" {
+			found = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = s.db.ExecContext(ctx, `ALTER TABLE documents ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`)
+	}
 	return err
 }

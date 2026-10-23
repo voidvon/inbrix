@@ -770,16 +770,27 @@ func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
-	rawMessages, err := h.mailDB.GetConversationAIChat(c.UserContext(), account.ID, conversationID)
+	page, err := chatMessagePage(c)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not load conversation AI chat"})
+		return err
+	}
+	session, err := h.mailDB.CreateAIChatSession(c.UserContext(), ownerID, account.ID, "mail", conversationID, selected.Subject, "quotation", page)
+	if err != nil {
+		return chatStoreError(err)
 	}
 	var messages []any
-	if err := json.Unmarshal([]byte(rawMessages), &messages); err != nil {
+	rawMessages, _ := json.Marshal(session.Messages)
+	if json.Unmarshal(rawMessages, &messages) != nil {
 		messages = []any{}
 	}
 	sanitizeDSMLChatMessages(messages)
-	return c.JSON(fiber.Map{"ok": true, "messages": messages})
+	business := session.BusinessContext
+	if business.AgentID == "" {
+		if binding, e := h.mailDB.GetAITaskBinding(c.UserContext(), ownerID, account.ID, mailstore.EmailDraftTask); e == nil {
+			business.AgentID = binding.AgentID
+		}
+	}
+	return c.JSON(fiber.Map{"ok": true, "messages": messages, "businessContext": business, "sessionId": session.ID, "version": session.Version, "lastRun": session.LastRun, "hasMoreMessages": session.HasMoreMessages, "nextBefore": session.NextBefore})
 }
 
 func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
@@ -796,14 +807,12 @@ func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
 	}
 	var body struct {
-		Messages any `json:"messages"`
+		Messages        any                          `json:"messages"`
+		Version         *int64                       `json:"version"`
+		BusinessContext *mailstore.AIBusinessContext `json:"businessContext"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
-	}
-	bytes, err := json.Marshal(body.Messages)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid messages payload"})
 	}
 	sess, err := requestSession(c, h.store)
 	if err != nil {
@@ -814,10 +823,24 @@ func (h *EmailHandler) HandleSaveConversationAIChatJSON(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
-	if err := h.mailDB.SaveConversationAIChat(c.UserContext(), account.ID, conversationID, string(bytes)); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not save conversation AI chat"})
+	if body.Version != nil && body.BusinessContext != nil && body.Messages == nil {
+		session, e := h.mailDB.CreateAIChatSession(c.UserContext(), ownerID, account.ID, "mail", conversationID, selected.Subject, "quotation")
+		if e != nil {
+			return chatStoreError(e)
+		}
+		business, e := mailstore.NormalizeAIBusinessContext(*body.BusinessContext)
+		if e != nil {
+			return fiber.NewError(400, e.Error())
+		}
+		if e = h.mailDB.ValidateAIChatBusiness(c.UserContext(), ownerID, account.ID, business); e != nil {
+			return fiber.NewError(400, e.Error())
+		}
+		if e = h.mailDB.UpdateAIChatBusiness(c.UserContext(), ownerID, account.ID, session.ID, *body.Version, business); e != nil {
+			return chatStoreError(e)
+		}
+		return c.JSON(fiber.Map{"ok": true, "businessContext": business, "version": *body.Version + 1})
 	}
-	return c.JSON(fiber.Map{"ok": true})
+	return fiber.NewError(409, "聊天记录由服务端保存，请刷新客户端 / Chat history is server-managed; refresh your client")
 }
 
 func (h *EmailHandler) HandleDeleteConversationAIChatJSON(c *fiber.Ctx) error {
@@ -842,8 +865,16 @@ func (h *EmailHandler) HandleDeleteConversationAIChatJSON(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
 	}
-	if err := h.mailDB.DeleteConversationAIChat(c.UserContext(), account.ID, conversationID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not delete conversation AI chat"})
+	version, e := strconv.ParseInt(c.Query("version"), 10, 64)
+	if e != nil {
+		return fiber.NewError(400, "version is required")
+	}
+	session, e := h.mailDB.CreateAIChatSession(c.UserContext(), ownerID, account.ID, "mail", conversationID, selected.Subject, "quotation")
+	if e != nil {
+		return chatStoreError(e)
+	}
+	if e = h.mailDB.DeleteAIChatSession(c.UserContext(), ownerID, account.ID, session.ID, version, true); e != nil {
+		return chatStoreError(e)
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }

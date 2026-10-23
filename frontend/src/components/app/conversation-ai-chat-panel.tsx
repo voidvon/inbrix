@@ -1,3 +1,8 @@
+import { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
+import { useAIDocumentSync } from "../../lib/use-ai-document-sync";
+import { AIChatImages } from "./ai-chat-images";
+import { AIBusinessToolbar } from "./ai-business-controls";
+import { emptyBusinessContext, type AIBusinessContext } from "../../lib/api";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,6 +22,7 @@ import {
 import { toast } from "../../lib/toast";
 import {
   chatWithAIAgent,
+  ApiError,
   deleteConversationAIChat,
   getAIAgents,
   getConversationAIChat,
@@ -61,7 +67,8 @@ function toolDisplayName(name: string, isZh: boolean) {
     case "read_email":
       return isZh ? "读取邮件正文" : "Read email";
     case "lookup_price":
-      return isZh ? "查询价格表" : "Looked up price list";
+    case "query_product_prices":
+      return isZh ? "查询产品规格与价格" : "Queried product specifications and prices";
     case "list_product_categories":
       return isZh ? "查看产品分类" : "Listed product categories";
     case "search_products":
@@ -102,12 +109,16 @@ export function ConversationAIChatPanel({
   className?: string;
 }) {
   const queryClient = useQueryClient();
+  useAIDocumentSync();
   const [input, setInput] = useState("");
+  const imageAttachments = useAIChatAttachments(detail.accountEmail || "", detail.id, copy === zh);
+  const [pendingImages, setPendingImages] = useState<ConversationAIChatMessage["attachments"]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const retryRef = useRef<{ key: string; payload: AIAgentChatRequest } | null>(null);
   const activeConversationRef = useRef(detail.id);
   activeConversationRef.current = detail.id;
   const followOutputRef = useRef(true);
@@ -115,20 +126,29 @@ export function ConversationAIChatPanel({
   // Query conversation AI chat messages from backend SQLite database
   const chatQuery = useQuery({
     queryKey: ["conversation-ai-chat", detail.id],
+    refetchInterval: query => query.state.data?.lastRun?.status === "pending" ? 3000 : false,
     queryFn: async () => {
       const res = await getConversationAIChat(detail.id);
-      return res.messages || [];
+      return res;
     },
   });
 
-  const messages: ConversationAIChatMessage[] = chatQuery.data || [];
+  const messages: ConversationAIChatMessage[] = chatQuery.data?.messages || [];
+
+  useEffect(() => {
+    const run = chatQuery.data?.lastRun;
+    const pending = retryRef.current?.payload;
+    if (run?.status === "failed" && !run.retryable && (run.requestId === pending?.requestId || run.requestId === pending?.retryRequestId)) retryRef.current = null;
+  }, [chatQuery.data]);
 
   const [pendingUserText, setPendingUserText] = useState<string | null>(null);
   const [pendingAssistant, setPendingAssistant] = useState<ConversationAIChatMessage | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
 
   useEffect(() => {
+    retryRef.current = null;
     setPendingUserText(null);
+    setPendingImages([]);
     setPendingAssistant(null);
     setStreamError(null);
     followOutputRef.current = true;
@@ -139,15 +159,23 @@ export function ConversationAIChatPanel({
   }, [detail.id]);
 
   const displayMessages = useMemo(() => {
-    if (!pendingUserText) return messages;
+    if (pendingUserText === null) return messages;
     const pendingMsg: ConversationAIChatMessage = {
       id: "pending-user-msg",
       role: "user",
       content: pendingUserText,
+      attachments: pendingImages,
       createdAt: new Date().toISOString(),
     };
-    return [...messages, pendingMsg, ...(pendingAssistant ? [pendingAssistant] : [])];
-  }, [messages, pendingUserText, pendingAssistant]);
+    const accepted = chatQuery.data?.lastRun?.requestId === (retryRef.current?.payload.requestId || retryRef.current?.payload.retryRequestId) && messages.some(m => m.id === chatQuery.data?.lastRun?.userMessageId);
+    return [...messages, ...(accepted ? [] : [pendingMsg]), ...(pendingAssistant ? [pendingAssistant] : [])];
+  }, [messages, pendingUserText, pendingAssistant, pendingImages, chatQuery.data?.lastRun]);
+
+  const olderMessages = useMutation({
+    mutationFn: async () => ({ id: detail.id, page: await getConversationAIChat(detail.id, chatQuery.data?.nextBefore) }),
+    onSuccess: ({ id, page }) => queryClient.setQueryData(["conversation-ai-chat", id], (previous: typeof chatQuery.data) => previous?.version === page.version ? { ...previous, messages: [...page.messages, ...previous.messages], hasMoreMessages: page.hasMoreMessages, nextBefore: page.nextBefore } : previous),
+    onError: (err: Error) => toast.error(err.message),
+  });
 
   // Query available AI agents from backend
   const { data: agentsData } = useQuery({
@@ -156,7 +184,14 @@ export function ConversationAIChatPanel({
     staleTime: 60_000,
   });
   const agents = agentsData?.agents || [];
-  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
+  const businessContext = chatQuery.data?.businessContext || emptyBusinessContext;
+  const selectedAgentId = businessContext.agentId || undefined;
+  const selectionMutation = useMutation({
+    mutationFn: async (value: AIBusinessContext) => { const id = detail.id; const saved = await saveConversationAIChat(id, undefined, value, chatQuery.data?.version); return { id, value: saved.businessContext || value, version: saved.version }; },
+    onSuccess: ({ id, value, version }) => queryClient.setQueryData(["conversation-ai-chat", id], (previous: Awaited<ReturnType<typeof getConversationAIChat>> | undefined) => ({ ...previous, businessContext: value, version, lastRun: previous?.lastRun ? { ...previous.lastRun, retryable: false } : undefined })),
+    onError: (err: Error) => { toast.error(err.message); void chatQuery.refetch(); },
+  });
+  const setSelectedAgentId = (agentId?: string) => selectionMutation.mutate({ ...businessContext, agentId: agentId || "" });
   const currentAgent = agents.find((a) => a.id === selectedAgentId);
 
   // Auto-scroll to bottom on messages update
@@ -170,7 +205,7 @@ export function ConversationAIChatPanel({
 
   useEffect(() => {
     scrollToBottom();
-  }, [displayMessages.length, pendingAssistant, streamError]);
+  }, [displayMessages.at(-1)?.id, pendingAssistant, streamError]);
 
   const focusedMessages = useMemo(() => {
     if (!focusedMessageIds.length) return [];
@@ -192,23 +227,23 @@ export function ConversationAIChatPanel({
   });
 
   const mutation = useMutation({
-    mutationFn: async (userQuestion: string) => {
-      const text = userQuestion.trim();
-      if (!text) return null;
+    mutationFn: async ({ text, attachments, retryRequestId }: { text: string; attachments: ConversationAIChatMessage["attachments"]; retryRequestId?: string }) => {
+      if (!text && !attachments?.length && !retryRequestId) return null;
 
       const accountEmail = detail.accountEmail;
       if (!accountEmail) {
         throw new Error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
       }
 
-      // The server resolves current notes/mail from the conversation identity.
-      // Send discussion and source references, independent of the UI mail window.
-      const apiMessages: AIAgentChatRequest["messages"] = messages.map((message) => ({
-        role: message.role,
-        content: message.content,
-        sources: message.sources,
-      }));
-      apiMessages.push({ role: "user", content: text });
+      if (!chatQuery.data?.sessionId) throw new Error(isZh ? "请先加载会话" : "Load the chat first");
+      const key = JSON.stringify([detail.id, text, attachments]);
+      const payload: AIAgentChatRequest = retryRequestId ? { accountEmail, sessionId: chatQuery.data.sessionId, retryRequestId, messages: [] } : retryRef.current?.key === key ? retryRef.current.payload : {
+        accountEmail, conversationId: detail.id, sessionId: chatQuery.data.sessionId,
+        requestId: crypto.randomUUID(), version: chatQuery.data.version,
+        activeDraft: getActiveDraft?.(), focusedMessages: focusedMessages.map(message => ({ uid: message.id, folder: message.folder || "INBOX" })),
+        businessContext, messages: [{ role: "user" as const, content: text, attachments }],
+      };
+      retryRef.current = { key, payload };
 
       const controller = new AbortController();
       requestRef.current = controller;
@@ -227,14 +262,7 @@ export function ConversationAIChatPanel({
       const isCurrent = () => activeConversationRef.current === conversationId && requestRef.current === controller && !controller.signal.aborted;
       try {
         return await aiState.run(async () => {
-          const res = await chatWithAIAgent({
-            accountEmail,
-            conversationId,
-            activeDraft: getActiveDraft?.(),
-            focusedMessages: focusedMessages.map((message) => ({ uid: message.id, folder: message.folder || "INBOX" })),
-            agentId: selectedAgentId,
-            messages: apiMessages,
-          }, {
+          const res = await chatWithAIAgent(payload, {
             signal: controller.signal,
             onEvent: (event) => {
               if (!isCurrent()) return;
@@ -257,13 +285,15 @@ export function ConversationAIChatPanel({
               }
             },
           });
-          return { res, text, conversationId, previousMessages: messages, controller, parts: finishAIChatParts(parts, res) };
+          return { res, text, attachments, conversationId, previousMessages: messages, retried: !!retryRequestId, controller, parts: finishAIChatParts(parts, res) };
         });
       } catch (err) {
         if (isCurrent()) {
           const message = err instanceof Error ? err.message : (isZh ? "AI 回复失败" : "AI reply failed");
           setStreamError(message);
-          setInput(text);
+          if (!retryRequestId) setInput(text);
+          const fresh = await chatQuery.refetch();
+          if (fresh.data?.lastRun?.status === "failed" && !fresh.data.lastRun.retryable || err instanceof ApiError && err.status === 409 && fresh.data?.lastRun?.requestId !== payload.requestId) retryRef.current = null;
           toast.error(message);
         }
         throw err;
@@ -273,19 +303,23 @@ export function ConversationAIChatPanel({
       if (!data?.res || data.controller.signal.aborted) return;
       const isCurrent = () => activeConversationRef.current === data.conversationId && requestRef.current === data.controller;
       if (isCurrent()) {
+        retryRef.current = null;
+        if (!data.retried) imageAttachments.clear();
+        setPendingImages([]);
         setPendingUserText(null);
         setPendingAssistant(null);
         setStreamError(null);
       }
       const now = new Date().toISOString();
       const userMsg: ConversationAIChatMessage = {
-        id: `user-${Date.now()}`,
+        id: data.res.userMessageId || `user-${Date.now()}`,
         role: "user",
         content: data.text,
+        attachments: data.attachments,
         createdAt: now,
       };
       const assistantMsg: ConversationAIChatMessage = {
-        id: `assistant-${Date.now() + 1}`,
+        id: data.res.assistantMessageId || `assistant-${Date.now() + 1}`,
         role: "assistant",
         content: data.res.content || "已处理完成。",
         sources: data.res.sources,
@@ -301,6 +335,9 @@ export function ConversationAIChatPanel({
         })),
         document: data.res.document
           ? {
+              templateId: data.res.document.templateId,
+              sourceQuotationId: data.res.document.sourceQuotationId,
+              sourceQuotationRevision: data.res.document.sourceQuotationRevision,
               type: data.res.document.type === "contract" ? "contract" : "quotation",
               title: data.res.document.title,
               counterparty: data.res.document.counterparty,
@@ -317,6 +354,8 @@ export function ConversationAIChatPanel({
         documentAction: data.res.documentAction
           ? {
               kind: data.res.documentAction.kind,
+              html: data.res.documentAction.html,
+              baseRevision: data.res.documentAction.baseRevision,
               documentId: data.res.documentAction.documentId,
               type: data.res.documentAction.type,
               name: data.res.documentAction.name,
@@ -327,20 +366,13 @@ export function ConversationAIChatPanel({
             }
           : undefined,
       };
-      const nextMessages = [...data.previousMessages, userMsg, assistantMsg];
+      const nextMessages = [...data.previousMessages.filter(m => m.id !== userMsg.id), userMsg, assistantMsg];
 
-      // Optimistically update React Query cache
-      queryClient.setQueryData<ConversationAIChatMessage[]>(
-        ["conversation-ai-chat", data.conversationId],
-        nextMessages
-      );
-
-      // Persist to SQLite database
-      try {
-        await saveConversationAIChat(data.conversationId, nextMessages);
-      } catch {
-        toast.error("保存对话记录到数据库失败");
-      }
+      queryClient.setQueryData(["conversation-ai-chat", data.conversationId], {
+        messages: nextMessages, businessContext: data.res.businessContext || businessContext,
+        sessionId: data.res.sessionId, version: data.res.version,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["conversation-ai-chat", data.conversationId] });
 
       if (isCurrent()) window.setTimeout(scrollToBottom, 50);
     },
@@ -348,18 +380,20 @@ export function ConversationAIChatPanel({
 
   const handleSend = (textToSend?: string) => {
     const text = (textToSend ?? input).trim();
-    if (!text || mutation.isPending) return;
+    if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending || chatQuery.isError || chatQuery.data?.lastRun?.status === "pending") return;
     if (!detail.accountEmail) {
       toast.error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
       return;
     }
+    imageAttachments.retain();
     followOutputRef.current = true;
     setInput("");
     setStreamError(null);
     setPendingAssistant(null);
     setPendingUserText(text);
+    setPendingImages(imageAttachments.attachments);
     window.setTimeout(scrollToBottom, 20);
-    mutation.mutate(text);
+    mutation.mutate({ text, attachments: imageAttachments.attachments });
   };
 
   const handleCopy = async (id: string, text: string) => {
@@ -377,21 +411,21 @@ export function ConversationAIChatPanel({
     setPendingUserText(null);
     setPendingAssistant(null);
     setStreamError(null);
-    queryClient.setQueryData<ConversationAIChatMessage[]>(
-      ["conversation-ai-chat", detail.id],
-      []
-    );
-
     try {
-      await deleteConversationAIChat(detail.id);
+      if (!chatQuery.data) return;
+      await deleteConversationAIChat(detail.id, chatQuery.data.version);
+      retryRef.current = null;
+      await chatQuery.refetch();
       toast.success(copy.aiChatClearHistory);
     } catch {
+      void chatQuery.refetch();
       toast.error("清除数据库记录失败");
     }
   };
 
   return (
     <div className={cn("flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-card text-foreground", className)}>
+      {!mutation.isPending && chatQuery.data?.lastRun?.status === "pending" && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{isZh ? "会话正在生成回复…" : "A reply is being generated…"}</p>}
       {/* Header */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
@@ -436,6 +470,7 @@ export function ConversationAIChatPanel({
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
                   className={cn(!selectedAgentId && "font-semibold text-primary")}
+                  disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
                   onClick={() => setSelectedAgentId(undefined)}
                 >
                   {copy.aiChatDefaultAgent}
@@ -445,6 +480,7 @@ export function ConversationAIChatPanel({
                   <DropdownMenuItem
                     key={agent.id}
                     className={cn(selectedAgentId === agent.id && "font-semibold text-primary")}
+                    disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
                     onClick={() => setSelectedAgentId(agent.id)}
                   >
                     <span className="truncate">{agent.name}</span>
@@ -482,6 +518,12 @@ export function ConversationAIChatPanel({
           </Button>
         </div>
       </header>
+      {chatQuery.data?.lastRun?.retryable && <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground"><span>{isZh ? "上次回复未完成，可继续重试。" : "The last reply failed. You can retry it."}</span><Button variant="outline" size="sm" disabled={mutation.isPending || selectionMutation.isPending} onClick={() => {
+        const run = chatQuery.data?.lastRun;
+        const user = messages.find(message => message.id === run?.userMessageId);
+        if (run && user) { setPendingUserText(null); setPendingAssistant(null); setStreamError(null); mutation.mutate({ text: user.content, attachments: user.attachments, retryRequestId: run.requestId }); }
+      }}>{isZh ? "重试上次回复" : "Retry last reply"}</Button></div>}
+      <AIBusinessToolbar copy={copy} accountEmail={detail.accountEmail} value={businessContext} onChange={value => selectionMutation.mutate(value)} disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending} />
 
       {/* Messages Scroll Area */}
       <div
@@ -492,6 +534,7 @@ export function ConversationAIChatPanel({
         }}
         className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-4"
       >
+        {chatQuery.data?.hasMoreMessages && <Button variant="ghost" size="sm" disabled={olderMessages.isPending} onClick={() => olderMessages.mutate()}>{isZh ? "加载更早消息" : "Load earlier messages"}</Button>}
         {chatQuery.isPending ? (
           <div className="flex h-full min-h-[200px] items-center justify-center text-xs text-muted-foreground gap-2">
             <Loader2 className="size-4 animate-spin text-primary" />
@@ -575,6 +618,7 @@ export function ConversationAIChatPanel({
                   <span>·</span>
                   <span>{formatTime(message.createdAt)}</span>
                 </div>
+                <AIChatImages attachments={message.attachments} accountEmail={detail.accountEmail || ""} />
                 {parts.map((part, partIndex) => {
                   if (part.type === "tool") {
                     const call = part.tool;
@@ -678,6 +722,7 @@ export function ConversationAIChatPanel({
                   <ConversationDocumentCard
                     copy={copy}
                     accountEmail={detail.accountEmail || ""}
+                    origin={chatQuery.data?.sessionId ? { sessionId: chatQuery.data.sessionId, messageId: message.id } : undefined}
                     counterpartyEmail={detail.peerEmail}
                     draft={message.document}
                     action={message.documentAction}
@@ -748,6 +793,8 @@ export function ConversationAIChatPanel({
           </div>
         )}
         <AIChatInput
+          imageAttachments={imageAttachments}
+          isZh={isZh}
           value={input}
           onChange={setInput}
           onSend={() => handleSend()}
@@ -758,7 +805,7 @@ export function ConversationAIChatPanel({
                   : `Ask about ${focusedMessages.length} focused email(s)...`)
               : copy.aiChatPlaceholder
           }
-          disabled={mutation.isPending}
+          disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
           isPending={mutation.isPending}
           sendLabel={copy.aiChatSend}
           textareaRef={textareaRef}

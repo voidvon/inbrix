@@ -244,7 +244,7 @@ the seam: it is only safe over a trusted transport.
 > scheme — see [SIGNING.md § 0](SIGNING.md#0-inbrix-emits-no-webhooks) for what
 > to use instead (SSE, Web Push, or polling).
 
-## Product knowledge library (`/api/products`)
+## Product library (`/api/products`)
 
 With the local SQLite mirror enabled, product records, categories and images
 belong to the authenticated application user. They are shared across that
@@ -254,20 +254,28 @@ browser writes require CSRF. A foreign product, category or image returns `404`.
 
 | Method | Path | Query / body / result |
 |--------|------|-----------------------|
-| GET | `/api/product-categories` | `{categories:[{id,name,productCount}]}` |
-| POST | `/api/product-categories` | `{name}`; returns `{category}` |
-| PUT | `/api/product-categories/:id` | `{name}`; rename an owned category |
-| DELETE | `/api/product-categories/:id` | Uncategorizes its products and advances their versions; `{ok:true}` |
-| GET | `/api/products` | `q`, `categoryId`, `limit` (default 10, 1–20), `offset` (default 0, 0–100000); bounded product search page |
+| GET | `/api/product-dimensions` | Owner-scoped shared definitions: `{dimensions:[{key,label,type,unit,options,version,productCount,updatedAt}]}` |
+| POST | `/api/product-dimensions` | `{label,type,unit,options}`; `201 {dimension}` with a server-generated key |
+| PUT | `/api/product-dimensions/:key` | `{label,type,unit,options,version}`; updates canonical definition and referencing product versions; stale version `409` |
+| DELETE | `/api/product-dimensions/:key` | Required `version`; unused definitions only; `{ok:true}` |
+| GET | `/api/product-categories` | `{categories:[{id,name,parentId,productCount}]}` (direct counts) |
+| POST | `/api/product-categories` | `{name,parentId?}`; returns `{category}` |
+| PUT | `/api/product-categories/:id` | `{name,parentId?}`; rename or move an owned category; omitted parent preserves hierarchy |
+| DELETE | `/api/product-categories/:id` | Leaf categories only; uncategorizes products and advances their versions; `{ok:true}` |
+| GET | `/api/product-navigation` | `{brands:[{name,productCount,categories:[{categoryId,productCount}]}],total}` for the complete owned library; empty brand/category IDs mean unbranded/uncategorized |
+| GET | `/api/products` | `q`, `categoryId` (includes descendants), `brand` (exact; empty = unbranded; omitted = all), `uncategorized=true`, `limit` (default 10, 1–20), `offset` (default 0, 0–100000); bounded product search page |
 | GET | `/api/products/search` | Same parameters and response as `/api/products` |
 | POST | `/api/products` | Product input below; `201 {product}` |
 | GET | `/api/products/:id` | `{product}` including complete specification, for the management editor |
 | PUT | `/api/products/:id` | Complete product input including current `version`; `{product}`; stale version `409` |
 | DELETE | `/api/products/:id` | Required query `version`; `{ok:true}`; stale version `409` |
 | GET | `/api/products/:id/read` | `version` (recommended), `offset` (Unicode characters, default 0), `length` (default 2400, 1–4000); bounded specification read; version conflict `409` |
+| POST | `/api/products/query-prices` | Structured configuration and price query described below; read-only despite POST |
+| GET | `/api/product-price-imports` | Pending legacy price rows, `offset` (default 0), `limit` (default 30, 1–100); `{rows,total,hasMore,nextOffset}` |
+| POST | `/api/product-price-imports/:id` | Explicitly import one pending row: `{productId,version,price?}`; empty productId creates a product; returns `{product}` |
 | GET | `/api/product-images/:id` | Owner-authenticated PNG/JPEG bytes; private, no-store |
 
-Product input is `{name,brand,model,categoryId,specification,version,imageDataUrl?}`.
+Product input is `{name,brand,model,categoryId,specification,version,imageDataUrl?,catalog?}`.
 `name` is required (max 200 characters), `brand` max 100, `model` max 160.
 `categoryId` is an owned category ID or empty. `specification` is one Markdown
 text field (max 100,000 Unicode characters), including parameters, tables,
@@ -284,7 +292,7 @@ are excluded. Empty `q` enumerates products. Nonempty queries use SQLite FTS5
 with Chinese character/bigram tokens, Latin words and normalized model matching
 (e.g. `KE-43` can be found using `ke43`). Terms are ANDed within an indexed
 section; this is **not** semantic search or numerical range filtering. Repeat
-the same query/category and use `nextOffset` to continue. Counts/offset pages
+the same query/brand/category and use `nextOffset` to continue. Counts/offset pages
 reflect current data, so concurrent edits may change page boundaries.
 
 Reads return `{product,sections,sectionCount,hasMoreSections,content,offset,
@@ -297,8 +305,156 @@ Updates rebuild chunks and the full-text index in the same transaction.
 Only the current specification is retained; versions detect changed evidence,
 not a historical specification archive.
 
+### Brand and category navigation
+
+The product library uses a left navigation panel and a right product table.
+Brands are grouped from the product's existing independent `brand` field.
+Below each brand, the shared category hierarchy shows only categories containing
+that brand's products and their ancestors. Counts in navigation include descendants;
+`product-categories.productCount` remains a direct count. Navigation aggregates
+are independent of search text and result pagination. On narrow screens the same
+navigation opens in a dialog, leaving the table its full width. The table fills
+the remaining height and scrolls internally with a fixed header and pagination.
+
+`parentId` is empty for a top-level category. Existing categories migrate as roots
+without changing product references or versions. Parents must belong to the owner;
+self/descendant parents are rejected. Category names remain unique per owner.
+Omitting `parentId` on update preserves its current parent; sending an empty string
+moves it to the top level. A category with children cannot be deleted until they
+are moved or deleted. Selecting a parent filters over its entire subtree and can
+be combined with an exact brand. Brands share category definitions rather than
+duplicating them. New product drafts inherit the selected brand/category.
+
+### Structured configurations and pricing
+
+The product editor owns both the narrative document and its structured catalog.
+The standalone price-list UI and `/api/price-lists` routes have been retired;
+old browser bookmarks open the product library's pending-price workflow.
+Original price-list tables remain intact as migration source data. Pending rows
+are excluded from AI pricing until explicitly linked. Importing a row and
+marking it resolved is one transaction, so retries cannot duplicate products.
+The UI lets users review and correct the CNY unit price.
+Unmapped original columns remain available in the source record; ordinary
+custom specification columns are imported as dimensions. `notes` remains in the
+source archive rather than becoming a configuration dimension. Importing into
+an existing product requires complete values for its dimension definitions.
+
+### Shared specification dimensions
+
+Definitions are maintained once per application owner in the product library's
+shared-dimensions manager. Products select only the relevant dimensions and
+store configuration values under their stable keys. Global means shared across
+that user's products and mailboxes, not across different users. A dimension's
+identity includes its name, type and case-sensitive unit (MPa differs from mPa).
+The same name with different types/units may exist in the dictionary; select the
+correct definition explicitly. Duplicate identities are rejected.
+
+Product catalog input can use `dimensions:[{key:"..."}]`. Existing keys resolve
+to canonical definitions; copied labels, types and units cannot override the
+shared dictionary. GET product and AI pricing results return resolved definitions.
+For backward compatibility, inline definitions with unknown keys are promoted
+into the dictionary and equivalent definitions are reused with attributes remapped.
+Existing local definitions migrate transactionally on upgrade; actual values,
+variant IDs and price IDs are preserved. Legacy select options are unioned when
+merging equivalent definitions so no existing option is lost.
+
+Renaming a definition or updating its options updates every referencing product,
+rebuilds its search metadata, and advances its product version in one transaction.
+Changing the type or unit of a used definition, removing a used option, or
+renaming it to cause a product-level dimension-label collision is rejected (400).
+Used definitions cannot be deleted. Unused definitions can change type/unit or
+be deleted with their current version. Tombstones prevent stale product drafts
+from recreating a deleted definition. Foreign-owner definitions return 404.
+Saved quotation/contract snapshots remain intact; new AI queries must use the
+new product version after a shared-definition edit.
+
+The product editor shows selected dimension chips with remove icons and an
+"Add dimension" button. Its shadcn Base UI DropdownMenu adds the selected shared
+definition immediately; already selected definitions are omitted. Loading, empty
+and retry states appear only inside the dropdown. Global definitions are created
+from the library's separate manager. The editor uses Base UI Select for variant
+values and AlertDialog for removing dimensions with existing configuration data.
+Removing a dimension only removes its selection and draft values, not the shared
+definition.
+
+### Product catalog input
+
+`catalog` is optional on save: omitting it preserves the existing catalog;
+`{dimensions:[],variants:[]}` explicitly clears it. Product version checks cover
+narrative, definitions, configurations and prices atomically. GET by ID returns
+the complete catalog for management; text search/read omit full catalogs.
+Structured attribute values and SKUs are indexed for product discovery.
+
+```json
+{
+  "dimensions": [
+    {"key":"connection","label":"连接方式","type":"select","unit":"","options":["法兰","螺纹"]},
+    {"key":"diameter","label":"口径","type":"number","unit":"mm"}
+  ],
+  "variants": [
+    {"id":"","sku":"BV-F50","attributes":{"connection":"法兰","diameter":"50"},
+     "prices":[{"id":"","amount":"1280.00"}]}
+  ]
+}
+```
+
+Stable dimension keys survive label edits. Types are `text`, `number`, `select`;
+every actual variant must supply every defined dimension. Do not generate the
+Cartesian product of option values. A simple product has zero dimensions and
+one default variant. Limits: 40 dimensions, 500 variants, 50 prices per variant.
+New variants/prices use empty IDs; the server generates IDs. Existing supplied
+IDs must belong to that same product/variant. Duplicate configurations and
+nonempty SKUs are rejected. Amounts are decimal strings (0 allowed, up to six
+decimal places), always in CNY. Currency and pricing unit are not editable fields.
+Responses include fixed `currency:"CNY"` metadata for compatibility with AI clients;
+omitted currency defaults to CNY and foreign-currency writes are rejected.
+Legacy pricing units are ignored; specification dimension units remain intact.
+Tax mode is `included`, `excluded`, or empty (unknown); a known mode requires an
+explicit decimal tax rate between 0 and 1. Quantity intervals are inclusive.
+Validity dates are inclusive `YYYY-MM-DD` dates; a missing bound is open-ended.
+
+POST `/api/products/query-prices` accepts
+`{productId,version?,variantId?,priceId?,attributes?,qty?,source?,date?,limit?,offset?}`.
+An empty attributes map discovers dimensions and actual configurations. Filter
+using stable dimension keys and exact text values (case-insensitive); numeric
+values are normalized, without unit conversion or range inference. Alternatively
+use `{query}` for keyword discovery, then select productId for attribute filters.
+The date defaults to the current UTC date. Limits are 1–50 (default 10), offsets
+0–100000. Counts and status include all candidates before pagination.
+
+The result is `{status,dimensions,matches,missing,total,hasMore,nextOffset}`.
+Each match includes productId/productVersion, product name/model, variantId,
+SKU, complete attributes and all applicable price records with stable IDs.
+`matched` means one configuration and one applicable price with all dimension
+values supplied (or an explicitly selected variantId). priceId can filter an
+explicitly selected price and requires productId and variantId. `needs_clarification` means additional configuration/price
+conditions must be resolved; a single returned page is not proof of uniqueness.
+`no_match` means no configuration matched; `no_price` means configurations exist
+but have no applicable price under the supplied quantity, source and date.
+Unknown dimensions and invalid quantities/dates return 400; stale version 409;
+foreign products return 404. An empty price is never interpreted as zero.
+
+The editor maintains one CNY unit price per configuration, with no price-condition
+controls or CSV import/export. Clearing the amount removes the price; zero remains
+a valid price. Existing legacy records and conditions are preserved until the user
+re-enters that configuration's amount, replacing them with one unconditional price.
+API price arrays and query filters remain compatible with archived records.
+Tax treatment is unspecified for newly entered plain prices; no tax rate is inferred.
+Legacy price migration also reuses an unambiguous compatible shared definition; unknown units or
+ambiguous names require selecting a product rather than guessing a mapping.
+
+Catalog-priced document items include `productId`, `productVersion`, `variantId`,
+`priceId` and `qty`. Generation verifies ownership, current version, configuration,
+price validity and quantity conditions, then fills the exact stored amount and
+recomputes line amounts. Currency conflicts are rejected. Catalog tax treatment
+replaces the legacy default tax surcharge; unknown tax terms leave final tax
+and total fields unconfirmed. Configuration and price references survive saved
+quotation/contract canvas documents, including items without product images.
+
+
 The built-in email/document AI gains `list_product_categories`,
-`search_products`, and `read_product`. `read_product` requires the version
+`search_products`, `read_product`, and `query_product_prices` (`lookup_price`
+is a compatibility alias for the product catalog). `read_product` requires the version
 returned by search. Tool results and the existing total context budget are
 bounded. Search only locates candidates: the agent must read limits and
 configuration conditions, distinguish supported/contradicted/unknown
@@ -980,3 +1136,364 @@ clients without a live mailbox.
 
 Recurring-event expansion (server-side RRULE materialization) is not yet exposed
 over `/v1`. Track this in [ROADMAP.md](../ROADMAP.md).
+
+## Business assistants and built-in Skills
+
+Existing `/api/settings/ai/agents` records now accept and return `businessProfile`:
+
+```json
+{
+  "name": "Valve sales assistant",
+  "prompt": "Use concise language and clarify missing requirements.",
+  "outputLabels": ["客户", "需求"],
+  "businessProfile": {
+    "company": "Seller Ltd",
+    "quotationTemplateId": "default-quotation",
+    "contractTemplateId": "default-contract"
+  }
+}
+```
+
+Brand responsibilities belong to mailboxes, configured under Settings → Mailboxes → Edit → Mailbox brands:
+
+- GET `/api/accounts/:id/brands` returns `{ "brands": ["Brand A", "Brand B"], "brandMode": "restrict" }`.
+- PUT the same shape to update; both operations require mailbox ownership. An unconfigured mailbox returns empty brands with `prefer` mode. Clearing brands is allowed in `prefer` mode.
+- All assistants for this mailbox use the latest binding on every chat turn. Switching assistants preserves the conversation's explicit brand selection.
+- On first upgrade, brands from the mailbox's bound email-draft assistant are copied once. Legacy assistant brand fields remain stored for compatibility but no longer affect prompts or scope; unbound mailboxes start unrestricted.
+
+`brandMode=prefer` uses brands as defaults when the customer has not specified
+one; other explicitly requested brands remain accessible. `restrict` requires at
+least one brand and enforces the allowed brands in catalog search (before
+pagination), direct product reads, price queries, generated document items and
+proposed item updates. Scoped document lines must reference actual catalog
+products. A conversation may narrow this range, never widen it. Brands match
+exactly as stored in the product library. This configuration governs business
+catalog usage; it does not change the signed-in user's mailbox/document access.
+
+Templates must belong to the current user and match the document type. Empty
+ids use the system template; built-in ids are `default-quotation` and
+`default-contract`. Saved custom canvas templates retain their layout and editor
+options, fill structured controls, expand product rows, and clear old buyer/item
+values. Legacy plain HTML templates must first be saved through the canvas
+editor. A deleted custom default produces an actionable error rather than a
+silent layout substitution. PUT requests that omit `businessProfile` preserve the stored
+profile.
+
+GET `/api/settings/ai/agents` also returns a `skills` catalog (id, name,
+description, dependsOn). These are built-in declarative workflows, with no
+arbitrary script execution:
+
+| Skill | Workflow |
+| --- | --- |
+| `email_analysis` | Read mail sources; extract per-line brands, specifications, quantities and missing requirements. |
+| `quotation` | Compose email analysis, verify technical suitability and catalog configurations/prices, prepare a quotation draft. |
+| `contract` | Verify the designated quotation and contract terms; compose selection/quotation when new prices are needed. |
+
+POST `/api/ai/agent-chat` accepts this optional selection:
+
+```json
+{
+  "businessContext": {
+    "agentId": "aiagent_...",
+    "skillId": "quotation",
+    "brands": ["Brand A"]
+  }
+}
+```
+
+Empty `skillId` automatically selects/composes the built-in workflows; empty
+`brands` inherits mailbox defaults. A nonempty selection is an explicit catalog
+filter. `agentId` remains a legacy request alias; invalid assistants or Skill ids
+are rejected. Mailbox email-draft bindings remain the default assistant when no
+assistant is selected. The response (including SSE `done.response`) returns the
+resolved `businessContext`. Identity/default data is separate from the workflow
+instructions and current catalog facts. Text in mail/product data is treated as
+reference material, not instructions.
+
+For a mail conversation, the context is stored separately from derived AI
+summaries in SQLite. GET `/api/conversations/:id/ai-chat` returns it beside
+`messages`, `sessionId`, `version` and `lastRun`. PUT accepts only
+`{version, businessContext}`; obsolete full-history writes are rejected with 409.
+Deleting chat history requires `?version=...` and clears messages and derived
+summaries while retaining business context. Each subsequent agent turn resolves
+the latest mailbox restrictions. Document drafting uses the same server session
+store, scoped to the authenticated owner and selected mailbox. The document library's
+**Draft with AI** action opens this workspace; `/ai-document` also opens it.
+
+`read_document` returns the saved document's `revision`. `generate_document`
+accepts `sourceQuotationId` and `sourceQuotationRevision` for `type=contract`.
+A supplied revision must match the owner's saved quotation; otherwise the tool
+asks the agent to read and confirm it again. If omitted by an older caller, the
+current revision is captured on first use. The server reads that owner's saved
+structured quotation once per generated contract and copies its buyer, item
+configuration, quantities, prices, amounts and commercial fields. Current catalog
+prices do not replace this commercial snapshot. The same immutable snapshot is
+used through final reply processing, even if the source is edited or deleted
+while the model is replying. A final document fence cannot replace a contract
+already generated from a trusted source snapshot. Source id/name/revision/update
+time are retained in the generated `values`, and `sourceQuotationRevision` is
+returned on the document card. The server validates new catalog-based
+quotations against product/variant/price/version references and recomputes line
+amounts and tax-aware totals, including documents returned through a model's
+final document fence. Manual and catalog line amounts are computed with decimal
+arithmetic and rounded to cents before summing. Supplied line amounts and totals
+are not trusted. Missing quantities/prices leave aggregates blank. Manual prices
+use explicit `tax_rate` (decimal or percentage), `tax_mode` (`included` or
+`excluded`) and optional `discount` (an amount deducted before tax). An explicit
+legacy `tax_rate` without a mode means excluded tax; absent tax terms leave tax
+and final totals blank instead of assuming 13%. Catalog lines retain their
+stored tax conditions. `calculate_pricing`, new drafts and saved-document
+commercial edits use the same calculations; contact-only edits retain historical
+pricing. Invalid numbers, tax rates and discounts are rejected.
+The editor AI sidebar, variable form and agent updates share the same server-side
+canvas mutation service. POST `/api/ai/write-document` in `variables` mode now
+requires `canvas` (the complete serialized current editor snapshot); fields and
+product references come from that snapshot, rather than a client variable list.
+The response includes the validated `html` canvas and a `summary`. The editor
+applies exactly that canvas and rejects responses if its content changed while
+waiting. Legacy variable-only replies cannot be applied. `mode: "apply"` accepts
+`canvas`, `values` and optional `items` to validate variable-form changes without
+calling a model. Both modes enforce the mailbox's brand scope. Unknown controls
+or unsupported layouts fail atomically, preserving manual clauses, stamps,
+header/footer content and formatting. Omitting references on an otherwise
+unchanged catalog product does not downgrade its price to an unchecked manual
+price.
+Catalog currency validation is shared by generation, final model document cards
+and modifications. Catalog prices use CNY; CNY/RMB/人民币/¥ aliases are normalized.
+Changing the currency of existing amounts to a different currency is rejected:
+there is no exchange-rate conversion workflow in this version.
+`inland_freight` is a separate charge, outside the goods subtotal and discount.
+A positive freight requires explicit `freight_tax_rate` and `freight_tax_mode`
+(`included` or `excluded`). Its tax is rounded separately to cents; gross freight
+plus any excluded freight tax contributes to the final amount. Missing freight
+tax conditions leave final/tax totals blank, clear stale amount words and prompt
+for confirmation. Absent or zero freight adds nothing. Freight changes trigger
+recalculation and these fields survive canvas saves and quotation snapshots.
+Canvas payloads persist commercial inputs, calculated amounts, currency and
+quotation provenance in `business: {version: 1, values: {...}}`, using a fixed
+commercial-field allowlist. Default and custom templates and editor saves retain
+this metadata even when there is no visible tax/discount control. Visible
+controls, including explicitly cleared controls, override metadata. Legacy
+canvases remain readable without inferring missing conditions; unsupported
+business-data versions cannot be modified. Quotation-to-contract snapshots copy
+these terms without retaining generated guesses for missing source conditions.
+When recalculation changes or invalidates the total, or the currency changes,
+`say_total` is cleared and the update summary asks the user to verify and refill
+it. Contact-only edits and recalculations with an unchanged total retain it.
+Generated layouts are built from trusted templates; model-supplied HTML is not
+used. Saved-document update/delete tools remain proposals requiring user action.
+Update proposals include `html`: the original saved canvas patched at
+`baseRevision`, retaining custom layout, options, stamps, free text, unchanged
+controls and row styles. Scalar edits require an existing control (including
+empty, nested, header and footer controls) or an allowed commercial metadata
+field. Missing controls reject the whole proposal; returned values are read back
+from the patched canvas. Unsupported item layouts fail instead of falling back
+to a default template. Preview and Apply use this same canvas and revision.
+Older update proposals missing the canvas must be regenerated. Concurrent
+changes still cause a revision conflict on save.
+
+Validation: `go test ./...`, frontend typecheck/lint/build,
+`scripts/check-ai-business.mjs` and `scripts/check-ai-document-mutations.mjs`
+(desktop/mobile; all APIs mocked by default), and the existing
+AI chat streaming regression. Provider integration tests use a local mock model;
+no paid model call is needed for these checks.
+
+
+## AI chat image attachments
+
+Both mail conversation chat and document drafting chat accept PNG, JPEG and
+static WebP images from a file picker, paste or drag-and-drop. A user message can
+contain images without text. Uploads must finish successfully before sending;
+failed chat requests retain their images for retry. Sent images are shown as
+thumbnails with a full-size dialog and remain available for follow-up questions.
+
+These session-authenticated routes use the normal CSRF protection:
+
+| Method | Route | Input / result |
+| --- | --- | --- |
+| POST | `/api/ai/attachments` | Multipart `file` and `accountEmail`; returns `201 {id, filename, contentType, size}`. |
+| GET | `/api/ai/attachments/:id?accountEmail=...` | Original image bytes, private/no-store, with MIME and inline filename headers. |
+| DELETE | `/api/ai/attachments/:id?accountEmail=...` | Removes an image belonging to this owner and mailbox; returns `204`. |
+
+Uploads are capped at 10 MiB each and 40 million pixels. The server validates
+actual content type, dimensions and decoding; SVG, animated WebP, unsupported
+formats and corrupt images are rejected. Each mailbox has a 256 MiB storage
+quota. Bytes live in SQLite separately from chat JSON and cascade on mailbox
+deletion. New uploads are staged for 24 hours. Accepting a turn transactionally
+creates its message and attachment references. Referenced images cannot be
+removed through the attachment DELETE route (409). Clearing/deleting a chat
+releases references and starts a fresh 24-hour grace period; shared images remain
+protected by other message references. The server collects expired, unreferenced
+uploads at startup, before uploads, and every 15 minutes. Browser draft cleanup
+is optional; images submitted in a request are left to the server lifecycle.
+Pre-upgrade images with unknown browser ownership remain protected until adopted
+by a server message; they are not indiscriminately expired.
+
+A message passed to `/api/ai/agent-chat` may include references:
+
+```json
+{
+  "accountEmail": "sales@example.com",
+  "sessionId": "chat_...",
+  "requestId": "unique-client-request-id",
+  "version": 0,
+  "messages": [{
+    "role": "user",
+    "content": "Identify the product and requirements in this image",
+    "attachments": [{"id": "aimg_...", "filename": "requirements.png", "contentType": "image/png", "size": 12345}]
+  }]
+}
+```
+
+Only uploaded IDs are resolved; arbitrary external URLs or base64 from the
+caller are not accepted as image sources. The server rechecks owner/mailbox
+access on every turn and reads authoritative bytes/metadata from storage. Only
+user messages may carry images, at most six per message. For server-managed
+sessions, the newest turn must fit 32 MiB and is validated before committing any
+message. The model receives at most 24 images / 32 MiB: newest-turn images first,
+then recent historical images that fit. Older references remain in stored history;
+missing old images are omitted. Text-only requests remain usable after many image
+turns, including when switching to a text-only adapter. Legacy stateless requests
+retain the original full-history validation limits. References are stored with the existing mail chat history or
+document session history; base64 is never stored in those histories.
+
+Every model tool-loop turn retains the selected images, including recent images
+from earlier user messages even when old text is summarized. Instructions explicitly
+forbid claiming to have inspected historical images omitted from this request. OpenAI Responses uses
+`input_image` data URLs, OpenAI-compatible Chat Completions uses `image_url`
+parts, and Gemini uses `inlineData`. Existing text-only calls remain unchanged.
+The configured model must support image input; the DeepSeek text adapter rejects
+images explicitly. Streaming and non-streaming responses share this path.
+OpenAI format reference: [Images and vision](https://developers.openai.com/api/docs/guides/images-vision).
+
+Validation includes provider payload/stream tests, authenticated upload/read/delete
+and invalid-image tests, tool-loop and historical-image tests, and
+`scripts/check-ai-images.mjs` on desktop/mobile with all APIs mocked.
+
+## Server-managed AI chat sessions
+
+Mail and document chats share SQLite sessions, ordered messages, execution records
+and attachment references. The mailbox determines ownership; session IDs alone
+never grant access. Mail history is lazily adopted from the legacy table, once
+per mailbox/conversation, preserving the source records until clear/delete.
+
+| Method | Route | Input / result |
+| --- | --- | --- |
+| GET | `/api/ai/chat-sessions?accountEmail=...` | Lists document session summaries (no message payloads), version, businessContext and lastRun. Accepts `limit` (default 30, max 100) and opaque `cursor`; returns `{sessions,nextCursor?}` ordered by updated time and ID. |
+| POST | `/api/ai/chat-sessions` | `{accountEmail,title,documentType:"quotation"\|"contract"}`; returns the new session (201). |
+| GET | `/api/ai/chat-sessions/:id?accountEmail=...` | Returns an owned session and the latest ordered message page. Accepts `limit` (default/max 100) and `before` (exclusive stored position). Includes `hasMoreMessages` and `nextBefore`; prepend older pages. Mail `GET /api/conversations/:id/ai-chat` uses the same message paging parameters. |
+| PATCH | `/api/ai/chat-sessions/:id?accountEmail=...` | `{version,businessContext}`; validates identity/Skill/mailbox brands and increments version. |
+| DELETE | `/api/ai/chat-sessions/:id?accountEmail=...&version=...` | Deletes a session; optional `clear=true` retains it and its business selection. |
+
+POST `/api/ai/agent-chat` supplies `sessionId`, `requestId`, `version` and exactly
+one new user message; mail sessions also supply the matching `conversationId`.
+The server reconstructs history. User messages and image references are committed
+after image preflight and before model execution, and assistant output is committed before JSON or SSE
+`done` is returned. Responses include `sessionId`, `requestId`, `version`,
+`userMessageId` and `assistantMessageId` for reconciliation. Visible text/tool
+parts and document cards are retained; raw tool results are excluded from stored
+session history.
+
+Retry the exact same body and request ID after a network/provider failure.
+For refresh/navigation recovery, send `{accountEmail,sessionId,retryRequestId}`
+to the same agent-chat endpoint. The server reloads the original execution input
+(including document/draft and focused mail snapshots) saved atomically with the
+user message. Other caller-supplied inputs are ignored on this recovery path.
+Current mailbox/brand/model authorization is revalidated; later changes to the
+session invalidate failed-turn retries. New `lastRun.retryable` indicates that a
+failed/expired latest run has a saved input and is eligible for recovery. Runs
+created before this migration lack snapshots and retain the exact-body retry path.
+
+Completed requests replay the saved response without another model call; failed
+requests reuse their original user message. Reusing an ID with different input,
+a stale version, a concurrently generating session, or retrying a failed request
+after later turns returns 409. A run has an 11-minute lease (execution is bounded
+to 10 minutes); an expired run can be retried after a process restart. Attempt
+tokens prevent a stale worker from committing after recovery. Preference changes
+and deletion also use version checks and reject active runs. GET exposes the
+latest run's request ID, user message ID and pending/complete/failed status;
+clients poll pending runs and refresh after errors.
+
+Requests without `sessionId` remain stateless for compatibility; the application
+uses durable sessions exclusively. Old unscoped browser document histories are
+kept untouched and can be explicitly exported from the document chat. They are
+never silently assigned to the currently logged-in user or mailbox. New document
+chat histories are not written to localStorage.
+
+
+The summary endpoint never reads message payloads. Session and message pages use
+bounded SQL reads; full history remains available internally to the context builder.
+Attachment GC processes at most 100 unreferenced expired attachments per sweep,
+using expiry/reference indexes. Business toolbar changes preserve unsent text and
+images; switching/deleting a chat explicitly discards its unsent attachment draft.
+
+Implementation references (design guidance; no harness runtime dependency):
+- [Codex image context budgeting](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote_v2_images.rs): retain recent image/label units within a model budget.
+- [DeepSeek Harness session query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md): separate lightweight session identity, complete history and model-context projections.
+
+## Document revisions and authoritative draft context
+
+Saved documents expose an integer `revision`, starting at 1. POST `/api/documents`
+uses `revision: 0` (or omitted) to create a new ID only. Updates must send the
+revision returned by GET or the preceding save. Each successful update increments
+it atomically; an outdated version or a deleted target returns 409 without writing.
+The save response contains the content and revision from that exact write.
+
+AI `documentAction` cards include `baseRevision` for both update and delete
+proposals. Applying a proposal sends this revision; deletion uses
+`DELETE /api/documents/:id?revision=<baseRevision>`. A conflict requires reopening
+the current document or generating a fresh proposal. Historical cards without a
+base revision cannot be applied. Ordinary library bulk deletion retains its
+explicit selection behavior. Reopening an applied card in the editor carries the
+new saved revision into subsequent saves.
+
+Document session detail responses include `currentDocument` independently of the
+message page. It is updated in the same transaction as the assistant's generated
+card. Existing sessions recover their latest generated card during migration.
+For both mail and document sessions, the server derives model context from this snapshot and
+ignores caller-supplied `activeDocument`; frontends do not infer it from whichever
+history pages happen to be loaded. Supplying a draft does not change a mail
+session's mode or remove its mail context/tools. Only explicit fresh-document
+requests (for example, “新建一份报价单”) clear buyer, line
+items, totals and terms while retaining seller/bank fields, atomically with the
+user turn. The cleared snapshot persists while the assistant asks for details.
+Drafting/generating or converting a quotation into a contract retains the current
+customer, line items, agreed prices and terms, including during clarification.
+Small snapshots are supplied directly; larger snapshots are read using the
+`read_current_draft` tool (`offset`, `length`, maximum 4000 Unicode characters).
+
+The first save of a generated card sends `aiOrigin: {sessionId,messageId}` and
+uses the persisted assistant message ID as the document ID. The server validates
+the owned session/card and records the association in the save transaction.
+Subsequent library edits need only the document ID and revision. Continuing the
+associated current draft reads the latest saved canvas fields and items, replacing
+the original generated values (including fields/items the user cleared). Detail
+responses expose this projection in `currentDocument`, with the saved `id` and
+`revision`; historical generated cards keep their original content and expose
+`savedDocumentId` for resolving the live library entry when reopened. Saved formats
+that cannot be parsed structurally are explicitly reported to the model.
+
+Saving/deleting a currently linked document advances the affected chat version
+and invalidates pending executions atomically, so a response using an old revision
+cannot commit or retry from its stale input. Clients refresh the chat version;
+the user can send a new request against the saved content. Saving an older card
+does not replace a newer generated draft. Deleted-document links remain as
+tombstones until chat history is cleared/deleted, preventing an old card from
+recreating the deleted library entry. Explicit fresh-draft requests detach the
+previous association. Card IDs and saved associations survive page refreshes.
+
+Both mail and document sessions compact older discussion into derived memory,
+keeping original messages intact. A prefix hash validates reusable summaries;
+session memory is persisted only by the worker holding the current run lease.
+Clear/delete also removes this derived state. New questions over the 12000-byte
+recent-turn budget and oversized business instructions fail before the user turn
+is committed. Summary/provider failures retain a retryable run instead of
+requiring the user to append the same question again.
+
+Regression coverage includes database upgrades/restarts, stale update/delete
+confirmation, deleted-document recreation prevention, long-history continuation,
+summary reuse, draft context beyond the latest 100 messages, history-page
+invariance, new-draft reset, mail draft continuation, quote-to-contract
+clarification, saved-canvas projection, origin ownership, concurrent-run
+invalidation, and both `scripts/check-ai-document-versions.mjs` and
+`scripts/check-ai-draft-sync.mjs` with isolated desktop/mobile API fixtures.

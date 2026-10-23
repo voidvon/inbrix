@@ -129,13 +129,14 @@ type AIModelRecord struct {
 }
 
 type AIAgentRecord struct {
-	ID           string
-	OwnerID      string
-	Name         string
-	Prompt       string
-	Purpose      string
-	OutputLabels []string
-	CreatedAt    time.Time
+	BusinessProfile AIBusinessProfile
+	ID              string
+	OwnerID         string
+	Name            string
+	Prompt          string
+	Purpose         string
+	OutputLabels    []string
+	CreatedAt       time.Time
 }
 
 type AITaskBindingRecord struct {
@@ -186,6 +187,15 @@ func Open(path string) (*Store, error) {
 	}
 
 	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+	// A pooled :memory: database must share its schema across connections.
+	// Give each Store a unique name so separate users/tests never share memory.
+	if path == ":memory:" {
+		id, err := newID("memory")
+		if err != nil {
+			return nil, err
+		}
+		dsn = "file:" + id + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: open %s: %w", path, err)
@@ -557,6 +567,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS ai_chat_attachments (
+            id TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            data BLOB NOT NULL,
+            FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_chat_attachments_account ON ai_chat_attachments(account_id)`,
 		`CREATE TABLE IF NOT EXISTS conversation_ai_context (
 			account_id TEXT NOT NULL,
 			conversation_id TEXT NOT NULL,
@@ -682,10 +702,19 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("mailstore: migrate: %w", err)
 		}
 	}
+	if err := s.migrateDocumentRevision(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateProducts(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureAIAgentPurposeColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateAIBusiness(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateAIChatSessions(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureAIAgentOutputLabelsColumn(ctx); err != nil {
@@ -839,6 +868,13 @@ func (s *Store) GetConversationAIChat(ctx context.Context, accountID, conversati
 }
 
 func (s *Store) SaveConversationAIChat(ctx context.Context, accountID, conversationID, messages string) error {
+	var upgraded int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_chat_sessions WHERE account_id=? AND conversation_id=? AND kind='mail'`, accountID, conversationID).Scan(&upgraded); err != nil {
+		return err
+	}
+	if upgraded > 0 {
+		return ErrAIChatConflict
+	}
 	accountID = strings.TrimSpace(accountID)
 	conversationID = strings.TrimSpace(conversationID)
 	if accountID == "" || conversationID == "" {

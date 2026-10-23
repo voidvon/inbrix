@@ -118,6 +118,8 @@ function sectionTitleCells(title: string, iconIndex: number) {
 export type QuotationItem = {
   productId?: string;
   productVersion?: number;
+  variantId?: string;
+  priceId?: string;
   model: string;
   picture?: string;
   description: string;
@@ -158,15 +160,17 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
     const qtyId = isSingle ? "item_qty" : `item_qty_${index}`;
     const priceId = isSingle ? "item_price" : `item_price_${index}`;
     const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
+    const modelControl = controlText(modelId, item.model, "Model", { size: 10 });
+    modelControl.control!.extension = { model: item.model, productId: item.productId, productVersion: item.productVersion, variantId: item.variantId, priceId: item.priceId };
 
     const pictureCellContent: IElement[] = item.picture
-      ? [{ type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { productId: item.productId, productVersion: item.productVersion } }]
+      ? [{ type: ElementType.IMAGE, value: item.picture, width: 80, height: 60, extension: { model: item.model, productId: item.productId, productVersion: item.productVersion, variantId: item.variantId, priceId: item.priceId } }]
       : [text(" ", { size: 10 })];
 
     return {
       height: item.picture ? Math.max(itemRowHeight, 68) : itemRowHeight,
       cells: [
-        cell([controlText(modelId, item.model, "Model", { size: 10 })]),
+        cell([modelControl]),
         cell(pictureCellContent),
         cell([controlText(descId, item.description, "Description", { size: 10 })]),
         cell([controlText(qtyId, item.qty, "Quantity", { size: 10 })]),

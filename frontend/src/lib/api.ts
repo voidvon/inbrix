@@ -1,8 +1,8 @@
 import { getCookie } from "./utils";
 import { CLIENT_ID } from "./client-id";
 import { readAIChatStream, type AIChatStreamEvent } from "./ai-chat-stream";
-import type { ConversationAIChatPart } from "../types";
-import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox, PriceColumn, PriceImportResult, PriceList, PriceListDetailResponse, PriceLookupEntry, PriceRow, PriceRowsResponse } from "../types";
+import type { AIChatAttachment, ConversationAIChatPart } from "../types";
+import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox } from "../types";
 
 export class ApiError extends Error {
   status: number;
@@ -140,107 +140,6 @@ export function searchMailMessages(query: string, limit = 50) {
   return apiFetch<MailSearchResponse>(`/api/mail/search?${params.toString()}`);
 }
 
-// ---------------------------------------------------------------------------
-// Price lists: user-defined spreadsheet tables that quotations and the AI
-// tools price against.
-// ---------------------------------------------------------------------------
-
-export function listPriceLists() {
-  return apiFetch<{ priceLists: PriceList[] }>("/api/price-lists");
-}
-
-export function createPriceList(input: { name: string; description?: string; columns?: PriceColumn[] }) {
-  return apiFetch<PriceListDetailResponse>("/api/price-lists", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export function getPriceList(id: string) {
-  return apiFetch<PriceListDetailResponse>(`/api/price-lists/${encodeURIComponent(id)}`);
-}
-
-export function updatePriceList(id: string, input: { name: string; description?: string }) {
-  return apiFetch<{ priceList: PriceList }>(`/api/price-lists/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
-}
-
-export function deletePriceList(id: string) {
-  return apiFetch<{ ok: boolean }>(`/api/price-lists/${encodeURIComponent(id)}`, { method: "DELETE" });
-}
-
-/** Replaces the column set: add, rename, retype, reorder, and delete in one call. */
-export function savePriceColumns(id: string, columns: PriceColumn[]) {
-  return apiFetch<{ columns: PriceColumn[] }>(`/api/price-lists/${encodeURIComponent(id)}/columns`, {
-    method: "PUT",
-    body: JSON.stringify({ columns }),
-  });
-}
-
-export function listPriceRows(id: string, options: { q?: string; sort?: string; dir?: "asc" | "desc"; limit?: number; offset?: number } = {}) {
-  const params = new URLSearchParams();
-  if (options.q?.trim()) params.set("q", options.q.trim());
-  if (options.sort) params.set("sort", options.sort);
-  if (options.dir) params.set("dir", options.dir);
-  params.set("limit", String(options.limit ?? 200));
-  params.set("offset", String(options.offset ?? 0));
-  return apiFetch<PriceRowsResponse>(`/api/price-lists/${encodeURIComponent(id)}/rows?${params.toString()}`);
-}
-
-/**
- * Creates one row and returns it with its server id. The grid appends a row
- * once, then addresses every later edit to that id.
- */
-export function appendPriceRow(id: string, data: Record<string, string>) {
-  return apiFetch<{ row: PriceRow }>(`/api/price-lists/${encodeURIComponent(id)}/rows/append`, {
-    method: "POST",
-    body: JSON.stringify({ data }),
-  });
-}
-
-/**
- * Writes only the cells that changed. This is the autosave-on-blur call: one
- * row, one or two cells, so a large sheet never resends itself.
- */
-export function updatePriceRowCells(id: string, rowId: string, cells: Record<string, string>) {
-  return apiFetch<{ row?: PriceRow }>(`/api/price-lists/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ cells }),
-  });
-}
-
-export function deletePriceRow(id: string, rowId: string) {
-  return apiFetch<{ ok: boolean }>(`/api/price-lists/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}`, {
-    method: "DELETE",
-  });
-}
-
-export function savePriceRows(id: string, input: { rows: PriceRow[]; deletedIds?: string[] }) {
-  return apiFetch<{ ok: boolean; saved: number }>(`/api/price-lists/${encodeURIComponent(id)}/rows`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export function importPriceRows(id: string, input: {
-  content: string;
-  delimiter?: string;
-  createColumns?: boolean;
-  mode?: "append" | "upsert";
-  dryRun?: boolean;
-}) {
-  return apiFetch<{ result: PriceImportResult }>(`/api/price-lists/${encodeURIComponent(id)}/import`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export function priceListExportURL(id: string) {
-  return `/api/price-lists/${encodeURIComponent(id)}/export`;
-}
-
 /**
  * Drafts live on the server so an unsent compose window follows the account to
  * another computer. `conversationId` narrows the list to the single draft a
@@ -262,12 +161,6 @@ export function deleteDraft(id: string) {
   return apiFetch<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function lookupPrices(input: { query?: string; queries?: string[]; limit?: number }) {
-  return apiFetch<{ entries: PriceLookupEntry[] }>("/api/price-lists/lookup", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
 
 export type UserRole = "user" | "super_admin";
 
@@ -391,25 +284,25 @@ export function saveConversationStatus(id: string, status: "answered" | "unanswe
 	});
 }
 
-export function getConversationAIChat(id: string) {
-  return apiFetch<{ ok: boolean; messages: ConversationAIChatMessage[] }>(
-    `/api/conversations/${encodeURIComponent(id)}/ai-chat`
+export function getConversationAIChat(id: string, before?: number) {
+  return apiFetch<{ ok: boolean; sessionId: string; version: number; lastRun?: AIChatRunState; hasMoreMessages?: boolean; nextBefore?: number; messages: ConversationAIChatMessage[]; businessContext?: AIBusinessContext }>(
+    `/api/conversations/${encodeURIComponent(id)}/ai-chat${before === undefined ? "" : `?before=${before}`}`
   );
 }
 
-export function saveConversationAIChat(id: string, messages: ConversationAIChatMessage[]) {
-  return apiFetch<{ ok: boolean }>(
+export function saveConversationAIChat(id: string, messages?: ConversationAIChatMessage[], businessContext?: AIBusinessContext, version?: number) {
+  return apiFetch<{ ok: boolean; businessContext?: AIBusinessContext; version: number }>(
     `/api/conversations/${encodeURIComponent(id)}/ai-chat`,
     {
       method: "PUT",
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, businessContext, version }),
     }
   );
 }
 
-export function deleteConversationAIChat(id: string) {
+export function deleteConversationAIChat(id: string, version: number) {
   return apiFetch<{ ok: boolean }>(
-    `/api/conversations/${encodeURIComponent(id)}/ai-chat`,
+    `/api/conversations/${encodeURIComponent(id)}/ai-chat?version=${version}`,
     { method: "DELETE" }
   );
 }
@@ -591,7 +484,10 @@ export type DocumentVariable = {
 
 export type GenerateDocumentInput = {
   accountEmail: string;
-  mode?: "generate" | "rewrite" | "variables";
+  mode?: "generate" | "rewrite" | "variables" | "apply";
+  canvas?: string;
+  values?: Record<string, string>;
+  items?: QuotationItem[];
   documentType: "quotation" | "contract";
   title: string;
   instruction: string;
@@ -602,6 +498,8 @@ export type GenerateDocumentInput = {
 export type QuotationItem = {
   productId?: string;
   productVersion?: number;
+  variantId?: string;
+  priceId?: string;
   model: string;
   picture?: string;
   description: string;
@@ -611,6 +509,7 @@ export type QuotationItem = {
 };
 
 export type GenerateDocumentResult = {
+  summary?: string;
   mode?: "variables" | "rewrite" | "generate";
   html?: string;
   values?: Record<string, string>;
@@ -634,6 +533,10 @@ export type AIToolCall = {
 };
 
 export type AIAgentDocumentCard = {
+  sourceQuotationRevision?: number;
+  savedDocumentId?: string;
+  templateId?: string;
+  sourceQuotationId?: string;
   id?: string;
   type: "quotation" | "contract";
   title: string;
@@ -654,6 +557,11 @@ export type AIAgentDocumentCard = {
 export type AIAgentEmailDraft = Pick<ComposeDraftResponse["draft"], "to" | "cc" | "subject" | "bodyText">;
 
 export type AIAgentChatRequest = {
+  retryRequestId?: string;
+  sessionId?: string;
+  requestId?: string;
+  version?: number;
+  businessContext?: AIBusinessContext;
   accountEmail: string;
   conversationId?: string;
   activeDraft?: AIAgentEmailDraft;
@@ -661,6 +569,7 @@ export type AIAgentChatRequest = {
   agentId?: string;
   modelId?: string;
   messages: Array<{
+    attachments?: AIChatAttachment[];
     role: "user" | "assistant";
     content: string;
     sources?: Array<{ uid: string; folder: string }>;
@@ -678,6 +587,8 @@ export type AIAgentChatRequest = {
 
 /** A saved-document change the agent proposes and the user confirms. */
 export type AIAgentDocumentAction = {
+  html?: string;
+  baseRevision: number;
   kind: "update" | "delete";
   documentId: string;
   type?: "quotation" | "contract";
@@ -689,6 +600,12 @@ export type AIAgentDocumentAction = {
 };
 
 export type AIAgentChatResponse = {
+  sessionId?: string;
+  requestId?: string;
+  version?: number;
+  userMessageId?: string;
+  assistantMessageId?: string;
+  businessContext?: AIBusinessContext;
   content: string;
   parts?: ConversationAIChatPart[];
   sources?: Array<{ uid: string; folder: string }>;
@@ -699,15 +616,15 @@ export type AIAgentChatResponse = {
 
 export async function chatWithAIAgent(payload: AIAgentChatRequest, options?: {
   signal?: AbortSignal;
-  onEvent: (event: AIChatStreamEvent) => void;
+  onEvent?: (event: AIChatStreamEvent) => void;
 }) {
   const response = await apiRequest("/api/ai/agent-chat", {
     method: "POST",
     body: JSON.stringify(payload),
     signal: options?.signal,
-    headers: { Accept: options ? "text/event-stream" : "application/json" },
+    headers: { Accept: options?.onEvent ? "text/event-stream" : "application/json" },
   });
-  if (!response.ok || !options || !response.headers.get("content-type")?.includes("text/event-stream")) {
+  if (!response.ok || !options?.onEvent || !response.headers.get("content-type")?.includes("text/event-stream")) {
     return parseAPIResponse<AIAgentChatResponse>(response);
   }
   return readAIChatStream(response, options.onEvent);
@@ -742,7 +659,28 @@ export function translateMailMessage(accountEmail: string, folder: string, messa
   });
 }
 
+export type AccountBrands = { brands: string[]; brandMode: "prefer" | "restrict" };
+export const emptyAccountBrands: AccountBrands = { brands: [], brandMode: "prefer" };
+export function getAccountBrands(id: string) {
+  return apiFetch<AccountBrands>(`/api/accounts/${encodeURIComponent(id)}/brands`);
+}
+export function saveAccountBrands(id: string, value: AccountBrands) {
+  return apiFetch<AccountBrands>(`/api/accounts/${encodeURIComponent(id)}/brands`, { method: "PUT", body: JSON.stringify(value) });
+}
+export type AIBusinessProfile = {
+  company: string;
+  brands: string[];
+  brandMode: "prefer" | "restrict";
+  quotationTemplateId: string;
+  contractTemplateId: string;
+};
+export type AIBusinessContext = { agentId: string; skillId: string; brands: string[] };
+export type AIBusinessSkill = { id: string; name: string; description: string; dependsOn: string[] };
+export const emptyBusinessProfile: AIBusinessProfile = { company: "", brands: [], brandMode: "prefer", quotationTemplateId: "", contractTemplateId: "" };
+export const emptyBusinessContext: AIBusinessContext = { agentId: "", skillId: "", brands: [] };
+
 export type AIAgent = {
+  businessProfile: AIBusinessProfile;
   id: string;
   name: string;
   prompt: string;
@@ -750,15 +688,18 @@ export type AIAgent = {
 };
 
 export type AIAgentInput = {
+  businessProfile?: AIBusinessProfile;
   name: string;
   prompt: string;
   outputLabels: string[];
 };
 
 export function getAIAgents() {
-  return apiFetch<{ agents: Array<Omit<AIAgent, "outputLabels"> & { outputLabels?: string[] }> }>("/api/settings/ai/agents").then((payload) => ({
+  return apiFetch<{ skills: AIBusinessSkill[]; agents: Array<Omit<AIAgent, "outputLabels" | "businessProfile"> & { outputLabels?: string[]; businessProfile?: AIBusinessProfile }> }>("/api/settings/ai/agents").then((payload) => ({
+    skills: payload.skills || [],
     agents: payload.agents.map((agent) => ({
       ...agent,
+      businessProfile: { ...emptyBusinessProfile, ...agent.businessProfile, brands: agent.businessProfile?.brands || [] },
       outputLabels: Array.isArray(agent.outputLabels) ? agent.outputLabels : ["客户", "需求", "要求", "问题"],
     })),
   }));
@@ -969,6 +910,7 @@ export function removePushSubscription(endpoint: string) {
 // ---------------------------------------------------------------------------
 
 export type ServerDocument = {
+  revision: number;
   id: string;
   type: "quotation" | "contract";
   name: string;
@@ -1002,6 +944,8 @@ export function getDocument(id: string) {
 }
 
 export function saveDocument(document: {
+  aiOrigin?: { sessionId: string; messageId: string };
+  revision?: number;
   id?: string;
   type: "quotation" | "contract";
   name: string;
@@ -1014,8 +958,8 @@ export function saveDocument(document: {
   });
 }
 
-export function deleteDocument(id: string) {
-  return apiFetch<{ ok: boolean }>(`/api/documents/${encodeURIComponent(id)}`, {
+export function deleteDocument(id: string, revision?: number) {
+  return apiFetch<{ ok: boolean }>(`/api/documents/${encodeURIComponent(id)}${revision === undefined ? "" : `?revision=${revision}`}`, {
     method: "DELETE",
   });
 }
@@ -1079,4 +1023,54 @@ export function importLegacyOutgoing(form: FormData) {
 export function outgoingAttachmentURL(id: string) {
   const dot = id.lastIndexOf(".");
   return `/api/outbox/${encodeURIComponent(id.slice(0, dot))}/attachments/${encodeURIComponent(id.slice(dot + 1))}`;
+}
+
+export function aiChatAttachmentURL(accountEmail: string, id: string) {
+  return `/api/ai/attachments/${encodeURIComponent(id)}?accountEmail=${encodeURIComponent(accountEmail)}`;
+}
+
+export function uploadAIChatAttachment(accountEmail: string, file: File, signal?: AbortSignal) {
+  const body = new FormData();
+  body.set("accountEmail", accountEmail);
+  body.set("file", file);
+  return apiFetch<AIChatAttachment>("/api/ai/attachments", { method: "POST", body, signal });
+}
+
+export function deleteAIChatAttachment(accountEmail: string, id: string) {
+  return apiRequest(aiChatAttachmentURL(accountEmail, id), { method: "DELETE" }).then(response => {
+    if (!response.ok) throw new ApiError("Could not remove image", response.status);
+  });
+}
+
+export type AIChatRunState = { requestId: string; status: "pending" | "complete" | "failed"; userMessageId: string; retryable?: boolean };
+export type AIChatSession = {
+  currentDocument?: AIAgentDocumentCard & { revision?: number; newDraft?: boolean; savedDocumentMissing?: boolean; structuredContentUnavailable?: boolean };
+  hasMoreMessages?: boolean;
+  nextBefore?: number;
+  lastRun?: AIChatRunState;
+  id: string;
+  kind: "mail" | "document";
+  conversationId?: string;
+  title: string;
+  documentType: "quotation" | "contract";
+  businessContext: AIBusinessContext;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  messages: Array<Omit<ConversationAIChatMessage, "document" | "documentAction" | "toolCalls"> & { document?: AIAgentDocumentCard; documentAction?: AIAgentDocumentAction; toolCalls?: AIToolCall[] }>;
+};
+export function getAIChatSessions(accountEmail: string, cursor?: string) {
+  return apiFetch<{ sessions: AIChatSession[]; nextCursor?: string }>(`/api/ai/chat-sessions?${new URLSearchParams({ accountEmail, ...(cursor ? { cursor } : {}) })}`);
+}
+export function getAIChatSession(accountEmail: string, id: string, before?: number) {
+  return apiFetch<AIChatSession>(`/api/ai/chat-sessions/${encodeURIComponent(id)}?${new URLSearchParams({ accountEmail, ...(before === undefined ? {} : { before: String(before) }) })}`);
+}
+export function createAIChatSession(accountEmail: string, documentType: "quotation" | "contract", title: string) {
+  return apiFetch<AIChatSession>("/api/ai/chat-sessions", { method: "POST", body: JSON.stringify({ accountEmail, documentType, title }) });
+}
+export function updateAIChatSession(accountEmail: string, id: string, version: number, businessContext: AIBusinessContext) {
+  return apiFetch<AIChatSession>(`/api/ai/chat-sessions/${encodeURIComponent(id)}?${new URLSearchParams({ accountEmail })}`, { method: "PATCH", body: JSON.stringify({ version, businessContext }) });
+}
+export function deleteAIChatSession(accountEmail: string, id: string, version: number) {
+  return apiFetch<void>(`/api/ai/chat-sessions/${encodeURIComponent(id)}?${new URLSearchParams({ accountEmail, version: String(version) })}`, { method: "DELETE" });
 }

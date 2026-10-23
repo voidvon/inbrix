@@ -115,7 +115,12 @@ func TestConversationAIChatEndpoints(t *testing.T) {
 	}
 	convID := listBody.Conversations[0].ID
 
-	// 2. Initial GET should return empty messages
+	// Legacy history is lazily adopted into the account's server session.
+	savePayload := `{"messages":[{"id":"1","role":"user","content":"summary"},{"id":"2","role":"assistant","content":"here is summary"}]}`
+	if err := db.SaveConversationAIChat(ctx, account.ID, convID, `[{"id":"1","role":"user","content":"summary"},{"id":"2","role":"assistant","content":"here is summary"}]`); err != nil {
+		t.Fatal(err)
+	}
+	// 2. GET should return imported messages
 	getReq := httptest.NewRequest(http.MethodGet, "/api/conversations/"+convID+"/ai-chat", nil)
 	getResp, err := app.Test(getReq)
 	if err != nil {
@@ -131,20 +136,40 @@ func TestConversationAIChatEndpoints(t *testing.T) {
 	if err := json.NewDecoder(getResp.Body).Decode(&getBody); err != nil {
 		t.Fatal(err)
 	}
-	if !getBody.OK || len(getBody.Messages) != 0 {
-		t.Fatalf("expected ok=true and empty messages, got ok=%v, len=%d", getBody.OK, len(getBody.Messages))
+	if !getBody.OK || len(getBody.Messages) != 2 {
+		t.Fatalf("expected ok=true and imported messages, got ok=%v, len=%d", getBody.OK, len(getBody.Messages))
 	}
 
 	// 3. PUT to save AI chat messages
-	savePayload := `{"messages":[{"id":"1","role":"user","content":"summary"},{"id":"2","role":"assistant","content":"here is summary"}]}`
 	putReq := httptest.NewRequest(http.MethodPut, "/api/conversations/"+convID+"/ai-chat", strings.NewReader(savePayload))
 	putReq.Header.Set("Content-Type", "application/json")
 	putResp, err := app.Test(putReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if putResp.StatusCode != http.StatusOK {
+	if putResp.StatusCode != http.StatusConflict {
 		t.Fatalf("put status = %d", putResp.StatusCode)
+	}
+
+	// Changing the business selection must not overwrite a history saved by another tab.
+	contextReq := httptest.NewRequest(http.MethodPut, "/api/conversations/"+convID+"/ai-chat", strings.NewReader(`{"version":0,"businessContext":{"agentId":"","skillId":"quotation","brands":["A"]}}`))
+	contextReq.Header.Set("Content-Type", "application/json")
+	contextResp, err := app.Test(contextReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextResp.StatusCode != http.StatusOK {
+		t.Fatalf("context-only PUT status = %d", contextResp.StatusCode)
+	}
+	contextResp.Body.Close()
+	chatSession, err := db.CreateAIChatSession(ctx, user.ID, account.ID, "mail", convID, "Mail", "quotation")
+	business := chatSession.BusinessContext
+	if err != nil || business.SkillID != "quotation" || len(business.Brands) != 1 {
+		t.Fatalf("business context not saved: %+v %v", business, err)
+	}
+	stored, err := db.GetConversationAIChat(ctx, account.ID, convID)
+	if err != nil || !strings.Contains(stored, "here is summary") {
+		t.Fatalf("context PUT overwrote history: %s %v", stored, err)
 	}
 
 	// 4. GET again should return the 2 saved messages
@@ -180,6 +205,9 @@ func TestConversationAIChatEndpoints(t *testing.T) {
 			}},
 		}
 		encoded, _ := json.Marshal(legacy)
+		if err := db.DeleteAIChatSession(ctx, user.ID, account.ID, chatSession.ID, 1, false); err != nil {
+			t.Fatal(err)
+		}
 		if err := db.SaveConversationAIChat(ctx, account.ID, convID, string(encoded)); err != nil {
 			t.Fatal(err)
 		}
@@ -208,7 +236,7 @@ func TestConversationAIChatEndpoints(t *testing.T) {
 	})
 
 	// 5. DELETE to clear AI chat messages
-	delReq := httptest.NewRequest(http.MethodDelete, "/api/conversations/"+convID+"/ai-chat", nil)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/conversations/"+convID+"/ai-chat?version=0", nil)
 	delResp, err := app.Test(delReq)
 	if err != nil {
 		t.Fatal(err)

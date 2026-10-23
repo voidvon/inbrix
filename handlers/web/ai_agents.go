@@ -10,16 +10,18 @@ import (
 )
 
 type aiAgentInput struct {
-	Name         string   `json:"name"`
-	Prompt       string   `json:"prompt"`
-	OutputLabels []string `json:"outputLabels"`
+	BusinessProfile *mailstore.AIBusinessProfile `json:"businessProfile"`
+	Name            string                       `json:"name"`
+	Prompt          string                       `json:"prompt"`
+	OutputLabels    []string                     `json:"outputLabels"`
 }
 
 type aiAgentPublic struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Prompt       string   `json:"prompt"`
-	OutputLabels []string `json:"outputLabels"`
+	BusinessProfile mailstore.AIBusinessProfile `json:"businessProfile"`
+	ID              string                      `json:"id"`
+	Name            string                      `json:"name"`
+	Prompt          string                      `json:"prompt"`
+	OutputLabels    []string                    `json:"outputLabels"`
 }
 
 type aiTaskBindingInput struct {
@@ -40,7 +42,7 @@ type aiTaskBindingPublic struct {
 }
 
 func publicAIAgent(agent mailstore.AIAgentRecord) aiAgentPublic {
-	return aiAgentPublic{ID: agent.ID, Name: agent.Name, Prompt: agent.Prompt, OutputLabels: agent.OutputLabels}
+	return aiAgentPublic{BusinessProfile: agent.BusinessProfile, ID: agent.ID, Name: agent.Name, Prompt: agent.Prompt, OutputLabels: agent.OutputLabels}
 }
 
 func (h *AISettingsHandler) HandleListAgents(c *fiber.Ctx) error {
@@ -56,7 +58,7 @@ func (h *AISettingsHandler) HandleListAgents(c *fiber.Ctx) error {
 	for _, agent := range agents {
 		out = append(out, publicAIAgent(agent))
 	}
-	return c.JSON(fiber.Map{"agents": out})
+	return c.JSON(fiber.Map{"agents": out, "skills": builtInBusinessSkills})
 }
 
 func (h *AISettingsHandler) HandleCreateAgent(c *fiber.Ctx) error {
@@ -68,6 +70,18 @@ func (h *AISettingsHandler) HandleCreateAgent(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	profile := mailstore.AIBusinessProfile{}
+	if input.BusinessProfile != nil {
+		profile = *input.BusinessProfile
+	} else if c.Params("id") != "" {
+		if stored, e := h.mailDB.GetAIAgent(c.UserContext(), owner, c.Params("id")); e == nil {
+			profile = stored.BusinessProfile
+		}
+	}
+	profile, err = h.mailDB.ValidateAIBusinessProfile(c.UserContext(), owner, profile)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	input.OutputLabels, err = mailstore.NormalizeAIAgentOutputLabels(input.OutputLabels)
@@ -77,7 +91,7 @@ func (h *AISettingsHandler) HandleCreateAgent(c *fiber.Ctx) error {
 	if input.Name == "" || input.Prompt == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "agent name and prompt are required")
 	}
-	created, err := h.mailDB.CreateAIAgent(c.UserContext(), mailstore.AIAgentRecord{OwnerID: owner, Name: input.Name, Prompt: input.Prompt, OutputLabels: input.OutputLabels})
+	created, err := h.mailDB.CreateAIAgent(c.UserContext(), mailstore.AIAgentRecord{OwnerID: owner, Name: input.Name, Prompt: input.Prompt, OutputLabels: input.OutputLabels, BusinessProfile: profile})
 	if err != nil {
 		return fiber.NewError(fiber.StatusConflict, "this agent already exists")
 	}
@@ -93,6 +107,18 @@ func (h *AISettingsHandler) HandleUpdateAgent(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	profile := mailstore.AIBusinessProfile{}
+	if input.BusinessProfile != nil {
+		profile = *input.BusinessProfile
+	} else if c.Params("id") != "" {
+		if stored, e := h.mailDB.GetAIAgent(c.UserContext(), owner, c.Params("id")); e == nil {
+			profile = stored.BusinessProfile
+		}
+	}
+	profile, err = h.mailDB.ValidateAIBusinessProfile(c.UserContext(), owner, profile)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	input.OutputLabels, err = mailstore.NormalizeAIAgentOutputLabels(input.OutputLabels)
@@ -102,7 +128,7 @@ func (h *AISettingsHandler) HandleUpdateAgent(c *fiber.Ctx) error {
 	if input.Name == "" || input.Prompt == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "agent name and prompt are required")
 	}
-	updated, err := h.mailDB.UpdateAIAgent(c.UserContext(), mailstore.AIAgentRecord{ID: c.Params("id"), OwnerID: owner, Name: input.Name, Prompt: input.Prompt, OutputLabels: input.OutputLabels})
+	updated, err := h.mailDB.UpdateAIAgent(c.UserContext(), mailstore.AIAgentRecord{ID: c.Params("id"), OwnerID: owner, Name: input.Name, Prompt: input.Prompt, OutputLabels: input.OutputLabels, BusinessProfile: profile})
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
 	}

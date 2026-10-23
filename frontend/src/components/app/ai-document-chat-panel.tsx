@@ -1,5 +1,11 @@
+import { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
+import { useAIDocumentSync } from "../../lib/use-ai-document-sync";
+import { AIChatImages } from "./ai-chat-images";
+import type { AIChatAttachment } from "../../types";
+import { ConversationDocumentCard } from "./conversation-document-card";
+import { AIBusinessToolbar } from "./ai-business-controls";
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Tags,
   ArrowLeft,
@@ -22,28 +28,19 @@ import {
 } from "lucide-react";
 import { toast } from "../../lib/toast";
 import {
-  chatWithAIAgent,
+  chatWithAIAgent, ApiError,
   getAIAgents,
+  getAITaskBindings,
+  createAIChatSession, deleteAIChatSession, getAIChatSessions, getAIChatSession, updateAIChatSession,
+  type AIBusinessContext,
   type AIAgentChatRequest,
 } from "../../lib/api";
 import { copyToClipboard } from "../../lib/email-format";
 import {
-  type AIDocumentGeneratedData,
-  type AIDocumentMessage,
-  type AIDocumentSession,
-  convertGeneratedToStoredDocument,
-  createNewAIDocumentSession,
-  deleteAIDocumentSession,
-  getActiveSessionId,
-  readAIDocumentSessions,
-  saveMessageToSession,
-  setActiveSessionId,
-  updateSessionAgent,
+  type AIDocumentGeneratedData, type AIDocumentMessage,
+  resolveGeneratedDocument, createInitialSession, toAIDocumentSession, hasLegacyAIDocumentSessions, exportLegacyAIDocumentSessions,
 } from "../../lib/ai-document-storage";
 import {
-  cleanDocumentVariablesForConversation,
-  documentTemplateHTML,
-  isSellerConcept,
   persistServerDocument,
   type DocumentTemplate,
   type StoredDocument,
@@ -86,14 +83,70 @@ export function AIDocumentChatPanel({
   className?: string;
 }) {
   const isZh = copy === zh;
-  const [sessions, setSessions] = useState<AIDocumentSession[]>(() => readAIDocumentSessions(copy));
-  const [activeId, setActiveId] = useState<string>(() => getActiveSessionId() || sessions[0]?.id || "default-ai-session");
+  const queryClient = useQueryClient();
+  useAIDocumentSync();
+  const sessionsQuery = useInfiniteQuery({
+    queryKey: ["ai-document-sessions", accountEmail],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => getAIChatSessions(accountEmail, pageParam),
+    getNextPageParam: page => page.nextCursor,
+    refetchInterval: query => query.state.data?.pages.some(page => page.sessions.some(s => s.lastRun?.status === "pending")) ? 3000 : false,
+    enabled: !!accountEmail,
+  });
+  const summaries = [...new Map((sessionsQuery.data?.pages.flatMap(page => page.sessions) || []).map(session => [session.id, session])).values()];
+  const [activeId, setActiveId] = useState("");
+  const selectedId = activeId || summaries[0]?.id || "";
+  const sessionQuery = useQuery({
+    queryKey: ["ai-document-session", accountEmail, selectedId],
+    queryFn: () => getAIChatSession(accountEmail, selectedId),
+    enabled: !!accountEmail && !!selectedId,
+    refetchInterval: query => query.state.data?.lastRun?.status === "pending" ? 3000 : false,
+  });
+  const sessions = summaries.map(session => toAIDocumentSession(session, copy));
+  const requestRef = useRef<AbortController | null>(null);
+  const retryRef = useRef<{ key: string; payload: AIAgentChatRequest } | null>(null);
+  useEffect(() => {
+    const run = sessionQuery.data?.lastRun;
+    const pending = retryRef.current?.payload;
+    if (run?.status === "failed" && !run.retryable && (run.requestId === pending?.requestId || run.requestId === pending?.retryRequestId)) retryRef.current = null;
+  }, [sessionQuery.data]);
+  const activeAccount = useRef(accountEmail); activeAccount.current = accountEmail;
   const [input, setInput] = useState("");
+  const imageAttachments = useAIChatAttachments(accountEmail, "document-chat", isZh);
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const currentSession = sessions.find((s) => s.id === activeId) || sessions[0];
+  const currentSession = sessionQuery.data ? toAIDocumentSession(sessionQuery.data, copy) : sessions.find(s => s.id === selectedId) || createInitialSession(copy);
+  const invalidateSession = async (scope: string, id?: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["ai-document-sessions", scope] }),
+      queryClient.invalidateQueries({ queryKey: ["ai-document-session", scope, ...(id ? [id] : [])] }),
+    ]);
+  };
+
+  useEffect(() => {
+    setActiveId(""); setInput(""); retryRef.current = null;
+    return () => { requestRef.current?.abort(); requestRef.current = null; };
+  }, [accountEmail]);
+
+  useEffect(() => {
+    const available = sessionsQuery.data?.pages.flatMap(page => page.sessions);
+    if (available && !available.some(session => session.id === activeId)) setActiveId(available[0]?.id || "");
+  }, [sessionsQuery.data, activeId]);
+
+  useEffect(() => {
+    const summary = sessionsQuery.data?.pages.flatMap(page => page.sessions).find(s => s.id === selectedId);
+    if (summary && sessionQuery.data && summary.version > sessionQuery.data.version) {
+      void queryClient.invalidateQueries({ queryKey: ["ai-document-session", accountEmail, selectedId] });
+    }
+  }, [sessionsQuery.data, sessionQuery.data, queryClient, accountEmail, selectedId]);
+
+  const olderMessages = useMutation({
+    mutationFn: async () => ({ scope: accountEmail, id: selectedId, page: await getAIChatSession(accountEmail, selectedId, sessionQuery.data?.nextBefore) }),
+    onSuccess: ({ scope, id, page }) => queryClient.setQueryData(["ai-document-session", scope, id], (previous: typeof sessionQuery.data) => previous?.version === page.version ? { ...previous, messages: [...page.messages, ...previous.messages], hasMoreMessages: page.hasMoreMessages, nextBefore: page.nextBefore } : previous),
+    onError: (err: Error) => toast.error(err.message),
+  });
 
   // Fetch user configured AI Agents from backend
   const { data: agentsData } = useQuery({
@@ -102,7 +155,10 @@ export function AIDocumentChatPanel({
     staleTime: 60_000,
   });
   const agents = agentsData?.agents || [];
-  const currentAgent = agents.find((a) => a.id === currentSession?.agentId);
+  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings });
+  const defaultAgentId = bindings.data?.bindings.find(b => b.accountEmail === accountEmail && b.taskType === "email_draft")?.agentId || "";
+  const businessContext = { ...(currentSession.businessContext || { agentId: currentSession.agentId || "", skillId: "", brands: [] }), agentId: currentSession.agentId || defaultAgentId };
+  const currentAgent = agents.find((a) => a.id === businessContext.agentId);
 
   const scrollToBottom = () => {
     window.requestAnimationFrame(() => {
@@ -114,43 +170,47 @@ export function AIDocumentChatPanel({
 
   useEffect(() => {
     scrollToBottom();
-  }, [currentSession?.messages?.length, activeId]);
+  }, [currentSession.messages.at(-1)?.id, activeId]);
 
   const selectSession = (id: string) => {
-    setActiveId(id);
-    setActiveSessionId(id);
+    imageAttachments.discard();
+    setActiveId(id); setInput(""); retryRef.current = null;
   };
-
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
-
-  const handleNewSession = (type: DocumentTemplate = "quotation") => {
-    const s = createNewAIDocumentSession(copy, type);
-    setSessions(readAIDocumentSessions(copy));
-    setActiveId(s.id);
-  };
-
-  const handleDeleteSession = (sessionId: string) => {
-    setDeleteSessionId(sessionId);
-  };
-
-  const confirmDeleteSession = () => {
-    if (!deleteSessionId) return;
-    const remaining = deleteAIDocumentSession(copy, deleteSessionId);
-    setSessions(remaining);
-    setActiveId(remaining[0]?.id || "default-ai-session");
-    setDeleteSessionId(null);
-    toast.success(isZh ? "对话记录已删除" : "Chat session deleted");
-  };
-
-  const handleSelectAgent = (agentId?: string) => {
-    const updated = updateSessionAgent(copy, currentSession.id, agentId);
-    setSessions(updated);
-    toast.success(
-      isZh
-        ? `已切换智能体角色为：${agents.find((a) => a.id === agentId)?.name || "默认文档助手"}`
-        : `Switched agent persona`
-    );
-  };
+  const sessionMutation = useMutation({
+    mutationFn: async (action: { type: "create"; documentType: DocumentTemplate } | { type: "delete"; id: string } | { type: "business"; value: AIBusinessContext }) => {
+      const scope = accountEmail;
+      let id = currentSession.id;
+      if (!id || action.type === "create") {
+        const documentType = action.type === "create" ? action.documentType : currentSession.documentType;
+        const session = await createAIChatSession(scope, documentType, isZh ? "文档助手对话" : "Document Assistant");
+        id = session.id;
+        queryClient.setQueryData(["ai-document-session", scope, id], session);
+        queryClient.setQueryData(["ai-document-sessions", scope], (previous: typeof sessionsQuery.data) => previous ? { ...previous, pages: previous.pages.map((page, index) => index === 0 ? { ...page, sessions: [session, ...page.sessions] } : page) } : { pages: [{ sessions: [session] }], pageParams: [undefined] });
+      }
+      if (action.type === "delete") {
+        const session = sessions.find(s => s.id === action.id);
+        if (session) await deleteAIChatSession(scope, session.id, session.version);
+        id = sessions.find(s => s.id !== action.id)?.id || "";
+      } else if (action.type === "business") {
+        await updateAIChatSession(scope, id, currentSession.id ? currentSession.version : 0, action.value);
+      }
+      return { scope, id, type: action.type };
+    },
+    onSuccess: async ({ scope, id, type }) => {
+      if (activeAccount.current === scope) {
+        if (type !== "business") { imageAttachments.discard(); setInput(""); }
+        setActiveId(id); setDeleteSessionId(null); retryRef.current = null;
+      }
+      if (type === "delete") await queryClient.invalidateQueries({ queryKey: ["ai-document-sessions", scope] });
+      else await invalidateSession(scope, id);
+    },
+    onError: (err: Error) => { toast.error(err.message); void sessionsQuery.refetch(); },
+  });
+  const handleNewSession = (documentType: DocumentTemplate = "quotation") => sessionMutation.mutate({ type: "create", documentType });
+  const handleDeleteSession = (id: string) => { if (id) setDeleteSessionId(id); };
+  const confirmDeleteSession = () => { if (deleteSessionId) sessionMutation.mutate({ type: "delete", id: deleteSessionId }); };
+  const handleSelectAgent = (agentId?: string) => sessionMutation.mutate({ type: "business", value: { ...businessContext, agentId: agentId || "" } });
 
   const toggleToolExpand = (msgId: string) => {
     setExpandedTools((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
@@ -163,206 +223,105 @@ export function AIDocumentChatPanel({
 
   // Agent Chat Mutation with Tool Calling support
   const mutation = useMutation({
-    mutationFn: async (instructionText: string) => {
+    onMutate: () => ({ scope: accountEmail }),
+    mutationFn: async ({ text, attachments, retryRequestId }: { text: string; attachments: AIChatAttachment[]; retryRequestId?: string }) => {
       if (!accountEmail) {
         throw new Error(isZh ? "未检测到登录账户邮箱，请先配置邮箱账户" : "Account email required");
       }
 
-      const text = instructionText.trim();
-      const lastDocMsg = [...(currentSession?.messages || [])].reverse().find((m) => m.document);
-      const prevDoc = lastDocMsg?.document;
-
-      // Identify whether this is the start of the conversation or drafting a brand new document
-      const userMsgCount = (currentSession?.messages || []).filter((m) => m.role === "user").length;
-      const isStartOfConversation = userMsgCount === 0;
-      const isExplicitNewDraft =
-        /(?:重新|起草|制作|生成|新建|创建|开一份|来一份).*(?:报价|合同|协议)/i.test(text) &&
-        !/(?:修改|调整|基于|在.*基础)/i.test(text);
-
-      let activeDocForAgent = prevDoc;
-      if (activeDocForAgent && (isStartOfConversation || isExplicitNewDraft)) {
-        // Clean out pre-filled template data (products, customer info, memos) while strictly PRESERVING Seller info!
-        activeDocForAgent = cleanDocumentVariablesForConversation(activeDocForAgent);
+      const scope = accountEmail;
+      let sessionId = currentSession.id;
+      let version = currentSession.version;
+      if (!sessionId) {
+        const session = await createAIChatSession(scope, currentSession.documentType, currentSession.title);
+        sessionId = session.id; version = session.version;
+        if (activeAccount.current === scope) setActiveId(sessionId);
+        queryClient.setQueryData(["ai-document-session", scope, sessionId], session);
+        queryClient.setQueryData(["ai-document-sessions", scope], (previous: typeof sessionsQuery.data) => previous ? { ...previous, pages: previous.pages.map((page, index) => index === 0 ? { ...page, sessions: [session, ...page.sessions] } : page) } : { pages: [{ sessions: [session] }], pageParams: [undefined] });
       }
+      const key = JSON.stringify([scope, sessionId, text, attachments]);
+      const payload: AIAgentChatRequest = retryRequestId ? { accountEmail: scope, sessionId, retryRequestId, messages: [] } : retryRef.current?.key === key ? retryRef.current.payload : {
+        accountEmail: scope, sessionId, requestId: crypto.randomUUID(), version,
+        businessContext, messages: [{ role: "user", content: text, attachments }],
 
-      // Prepare previous conversation history for the AI Agent
-      const apiMessages: AIAgentChatRequest["messages"] = (currentSession?.messages || [])
-        .filter((m) => m.id !== "welcome-msg")
-        .map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolCalls: m.toolCalls,
-          document: m.document
-            ? {
-                id: m.document.id,
-                type: m.document.type,
-                title: m.document.name,
-                counterparty: m.document.company || "",
-                items: m.document.items,
-                values: m.document.values,
-              }
-            : undefined,
-        }));
-
-      // Append current user message
-      apiMessages.push({ role: "user", content: text });
-
+      };
+      retryRef.current = { key, payload };
+      const controller = new AbortController(); requestRef.current = controller;
       return await aiState.run(async () => {
-        const res = await chatWithAIAgent({
-          accountEmail,
-          agentId: currentSession.agentId,
-          messages: apiMessages,
-          activeDocument: activeDocForAgent
-            ? {
-                type: activeDocForAgent.type,
-                title: activeDocForAgent.name,
-                counterparty: activeDocForAgent.company || "",
-                items: activeDocForAgent.items,
-                values: activeDocForAgent.values,
-              }
-            : undefined,
-        });
-
+        const res = await chatWithAIAgent(payload, { signal: controller.signal });
         if (res.toolCalls && res.toolCalls.length > 0) {
           const first = res.toolCalls[0];
           aiState.setToolCall(first.name, first.summary);
         }
 
-        return { res, text, prevDoc };
+        return { res, scope, sessionId, retried: !!retryRequestId };
       });
     },
-    onSuccess: ({ res, prevDoc }) => {
-      let generatedDoc: AIDocumentGeneratedData | undefined = undefined;
-
-      if (res.document) {
-        const doc = res.document;
-        const docType: DocumentTemplate = doc.type === "contract" ? "contract" : "quotation";
-        const company = doc.counterparty || (isZh ? "客户单位" : "Client");
-        const title =
-          doc.title ||
-          `${company} ${docType === "quotation" ? (isZh ? "标准报价单" : "Quotation") : (isZh ? "购销合同" : "Sales Contract")}`;
-
-        // Ensure Seller information from previous document or template is preserved
-        const mergedValues: Record<string, string> = { ...(doc.values || {}) };
-        if (prevDoc?.values) {
-          for (const [k, v] of Object.entries(prevDoc.values)) {
-            if (isSellerConcept(k) && !mergedValues[k]) {
-              mergedValues[k] = v;
-            }
-          }
-        }
-
-        generatedDoc = {
-          id: doc.id || crypto.randomUUID(),
-          type: docType,
-          name: title,
-          html: doc.html || prevDoc?.html || documentTemplateHTML(docType, copy),
-          company,
-          values: mergedValues,
-          items: doc.items,
-          terms: doc.terms,
-          notes: doc.notes,
-          subtotal: doc.subtotal,
-          taxAmount: doc.taxAmount,
-          total: doc.total,
-          summary: doc.items?.length
-            ? `${doc.items.length} ${isZh ? "项产品明细" : "items"}`
-            : undefined,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-
-      const cleanedContent = sanitizeAssistantContent(res.content, res.toolCalls, isZh);
-      const assistantMsg: AIDocumentMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: cleanedContent,
-        createdAt: new Date().toISOString(),
-        toolCalls: res.toolCalls,
-        document: generatedDoc,
-      };
-
-      const updatedSessions = saveMessageToSession(copy, currentSession.id, assistantMsg);
-      setSessions(updatedSessions);
-
-      if (res.toolCalls && res.toolCalls.length > 0) {
-        toast.success(
-          isZh
-            ? `已完成 ${res.toolCalls.length} 个智能工具调用`
-            : `Executed ${res.toolCalls.length} tool calls`
-        );
-      } else if (generatedDoc) {
-        toast.success(isZh ? "文档已成功生成并记录" : "Document generated and saved to chat");
-      }
+    onSuccess: async ({ scope, sessionId, retried }) => {
+      if (activeAccount.current === scope) { if (!retried) imageAttachments.clear(); retryRef.current = null; }
+      await invalidateSession(scope, sessionId);
     },
-    onError: (err) => {
-      const errMsg = err instanceof Error ? err.message : copy.aiDocumentFailed;
-      const assistantMsg: AIDocumentMessage = {
-        id: `assistant-err-${Date.now()}`,
-        role: "assistant",
-        content: isZh
-          ? `抱歉，Agent 执行过程中遇到错误：${errMsg}。请检查 AI 设置或换个更具体的描述重试。`
-          : `Agent execution failed: ${errMsg}`,
-        createdAt: new Date().toISOString(),
-        error: errMsg,
-      };
-      const updatedSessions = saveMessageToSession(copy, currentSession.id, assistantMsg);
-      setSessions(updatedSessions);
-      toast.error(errMsg);
+    onError: async (err: Error, { text, retryRequestId }, context) => {
+      if (activeAccount.current !== context?.scope) return;
+      if (err.name !== "AbortError") { if (!retryRequestId) setInput(text); toast.error(err.message); }
+      const fresh = await sessionQuery.refetch();
+      await sessionsQuery.refetch();
+      const payload = retryRef.current?.payload;
+      const run = fresh.data?.lastRun;
+      if (err instanceof ApiError && err.status === 409 && (run?.requestId !== payload?.requestId || run?.status === "failed" && !run.retryable)) retryRef.current = null;
     },
   });
-
+  const lastRun = sessionQuery.data?.lastRun;
+  const submitted = mutation.variables;
+  const accepted = lastRun?.requestId === (retryRef.current?.payload.requestId || retryRef.current?.payload.retryRequestId);
+  const displayedMessages: AIDocumentMessage[] = [...currentSession.messages,
+    ...(mutation.isPending && submitted && !accepted ? [{ id: "pending-user", role: "user" as const, content: submitted.text, attachments: submitted.attachments, createdAt: new Date().toISOString() }] : []),
+  ];
+  const busy = lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
   const handleSend = () => {
-    const trimmed = input.trim();
-    if (!trimmed || mutation.isPending) return;
-
-    const userMsg: AIDocumentMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: trimmed,
-      createdAt: new Date().toISOString(),
-    };
-
-    saveMessageToSession(copy, currentSession.id, userMsg);
-    setSessions(readAIDocumentSessions(copy));
-    setInput("");
-
-    mutation.mutate(trimmed);
+    const text = input.trim();
+    if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || busy) return;
+    imageAttachments.retain();
+    setInput(""); mutation.mutate({ text, attachments: imageAttachments.attachments });
   };
 
   const handleSaveToDocs = async (doc: AIDocumentGeneratedData) => {
-    const storedDoc = convertGeneratedToStoredDocument(doc);
     try {
-      await persistServerDocument(storedDoc);
+      const storedDoc = await resolveGeneratedDocument(doc);
+      if (!storedDoc.revision) await persistServerDocument(storedDoc);
       toast.success(copy.aiDocumentSavedToDocuments);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : copy.loadFailed);
     }
   };
 
-  const handleOpenInEditor = (doc: AIDocumentGeneratedData) => {
-    const stored = convertGeneratedToStoredDocument(doc);
-    onOpenDocument?.(stored);
+  const handleOpenInEditor = async (doc: AIDocumentGeneratedData) => {
+    try {
+      const stored = await resolveGeneratedDocument(doc);
+      onOpenDocument?.(stored);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : copy.loadFailed);
+    }
   };
 
   const quickPrompts = [
     {
       label: isZh ? "🔍 检索邮件制作报价单" : "🔍 Search email to quote",
       text: isZh
-        ? "请检索我最近关于轴承/减压阀的客户询价邮件，核算价格并生成一份正式报价单"
-        : "Search my emails for valve inquiries, calculate pricing and generate a quotation",
+        ? "请分析相关客户询价邮件，列出每项产品的品牌、规格、数量及缺失参数，再查询产品库匹配产品与价格，制作待审核的报价草稿"
+        : "Analyze the customer inquiry emails, identify brands, specifications, quantities and missing requirements, then verify catalog products/prices and draft a quotation",
     },
     {
       label: copy.aiDocumentQuickQuotation,
       text: isZh
-        ? "为【上海宝钢工程】制作一份标准报价单：减压阀 DP27 5台（单价4,500元），疏水阀 TD42 10台（单价380元），按13%税率精确核算，交期15天"
-        : "Draft a quotation for Baosteel: 5 valves DP27 ($650 each), 10 steam traps TD42 ($55 each), 13% tax, 15 days lead time",
+        ? "请根据我在对话中提供的客户需求制作报价草稿。先核对产品规格和价格，缺少品牌、规格、数量或商业条款时请先列出待确认信息。"
+        : "Draft a quotation from the requirements in this conversation. Verify specifications/prices and identify missing brands, specifications, quantities or terms first.",
     },
     {
       label: copy.aiDocumentQuickContract,
       text: isZh
-        ? "为【中石化物资部】起草一份标准购销合同：预付30%，到货验收合格后支付65%，留5%质保金，质保期12个月，总金额15.8万元"
-        : "Draft a sales contract: 30% advance payment, 65% on delivery, 5% retention, 12 months warranty",
+        ? "请基于我指定的已保存报价单起草销售合同，沿用报价明细和约定价格；如有多个候选报价，请让我选择，并列出需要确认的合同条款。"
+        : "Draft a sales contract from the saved quotation I designate, retaining its line items and agreed prices. Ask me to choose if ambiguous and identify missing contract terms.",
     },
     {
       label: copy.aiDocumentQuickUpdateTerms,
@@ -396,13 +355,13 @@ export function AIDocumentChatPanel({
             <Sparkles className="size-4" />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-sm font-semibold">{copy.aiDocument}</h2>
-              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="truncate text-sm font-semibold"><span className="sm:hidden">AI</span><span className="hidden sm:inline">{copy.aiDocument}</span></h2>
+              <Badge variant="secondary" className="hidden sm:inline-flex px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
                 Agent
               </Badge>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{currentSession?.title || copy.aiDocumentSubtitle}</p>
+            <p className="hidden sm:block truncate text-xs text-muted-foreground">{currentSession?.title || copy.aiDocumentSubtitle}</p>
           </div>
         </div>
 
@@ -426,6 +385,7 @@ export function AIDocumentChatPanel({
               </div>
               <DropdownMenuItem
                 className={cn("cursor-pointer gap-2 text-xs", !currentSession?.agentId && "bg-muted font-medium")}
+                disabled={busy}
                 onClick={() => handleSelectAgent(undefined)}
               >
                 <Sparkles className="size-3.5 text-indigo-500" />
@@ -436,7 +396,8 @@ export function AIDocumentChatPanel({
                 <DropdownMenuItem
                   key={ag.id}
                   className={cn("cursor-pointer gap-2 text-xs", currentSession?.agentId === ag.id && "bg-muted font-medium")}
-                  onClick={() => handleSelectAgent(ag.id)}
+                  disabled={busy}
+                onClick={() => handleSelectAgent(ag.id)}
                 >
                   <Bot className="size-3.5 text-primary" />
                   <span className="truncate">{ag.name}</span>
@@ -449,7 +410,7 @@ export function AIDocumentChatPanel({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs" aria-label={copy.aiDocumentHistory}>
                   <History className="size-3.5" />
                   <span className="hidden sm:inline">{copy.aiDocumentHistory}</span>
                 </Button>
@@ -460,16 +421,19 @@ export function AIDocumentChatPanel({
               {sessions.map((s) => (
                 <DropdownMenuItem
                   key={s.id}
-                  className={cn("flex cursor-pointer items-center justify-between gap-2 px-2 py-1.5 text-xs", s.id === activeId && "bg-muted font-medium")}
-                  onClick={() => selectSession(s.id)}
+                  className={cn("flex cursor-pointer items-center justify-between gap-2 px-2 py-1.5 text-xs", s.id === currentSession.id && "bg-muted font-medium")}
+                  disabled={busy}
+                    onClick={() => selectSession(s.id)}
                 >
                   <span className="min-w-0 flex-1 truncate">{s.title}</span>
                   <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(s.updatedAt)}</span>
                 </DropdownMenuItem>
               ))}
+              {sessionsQuery.hasNextPage && <DropdownMenuItem closeOnClick={false} disabled={sessionsQuery.isFetchingNextPage} onClick={() => void sessionsQuery.fetchNextPage()}>{isZh ? "加载更多会话" : "Load more chats"}</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="cursor-pointer gap-2 text-xs text-primary font-medium"
+                disabled={busy}
                 onClick={() => handleNewSession("quotation")}
               >
                 <Plus className="size-3.5" />
@@ -482,7 +446,8 @@ export function AIDocumentChatPanel({
             variant="ghost"
             size="sm"
             className="h-8 gap-1 px-2 text-xs"
-            onClick={() => handleNewSession(currentSession?.documentType || "quotation")}
+            disabled={busy}
+                onClick={() => handleNewSession(currentSession?.documentType || "quotation")}
             title={copy.aiDocumentNewChat}
           >
             <Plus className="size-3.5" />
@@ -493,6 +458,7 @@ export function AIDocumentChatPanel({
             variant="ghost"
             size="icon"
             className="size-8 text-muted-foreground hover:text-destructive"
+            disabled={busy}
             onClick={() => handleDeleteSession(currentSession.id)}
             aria-label={copy.aiDocumentClearChat}
             title={copy.aiDocumentClearChat}
@@ -502,10 +468,22 @@ export function AIDocumentChatPanel({
         </div>
       </header>
 
+      {hasLegacyAIDocumentSessions() && (
+        <div className="flex items-center justify-between gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+          <span>{isZh ? "此设备有未绑定邮箱的旧记录，可导出保留。" : "Unassigned legacy chats are available for export."}</span>
+          <Button size="sm" variant="ghost" onClick={exportLegacyAIDocumentSessions}>{isZh ? "导出旧记录" : "Export legacy chats"}</Button>
+        </div>
+      )}
+      {sessionsQuery.isError && <div role="alert" className="px-4 py-2 text-sm text-destructive">{sessionsQuery.error.message}<Button variant="ghost" onClick={() => void sessionsQuery.refetch()}>{isZh ? "重试" : "Retry"}</Button></div>}
+      {!mutation.isPending && lastRun?.status === "pending" && <p role="status" className="px-4 py-2 text-xs text-muted-foreground">{isZh ? "会话正在生成回复…" : "A reply is being generated…"}</p>}
+      {sessionQuery.isError && <div role="alert" className="px-4 py-2 text-sm text-destructive">{sessionQuery.error.message}<Button variant="ghost" onClick={() => void sessionQuery.refetch()}>{isZh ? "重试" : "Retry"}</Button></div>}
+      {lastRun?.retryable && <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground"><span>{isZh ? "上次回复未完成，可继续重试。" : "The last reply failed. You can retry it."}</span><Button variant="outline" size="sm" disabled={busy} onClick={() => mutation.mutate({ text: "", attachments: [], retryRequestId: lastRun.requestId })}>{isZh ? "重试上次回复" : "Retry last reply"}</Button></div>}
       {/* Messages Scroll Area */}
+      <AIBusinessToolbar copy={copy} accountEmail={accountEmail} value={businessContext} disabled={busy} onChange={value => sessionMutation.mutate({ type: "business", value })} />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        {sessionQuery.data?.hasMoreMessages && <Button variant="ghost" size="sm" disabled={olderMessages.isPending} onClick={() => olderMessages.mutate()}>{isZh ? "加载更早消息" : "Load earlier messages"}</Button>}
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {currentSession?.messages?.map((msg) => (
+          {displayedMessages.map((msg) => (
             <div
               key={msg.id}
               className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
@@ -589,8 +567,9 @@ export function AIDocumentChatPanel({
                   </div>
                 )}
 
+                <AIChatImages attachments={msg.attachments} accountEmail={accountEmail} />
                 {/* Assistant or User Content Bubble */}
-                <div
+                {(msg.role === "assistant" || Boolean(msg.content.trim())) && <div
                   className={cn(
                     "min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-2xs break-words select-text cursor-text",
                     msg.role === "user"
@@ -609,9 +588,10 @@ export function AIDocumentChatPanel({
                   ) : (
                     <p>{msg.content}</p>
                   )}
-                </div>
+                </div>}
 
                 {/* Interactive Document Preview Card */}
+                {msg.documentAction && <ConversationDocumentCard copy={copy} accountEmail={accountEmail} action={msg.documentAction} />}
                 {msg.document && (
                   <div className="mt-2.5 w-full rounded-xl border bg-card p-3.5 shadow-xs transition-shadow hover:shadow-md">
                     <div className="flex items-start justify-between gap-2 border-b pb-2.5">
@@ -687,7 +667,7 @@ export function AIDocumentChatPanel({
                         type="button"
                         size="sm"
                         className="h-7 gap-1 px-2.5 text-xs shadow-none cursor-pointer"
-                        onClick={() => handleOpenInEditor(msg.document!)}
+                        onClick={() => void handleOpenInEditor(msg.document!)}
                       >
                         <ExternalLink className="size-3" />
                         {copy.aiDocumentOpenInEditor}
@@ -763,12 +743,14 @@ export function AIDocumentChatPanel({
 
           {/* Input Box */}
           <AIChatInput
+            imageAttachments={imageAttachments}
+            isZh={isZh}
             textareaRef={textareaRef}
             value={input}
             onChange={setInput}
             onSend={handleSend}
             placeholder={copy.aiDocumentPromptPlaceholder}
-            disabled={mutation.isPending}
+            disabled={busy}
             isPending={mutation.isPending}
             sendLabel={copy.send}
             hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}

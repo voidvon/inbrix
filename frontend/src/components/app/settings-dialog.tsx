@@ -1,3 +1,5 @@
+import { AccountBrandSettings, AIBusinessProfileFields } from "./ai-business-controls";
+import { emptyBusinessProfile, type AIBusinessProfile } from "../../lib/api";
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -457,6 +459,7 @@ export function AgentSettings({ copy }: { copy: Copy }) {
   useQueryErrorToast(agents.error, copy.loadFailed, "ai-agents-error", () => void agents.refetch(), copy.retry);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AIAgent | null>(null);
+  const [businessProfile, setBusinessProfile] = useState<AIBusinessProfile>(emptyBusinessProfile);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [outputLabels, setOutputLabels] = useState<string[]>(["客户", "需求", "要求", "问题"]);
@@ -473,8 +476,8 @@ export function AgentSettings({ copy }: { copy: Copy }) {
     onSuccess: () => { setOpen(false); setEditing(null); setInvalid({}); toast.success(copy.agentUpdated); refresh(); },
     onError: (value) => toastError(value, copy.loadFailed),
   });
-  const openAdd = () => { setEditing(null); setName(""); setPrompt(""); setOutputLabels(["客户", "需求", "要求", "问题"]); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
-  const openEdit = (agent: AIAgent) => { setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setOutputLabels(agent.outputLabels); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
+  const openAdd = () => { setBusinessProfile(emptyBusinessProfile); setEditing(null); setName(""); setPrompt(""); setOutputLabels(["客户", "需求", "要求", "问题"]); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
+  const openEdit = (agent: AIAgent) => { setBusinessProfile(agent.businessProfile); setEditing(agent); setName(agent.name); setPrompt(agent.prompt); setOutputLabels(agent.outputLabels); outputLabelDraftRef.current = ""; setInvalid({}); setOpen(true); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const pendingLabels = splitOutputLabels(outputLabelDraftRef.current);
@@ -496,7 +499,7 @@ export function AgentSettings({ copy }: { copy: Copy }) {
       return;
     }
     setInvalid({});
-    const input = { name: name.trim(), prompt: prompt.trim(), outputLabels: submittedLabels };
+    const input = { name: name.trim(), prompt: prompt.trim(), outputLabels: submittedLabels, businessProfile };
     if (editing) update.mutate({ id: editing.id, input });
     else create.mutate(input);
   };
@@ -510,7 +513,7 @@ export function AgentSettings({ copy }: { copy: Copy }) {
       <div className="mt-5 overflow-hidden rounded-lg border">
         <Table className="min-w-[36rem] table-fixed">
           <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[28%] px-4">{copy.agentName}</TableHead><TableHead className="px-4">{copy.agentPrompt}</TableHead><TableHead className="w-20 px-4 text-right">{copy.actions}</TableHead></TableRow></TableHeader>
-          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : agents.isError ? null : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
+          <TableBody>{agents.isPending ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.loading}</TableCell></TableRow> : agents.data?.agents.length ? agents.data.agents.map((agent) => <TableRow key={agent.id}><TableCell className="px-4 py-3 font-medium"><span className="block truncate">{agent.name}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{agent.businessProfile.company}</span></TableCell><TableCell className="px-4 py-3 text-muted-foreground whitespace-normal"><p className="line-clamp-2 whitespace-pre-line">{agent.prompt}</p><p className="mt-1 truncate text-xs" title={agent.outputLabels.join(" · ")}>{agent.outputLabels.join(" · ")}</p></TableCell><TableCell className="px-4 py-3"><div className="flex justify-end"><Button variant="ghost" size="icon" onClick={() => openEdit(agent)} aria-label={copy.editAgent} title={copy.editAgent}><Pencil /></Button></div></TableCell></TableRow>) : agents.isError ? null : <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={3}>{copy.noAgents}</TableCell></TableRow>}</TableBody>
         </Table>
       </div>
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setEditing(null); }}>
@@ -518,6 +521,7 @@ export function AgentSettings({ copy }: { copy: Copy }) {
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editing ? copy.editAgent : copy.addAgent}</DialogTitle><DialogDescription>{copy.agentSettingsDescription}</DialogDescription></DialogHeader>
           <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" noValidate onSubmit={submit}>
             <div className="grid gap-2"><Label htmlFor="agent-name">{copy.agentName}</Label><Input id="agent-name" value={name} aria-invalid={invalid.name} onChange={(event) => { setName(event.target.value); if (invalid.name) setInvalid((current) => ({ ...current, name: false })); }} disabled={pending} required /></div>
+            <AIBusinessProfileFields copy={copy} value={businessProfile} onChange={setBusinessProfile} disabled={pending} />
             <div className="grid gap-2"><div><Label>{copy.agentOutputLabels}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.agentOutputLabelsDescription}</p></div><AgentOutputLabelInput copy={copy} labels={outputLabels} onChange={setOutputLabels} draftRef={outputLabelDraftRef} disabled={pending} /></div>
             <div className="grid gap-2"><Label htmlFor="agent-prompt">{copy.agentPrompt}</Label><Textarea id="agent-prompt" className="min-h-36 sm:min-h-48 resize-y" value={prompt} aria-invalid={invalid.prompt} onChange={(event) => { setPrompt(event.target.value); if (invalid.prompt) setInvalid((current) => ({ ...current, prompt: false })); }} disabled={pending} required /></div>
             <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={pending}>{pending ? copy.savingAgent : editing ? copy.editAgent : copy.addAgent}</Button></DialogFooter>
@@ -1276,6 +1280,7 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
               <Label className="grid gap-1.5">{copy.smtpPort}<Input type="number" min={1} max={65535} value={form.smtp_port} aria-invalid={invalid.smtp_port} onChange={field("smtp_port")} required /></Label>
             </div>
             {account && <div className="grid gap-4 border-t pt-5">
+              <AccountBrandSettings key={account.id} copy={copy} accountId={account.id} />
               <div><h3 className="text-sm font-semibold">{copy.mailboxAIConfiguration}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p></div>
               <div className="overflow-x-auto rounded-lg border">
                 <Table className="min-w-[38rem] table-fixed">

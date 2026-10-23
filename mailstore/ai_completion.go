@@ -32,27 +32,36 @@ var reservedAIExtraParamKeys = map[string]struct{}{
 
 // CreateAIResponse calls the configured model backend (OpenAI or Gemini) and returns the output text.
 func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
-	return createAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, nil)
+	return CreateAIResponseWithImages(ctx, client, model, apiKey, instructions, input, nil, maxOutputTokens, effort, nil)
 }
 
 // CreateAIResponseStream emits text as the provider generates it. JSON-only
 // gateways remain supported, while other callers keep the non-streaming API.
 func CreateAIResponseStream(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+	return CreateAIResponseWithImages(ctx, client, model, apiKey, instructions, input, nil, maxOutputTokens, effort, onDelta)
+}
+
+// AIInputImage contains trusted image bytes resolved from owned attachments.
+// Label associates each image with its original turn even after text compaction.
+type AIInputImage struct {
+	Label       string
+	ContentType string
+	Base64      string
+}
+
+func CreateAIResponseWithImages(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	if onDelta == nil {
-		return CreateAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort)
+		return createAIResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, nil)
 	}
 	emitted := false
-	text, err := createAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, func(delta string) error {
-		emitted = true
-		return onDelta(delta)
-	})
+	text, err := createAIResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, func(delta string) error { emitted = true; return onDelta(delta) })
 	if err == nil && !emitted && text != "" {
 		err = onDelta(text)
 	}
 	return text, err
 }
 
-func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	provider := strings.ToLower(strings.TrimSpace(model.Provider))
 	if provider == "" {
 		provider = "openai"
@@ -68,13 +77,16 @@ func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 	}
 	switch provider {
 	case "gemini":
-		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
+		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
 	case "deepseek":
+		if len(images) > 0 {
+			return "", errors.New("当前 DeepSeek 接口不支持图片输入，请在邮箱 AI 设置中选择支持图片的模型 / Select a vision model")
+		}
 		return createDeepSeekResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	case "openai":
-		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
+		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
 	case "openai-compatible":
-		return createOpenAICompatibleResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
+		return createOpenAICompatibleResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
 	default:
 		return "", fmt.Errorf("unsupported AI provider: %q", model.Provider)
 	}
@@ -158,9 +170,15 @@ func BuildGeminiURL(baseURL, model string) string {
 	return baseURL + "/models/" + url.PathEscape(cleanModel) + ":generateContent"
 }
 
+type geminiInlineData struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
 type geminiPart struct {
-	Text    string `json:"text,omitempty"`
-	Thought bool   `json:"thought,omitempty"`
+	InlineData *geminiInlineData `json:"inlineData,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Thought    bool              `json:"thought,omitempty"`
 }
 
 type geminiContent struct {
@@ -183,7 +201,7 @@ type geminiRequest struct {
 	GenerationConfig  geminiGenerationConfig `json:"generationConfig"`
 }
 
-func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	endpoint := BuildGeminiURL(model.BaseURL, model.Model)
 	if onDelta != nil {
 		endpoint = strings.TrimSuffix(endpoint, ":generateContent") + ":streamGenerateContent?alt=sse"
@@ -200,6 +218,9 @@ func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelR
 			GenerationConfig: geminiGenerationConfig{
 				MaxOutputTokens: maxOutputTokens,
 			},
+		}
+		for _, img := range images {
+			reqBody.Contents[0].Parts = append(reqBody.Contents[0].Parts, geminiPart{Text: img.Label}, geminiPart{InlineData: &geminiInlineData{MIMEType: img.ContentType, Data: img.Base64}})
 		}
 		if strings.TrimSpace(instructions) != "" {
 			reqBody.SystemInstruction = &geminiContent{
@@ -345,13 +366,20 @@ func geminiResponseText(raw []byte) (string, error) {
 	return strings.Join(parts, "\n"), nil
 }
 
-func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	payload := map[string]any{
 		"stream":       onDelta != nil,
 		"model":        model.Model,
 		"instructions": instructions,
 		"input":        input,
 		"reasoning":    map[string]string{"effort": effort},
+	}
+	if len(images) > 0 {
+		content := []map[string]any{{"type": "input_text", "text": input}}
+		for _, img := range images {
+			content = append(content, map[string]any{"type": "input_text", "text": img.Label}, map[string]any{"type": "input_image", "image_url": "data:" + img.ContentType + ";base64," + img.Base64})
+		}
+		payload["input"] = []map[string]any{{"role": "user", "content": content}}
 	}
 	if maxOutputTokens > 0 {
 		payload["max_output_tokens"] = maxOutputTokens
@@ -406,7 +434,7 @@ func BuildOpenAICompatibleURL(baseURL string) string {
 
 type openAICompatibleMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 type openAICompatibleRequest struct {
@@ -519,14 +547,20 @@ func truncateForError(s string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
-func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
+func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	endpoint := BuildOpenAICompatibleURL(model.BaseURL)
 
 	var msgs []openAICompatibleMessage
 	if strings.TrimSpace(instructions) != "" {
 		msgs = append(msgs, openAICompatibleMessage{Role: "system", Content: instructions})
 	}
-	if strings.TrimSpace(input) != "" {
+	if len(images) > 0 {
+		content := []map[string]any{{"type": "text", "text": input}}
+		for _, img := range images {
+			content = append(content, map[string]any{"type": "text", "text": img.Label}, map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:" + img.ContentType + ";base64," + img.Base64}})
+		}
+		msgs = append(msgs, openAICompatibleMessage{Role: "user", Content: content})
+	} else if strings.TrimSpace(input) != "" {
 		msgs = append(msgs, openAICompatibleMessage{Role: "user", Content: input})
 	}
 

@@ -102,12 +102,16 @@ export type ConversationAIChatPart =
 
 /** A quotation/contract the conversation agent drafted, awaiting the user's save. */
 export type ConversationAIDocumentDraft = {
+  sourceQuotationRevision?: number;
+  savedDocumentId?: string;
+  templateId?: string;
+  sourceQuotationId?: string;
   type: "quotation" | "contract";
   title: string;
   counterparty: string;
   contact?: string;
   currency?: string;
-  items?: Array<{ productId?: string; productVersion?: number; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  items?: Array<{ productId?: string; productVersion?: number; variantId?: string; priceId?: string; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
   terms?: string[];
   notes?: string;
   total?: string;
@@ -116,17 +120,27 @@ export type ConversationAIDocumentDraft = {
 };
 
 export type ConversationAIDocumentAction = {
+  html?: string;
+  baseRevision: number;
   kind: "update" | "delete";
   documentId: string;
   type?: "quotation" | "contract";
   name?: string;
   company?: string;
   values?: Record<string, string>;
-  items?: Array<{ productId?: string; productVersion?: number; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
+  items?: Array<{ productId?: string; productVersion?: number; variantId?: string; priceId?: string; picture?: string; model?: string; description?: string; qty?: string; price?: string; amount?: string }>;
   summary?: string;
 };
 
+export type AIChatAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+};
+
 export type ConversationAIChatMessage = {
+  attachments?: AIChatAttachment[];
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -219,65 +233,6 @@ export type MailSearchResponse = {
   hasMore: boolean;
 };
 
-/** A user-owned, spreadsheet-shaped price table. */
-export type PriceList = {
-  id: string;
-  name: string;
-  description: string;
-  version: number;
-  rowCount: number;
-  columnCount: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PriceColumnType = "text" | "number" | "date" | "select";
-
-/**
- * Column roles are what keep a free-form table machine-readable: they tell the
- * quotation editor and the AI which column holds the model and the price.
- */
-export type PriceColumnRole =
-  | ""
-  | "model"
-  | "name"
-  | "unit"
-  | "price"
-  | "currency"
-  | "tax"
-  | "moq"
-  | "lead_time";
-
-export type PriceColumn = {
-  id?: string;
-  key: string;
-  label: string;
-  type: PriceColumnType;
-  role: PriceColumnRole;
-  width: number;
-  position?: number;
-  options?: string[];
-};
-
-export type PriceRow = {
-  id: string;
-  position?: number;
-  data: Record<string, string>;
-  updatedAt?: string;
-};
-
-export type PriceListDetailResponse = {
-  priceList: PriceList;
-  columns: PriceColumn[];
-};
-
-export type PriceRowsResponse = {
-  rows: PriceRow[];
-  total: number;
-  limit: number;
-  offset: number;
-};
-
 export type ComposeDraftMode = "new" | "reply" | "reply_all";
 
 /**
@@ -321,31 +276,6 @@ export type ComposeDraftListResponse = {
 
 export type ComposeDraftResponse = {
   draft: ComposeDraft;
-};
-
-export type PriceLookupEntry = {
-  listId: string;
-  listName: string;
-  rowId: string;
-  model: string;
-  name: string;
-  unit: string;
-  currency: string;
-  price: number;
-  priceText: string;
-  taxRate: number;
-  moq?: string;
-  leadTime?: string;
-};
-
-export type PriceImportResult = {
-  headers: string[];
-  added: number;
-  updated: number;
-  skipped: number;
-  createdColumns?: PriceColumn[];
-  preview?: string[][];
-  errors?: string[];
 };
 
 export type MailMessage = Omit<ConversationMessage, "outgoing"> & {

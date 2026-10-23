@@ -55,13 +55,16 @@ type aiVariableItem struct {
 }
 
 type aiDocumentInput struct {
-	AccountEmail string           `json:"accountEmail"`
-	Mode         string           `json:"mode"`
-	DocumentType string           `json:"documentType"`
-	Title        string           `json:"title"`
-	Instruction  string           `json:"instruction"`
-	CurrentHTML  string           `json:"currentHTML"`
-	Variables    []aiVariableItem `json:"variables,omitempty"`
+	Canvas       string            `json:"canvas"`
+	Values       map[string]string `json:"values,omitempty"`
+	Items        []AIDocumentItem  `json:"items,omitempty"`
+	AccountEmail string            `json:"accountEmail"`
+	Mode         string            `json:"mode"`
+	DocumentType string            `json:"documentType"`
+	Title        string            `json:"title"`
+	Instruction  string            `json:"instruction"`
+	CurrentHTML  string            `json:"currentHTML"`
+	Variables    []aiVariableItem  `json:"variables,omitempty"`
 }
 
 type aiModelPublic struct {
@@ -724,13 +727,13 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 			input.Mode = "rewrite"
 		}
 	}
-	if input.Mode != "generate" && input.Mode != "rewrite" && input.Mode != "variables" {
-		return fiber.NewError(fiber.StatusBadRequest, "mode must be generate, rewrite, or variables")
+	if input.Mode != "generate" && input.Mode != "rewrite" && input.Mode != "variables" && input.Mode != "apply" {
+		return fiber.NewError(fiber.StatusBadRequest, "mode must be generate, rewrite, variables, or apply")
 	}
 	if input.DocumentType != "quotation" && input.DocumentType != "contract" {
 		return fiber.NewError(fiber.StatusBadRequest, "unsupported document type")
 	}
-	if input.Instruction == "" && input.CurrentHTML == "" && len(input.Variables) == 0 {
+	if input.Instruction == "" && input.CurrentHTML == "" && input.Canvas == "" && len(input.Variables) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "document instruction or current content is required")
 	}
 	if len(input.CurrentHTML) > maxSummaryInputBytes || len(input.Instruction) > maxSummaryInputBytes {
@@ -742,6 +745,41 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	}
 	if err != nil {
 		return fiber.ErrInternalServerError
+	}
+	if input.Mode == "variables" || input.Mode == "apply" || input.Canvas != "" {
+		if len(input.Canvas) > 20*1024*1024 {
+			return fiber.NewError(413, "文档过大")
+		}
+		values, _, ok := canvasDocumentContent(input.Canvas)
+		if !ok {
+			return fiber.NewError(422, "请重新打开结构化文档后再修改；当前快照或商业数据版本不受支持")
+		}
+		input.Variables = nil
+		for key := range documentBusinessKeys {
+			if _, exists := values[key]; !exists {
+				values[key] = ""
+			}
+		}
+		for _, key := range documentValueKeys(values) {
+			input.Variables = append(input.Variables, aiVariableItem{ConceptID: key, Label: key, CurrentValue: values[key]})
+		}
+		mailbox, err := h.mailDB.GetAccountBrands(c.UserContext(), owner, account.ID)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		runtime, err := resolveBusinessRuntime(mailstore.AIBusinessProfile{}, mailbox, mailstore.AIBusinessContext{})
+		if err != nil {
+			return fiber.NewError(422, err.Error())
+		}
+		c.SetUserContext(context.WithValue(c.UserContext(), businessRuntimeKey{}, runtime))
+		if input.Mode == "apply" {
+			return h.respondCanvasDocumentUpdate(c, owner, input, input.Values, input.Items)
+		}
+		input.CurrentHTML = stripHeavyHTMLForAI(input.Canvas)
+		if len(input.CurrentHTML) > maxSummaryInputBytes {
+			return fiber.NewError(413, "文档上下文过大，请缩小内容后再试")
+		}
+		input.Mode = "variables"
 	}
 	var model mailstore.AIModelRecord
 	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
@@ -766,6 +804,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	}
 	if input.Mode == "variables" || len(input.Variables) > 0 {
 		instructions, prompt := buildDocumentVariablesPrompt(input)
+		instructions += currentBusiness(c.UserContext()).prompt()
 
 		body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 4096)
 		if err != nil {
@@ -778,14 +817,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusUnprocessableEntity, "AI did not return valid variable updates")
 		}
 
-		res := fiber.Map{
-			"mode":   "variables",
-			"values": stringUpdates,
-		}
-		if len(items) > 0 {
-			res["items"] = items
-		}
-		return c.JSON(res)
+		return h.respondCanvasDocumentUpdate(c, owner, input, stringUpdates, items)
 	}
 	instructions := "Generate a professional " + input.DocumentType + " document. Return only clean HTML suitable for a rich text document. Use headings, paragraphs, and tables when useful. Do not include markdown fences, scripts, styles, or commentary. Match the user's language. Do not invent specific facts; use clear bracketed placeholders."
 	prompt := "Title: " + input.Title + "\nMode: " + input.Mode + "\nAdditional instructions: " + input.Instruction
@@ -832,7 +864,7 @@ CRITICAL INSTRUCTIONS:
 {"values": {"<variable-id>": "<new value>"}, "items": [{"model": "...", "description": "...", "qty": "...", "price": "...", "amount": "..."}]}
 Every key inside "values" MUST be one of the ALLOWED VARIABLE IDS listed in the user message, copied exactly. Do NOT invent keys. Do NOT use generic names such as "customer_company" unless that exact id is in the allowed list. Map the user's wording onto the closest allowed id (for example a request about the buyer maps to a "buyer_*" id, a request about notes maps to an "order_note_*" id).
 2. Only include variables whose values actually change according to the user's instruction. Do not echo unchanged variables.
-3. When the instruction touches products or prices, extract ALL product/line items into the "items" array — as many entries as there are products. Never omit, truncate, or merge items. Calculate each line amount as qty * price and format numbers with commas (e.g. 24,326.00).
+3. When the instruction touches products or prices, extract ALL product/line items into the "items" array — as many entries as there are products. Never omit, truncate, or merge items. Preserve productId/productVersion/variantId/priceId/model/picture from the current line unless explicitly replacing the product. Return all lines in their existing order. Amounts and totals are recomputed by the server; do not invent totals, tax terms or exchange rates. Item fields (item_*) must be changed using items, never values. inland_freight is charged separately from goods; a nonzero freight needs explicit freight_tax_rate and freight_tax_mode (included or excluded), otherwise the final amount remains unknown.
 4. A "Full Document Content" section is provided as GLOBAL CONTEXT so you can see the whole document and understand which parts the instruction refers to. Read it, but do NOT rewrite the document and do NOT return HTML — return only the JSON update object.
 5. Keep internal reasoning to the absolute minimum (1-2 sentences). Do not include markdown code fences, commentary, or thoughts. Only return pure JSON.`
 
@@ -858,6 +890,8 @@ func stripHeavyHTMLForAI(html string) string {
 }
 
 type AIDocumentItem struct {
+	VariantID      string `json:"variantId,omitempty"`
+	PriceID        string `json:"priceId,omitempty"`
 	ProductID      string `json:"productId,omitempty"`
 	ProductVersion int64  `json:"productVersion,omitempty"`
 	Picture        string `json:"picture,omitempty"`
@@ -905,6 +939,8 @@ func parseAIDocumentUpdateResponse(body string) (map[string]string, []AIDocument
 				}
 				items = append(items, AIDocumentItem{
 					ProductID:      getStr("productId"),
+					VariantID:      getStr("variantId"),
+					PriceID:        getStr("priceId"),
 					ProductVersion: productVersionArg(itMap),
 					Model:          getStr("model"),
 					Description:    getStr("description"),
