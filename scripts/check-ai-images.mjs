@@ -45,6 +45,7 @@ await page.route('**/api/**', async route => {
     return;
   } else if (path === '/api/accounts') json = { accounts: [{ id: 'account', email: accountEmail, label: accountEmail, isActive: true }] };
   else if (path === '/api/accounts/account/brands') json = { brands: [], brandMode: 'prefer' };
+  else if (path === '/api/settings/ai/skills') json = { mailSummarySkillId: 'mail-analysis', skills: [{ id: 'email_analysis', name: '邮件需求分析', kind: 'chat', enabled: true }, { id: 'quotation', name: '产品选型与报价', kind: 'chat', enabled: true }, { id: 'contract', name: '销售合同制作', kind: 'chat', enabled: true }] };
   else if (path === '/api/conversations') json = { locale: 'zh-CN', accountEmail, conversations: [conversation], folders: [], accounts: [{ id: 'account', email: accountEmail, label: accountEmail, isActive: true }] };
   else if (path.endsWith('/ai-chat')) {
     assert.notEqual(req.method(), 'PUT', 'History is never saved by the browser');

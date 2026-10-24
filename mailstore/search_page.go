@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"inbrix/models"
 )
@@ -30,6 +31,13 @@ type messageSearchCursor struct {
 // the search to a server-resolved conversation; an empty slice matches nothing.
 // Keyset pagination avoids skipping older hits when new mail arrives.
 func (s *Store) SearchMessagePage(ctx context.Context, accountID, scopeID, query, cursor string, limit int, keys []MessageKey) (MessageSearchPage, error) {
+	return s.searchMessagePage(ctx, accountID, scopeID, query, cursor, limit, keys, time.Time{}, MessageKey{})
+}
+
+// searchMessagePage optionally anchors evidence to a triggering mail. Both the
+// query and cursor identity include the boundary, so a caller cannot paginate
+// into future mail or reuse a cursor from a different analysis.
+func (s *Store) searchMessagePage(ctx context.Context, accountID, scopeID, query, cursor string, limit int, keys []MessageKey, asOf time.Time, anchor MessageKey) (MessageSearchPage, error) {
 	page := MessageSearchPage{Messages: []models.Email{}}
 	if keys != nil && len(keys) == 0 {
 		return page, nil
@@ -37,31 +45,8 @@ func (s *Store) SearchMessagePage(ctx context.Context, accountID, scopeID, query
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
-	parsed := parseSearchQuery(query)
-	clauses := []string{"account_id = ?"}
-	args := []any{accountID}
-	if parsed.folder != "" {
-		clauses = append(clauses, "folder_name = ?")
-		args = append(args, parsed.folder)
-	}
-	clauses = append(clauses, parsed.clauses...)
-	args = append(args, parsed.args...)
-	if keys != nil {
-		values := make([]string, 0, len(keys))
-		for _, key := range keys {
-			uid, err := parseUIDString(key.UID)
-			if err != nil {
-				continue
-			}
-			values = append(values, "(?, ?)")
-			args = append(args, key.FolderName, uid)
-		}
-		if len(values) == 0 {
-			return page, nil
-		}
-		clauses = append(clauses, "(folder_name, uid) IN (VALUES "+strings.Join(values, ",")+")")
-	}
-	identity := sha256.Sum256([]byte(accountID + "\x00" + scopeID + "\x00" + query))
+	clauses, args := messageSearchConditions(accountID, query, keys, asOf, anchor)
+	identity := sha256.Sum256([]byte(accountID + "\x00" + scopeID + "\x00" + query + fmt.Sprintf("\x00%d\x00%s\x00%s", unixOrZero(asOf), anchor.FolderName, anchor.UID)))
 	fingerprint := hex.EncodeToString(identity[:])
 	if cursor != "" {
 		var boundary messageSearchCursor
@@ -97,4 +82,41 @@ func (s *Store) SearchMessagePage(ctx context.Context, accountID, scopeID, query
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
+}
+
+// Shared by paginated retrieval and its cache dependency fingerprint.
+func messageSearchConditions(accountID, query string, keys []MessageKey, asOf time.Time, anchor MessageKey) ([]string, []any) {
+	parsed := parseSearchQuery(query)
+	clauses := []string{"account_id = ?"}
+	args := []any{accountID}
+	if !asOf.IsZero() {
+		clauses = append(clauses, "date_unix <= ?")
+		args = append(args, asOf.Unix())
+	}
+	if uid, err := parseUIDString(anchor.UID); err == nil && anchor.FolderName != "" {
+		clauses = append(clauses, "(folder_name <> ? OR uid <= ?)")
+		args = append(args, anchor.FolderName, uid)
+	}
+	if parsed.folder != "" {
+		clauses = append(clauses, "folder_name = ?")
+		args = append(args, parsed.folder)
+	}
+	clauses = append(clauses, parsed.clauses...)
+	args = append(args, parsed.args...)
+	if keys != nil {
+		values := make([]string, 0, len(keys))
+		for _, key := range keys {
+			uid, err := parseUIDString(key.UID)
+			if err != nil {
+				continue
+			}
+			values = append(values, "(?, ?)")
+			args = append(args, key.FolderName, uid)
+		}
+		if len(values) == 0 {
+			return []string{"0"}, nil
+		}
+		clauses = append(clauses, "(folder_name, uid) IN (VALUES "+strings.Join(values, ",")+")")
+	}
+	return clauses, args
 }

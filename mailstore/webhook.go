@@ -8,14 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"inbrix/events"
-	mailapi "inbrix/handlers/api"
 	"inbrix/models"
 )
 
@@ -120,95 +117,19 @@ func (s *Store) SaveAccountWebhookSettings(ctx context.Context, ownerID, account
 	return err
 }
 
-func (m *SyncManager) notifyNewMessages(ctx context.Context, mailClient *mailapi.Client, account Account, messages []models.Email) {
-	if len(messages) == 0 {
-		return
-	}
-	cfg, err := m.store.GetAccountWebhookSettings(ctx, account.OwnerID, account.ID)
-	if err != nil {
-		log.Printf("mail webhook: load settings for account %s: %v", account.ID, err)
-		cfg = WebhookSettings{}
-	}
-	webhookClient := &http.Client{Timeout: 10 * time.Second}
-	aiClient := m.aiClient
-	if aiClient == nil {
-		aiClient = &http.Client{Timeout: 60 * time.Second}
-	}
-	for _, message := range messages {
-		fullMessage, err := m.store.GetMessage(ctx, account.ID, "INBOX", message.ID)
-		if err != nil {
-			log.Printf("mail webhook: load full message %s/%s: %v", account.ID, message.ID, err)
-			continue
-		}
-		if !fullMessage.BodyCached && mailClient != nil {
-			fetched, fetchErr := mailClient.FetchSingleMessage("INBOX", message.ID)
-			if fetchErr != nil {
-				log.Printf("mail webhook: fetch full message %s/%s: %v", account.ID, message.ID, fetchErr)
-				continue
-			}
-			if err := m.store.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{fetched}); err != nil {
-				log.Printf("mail webhook: cache full message %s/%s: %v", account.ID, message.ID, err)
-				continue
-			}
-			fullMessage = fetched
-		}
-		fullMessage.Folder = "INBOX"
-		if !fullMessage.BodyCached {
-			log.Printf("mail AI: skip message %s/%s because full body is unavailable", account.ID, message.ID)
-			continue
-		}
-		conversationChanged := false
-		publishConversationUpdate := func() {
-			m.store.PublishAccountEvent(ctx, account.ID, events.Event{
-				Kind:      events.KindConversationUpdated,
-				Folder:    "INBOX",
-				MessageID: fullMessage.ID,
-			})
-		}
-		if _, err := GetOrCreateReplySuggestion(ctx, aiClient, m.store, m.key, account, fullMessage, false); err != nil {
-			if !errors.Is(err, ErrNotFound) {
-				log.Printf("mail AI: suggest reply for account %s message %s: %v", account.ID, message.ID, err)
-			}
-		} else {
-			conversationChanged = true
-		}
-		if !cfg.Enabled || cfg.URL == "" {
-			if conversationChanged {
-				publishConversationUpdate()
-			}
-			continue
-		}
-		result, err := GetOrCreateMailSummary(ctx, aiClient, m.store, m.key, account, fullMessage, false)
-		if err != nil {
-			log.Printf("mail webhook: analyze account %s message %s: %v", account.ID, message.ID, err)
-			if conversationChanged {
-				publishConversationUpdate()
-			}
-			continue
-		}
-		conversationChanged = true
-		if err := sendFeishuWebhook(ctx, webhookClient, cfg.URL, account, fullMessage, result.Record.Summary); err != nil {
-			log.Printf("mail webhook: notify account %s message %s: %v", account.ID, message.ID, err)
-		}
-		// The reply suggestion (and, when the Feishu webhook is enabled, the
-		// summary) is written asynchronously after the initial new-mail event.
-		// Tell clients the conversation gained AI data so they refetch it
-		// without polling.
-		publishConversationUpdate()
-	}
+func sendFeishuWebhook(ctx context.Context, client HTTPClient, webhookURL string, _ Account, message models.Email, summary string) error {
+	return sendFeishuText(ctx, client, webhookURL, feishuMailText(message, summary))
 }
 
-func sendFeishuWebhook(ctx context.Context, client HTTPClient, webhookURL string, _ Account, message models.Email, summary string) error {
+func feishuMailText(message models.Email, summary string) string {
 	from := strings.TrimSpace(message.From)
 	if from == "" {
 		from = "（未知发件人）"
 	}
-	summary = strings.TrimSpace(summary)
-	text := from
-	if summary != "" {
-		text += "\n" + summary
+	if summary = strings.TrimSpace(summary); summary != "" {
+		return from + "\n" + summary
 	}
-	return sendFeishuText(ctx, client, webhookURL, text)
+	return from
 }
 
 func (m *SyncManager) summarizeInquiryForWebhook(ctx context.Context, client HTTPClient, account Account, message models.Email) (string, error) {
@@ -220,7 +141,7 @@ func createOpenAIWebhookResponse(ctx context.Context, client HTTPClient, model A
 }
 
 func fullEmailForInquiryAnalysis(account Account, message models.Email) string {
-	content := currentMessageText(message.Body, message.HTML)
+	content := AgentMailText(message)
 	var attachments []string
 	for _, attachment := range message.Attachments {
 		if name := strings.TrimSpace(attachment.Filename); name != "" {
@@ -275,7 +196,7 @@ func SendFeishuTestWebhook(ctx context.Context, webhookURL string) error {
 
 func sendFeishuText(ctx context.Context, client HTTPClient, webhookURL, text string) error {
 	if err := ValidateFeishuWebhookURL(webhookURL); err != nil {
-		return err
+		return permanentMailTaskError("configuration", err)
 	}
 	payload, err := json.Marshal(struct {
 		MsgType string `json:"msg_type"`
@@ -295,7 +216,7 @@ func sendFeishuText(ctx context.Context, client HTTPClient, webhookURL, text str
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return upstreamTransportError("Feishu", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWebhookResponseBytes))
@@ -303,20 +224,21 @@ func sendFeishuText(ctx context.Context, client HTTPClient, webhookURL, text str
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Feishu returned HTTP %d", resp.StatusCode)
+		return upstreamHTTPError("Feishu", resp, "")
 	}
 	var result struct {
 		Code       *int   `json:"code"`
 		StatusCode *int   `json:"StatusCode"`
 		Message    string `json:"msg"`
 	}
-	if len(body) > 0 && json.Unmarshal(body, &result) == nil {
-		if result.Code != nil && *result.Code != 0 {
-			return fmt.Errorf("Feishu returned code %d: %s", *result.Code, result.Message)
-		}
-		if result.StatusCode != nil && *result.StatusCode != 0 {
-			return fmt.Errorf("Feishu returned status %d", *result.StatusCode)
-		}
+	if len(body) == 0 || json.Unmarshal(body, &result) != nil || (result.Code == nil && result.StatusCode == nil) {
+		return errors.New("Feishu returned an invalid acknowledgement")
+	}
+	if result.Code != nil && *result.Code != 0 {
+		return fmt.Errorf("Feishu returned code %d: %s", *result.Code, result.Message)
+	}
+	if result.StatusCode != nil && *result.StatusCode != 0 {
+		return fmt.Errorf("Feishu returned status %d", *result.StatusCode)
 	}
 	return nil
 }

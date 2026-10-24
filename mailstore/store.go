@@ -159,6 +159,7 @@ type MessageSummaryRecord struct {
 	MessageSummaryKey
 	SummaryType     string
 	Summary         string
+	Analysis        *MailAnalysis
 	Status          string
 	SourceHash      string
 	ConfigHash      string
@@ -381,6 +382,31 @@ func (s *Store) migrate(ctx context.Context) error {
 			UNIQUE(owner_id, name)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_agents_owner ON ai_agents(owner_id, created_at, name)`,
+		`CREATE TABLE IF NOT EXISTS ai_skills (
+			id TEXT NOT NULL,
+			owner_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			instructions TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			depends_on_json TEXT NOT NULL DEFAULT '[]',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			built_in INTEGER NOT NULL DEFAULT 0,
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(owner_id,id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_skill_settings (
+			owner_id TEXT PRIMARY KEY,
+			mail_summary_skill_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_skill_versions (
+			owner_id TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
+			snapshot_json TEXT NOT NULL, action TEXT NOT NULL, source TEXT NOT NULL,
+			restored_from INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+			PRIMARY KEY(owner_id,id,revision)
+		)`,
 		`CREATE TABLE IF NOT EXISTS ai_task_bindings (
 			account_id TEXT NOT NULL,
 			task_type TEXT NOT NULL,
@@ -523,6 +549,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			uid INTEGER NOT NULL,
 			summary_type TEXT NOT NULL DEFAULT 'mail_summary',
 			summary_text TEXT NOT NULL DEFAULT '',
+			analysis_json TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'generating',
 			source_hash TEXT NOT NULL DEFAULT '',
 			config_hash TEXT NOT NULL DEFAULT '',
@@ -539,6 +566,36 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY(account_id, folder_name, uid) REFERENCES messages(account_id, folder_name, uid) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_summaries_account ON message_summaries(account_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS mail_tasks (
+			account_id TEXT NOT NULL,
+			folder_name TEXT NOT NULL,
+			uid INTEGER NOT NULL,
+			task_type TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			generation_token TEXT NOT NULL DEFAULT '',
+			lease_until INTEGER NOT NULL DEFAULT 0,
+			next_attempt INTEGER NOT NULL DEFAULT 0,
+			payload TEXT NOT NULL DEFAULT '',
+			error_message TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(account_id,folder_name,uid,task_type),
+			FOREIGN KEY(account_id,folder_name,uid) REFERENCES messages(account_id,folder_name,uid) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_tasks_due ON mail_tasks(account_id,status,next_attempt,uid)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_tasks_active_ai ON mail_tasks(lease_until) WHERE status='running' AND task_type IN ('analysis','reply')`,
+		`CREATE TABLE IF NOT EXISTS mail_task_runs (
+			id TEXT PRIMARY KEY, lease_token TEXT NOT NULL UNIQUE,
+			account_id TEXT NOT NULL,folder_name TEXT NOT NULL,uid INTEGER NOT NULL,task_type TEXT NOT NULL,
+			attempt INTEGER NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL,
+			started_at INTEGER NOT NULL,finished_at INTEGER NOT NULL DEFAULT 0,duration_ms INTEGER NOT NULL DEFAULT 0,
+			error_kind TEXT NOT NULL DEFAULT '',error_message TEXT NOT NULL DEFAULT '',retryable INTEGER NOT NULL DEFAULT 0,
+			context_json TEXT NOT NULL DEFAULT '{}',
+			FOREIGN KEY(account_id,folder_name,uid,task_type) REFERENCES mail_tasks(account_id,folder_name,uid,task_type) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_task_runs_account ON mail_task_runs(account_id,started_at DESC,id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_task_runs_task ON mail_task_runs(account_id,folder_name,uid,task_type,started_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS conversation_notes (
 			account_id TEXT NOT NULL,
 			conversation_id TEXT NOT NULL,
@@ -701,6 +758,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("mailstore: migrate: %w", err)
 		}
+	}
+	if err := s.ensureMessageAnalysisColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.backfillAISkillVersions(ctx); err != nil {
+		return err
 	}
 	if err := s.migrateDocumentRevision(ctx); err != nil {
 		return err

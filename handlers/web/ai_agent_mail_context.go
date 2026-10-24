@@ -230,7 +230,7 @@ func (h *AISettingsHandler) searchAgentEmails(ctx context.Context, accountID str
 	if len(query) > 2000 || len(cursor) > 2048 {
 		return nil, "", fmt.Errorf("query or cursor is too long")
 	}
-	page, err := h.mailDB.SearchMessagePage(ctx, accountID, scopeID, query, cursor, limit, keys)
+	page, err := (mailstore.AgentMailReader{Store: h.mailDB, AccountID: accountID}).Search(ctx, scopeID, query, cursor, limit, keys)
 	if err != nil {
 		return nil, "", err
 	}
@@ -271,7 +271,7 @@ func (h *AISettingsHandler) readAgentEmail(ctx context.Context, accountID string
 		}
 	}
 	if folder != "Outbox" {
-		email, err = h.mailDB.GetMessage(ctx, accountID, folder, uid)
+		email, err = (mailstore.AgentMailReader{Store: h.mailDB, AccountID: accountID}).Read(ctx, folder, uid)
 		if err != nil {
 			return nil, "", fmt.Errorf("mail not found in the specified account and folder")
 		}

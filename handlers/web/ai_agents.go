@@ -58,7 +58,17 @@ func (h *AISettingsHandler) HandleListAgents(c *fiber.Ctx) error {
 	for _, agent := range agents {
 		out = append(out, publicAIAgent(agent))
 	}
-	return c.JSON(fiber.Map{"agents": out, "skills": builtInBusinessSkills})
+	skills, err := h.mailDB.ListAISkills(c.UserContext(), owner)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	available := make([]mailstore.AISkillRecord, 0, len(skills))
+	for _, skill := range skills {
+		if skill.Enabled && skill.Kind == mailstore.AISkillChat {
+			available = append(available, skill)
+		}
+	}
+	return c.JSON(fiber.Map{"agents": out, "skills": available})
 }
 
 func (h *AISettingsHandler) HandleCreateAgent(c *fiber.Ctx) error {

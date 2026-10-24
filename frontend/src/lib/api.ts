@@ -676,6 +676,40 @@ export type AIBusinessProfile = {
 };
 export type AIBusinessContext = { agentId: string; skillId: string; brands: string[] };
 export type AIBusinessSkill = { id: string; name: string; description: string; dependsOn: string[] };
+export type AISkill = AIBusinessSkill & {
+  instructions: string;
+  kind: "chat" | "mail_summary";
+  enabled: boolean;
+  builtIn: boolean;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type AISkillInput = Pick<AISkill, "name" | "description" | "instructions" | "kind" | "dependsOn" | "enabled"> & { id?: string; revision?: number };
+export type AISkillVersion = { skill: AISkill; action: string; source: string; restoredFrom?: number; recordedAt: string };
+
+export function getAISkillVersions(id: string, before?: number) {
+  return apiFetch<{ versions: AISkillVersion[] }>(`/api/settings/ai/skills/${encodeURIComponent(id)}/versions${before ? `?before=${before}` : ""}`);
+}
+export function restoreAISkillVersion(id: string, revision: number, expectedRevision: number) {
+  return apiFetch<AISkill>(`/api/settings/ai/skills/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, expectedRevision }) });
+}
+
+export function getAISkills() {
+  return apiFetch<{ skills: AISkill[]; mailSummarySkillId: string }>("/api/settings/ai/skills");
+}
+export function addAISkill(input: AISkillInput) {
+  return apiFetch<AISkill>("/api/settings/ai/skills", { method: "POST", body: JSON.stringify(input) });
+}
+export function updateAISkill(id: string, input: Partial<AISkillInput>) {
+  return apiFetch<AISkill>(`/api/settings/ai/skills/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+export function deleteAISkill(id: string, revision: number) {
+  return apiFetch<{ ok: boolean }>(`/api/settings/ai/skills/${encodeURIComponent(id)}?revision=${revision}`, { method: "DELETE" });
+}
+export function useMailSummarySkill(id: string, revision: number) {
+  return apiFetch<{ mailSummarySkillId: string }>(`/api/settings/ai/skills/${encodeURIComponent(id)}/use-for-mail-summary`, { method: "POST", body: JSON.stringify({ revision }) });
+}
 export const emptyBusinessProfile: AIBusinessProfile = { company: "", brands: [], brandMode: "prefer", quotationTemplateId: "", contractTemplateId: "" };
 export const emptyBusinessContext: AIBusinessContext = { agentId: "", skillId: "", brands: [] };
 

@@ -51,7 +51,7 @@ func resolveReplySuggestionConfig(ctx context.Context, store *Store, encryptionK
 	}
 	var apiKey string
 	if model.EncryptedAPIKey == "" || mailapi.DecryptJSON(model.EncryptedAPIKey, &apiKey, encryptionKey) != nil || strings.TrimSpace(apiKey) == "" {
-		return replySuggestionConfig{}, errors.New("decrypt OpenAI API key")
+		return replySuggestionConfig{}, permanentMailTaskError("configuration", errors.New("decrypt OpenAI API key"))
 	}
 	effort := strings.TrimSpace(model.ReasoningEffort)
 	if effort == "" {
@@ -92,6 +92,9 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 		return ReplySuggestionResult{}, err
 	}
 	claim := MessageSummaryRecord{MessageSummaryKey: key, SourceHash: sourceHash, ConfigHash: cfg.configHash, ModelID: cfg.model.ID, ModelName: cfg.model.Model, AgentID: cfg.agent.ID, PipelineVersion: replySuggestionPipelineVersion}
+	if err := store.recordMailTaskRunContext(ctx, cfg.model, cfg.configHash, AISkillExecution{}); err != nil {
+		return ReplySuggestionResult{}, err
+	}
 	current, claimed, err := store.ClaimMessageReplySuggestionGeneration(ctx, claim, regenerate, replySuggestionGenerationLease)
 	if err != nil {
 		_ = store.RecordAIError(ctx, AIErrorLogRecord{
@@ -142,8 +145,10 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 	}
 	suggestion, generationErr := createOpenAIWebhookResponse(ctx, client, cfg.model, cfg.apiKey, instructions, replySuggestionInput(account, message), cfg.effort)
 	if generationErr != nil {
-		_ = store.FailMessageReplySuggestionGeneration(ctx, key, current.GenerationToken, generationErr)
-		_ = store.RecordAIError(ctx, AIErrorLogRecord{
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = store.FailMessageReplySuggestionGeneration(cleanupCtx, key, current.GenerationToken, generationErr)
+		_ = store.RecordAIError(cleanupCtx, AIErrorLogRecord{
 			OwnerID:      account.OwnerID,
 			TaskType:     ReplySuggestionTask,
 			AccountEmail: account.Email,

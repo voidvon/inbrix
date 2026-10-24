@@ -49,7 +49,9 @@ func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
 	if call == c.failCall {
 		return nil, errors.New("model unavailable")
 	}
-	body := fmt.Sprintf(`{"output_text":"{\"客户\":\"测试客户\",\"需求\":\"十台阀门\",\"要求\":\"这是第%d次生成，需确认型号和交期。\",\"问题\":\"\"}"}`, call)
+	output := fmt.Sprintf(`{"request":"询价十台阀门","background":"","changes":"","actions":["确认型号和交期"],"missing":[],"fields":{"客户":"测试客户","需求":"十台阀门","要求":"这是第%d次生成，需确认型号和交期。","问题":""}}`, call)
+	bodyJSON, _ := json.Marshal(map[string]string{"output_text": output})
+	body := string(bodyJSON)
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 }
 
@@ -187,7 +189,7 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	}
 }
 
-func TestGetOrCreateMailSummaryReusesDirectParentSummaryAndStripsQuote(t *testing.T) {
+func TestGetOrCreateMailSummaryPreservesQuotesAndUsesOriginalEvidence(t *testing.T) {
 	s, account, message, encryptionKey := setupMailSummaryTest(t)
 	ctx := context.Background()
 
@@ -227,8 +229,8 @@ func TestGetOrCreateMailSummaryReusesDirectParentSummaryAndStripsQuote(t *testin
 		t.Fatalf("configured fields were not formatted:\n%s", result.Record.Summary)
 	}
 	input := client.lastInput()
-	if !strings.Contains(input, parentSummary) || !strings.Contains(input, "Please add CE certificates.") || strings.Contains(input, "Original request") || strings.Contains(input, "wrote:") {
-		t.Fatalf("model input did not include the parent analysis and isolated current body:\n%s", input)
+	if strings.Contains(input, parentSummary) || !strings.Contains(input, "Please add CE certificates.") || !strings.Contains(input, "Original request") || !strings.Contains(input, "quotedOrForwardedText") {
+		t.Fatalf("model input did not retain quoted evidence or unexpectedly used a previous summary:\n%s", input)
 	}
 
 	currentHash, err := CurrentMailSummarySourceHash(ctx, s, account, message)
@@ -259,6 +261,11 @@ func TestConfiguredOutputLabelsControlPromptAndSummaryOrder(t *testing.T) {
 	agent.OutputLabels = []string{"风险", "行动"}
 	if after := mailSummaryConfigHash(agent, model, "low"); before == after {
 		t.Fatal("changing output label order did not change the configuration hash")
+	}
+	before = mailSummaryConfigHash(agent, model, "low")
+	model.ExtraParams = `{"temperature":0.1}`
+	if after := mailSummaryConfigHash(agent, model, "low"); before == after {
+		t.Fatal("changing model parameters did not change the configuration hash")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mailapi "inbrix/handlers/api"
+	"inbrix/internal/agentruntime"
 	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
@@ -26,14 +27,7 @@ type AIAgentChatMessage struct {
 	Sources     []AgentMailReference         `json:"sources,omitempty"`
 }
 
-type AIToolCall struct {
-	ID      string         `json:"id,omitempty"`
-	Name    string         `json:"name"`
-	Args    map[string]any `json:"args"`
-	Result  any            `json:"result,omitempty"`
-	Summary string         `json:"summary,omitempty"`
-	Status  string         `json:"status,omitempty"` // "success", "error"
-}
+type AIToolCall = agentruntime.ToolCall
 
 type AIDocumentCard struct {
 	// Only server-loaded records can establish a source snapshot. JSON supplied
@@ -114,17 +108,18 @@ type AIAgentChatPart struct {
 }
 
 type AIAgentChatResponse struct {
-	SessionID          string                      `json:"sessionId,omitempty"`
-	RequestID          string                      `json:"requestId,omitempty"`
-	Version            int64                       `json:"version,omitempty"`
-	UserMessageID      string                      `json:"userMessageId,omitempty"`
-	AssistantMessageID string                      `json:"assistantMessageId,omitempty"`
-	BusinessContext    mailstore.AIBusinessContext `json:"businessContext"`
-	Parts              []AIAgentChatPart           `json:"parts,omitempty"`
-	Content            string                      `json:"content"`
-	ToolCalls          []AIToolCall                `json:"toolCalls,omitempty"`
-	Document           *AIDocumentCard             `json:"document,omitempty"`
-	Sources            []AgentMailReference        `json:"sources,omitempty"`
+	SkillSnapshots     []mailstore.AISkillExecution `json:"skillSnapshots,omitempty"`
+	SessionID          string                       `json:"sessionId,omitempty"`
+	RequestID          string                       `json:"requestId,omitempty"`
+	Version            int64                        `json:"version,omitempty"`
+	UserMessageID      string                       `json:"userMessageId,omitempty"`
+	AssistantMessageID string                       `json:"assistantMessageId,omitempty"`
+	BusinessContext    mailstore.AIBusinessContext  `json:"businessContext"`
+	Parts              []AIAgentChatPart            `json:"parts,omitempty"`
+	Content            string                       `json:"content"`
+	ToolCalls          []AIToolCall                 `json:"toolCalls,omitempty"`
+	Document           *AIDocumentCard              `json:"document,omitempty"`
+	Sources            []AgentMailReference         `json:"sources,omitempty"`
 	// DocumentAction is a change to a stored document that the user confirms in
 	// the UI. The agent never deletes or overwrites a saved document itself.
 	DocumentAction *AIDocumentAction `json:"documentAction,omitempty"`
@@ -298,7 +293,11 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	if e != nil {
 		return fiber.ErrInternalServerError
 	}
-	runtime, e := resolveBusinessRuntime(profile, mailboxBrands, selection)
+	skills, e := h.mailDB.ListAISkills(c.UserContext(), owner)
+	if e != nil {
+		return fiber.ErrInternalServerError
+	}
+	runtime, e := resolveBusinessRuntime(profile, mailboxBrands, selection, skills)
 	if e != nil {
 		return fiber.NewError(fiber.StatusBadRequest, e.Error())
 	}
@@ -464,7 +463,6 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 	if len(currentTurnInput) > inputBudget-maxAgentToolResultBytes {
 		return nil, fiber.NewError(fiber.StatusRequestEntityTooLarge, "AI 上下文过长，请缩短问题或减少重点邮件")
 	}
-	maxToolTurns := 12
 	finalReply := ""
 	var sources []AgentMailReference
 	seenSources := make(map[string]bool)
@@ -503,47 +501,13 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		return response, err
 	}
 
-	for turn := 0; turn < maxToolTurns; turn++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		rawResponse, err := respond(currentTurnInput)
-		if err != nil {
-			h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, err)
-			return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-		}
-
-		calls, parseErr := parseToolCallsChecked(rawResponse)
-		if parseErr != nil {
-			h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, parseErr)
-			return nil, fiber.NewError(fiber.StatusUnprocessableEntity, parseErr.Error())
-		}
-		if len(calls) == 0 {
-			// No tool call requested; model gave its natural language response
-			finalReply = rawResponse
-			break
-		}
-
-		// Execute all parsed tool calls in this turn
-		stopReason := ""
-		for index, call := range calls {
-			if index >= 4 || len(executedToolCalls) >= 32 || len(currentTurnInput) > inputBudget-maxAgentToolResultBytes-4096 {
-				stopReason = "Tool/context budget reached. Some requested tools were NOT executed."
-				break
-			}
-			call.ID = fmt.Sprintf("call_%d", len(executedToolCalls)+1)
-			if err := sendToolEvent(emit, "tool_start", call); err != nil {
-				return nil, err
-			}
+	run, runErr := agentruntime.Run(ctx, agentruntime.Options{
+		Input:   currentTurnInput,
+		Limits:  agentruntime.Limits{Turns: 12, CallsPerTurn: 4, Calls: 32, InputBytes: inputBudget, ResultBytes: maxAgentToolResultBytes},
+		Respond: func(ctx context.Context, prompt string) (string, error) { return respond(prompt) },
+		Execute: func(ctx context.Context, call AIToolCall) (any, string, error) {
 			result, summary, err := h.executeScopedAgentTool(ctx, owner, account.ID, mailContext, call, model, apiKey)
-			if err != nil {
-				call.Status = "error"
-				call.Result = map[string]string{"error": err.Error()}
-				call.Summary = "工具执行出错: " + err.Error()
-			} else {
-				call.Status = "success"
-				call.Result = result
-				call.Summary = summary
+			if err == nil {
 				if call.Name == "read_email" {
 					ref := AgentMailReference{UID: parseStringArg(call.Args, "uid", "email_id", "id", "message_id"), Folder: parseStringArg(call.Args, "folder", "mailbox")}
 					key := agentMailKey(ref.Folder, ref.UID)
@@ -552,64 +516,46 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 						seenSources[key] = true
 					}
 				}
-			}
-
-			if call.Name == "generate_document" && call.Status == "success" {
-				if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
-					generatedDocument = doc
+				if call.Name == "generate_document" {
+					if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
+						generatedDocument = doc
+					}
 				}
-			}
-
-			if call.Status == "success" {
 				if action, ok := result.(*AIDocumentAction); ok && action != nil {
 					documentAction = action
 				}
 			}
-
-			// Layout is for the editor, not model evidence. Keep the full
-			// proposal on the response while exposing only its structured facts.
-			switch result := call.Result.(type) {
+			return result, summary, err
+		},
+		Project: func(result any) any {
+			// Editor layout is not model evidence.
+			switch value := result.(type) {
 			case *AIDocumentAction:
-				copy := *result
+				copy := *value
 				copy.HTML = ""
-				call.Result = &copy
+				return &copy
 			case *AIDocumentCard:
-				copy := *result
+				copy := *value
 				copy.HTML = ""
-				call.Result = &copy
+				return &copy
 			}
-			// Feed tool result back to the model for next turn
-			resBytes, _ := json.Marshal(call.Result)
-			if len(resBytes) > maxAgentToolResultBytes {
-				call.Result = map[string]any{"outputOmitted": true, "summary": clipRunes(call.Summary, 500), "notice": "Result exceeded the output budget. Request a smaller page or narrower data. Do not claim to have read the omitted data."}
-				resBytes, _ = json.Marshal(call.Result)
+			return result
+		},
+		OnTool: func(kind string, call AIToolCall) error {
+			if err := sendToolEvent(emit, kind, call); err != nil {
+				return err
 			}
-			if err := sendToolEvent(emit, "tool_end", call); err != nil {
-				return nil, err
+			if kind == "tool_end" {
+				parts = append(parts, AIAgentChatPart{Type: "tool", Tool: &AIToolCall{ID: call.ID, Name: call.Name, Summary: call.Summary, Status: call.Status}})
 			}
-			parts = append(parts, AIAgentChatPart{Type: "tool", Tool: &AIToolCall{ID: call.ID, Name: call.Name, Summary: call.Summary, Status: call.Status}})
-			executedToolCalls = append(executedToolCalls, call)
-			argsBytes, _ := json.Marshal(call.Args)
-			if len(argsBytes) > 2048 {
-				argsBytes = []byte(`{"argumentsOmitted":true}`)
-			}
-			currentTurnInput += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%s)\n[Tool Result (%s)]: %s", clipRunes(call.Name, 80), string(argsBytes), clipRunes(call.Name, 80), string(resBytes))
-		}
-
-		// If this was the last tool turn allowed, ask model for final synthesis
-		if turn == maxToolTurns-1 || stopReason != "" {
-			currentTurnInput += "\n\n[System]: " + stopReason + " No more tools are available for this response. Give a final answer from the evidence actually read. Explicitly state any unread pages, missing mail bodies, or incomplete coverage; never claim to have reviewed the whole thread unless you did."
-			synthesisResponse, synErr := respond(currentTurnInput)
-			if synErr != nil {
-				h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, synErr)
-				return nil, fiber.NewError(fiber.StatusUnprocessableEntity, synErr.Error())
-			}
-			finalReply = synthesisResponse
-			break
-		} else {
-			currentTurnInput += "\n\nBased on the tool results above, continue answering the user or call another tool if needed."
-		}
+			return nil
+		},
+	})
+	if runErr != nil {
+		h.recordError(ctx, owner, "agent_chat", input.AccountEmail, model.Model, agentName, runErr)
+		return nil, fiber.NewError(fiber.StatusUnprocessableEntity, runErr.Error())
 	}
+	finalReply, executedToolCalls = run.Text, run.Calls
 
 	// 5. Parse Final Output (extract Document Card if present & sanitize residual tool blocks)
 	// Synthesis must also be a final answer, not another tool request after the
@@ -648,7 +594,12 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 	} else {
 		parts = append(parts, AIAgentChatPart{Type: "text", Content: strings.TrimSpace(cleanedContent)})
 	}
+	var skillSnapshots []mailstore.AISkillExecution
+	if session := currentBusiness(ctx).SkillSession; session != nil {
+		skillSnapshots = session.Snapshots()
+	}
 	return &AIAgentChatResponse{
+		SkillSnapshots:  skillSnapshots,
 		BusinessContext: currentBusiness(ctx).Selection,
 		Parts:           parts,
 		Content:         strings.TrimSpace(cleanedContent),
@@ -873,105 +824,11 @@ func parseToolCalls(output string) []AIToolCall {
 }
 
 func parseToolCallsChecked(output string) ([]AIToolCall, error) {
-	normalized, err := normalizeDSMLToolCalls(output)
-	if err != nil {
-		return nil, err
-	}
-	return parseJSONToolCalls(normalized), nil
-}
-
-func parseJSONToolCalls(output string) []AIToolCall {
-	var calls []AIToolCall
-
-	// 1. Match all ```tool_call, ```json:tool_call, ```toolCall code fences
-	matches := toolCallRegex.FindAllStringSubmatch(output, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			fenceContent := strings.TrimSpace(match[1])
-			if fenceContent == "" {
-				continue
-			}
-			calls = append(calls, parseToolCallsFromJSON(fenceContent)...)
-		}
-	}
-
-	if len(calls) > 0 {
-		return calls
-	}
-
-	// 2. Fallback: check if the entire output (or code block) is raw JSON tool call
-	trimmed := strings.TrimSpace(output)
-	return parseToolCallsFromJSON(trimmed)
+	return agentruntime.ParseToolCalls(output)
 }
 
 func parseToolCallsFromJSON(raw string) []AIToolCall {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-
-	if strings.HasPrefix(raw, "{") && strings.HasSuffix(raw, "}") {
-		var single struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-			Args      map[string]any `json:"args"`
-		}
-		if err := json.Unmarshal([]byte(raw), &single); err == nil && single.Name != "" {
-			args := single.Arguments
-			if args == nil {
-				args = single.Args
-			}
-			if args == nil {
-				args = make(map[string]any)
-			}
-			return []AIToolCall{{Name: single.Name, Args: args}}
-		}
-	} else if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
-		var list []struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-			Args      map[string]any `json:"args"`
-		}
-		if err := json.Unmarshal([]byte(raw), &list); err == nil && len(list) > 0 {
-			var res []AIToolCall
-			for _, item := range list {
-				if item.Name != "" {
-					args := item.Arguments
-					if args == nil {
-						args = item.Args
-					}
-					if args == nil {
-						args = make(map[string]any)
-					}
-					res = append(res, AIToolCall{Name: item.Name, Args: args})
-				}
-			}
-			return res
-		}
-	} else {
-		start := strings.Index(raw, "{")
-		end := strings.LastIndex(raw, "}")
-		if start != -1 && end > start {
-			sub := raw[start : end+1]
-			var single struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-				Args      map[string]any `json:"args"`
-			}
-			if err := json.Unmarshal([]byte(sub), &single); err == nil && single.Name != "" {
-				args := single.Arguments
-				if args == nil {
-					args = single.Args
-				}
-				if args == nil {
-					args = make(map[string]any)
-				}
-				return []AIToolCall{{Name: single.Name, Args: args}}
-			}
-		}
-	}
-
-	return nil
+	return agentruntime.ParseToolCallsFromJSON(raw)
 }
 
 func parseToolCall(output string) (AIToolCall, bool) {
@@ -1078,6 +935,22 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 		}
 	}
 	switch call.Name {
+	case "load_skill":
+		session := currentBusiness(ctx).SkillSession
+		if session == nil {
+			return nil, "", errors.New("Skill catalog is unavailable")
+		}
+		offset, err := productToolInt(call.Args, "offset", 0, 0, 100000)
+		if err != nil {
+			return nil, "", err
+		}
+		length, err := productToolInt(call.Args, "length", 2000, 1, 2000)
+		if err != nil {
+			return nil, "", err
+		}
+		id := parseStringArg(call.Args, "id")
+		result, err := session.Load(id, offset, length)
+		return result, "加载 Skill " + id, err
 	case "read_current_draft":
 		return readCurrentDraft(ctx, call.Args)
 	case "search_products", "read_product", "list_product_categories":

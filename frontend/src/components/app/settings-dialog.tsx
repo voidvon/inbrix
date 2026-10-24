@@ -1,3 +1,4 @@
+import { SkillSettings } from "./skill-settings";
 import { AccountBrandSettings, AIBusinessProfileFields } from "./ai-business-controls";
 import { emptyBusinessProfile, type AIBusinessProfile } from "../../lib/api";
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
@@ -6,6 +7,7 @@ import {
   AlertCircle,
   Bell,
   BellOff,
+  BookOpen,
   Bot,
   Check,
   CircleAlert,
@@ -98,7 +100,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { RichTextButtons } from "./rich-text-buttons";
 import { APIKeysSettings } from "./api-keys-settings";
 
-export type SettingsSection = "api_keys" | "account" | "general" | "signatures" | "ai" | "agents" | "error_logs" | "mailboxes" | "system" | "about";
+export type SettingsSection = "api_keys" | "account" | "general" | "signatures" | "ai" | "agents" | "skills" | "error_logs" | "mailboxes" | "system" | "about";
 
 export function SettingsDialog({ copy, open, onOpenChange }: { copy: Copy; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [accountEditor, setAccountEditor] = useState<ConnectedAccount | null | undefined>(undefined);
@@ -142,12 +144,13 @@ export function SettingsContent({ copy, section, onSectionChange, onManageAccoun
         <Button className="shrink-0 justify-start" variant={section === "signatures" ? "secondary" : "ghost"} onClick={() => onSectionChange("signatures")}><SignatureIcon />{copy.signatureSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "ai" ? "secondary" : "ghost"} onClick={() => onSectionChange("ai")}><Sparkles />{copy.aiSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "agents" ? "secondary" : "ghost"} onClick={() => onSectionChange("agents")}><Bot />{copy.agentSettings}</Button>
+        <Button className="shrink-0 justify-start" variant={section === "skills" ? "secondary" : "ghost"} onClick={() => onSectionChange("skills")}><BookOpen />{copy.skillSettings}</Button>
         <Button className="shrink-0 justify-start" variant={section === "error_logs" ? "secondary" : "ghost"} onClick={() => onSectionChange("error_logs")}><AlertCircle />{copy.aiErrorLogs}</Button>
         {isSuperAdmin && <Button className="shrink-0 justify-start" variant={section === "system" ? "secondary" : "ghost"} onClick={() => onSectionChange("system")}><ShieldCheck />{copy.systemSettings}</Button>}
         <Button className="shrink-0 justify-start" variant={section === "about" ? "secondary" : "ghost"} onClick={() => onSectionChange("about")}><Info />{copy.about}</Button>
       </nav>
       <div className="min-w-0 pt-5 md:pt-0 md:pl-6">
-        {section === "api_keys" ? <APIKeysSettings copy={copy} /> : section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "error_logs" ? <AIErrorLogsSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
+        {section === "api_keys" ? <APIKeysSettings copy={copy} /> : section === "account" ? <AccountInfoSettings copy={copy} /> : section === "general" ? <GeneralSettings copy={copy} /> : section === "signatures" ? <SignatureSettings copy={copy} /> : section === "ai" ? <AISettings copy={copy} /> : section === "agents" ? <AgentSettings copy={copy} /> : section === "skills" ? <SkillSettings copy={copy} /> : section === "error_logs" ? <AIErrorLogsSettings copy={copy} /> : section === "system" && isSuperAdmin ? <SystemSettings copy={copy} /> : section === "about" ? <AboutSettings copy={copy} isSuperAdmin={isSuperAdmin} /> : <MailboxSettings copy={copy} onManageAccount={onManageAccount} />}
       </div>
     </div>
   );

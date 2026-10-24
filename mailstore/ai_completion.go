@@ -247,7 +247,7 @@ func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelR
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Gemini request failed: %w", err)
+			return nil, nil, upstreamTransportError("Gemini", err)
 		}
 		defer resp.Body.Close()
 
@@ -290,9 +290,9 @@ func createGeminiResponse(ctx context.Context, client HTTPClient, model AIModelR
 		}
 		_ = json.Unmarshal(raw, &apiErr)
 		if apiErr.Error.Message != "" {
-			return "", fmt.Errorf("Gemini returned HTTP %d: %s", resp.StatusCode, apiErr.Error.Message)
+			return "", upstreamHTTPError("Gemini", resp, apiErr.Error.Message)
 		}
-		return "", fmt.Errorf("Gemini returned HTTP %d", resp.StatusCode)
+		return "", upstreamHTTPError("Gemini", resp, "")
 	}
 
 	return geminiResponseText(raw)
@@ -397,7 +397,7 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI request failed: %w", err)
+		return "", upstreamTransportError("OpenAI", err)
 	}
 	defer resp.Body.Close()
 	raw, err := readAIResponse(resp, "openai", onDelta)
@@ -412,9 +412,9 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 		}
 		_ = json.Unmarshal(raw, &apiErr)
 		if apiErr.Error.Message != "" {
-			return "", fmt.Errorf("OpenAI returned HTTP %d: %s", resp.StatusCode, apiErr.Error.Message)
+			return "", upstreamHTTPError("OpenAI", resp, apiErr.Error.Message)
 		}
-		return "", fmt.Errorf("OpenAI returned HTTP %d", resp.StatusCode)
+		return "", upstreamHTTPError("OpenAI", resp, "")
 	}
 	return openAIResponseText(raw)
 }
@@ -585,7 +585,7 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI-compatible request failed: %w", err)
+		return "", upstreamTransportError("OpenAI-compatible", err)
 	}
 	defer resp.Body.Close()
 
@@ -596,9 +596,9 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if msg := openAICompatibleResponseError(raw); msg != "" {
-			return "", fmt.Errorf("OpenAI-compatible returned HTTP %d: %s", resp.StatusCode, msg)
+			return "", upstreamHTTPError("OpenAI-compatible", resp, msg)
 		}
-		return "", fmt.Errorf("OpenAI-compatible returned HTTP %d", resp.StatusCode)
+		return "", upstreamHTTPError("OpenAI-compatible", resp, "")
 	}
 
 	var result openAICompatibleResponse
@@ -719,7 +719,7 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("DeepSeek request failed: %w", err)
+		return "", upstreamTransportError("DeepSeek", err)
 	}
 	defer resp.Body.Close()
 
@@ -732,9 +732,9 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 		var apiErr deepSeekResponse
 		_ = json.Unmarshal(raw, &apiErr)
 		if apiErr.Error != nil && apiErr.Error.Message != "" {
-			return "", fmt.Errorf("DeepSeek returned HTTP %d: %s", resp.StatusCode, apiErr.Error.Message)
+			return "", upstreamHTTPError("DeepSeek", resp, apiErr.Error.Message)
 		}
-		return "", fmt.Errorf("DeepSeek returned HTTP %d", resp.StatusCode)
+		return "", upstreamHTTPError("DeepSeek", resp, "")
 	}
 
 	var result deepSeekResponse

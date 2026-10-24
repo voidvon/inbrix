@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
-import { emptyAccountBrands, getAccountBrands, getAccounts, saveAccountBrands, type AccountBrands, type AIBusinessContext, type AIBusinessProfile } from "../../lib/api";
+import { emptyAccountBrands, getAccountBrands, getAccounts, getAISkills, saveAccountBrands, type AccountBrands, type AIBusinessContext, type AIBusinessProfile } from "../../lib/api";
 import { toast } from "../../lib/toast";
 import { type Copy, zh } from "../../lib/locale";
 import { listProductNavigation } from "../../lib/products";
@@ -11,13 +11,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { ProductSelect } from "./product-select";
-
-const tasks = [
-  { value: "", zh: "自动选择任务", en: "Auto task" },
-  { value: "email_analysis", zh: "邮件需求分析", en: "Email analysis" },
-  { value: "quotation", zh: "产品选型与报价", en: "Product selection & quotation" },
-  { value: "contract", zh: "销售合同制作", en: "Sales contract" },
-];
 
 function BrandPicker({ brands, available, onChange, disabled, label, resetLabel, emptyLabel }: { brands: string[]; available: string[]; onChange: (brands: string[]) => void; disabled?: boolean; label: string; resetLabel: string; emptyLabel: string }) {
   return <DropdownMenu><DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={disabled} className="max-w-full gap-1 text-xs" aria-label={label}><span className="truncate">{label}</span><ChevronDown className="size-3 shrink-0" /></Button>} />
@@ -40,12 +33,16 @@ export function AIBusinessProfileFields({ copy, value, onChange, disabled }: { c
       const key = type === "quotation" ? "quotationTemplateId" : "contractTemplateId";
       return <div className="grid gap-2" key={type}><Label>{isZh ? `默认${type === "quotation" ? "报价单" : "合同"}模板` : `Default ${type} template`}</Label><ProductSelect value={value[key]} label={key} disabled={disabled || templates.isPending} onValueChange={id => patch({ [key]: id })} options={[{ value: "", label: isZh ? "系统默认模板" : "System default" }, ...(templates.data || []).filter(t => t.type === type).map(t => ({ value: t.id, label: t.name }))]} /></div>;
     })}
-    <p className="text-xs text-muted-foreground">{isZh ? "内置 Skill：邮件需求分析 → 产品选型与报价 → 销售合同制作。各品牌共用任务流程，价格以产品库或已约定的报价为准。" : "Built-in skills: email analysis → selection & quotation → sales contract. Brands share workflows; prices come from the catalog or an agreed quotation."}</p>
+    <p className="text-xs text-muted-foreground">{isZh ? "在设置的 Skill 管理中维护任务流程。各品牌共用流程，价格以产品库或已约定的报价为准。" : "Manage workflows in Settings → Skills. Brands share workflows; prices come from the catalog or an agreed quotation."}</p>
   </div>;
 }
 
 export function AIBusinessToolbar({ copy, accountEmail, value, onChange, disabled }: { copy: Copy; accountEmail?: string; value: AIBusinessContext; onChange: (value: AIBusinessContext) => void; disabled?: boolean }) {
   const isZh = copy === zh;
+  const skills = useQuery({ queryKey: ["ai-skills"], queryFn: getAISkills });
+  const activeSkills = (skills.data?.skills || []).filter(skill => skill.kind === "chat" && skill.enabled);
+  const options = [{ value: "", label: isZh ? "自动选择任务" : "Auto task" }, ...activeSkills.map(skill => ({ value: skill.id, label: skill.name }))];
+  if (value.skillId && !activeSkills.some(skill => skill.id === value.skillId)) options.push({ value: value.skillId, label: `${value.skillId} (${isZh ? "不可用，请重新选择" : "unavailable; select another"})` });
   const navigation = useQuery({ queryKey: ["product-navigation"], queryFn: listProductNavigation });
   const binding = useMailboxBrands(accountEmail);
   const profile = binding.data;
@@ -54,7 +51,8 @@ export function AIBusinessToolbar({ copy, accountEmail, value, onChange, disable
   const inherited = profile?.brands || [];
   const label = value.brands.length ? value.brands.join("、") : inherited.length ? `${restricted ? (isZh ? "限定" : "Only") : (isZh ? "优先" : "Prefer")} ${inherited.join("、")}` : (isZh ? "全部品牌" : "All brands");
   return <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-    <div className="min-w-0 max-w-full flex-1"><ProductSelect label={isZh ? "任务 Skill" : "Task skill"} value={value.skillId} disabled={disabled} onValueChange={skillId => onChange({ ...value, skillId })} options={tasks.map(t => ({ value: t.value, label: isZh ? t.zh : t.en }))} className="h-8 text-xs" /></div>
+    <div className="min-w-0 max-w-full flex-1"><ProductSelect label={isZh ? "任务 Skill" : "Task skill"} value={value.skillId} disabled={disabled || skills.isPending || skills.isError} onValueChange={skillId => onChange({ ...value, skillId })} options={options} className="h-8 text-xs" /></div>
+    {skills.isError && <span className="text-xs text-destructive">{isZh ? "Skill 加载失败" : "Skills unavailable"}</span>}
     {binding.isError && <span className="text-xs text-destructive">{isZh ? "邮箱品牌加载失败" : "Mailbox brands unavailable"}</span>}
     <BrandPicker brands={value.brands} available={available} disabled={disabled || binding.isPending || binding.isError} onChange={brands => onChange({ ...value, brands })} resetLabel={isZh ? "使用邮箱默认品牌" : "Use mailbox defaults"} emptyLabel={isZh ? "产品库中暂无品牌" : "No catalog brands"} label={`${isZh ? "品牌" : "Brands"}: ${label}`} />
   </div>;

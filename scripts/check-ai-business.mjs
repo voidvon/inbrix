@@ -44,6 +44,7 @@ await page.route('**/api/**', async route => {
     json = { ok: true, ...chatStore.mail, sessionId: chatStore.mail.id };
   } else if (path.startsWith('/api/conversations/')) json = { conversation: { ...conversation, messages: [mail] } };
   else if (path === '/api/product-navigation') json = { total: 3, brands: ['A', 'B', 'C'].map(name => ({ name, productCount: 1, categories: [] })) };
+  else if (path === '/api/settings/ai/skills') json = { mailSummarySkillId: 'mail-analysis', skills: [{ id: 'email_analysis', name: '邮件需求分析', kind: 'chat', enabled: true }, { id: 'quotation', name: '产品选型与报价', kind: 'chat', enabled: true }, { id: 'contract', name: '销售合同制作', kind: 'chat', enabled: true }] };
   else if (path === '/api/settings/ai/agents') json = { agents, skills: [{ id: 'email_analysis', name: '邮件需求分析', dependsOn: [] }, { id: 'quotation', name: '产品选型与报价', dependsOn: ['email_analysis'] }, { id: 'contract', name: '销售合同制作', dependsOn: ['email_analysis'] }] };
   else if (path === '/api/settings/ai/agents/sales-ab' && req.method() === 'PUT') {
     savedProfile = req.postDataJSON(); agents = [{ id: 'sales-ab', ...savedProfile }]; json = agents[0];

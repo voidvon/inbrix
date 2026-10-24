@@ -18,18 +18,21 @@ import (
 // Each loop uses a separate IMAP connection, so web requests remain free to
 // perform writes or on-demand body fetches without sharing a selected mailbox.
 type SyncManager struct {
-	store    *Store
-	key      string
-	config   config.MailSyncConfig
-	aiClient HTTPClient
+	store         *Store
+	key           string
+	config        config.MailSyncConfig
+	aiClient      HTTPClient
+	webhookClient HTTPClient
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	wake   map[string]chan struct{}
-	stop   map[string]chan struct{}
-	done   map[string]chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	mu       sync.Mutex
+	wake     map[string]chan struct{}
+	taskWake map[string]chan struct{}
+	syncing  map[string]int
+	stop     map[string]chan struct{}
+	done     map[string]chan struct{}
 }
 
 func NewSyncManager(store *Store, encryptionKey string, cfg config.MailSyncConfig) *SyncManager {
@@ -40,12 +43,14 @@ func NewSyncManager(store *Store, encryptionKey string, cfg config.MailSyncConfi
 		cfg.BatchSize = 200
 	}
 	return &SyncManager{
-		store:  store,
-		key:    encryptionKey,
-		config: cfg,
-		wake:   make(map[string]chan struct{}),
-		stop:   make(map[string]chan struct{}),
-		done:   make(map[string]chan struct{}),
+		store:    store,
+		key:      encryptionKey,
+		config:   cfg,
+		wake:     make(map[string]chan struct{}),
+		taskWake: make(map[string]chan struct{}),
+		syncing:  make(map[string]int),
+		stop:     make(map[string]chan struct{}),
+		done:     make(map[string]chan struct{}),
 	}
 }
 
@@ -99,6 +104,11 @@ func (m *SyncManager) StartAccount(accountID string) {
 		return
 	}
 	wake := make(chan struct{}, 1)
+	taskWake := make(chan struct{}, 1)
+	if m.taskWake == nil {
+		m.taskWake = make(map[string]chan struct{})
+	}
+	m.taskWake[accountID] = taskWake
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	m.wake[accountID] = wake
@@ -111,7 +121,10 @@ func (m *SyncManager) StartAccount(accountID string) {
 	go func() {
 		defer m.wg.Done()
 		defer close(done)
+		tasksDone := make(chan struct{})
+		go func() { defer close(tasksDone); m.runMailTasks(ctx, accountID, taskWake, stop) }()
 		m.runAccount(ctx, accountID, wake, stop)
+		<-tasksDone
 	}()
 }
 
@@ -126,6 +139,7 @@ func (m *SyncManager) StopAccount(accountID string) {
 	done := m.done[accountID]
 	delete(m.stop, accountID)
 	delete(m.wake, accountID)
+	delete(m.taskWake, accountID)
 	delete(m.done, accountID)
 	m.mu.Unlock()
 	if stop != nil {
@@ -157,6 +171,8 @@ func (m *SyncManager) SyncNewMessagesNow(ctx context.Context, accountID, folderN
 	if m == nil || m.store == nil || accountID == "" || strings.TrimSpace(folderName) == "" {
 		return nil
 	}
+	m.setAccountSyncing(accountID, 1)
+	defer func() { m.setAccountSyncing(accountID, -1); m.wakeMailTasks(accountID) }()
 	account, err := m.store.GetAccount(ctx, accountID)
 	if err != nil {
 		return err
@@ -193,7 +209,7 @@ func (m *SyncManager) SyncNewMessagesNow(ctx context.Context, accountID, folderN
 		if len(page) == 0 {
 			break
 		}
-		if err := m.store.UpsertMessages(ctx, accountID, folderName, page); err != nil {
+		if err := m.store.UpsertIncomingMessages(ctx, accountID, folderName, page); err != nil {
 			return err
 		}
 		maxUID := cursor
@@ -240,6 +256,7 @@ func (m *SyncManager) Stop() {
 	for accountID, stop := range m.stop {
 		delete(m.stop, accountID)
 		delete(m.wake, accountID)
+		delete(m.taskWake, accountID)
 		delete(m.done, accountID)
 		close(stop)
 	}
@@ -251,7 +268,11 @@ func (m *SyncManager) runAccount(ctx context.Context, accountID string, wake, st
 	ticker := time.NewTicker(time.Duration(m.config.Interval) * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := m.syncAccount(ctx, accountID); err != nil && ctx.Err() == nil {
+		m.setAccountSyncing(accountID, 1)
+		err := m.syncAccount(ctx, accountID)
+		m.setAccountSyncing(accountID, -1)
+		m.wakeMailTasks(accountID)
+		if err != nil && ctx.Err() == nil {
 			log.Printf("mail sync: account %s: %v", accountID, err)
 		}
 		select {
@@ -623,7 +644,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 			if len(page) == 0 {
 				break
 			}
-			if err := m.store.UpsertMessages(ctx, accountID, folderName, page); err != nil {
+			if err := m.store.UpsertIncomingMessages(ctx, accountID, folderName, page); err != nil {
 				return err
 			}
 			if err := m.syncBodies(ctx, client, accountID, folderName, page); err != nil {
@@ -698,11 +719,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 		return err
 	}
 	if strings.EqualFold(strings.TrimSpace(folderName), "INBOX") && len(newMessages) > 0 {
-		account, err := m.store.GetAccount(ctx, accountID)
-		if err != nil {
-			return err
-		}
-		m.notifyNewMessages(ctx, client, account, newMessages)
+		m.wakeMailTasks(accountID)
 	}
 	return nil
 }

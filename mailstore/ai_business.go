@@ -45,9 +45,8 @@ func NormalizeAIBrands(brands []string) ([]string, error) {
 }
 func NormalizeAIBusinessContext(in AIBusinessContext) (AIBusinessContext, error) {
 	in.AgentID = strings.TrimSpace(in.AgentID)
-	switch in.SkillID {
-	case "", "email_analysis", "quotation", "contract":
-	default:
+	in.SkillID = strings.TrimSpace(in.SkillID)
+	if in.SkillID != "" && !aiSkillIDPattern.MatchString(in.SkillID) {
 		return in, errors.New("未知的业务 Skill")
 	}
 	var err error
@@ -177,6 +176,15 @@ func (s *Store) ValidateAIChatBusiness(ctx context.Context, owner, account strin
 	}
 	if count != 1 {
 		return ErrNotFound
+	}
+	if in.SkillID != "" {
+		skills, err := s.ListAISkills(ctx, owner)
+		if err != nil {
+			return err
+		}
+		if _, err := resolveAISkillRecords(skills, in.SkillID, AISkillChat); err != nil {
+			return fmt.Errorf("Skill 不存在或已停用，请重新选择: %w", err)
+		}
 	}
 	if in.AgentID != "" {
 		if _, e := s.GetAIAgent(ctx, owner, in.AgentID); e != nil {

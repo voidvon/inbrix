@@ -95,7 +95,7 @@ func (s *Store) claimMessageTranslationGeneration(ctx context.Context, record Me
 	if regenerate {
 		readyGuard = "status <> 'generating' OR lease_until <= ?"
 	}
-	query := `INSERT INTO message_summaries(` + messageSummaryColumns + `) VALUES(?, ?, ?, ?, '', 'generating', ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+	query := `INSERT INTO message_summaries(` + messageSummaryColumns + `) VALUES(?, ?, ?, ?, '', 'generating', ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '')
 		ON CONFLICT(account_id, folder_name, uid, summary_type) DO UPDATE SET
 			status = 'generating', generation_token = excluded.generation_token,
 			lease_until = excluded.lease_until, error_message = '', updated_at = excluded.updated_at

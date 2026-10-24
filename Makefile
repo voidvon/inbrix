@@ -1,4 +1,4 @@
-.PHONY: dev build test vet fmt fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest release release-version-selftest check clean
+.PHONY: dev build test vet fmt fmt-check notices screenshots demo-screenshots site-docs site-docs-check site-render verify-selftest release release-version-selftest check clean mail-eval-check
 
 # Local React/Vite development. Vite owns :2342 and proxies backend requests
 # to Go on :3001, so the browser never renders the embedded frontend/dist copy.
@@ -19,6 +19,11 @@ notices:
 # Run all tests
 test:
 	go test ./...
+
+# Offline only. Live-model evaluation is an explicit cmd/mail-eval invocation.
+mail-eval-check:
+	go run ./cmd/mail-eval -mode validate
+	go test ./internal/maileval ./cmd/mail-eval
 
 # Vet
 vet:

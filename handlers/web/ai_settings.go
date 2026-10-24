@@ -523,6 +523,7 @@ func (h *AISettingsHandler) HandleSummarizeMail(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{
 		"summary":   result.Record.Summary,
+		"analysis":  result.Record.Analysis,
 		"status":    result.Record.Status,
 		"cached":    result.Cached,
 		"stale":     result.Stale,
@@ -767,7 +768,11 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.ErrInternalServerError
 		}
-		runtime, err := resolveBusinessRuntime(mailstore.AIBusinessProfile{}, mailbox, mailstore.AIBusinessContext{})
+		skills, err := h.mailDB.ListAISkills(c.UserContext(), owner)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		runtime, err := resolveBusinessRuntime(mailstore.AIBusinessProfile{}, mailbox, mailstore.AIBusinessContext{}, skills)
 		if err != nil {
 			return fiber.NewError(422, err.Error())
 		}

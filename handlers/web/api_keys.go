@@ -41,7 +41,7 @@ func (h *AuthHandler) APIKeyMiddleware() fiber.Handler {
 		if h.mirror == nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "API Key authentication is unavailable")
 		}
-		user, _, err := h.mirror.AuthenticateAPIKey(c.UserContext(), token, c.IP())
+		user, keyID, err := h.mirror.AuthenticateAPIKey(c.UserContext(), token, c.IP())
 		if errors.Is(err, mailstore.ErrNotFound) {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid, expired or revoked API Key")
 		}
@@ -83,6 +83,7 @@ func (h *AuthHandler) APIKeyMiddleware() fiber.Handler {
 			return fiber.ErrInternalServerError
 		}
 		c.Locals("user_id", user.ID)
+		c.Locals("api_key_id", keyID)
 		c.Locals("username", user.Login)
 		c.Locals("email", email)
 		defer api.ClearRequestSessionHeader(c)

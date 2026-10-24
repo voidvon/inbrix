@@ -1137,6 +1137,144 @@ clients without a live mailbox.
 Recurring-event expansion (server-side RRULE materialization) is not yet exposed
 over `/v1`. Track this in [ROADMAP.md](../ROADMAP.md).
 
+## Skills
+
+Settings → **Skills** manages reusable workflows. These APIs accept either
+`Authorization: Bearer <API_KEY>` or `X-API-Key: <API_KEY>` and inherit the current
+user's permissions. Skills and the active summary workflow are isolated by owner.
+Browser mutations retain the normal CSRF requirement.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/settings/ai/skills` | List skills and `mailSummarySkillId`. |
+| POST | `/api/settings/ai/skills` | Create a skill. |
+| GET | `/api/settings/ai/skills/:id` | Read one skill, including its instructions and revision. |
+| PUT | `/api/settings/ai/skills/:id` | Update editable fields; omitted fields are preserved. |
+| PATCH | `/api/settings/ai/skills/:id` | Partially update a skill. |
+| DELETE | `/api/settings/ai/skills/:id` | Delete an unused skill; optional `?revision=N` checks its revision. |
+| POST | `/api/settings/ai/skills/:id/use-for-mail-summary` | Select an enabled mail-summary skill for all the owner's mailboxes. |
+| GET | `/api/settings/ai/skills/:id/versions` | List up to 50 immutable revisions, newest first; optional `?before=N` paginates to revisions older than N. |
+| GET | `/api/settings/ai/skills/:id/versions/:revision` | Read one historical snapshot, including change source. |
+| POST | `/api/settings/ai/skills/:id/restore` | Restore historical content as a new revision with mandatory concurrency protection. |
+
+Create body:
+
+```json
+{
+  "id": "customer-follow-up",
+  "name": "Customer follow-up",
+  "description": "Track unanswered requests using source emails",
+  "kind": "chat",
+  "instructions": "Read the latest email and relevant history. Identify open questions and next actions, with email sources.",
+  "dependsOn": ["email_analysis"],
+  "enabled": true
+}
+```
+
+`id` is optional and generated when blank; explicit ids use lowercase letters,
+digits, underscores and hyphens, starting with a letter (at most 64 characters).
+`name` and `instructions` are required. `kind` is `chat` (default) or
+`mail_summary` and cannot change after creation. `description`, `dependsOn` and
+`enabled` default to an empty string, empty array and true. Instructions are
+limited to 16,000 UTF-8 bytes, names to 100 characters, descriptions to 400
+characters, dependencies to 12, and the registry to 64 skills. Each enabled
+skill's expanded dependency instructions have a 24,000-byte context budget.
+Chat supplies a bounded metadata catalog and loads full instructions only for
+the selected skill or through `load_skill`; unique root loads have a cumulative
+48,000-byte instruction budget per execution. Other runtime limits still apply.
+
+Responses include `revision`, `builtIn`, `createdAt` and `updatedAt`. PATCH/PUT
+accept editable fields and an optional positive `revision`; a stale revision
+returns **409**. Include the revision from GET to protect against overwriting
+an editor's changes. Successful saves increment the revision. Unknown JSON keys
+are rejected; do not send read-only response fields back as updates.
+
+Every successful save atomically appends an immutable version. Version responses
+contain `skill` (the complete historical record), `action`, `source`,
+`restoredFrom` when applicable, and `recordedAt`. Sources distinguish `system`,
+`browser`, and `api_key:<key-id>`; key secrets are never recorded. Deletion removes
+the active skill but retains owner-scoped history. Recreating its id continues
+the revision sequence. Upgrading an existing database archives only the surviving
+revision; older overwritten content cannot be recovered.
+
+Restore body: `{ "revision": 1, "expectedRevision": 3 }`. This creates revision
+4 from revision 1's editable fields. It does not rewind version numbers or
+automatically restore dependencies. The current dependency graph is revalidated;
+missing/disabled dependencies and an invalid active-summary state reject the
+operation. A stale `expectedRevision` returns **409**, missing history **404**.
+Restoring requires an existing active skill record; history remains readable
+after deletion. Rollback is immediately effective for subsequent executions,
+consistent with ordinary saves; there is no separate draft/publication stage.
+
+```sh
+curl "$INBRIX_URL/api/settings/ai/skills/customer-follow-up" \
+  -H "Authorization: Bearer $INBRIX_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -X PATCH --data '{"revision":1,"instructions":"Verify each unanswered request against the latest source emails."}'
+```
+
+To create an alternative automatic-summary workflow, use `kind=mail_summary`,
+then POST its `use-for-mail-summary` endpoint with `{ "revision": 1 }`. This
+workflow applies to all the owner's mailboxes; mailbox model, business prompt,
+output labels and task-enable settings still apply. Dependencies must exist in
+the same owner's registry, match the skill's kind, and be acyclic. An enabled
+skill cannot depend on a disabled skill. An active summary cannot be deleted or disabled; any referenced skill cannot
+be deleted, and a dependency of an enabled skill cannot be disabled (**409**).
+
+Default workflows (`email_analysis`, `quotation`, `contract`, `mail-analysis`)
+are seeded once per owner and can be edited. Deleting an unused built-in does
+not restore it on restart. Enabled chat skills appear in both chat selectors.
+Each turn freezes the current catalog, injects the explicitly selected skill
+and its dependencies, and exposes `load_skill` for other matching workflows.
+Automatic summaries read their selected skill and
+dependencies for each new run; changed revisions mark existing summaries stale
+without silently replacing them. A run already in progress retains its loaded
+snapshot. Skills are declarative instructions: tool implementations, account
+access, brand restrictions and output validation remain enforced by server code.
+
+## Mail background tasks
+
+These endpoints support browser sessions and API Keys, with the same owner and
+mailbox checks as other AI settings APIs. They inspect work queued by incremental
+mail synchronization; they do not enqueue history or replay successful delivery.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/settings/ai/mail-tasks` | Read current task status. Required: `accountEmail`; optional: `folder`, `messageId`, `limit` (1–100, default 50). |
+| GET | `/api/settings/ai/mail-tasks/runs` | Read attempt history, newest first. Same query fields, plus optional `taskType` (`analysis`, `reply`, `notification`). Returns `{ "runs": [...] }`. |
+| POST | `/api/settings/ai/mail-tasks/retry` | Retry a terminal failed task. Body: `accountEmail`, `folder`, `messageId`, `taskType`. Ready notifications cannot be replayed. |
+
+Each attempt has a distinct public `id`, `folder`, `messageId`, `taskType`,
+`attempt`, `status`, `phase`, `startedAt`, `finishedAt`, `durationMs`, `errorKind`,
+`error`, `retryable`, and `context`. Run statuses are `running`, `ready`, `skipped`,
+`failed`, `interrupted`, or `expired`. A failed run with `retryable=true` means
+the queue scheduled another attempt; check the task's current status and
+`nextAttempt` for its present state. Explicit retries reset the task's attempt
+counter but retain previous run records. Shutdown interruptions do not consume
+the failure budget. Public ids are separate from internal fencing tokens.
+
+Run context includes the model id/name/provider and config fingerprint when
+generation was reached, plus Skill ids/revisions and their combined fingerprint
+for mail analysis. `cached` and `stale` distinguish reused results; cached version
+metadata describes the stored result, not the current configuration. Full prompts,
+notification payloads, mail bodies, credentials and fencing-token fields are
+excluded. Each task retains at most 50 run records, removed when its email is
+deleted. No history is fabricated for attempts made before this feature.
+
+Background AI execution is serialized per mailbox and capped at four simultaneous
+tasks across the database. Notification delivery has a separate per-mailbox lane:
+it waits for the corresponding first analysis attempt, or becomes eligible for a
+basic notification after 30 seconds from enqueue. Scheduling polls every five
+seconds and wakes on completed work, so this is a summary-wait threshold, not a
+remote-delivery deadline. Interactive chat/manual model requests are outside this
+background cap.
+
+Transient retries use exponential backoff with jitter. HTTP 429 respects
+`Retry-After`; HTTP 401/403 and other non-retryable 4xx require explicit retry
+after repair. Structured mail-analysis output validation gets one additional
+attempt. Duplicate remote delivery remains possible when an acknowledgement is
+lost; successful tasks are never replayed by the retry endpoint.
+
 ## Business assistants and built-in Skills
 
 Existing `/api/settings/ai/agents` records now accept and return `businessProfile`:
@@ -1180,8 +1318,8 @@ silent layout substitution. PUT requests that omit `businessProfile` preserve th
 profile.
 
 GET `/api/settings/ai/agents` also returns a `skills` catalog (id, name,
-description, dependsOn). These are built-in declarative workflows, with no
-arbitrary script execution:
+description, dependsOn). This is the enabled chat subset of the managed
+Skills registry. Default declarative workflows are:
 
 | Skill | Workflow |
 | --- | --- |

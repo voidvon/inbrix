@@ -2,7 +2,6 @@ package web
 
 import (
 	stdhtml "html"
-	"inbrix/handlers/api"
 	"inbrix/mailstore"
 	"inbrix/models"
 	"sort"
@@ -74,15 +73,7 @@ func mailSearchLimit(c *fiber.Ctx) int {
 // markup out of snippets for senders whose text/plain alternative embeds VML or
 // HTML fragments. Text-only mail falls back to its body, then to the preview.
 func messagePlainText(email models.Email) string {
-	if markup := strings.TrimSpace(email.HTML); markup != "" {
-		if text := strings.TrimSpace(api.PlainTextFromHTML(markup)); text != "" {
-			return text
-		}
-	}
-	if body := strings.TrimSpace(email.Body); body != "" {
-		return body
-	}
-	return strings.TrimSpace(email.Preview)
+	return mailstore.AgentMailText(email)
 }
 
 // mailMessageMatchesTerms reports whether every term appears in the fields the

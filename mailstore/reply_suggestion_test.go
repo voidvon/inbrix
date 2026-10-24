@@ -94,7 +94,12 @@ func TestNewMessageProcessingPersistsSuggestionWithoutWebhook(t *testing.T) {
 	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"I can confirm the requested quantity."}`}
 	manager := &SyncManager{store: s, key: encryptionKey, aiClient: client}
 
-	manager.notifyNewMessages(context.Background(), nil, account, []models.Email{message})
+	if err := s.UpsertIncomingMessages(context.Background(), account.ID, "INBOX", []models.Email{message}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.processMailTasks(context.Background(), account, 3); err != nil {
+		t.Fatal(err)
+	}
 
 	saved, err := s.GetMessageReplySuggestion(context.Background(), MessageSummaryKey{AccountID: account.ID, FolderName: "INBOX", UID: message.ID})
 	if err != nil || saved.Status != "ready" || saved.Summary != "I can confirm the requested quantity." {

@@ -17,6 +17,16 @@ const messageColumns = `account_id, folder_name, uid, date_unix, from_addr, from
 // UpsertMessages stores list metadata and preserves a previously cached full
 // body when the incoming record only came from the lightweight IMAP list fetch.
 func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string, emails []models.Email) error {
+	return s.upsertMessages(ctx, accountID, folderName, emails, false)
+}
+
+// UpsertIncomingMessages atomically queues background work for an incremental
+// INBOX batch. Initial history synchronization uses UpsertMessages instead.
+func (s *Store) UpsertIncomingMessages(ctx context.Context, accountID, folderName string, emails []models.Email) error {
+	return s.upsertMessages(ctx, accountID, folderName, emails, strings.EqualFold(folderName, "INBOX"))
+}
+
+func (s *Store) upsertMessages(ctx context.Context, accountID, folderName string, emails []models.Email, enqueue bool) error {
 	if accountID == "" || folderName == "" {
 		return fmt.Errorf("mailstore: message account and folder are required")
 	}
@@ -134,6 +144,11 @@ func (s *Store) UpsertMessages(ctx context.Context, accountID, folderName string
 		if attachmentMetadataCached && rowsAffected > 0 {
 			if err := replaceMessageAttachments(ctx, tx, accountID, folderName, uid, email.Attachments); err != nil {
 				return err
+			}
+		}
+		if enqueue {
+			if err := enqueueMailTasksTx(ctx, tx, accountID, folderName, uid, now); err != nil {
+				return fmt.Errorf("mailstore: enqueue new mail: %w", err)
 			}
 		}
 	}

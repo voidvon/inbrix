@@ -3,6 +3,7 @@ package mailstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,12 +12,18 @@ import (
 
 const defaultMessageSummaryType = "mail_summary"
 
-const messageSummaryColumns = `account_id, folder_name, uid, summary_type, summary_text, status, source_hash, config_hash, model_id, model_name, agent_id, pipeline_version, generation_token, lease_until, error_message, created_at, updated_at`
+const messageSummaryColumns = `account_id, folder_name, uid, summary_type, summary_text, status, source_hash, config_hash, model_id, model_name, agent_id, pipeline_version, generation_token, lease_until, error_message, created_at, updated_at, analysis_json`
 
 func scanMessageSummary(scanner interface{ Scan(...any) error }) (MessageSummaryRecord, error) {
 	var record MessageSummaryRecord
 	var uid, leaseUntil, createdAt, updatedAt int64
-	err := scanner.Scan(&record.AccountID, &record.FolderName, &uid, &record.SummaryType, &record.Summary, &record.Status, &record.SourceHash, &record.ConfigHash, &record.ModelID, &record.ModelName, &record.AgentID, &record.PipelineVersion, &record.GenerationToken, &leaseUntil, &record.ErrorMessage, &createdAt, &updatedAt)
+	var analysisJSON string
+	err := scanner.Scan(&record.AccountID, &record.FolderName, &uid, &record.SummaryType, &record.Summary, &record.Status, &record.SourceHash, &record.ConfigHash, &record.ModelID, &record.ModelName, &record.AgentID, &record.PipelineVersion, &record.GenerationToken, &leaseUntil, &record.ErrorMessage, &createdAt, &updatedAt, &analysisJSON)
+	if err == nil && analysisJSON != "" {
+		if decodeErr := json.Unmarshal([]byte(analysisJSON), &record.Analysis); decodeErr != nil {
+			return MessageSummaryRecord{}, fmt.Errorf("mailstore: decode mail analysis: %w", decodeErr)
+		}
+	}
 	record.UID = fmt.Sprintf("%d", uid)
 	record.LeaseUntil = timeFromUnix(leaseUntil)
 	record.CreatedAt = timeFromUnix(createdAt)
@@ -142,7 +149,7 @@ func (s *Store) ClaimMessageSummaryGeneration(ctx context.Context, record Messag
 	if regenerate {
 		readyGuard = "status <> 'generating' OR lease_until <= ?"
 	}
-	query := `INSERT INTO message_summaries(` + messageSummaryColumns + `) VALUES(?, ?, ?, ?, '', 'generating', ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+	query := `INSERT INTO message_summaries(` + messageSummaryColumns + `) VALUES(?, ?, ?, ?, '', 'generating', ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '')
 		ON CONFLICT(account_id, folder_name, uid, summary_type) DO UPDATE SET
 			status = 'generating', generation_token = excluded.generation_token,
 			lease_until = excluded.lease_until, error_message = '', updated_at = excluded.updated_at
@@ -169,7 +176,7 @@ func (s *Store) CompleteMessageSummaryGeneration(ctx context.Context, record Mes
 		return MessageSummaryRecord{}, err
 	}
 	now := time.Now().Unix()
-	result, err := s.db.ExecContext(ctx, `UPDATE message_summaries SET summary_text = ?, status = 'ready', source_hash = ?, config_hash = ?, model_id = ?, model_name = ?, agent_id = ?, pipeline_version = ?, generation_token = '', lease_until = 0, error_message = '', updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, summary, record.SourceHash, record.ConfigHash, record.ModelID, record.ModelName, record.AgentID, record.PipelineVersion, now, key.AccountID, key.FolderName, uid, defaultMessageSummaryType, token)
+	result, err := s.db.ExecContext(ctx, `UPDATE message_summaries SET summary_text = ?, analysis_json = ?, status = 'ready', source_hash = ?, config_hash = ?, model_id = ?, model_name = ?, agent_id = ?, pipeline_version = ?, generation_token = '', lease_until = 0, error_message = '', updated_at = ? WHERE account_id = ? AND folder_name = ? AND uid = ? AND summary_type = ? AND generation_token = ?`, summary, marshalJSON(record.Analysis, "null"), record.SourceHash, record.ConfigHash, record.ModelID, record.ModelName, record.AgentID, record.PipelineVersion, now, key.AccountID, key.FolderName, uid, defaultMessageSummaryType, token)
 	if err != nil {
 		return MessageSummaryRecord{}, fmt.Errorf("mailstore: complete message summary generation: %w", err)
 	}

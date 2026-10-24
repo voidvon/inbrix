@@ -143,7 +143,8 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err != nil || agent.ID != createdAgent.ID {
 		t.Fatalf("GetWebhookInquiryAgent: %+v, %v", agent, err)
 	}
-	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"{\"客户\":\"Acme GmbH\",\"需求\":\"十台阀门\",\"要求\":\"确认型号和交期\",\"问题\":\"\"}"}`}
+	output, _ := json.Marshal(map[string]string{"output_text": `{"request":"询价十台阀门","background":"","changes":"","actions":[],"missing":[],"fields":{"客户":"Acme GmbH","需求":"十台阀门","要求":"确认型号和交期","问题":""}}`})
+	client := &recordingWebhookClient{status: http.StatusOK, body: string(output)}
 	m := &SyncManager{store: s, key: encryptionKey}
 	summary, err := m.summarizeInquiryForWebhook(ctx, client, Account{OwnerID: "alice", Email: "sales@example.com"}, models.Email{From: "buyer@example.com", To: "sales@example.com", Subject: "Valve RFQ", Body: "Please quote 10 valves", BodyCached: true})
 	if err != nil {
@@ -168,5 +169,56 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	}
 	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, `["客户","需求","要求","问题"]`) || request.Reasoning.Effort != "low" || !strings.Contains(request.Input, "Please quote 10 valves") {
 		t.Fatalf("unexpected OpenAI request: %+v", request)
+	}
+}
+
+func TestNewMailStillNotifiesWhenAnalysisFails(t *testing.T) {
+	s, account, message, key := setupMailSummaryTest(t)
+	ctx := context.Background()
+	if err := s.SaveAccountWebhookSettings(ctx, account.OwnerID, account.ID, WebhookSettings{Enabled: true, URL: "https://open.feishu.cn/open-apis/bot/v2/hook/test"}); err != nil {
+		t.Fatal(err)
+	}
+	// This model returns invalid structured analysis; the notification still
+	// contains the sender and subject, without claiming AI analysis succeeded.
+	ai := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"invalid analysis"}`}
+	webhook := &recordingWebhookClient{status: http.StatusOK, body: `{"code":0}`}
+	m := &SyncManager{store: s, key: key, aiClient: ai, webhookClient: webhook}
+	if err := s.UpsertIncomingMessages(ctx, account.ID, "INBOX", []models.Email{message}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.processMailTasks(ctx, account, 3); err != nil {
+		t.Fatal(err)
+	}
+	if webhook.req == nil || !strings.Contains(string(webhook.data), message.Subject) || !strings.Contains(string(webhook.data), "AI 分析暂未完成") {
+		t.Fatalf("fallback notification missing: %s", webhook.data)
+	}
+	result, err := s.GetMessageSummary(ctx, MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID})
+	if err != nil || result.Status != "failed" || result.ErrorMessage == "" {
+		t.Fatalf("failure was not saved: %+v %v", result, err)
+	}
+}
+
+func TestNewMailStillNotifiesWithoutCachedBody(t *testing.T) {
+	s, account, message, key := setupMailSummaryTest(t)
+	ctx := context.Background()
+	message.ID = "43"
+	message.Body = ""
+	message.BodyCached = false
+	if err := s.UpsertMessages(ctx, account.ID, message.Folder, []models.Email{message}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveAccountWebhookSettings(ctx, account.OwnerID, account.ID, WebhookSettings{Enabled: true, URL: "https://open.feishu.cn/open-apis/bot/v2/hook/test"}); err != nil {
+		t.Fatal(err)
+	}
+	webhook := &recordingWebhookClient{status: http.StatusOK, body: `{"code":0}`}
+	m := &SyncManager{store: s, key: key, webhookClient: webhook}
+	if err := s.UpsertIncomingMessages(ctx, account.ID, "INBOX", []models.Email{message}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.processMailTasks(ctx, account, 3); err != nil {
+		t.Fatal(err)
+	}
+	if webhook.req == nil || !strings.Contains(string(webhook.data), message.Subject) {
+		t.Fatalf("fallback notification missing: %s", webhook.data)
 	}
 }
