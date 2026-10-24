@@ -52,6 +52,20 @@ export const ReplyQuote = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ReplyQuoteView);
+    const render = ReactNodeViewRenderer(ReplyQuoteView);
+    return (props) => {
+      const nodeView = render(props);
+      const ignoreMutation = nodeView.ignoreMutation?.bind(nodeView);
+      nodeView.ignoreMutation = (mutation) => {
+        // React mounts the quote chrome and moves contentDOM into its slot.
+        // Tiptap's mobile heuristic treats that move as a user edit when the
+        // editor is focused, rebuilding the view and repeating the move forever.
+        // Only changes inside contentDOM belong to ProseMirror; keep selection
+        // handling and actual quote edits on Tiptap's normal path.
+        if (mutation.type === "childList" && !nodeView.contentDOM?.contains(mutation.target)) return true;
+        return ignoreMutation?.(mutation) ?? false;
+      };
+      return nodeView;
+    };
   },
 });
