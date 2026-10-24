@@ -26,6 +26,7 @@ import { folderKind, folderLabel } from "../../lib/mailbox";
 import { type Copy, useLocale } from "../../lib/locale";
 import { useMailEvents, type MailEventStatus } from "../../lib/use-mail-events";
 import { useConversationsQuery } from "../../lib/use-conversations";
+import { useAppViewport } from "../../lib/use-app-viewport";
 import type { ComposeDefaults } from "../../lib/email-format";
 import type { ConversationDetail, ConversationListResponse, Mailbox } from "../../types";
 import { ShellContext, type ShellContextType } from "./shell-context";
@@ -233,6 +234,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   }
 
   const signedOut = shell.error instanceof ApiError && shell.error.status === 401;
+  useAppViewport(!signedOut);
   // SSE is the only refresh channel for mail; the shell query no longer polls.
   // Wait for a mailbox before connecting (a user without an account would be
   // redirected by the server-side mailbox gate), and resync on every reconnect.
@@ -317,7 +319,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
 
   return (
     <ShellContext.Provider value={contextValue}>
-      <div className="flex h-screen h-[100dvh] md:min-h-[32.5rem] overflow-hidden bg-background">
+      <div className="app-viewport flex min-h-0 overflow-hidden bg-background">
         {sidebarOpen && (
           <button
             className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs lg:hidden"

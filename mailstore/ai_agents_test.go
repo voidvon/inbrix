@@ -71,3 +71,28 @@ func TestMailSummaryAgentReusesLegacyWebhookAgent(t *testing.T) {
 		t.Fatalf("mail summary agent = %q, want legacy agent %q", got.ID, legacy.ID)
 	}
 }
+
+func TestMailSummaryAgentAllowsClearingLegacyOutputLabels(t *testing.T) {
+	s, account, _, _ := setupMailSummaryTest(t)
+	ctx := context.Background()
+	agent, err := s.GetMailSummaryAgent(ctx, account.OwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := s.GetDefaultAIModel(ctx, account.OwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, AITaskBindingRecord{AccountID: account.ID, TaskType: MailSummaryTask, AgentID: agent.ID, ModelID: model.ID}); err != nil {
+		t.Fatal(err)
+	}
+	agent.OutputLabels = []string{}
+	updated, err := s.UpdateAIAgent(ctx, agent)
+	if err != nil || len(updated.OutputLabels) != 0 {
+		t.Fatal("free-text summary agent still requires output labels", updated, err)
+	}
+	resolved, _, _, err := resolveMailSummaryMetadata(ctx, s, account)
+	if err != nil || resolved.ID != agent.ID {
+		t.Fatal("summary binding was lost", resolved, err)
+	}
+}

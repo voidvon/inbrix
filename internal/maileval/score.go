@@ -33,7 +33,13 @@ func targetText(a *mailstore.MailAnalysis, target string) string {
 		return strings.Join(a.Actions, "\n")
 	case "missing":
 		return strings.Join(a.Missing, "\n")
+	case "summary":
+		return a.Summary
 	case "fields":
+		// Legacy rubrics target the user-visible summary through the old field name.
+		if a.Summary != "" {
+			return a.Summary
+		}
 		keys := make([]string, 0, len(a.Fields))
 		for key := range a.Fields {
 			keys = append(keys, key)

@@ -39,9 +39,29 @@ func (c *analysisScriptClient) Do(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(raw))), Header: make(http.Header)}, nil
 }
 
-const validAnalysisOutput = `{"request":"数量改为20台","background":"[Sent Messages/41] 上次报价10台，每台USD 25","changes":"数量10台改为20台","actions":["核实新数量价格与交期"],"missing":[],"fields":{"客户":"测试客户","需求":"20台阀门","要求":"确认新报价","问题":""}}`
+const validAnalysisOutput = `{"request":"数量改为20台","background":"[Sent Messages/41] 上次报价10台，每台USD 25","changes":"数量10台改为20台","actions":["核实新数量价格与交期"],"missing":[],"summary":"测试客户，20台阀门，确认新报价。"}`
 
-const standaloneAnalysisOutput = `{"request":"分析当前邮件","background":"","changes":"","actions":[],"missing":[],"fields":{"客户":"测试客户","需求":"20台阀门","要求":"确认新报价","问题":""}}`
+const standaloneAnalysisOutput = `{"request":"分析当前邮件","background":"","changes":"","actions":[],"missing":[],"summary":"测试客户，20台阀门，确认新报价。"}`
+
+func TestMailSummaryRewritesOverlongTextInsteadOfTruncating(t *testing.T) {
+	s, account, message, key := setupMailSummaryTest(t)
+	client := &analysisScriptClient{reply: func(turn int, input string) string {
+		if turn == 1 {
+			return strings.Replace(standaloneAnalysisOutput, "测试客户，20台阀门，确认新报价。", strings.Repeat("重要信息", 51), 1)
+		}
+		if !strings.Contains(input, "summary must be at most 200 Unicode characters") {
+			t.Fatal("model did not receive the length correction")
+		}
+		return standaloneAnalysisOutput
+	}}
+	result, err := GetOrCreateMailSummary(context.Background(), client, s, key, account, message, false)
+	if err != nil || result.Record.Summary != "测试客户，20台阀门，确认新报价。" || len(client.inputs) != 2 {
+		t.Fatal(result, len(client.inputs), err)
+	}
+	if result.Record.Analysis.Summary != result.Record.Summary || len(result.Record.Analysis.Fields) != 0 {
+		t.Fatal("summary was reformatted into columns", result.Record.Analysis)
+	}
+}
 
 func TestMailAnalysisRepairsToolTranscriptAndUnreadCitations(t *testing.T) {
 	s, account, message, key := setupMailSummaryTest(t)
@@ -80,9 +100,9 @@ func TestMailAnalysisRepairsToolTranscriptAndUnreadCitations(t *testing.T) {
 }
 
 func TestMailAnalysisRejectsUnreadReferencesInDisplayFields(t *testing.T) {
-	analysis := &MailAnalysis{Fields: map[string]string{"需求": "[INBOX/99] 20 valves"}}
+	analysis := &MailAnalysis{Summary: "[INBOX/99] 20 valves"}
 	if err := validateMailAnalysisReferences(analysis); err == nil {
-		t.Fatal("unread reference in display fields accepted")
+		t.Fatal("unread reference in free-text summary accepted")
 	}
 }
 
@@ -144,7 +164,7 @@ func TestMailAnalysisSearchesReadsAndPersistsEvidence(t *testing.T) {
 	if result.Record.Analysis == nil || len(result.Record.Analysis.Sources) != 2 || len(result.Record.Analysis.Activity) != 2 {
 		t.Fatalf("analysis not persisted: %+v", result.Record.Analysis)
 	}
-	if result.Record.Summary != "客户：测试客户\n需求：20台阀门\n要求：确认新报价" {
+	if result.Record.Summary != "测试客户，20台阀门，确认新报价。" {
 		t.Fatal(result.Record.Summary)
 	}
 	stored, err := s.GetMessageSummary(ctx, result.Record.MessageSummaryKey)
@@ -178,7 +198,7 @@ func TestMailAnalysisPreservesForwardedInquiryInsideQuote(t *testing.T) {
 		if !strings.Contains(input, "TD42") || !strings.Contains(input, "quotedOrForwardedText") {
 			t.Fatal("forwarded content lost before model")
 		}
-		return `{"request":"转发询价 TD42 1/2 inch，1 UNIT","background":"","changes":"","actions":["核实报价"],"missing":[],"fields":{"客户":"Rayon Hew","需求":"TD42 1/2 inch，1 UNIT","要求":"报价","问题":""}}`
+		return `{"request":"转发询价 TD42 1/2 inch，1 UNIT","background":"","changes":"","actions":["核实报价"],"missing":[],"summary":"Rayon Hew，TD42 1/2 inch，1 UNIT，报价。"}`
 	}}
 	if _, err := SummarizeMail(context.Background(), client, s, key, account, message); err != nil {
 		t.Fatal(err)
@@ -254,7 +274,7 @@ func TestMailAnalysisRejectsUnreadTriggerAndInvalidFields(t *testing.T) {
 		t.Fatalf("unread latest mail accepted: %v", err)
 	}
 	message.Body = "short mail"
-	for _, output := range []string{`{"request":"ok","fields":{"客户":"one"}}`, validAnalysisOutput + ` {"extra":true}`, strings.Replace(validAnalysisOutput, `"changes":`, `"unknown":`, 1)} {
+	for _, output := range []string{`{"request":"ok","summary":"one。"}`, validAnalysisOutput + ` {"extra":true}`, strings.Replace(validAnalysisOutput, `"changes":`, `"unknown":`, 1)} {
 		client := &analysisScriptClient{reply: func(_ int, _ string) string { return output }}
 		if _, err := SummarizeMail(context.Background(), client, s, key, account, message); err == nil {
 			t.Fatalf("invalid output accepted: %s", output)

@@ -50,7 +50,7 @@ func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
 	if call == c.failCall {
 		return nil, errors.New("model unavailable")
 	}
-	output := fmt.Sprintf(`{"request":"询价十台阀门","background":"","changes":"","actions":["确认型号和交期"],"missing":[],"fields":{"客户":"测试客户","需求":"十台阀门","要求":"这是第%d次生成，需确认型号和交期。","问题":""}}`, call)
+	output := fmt.Sprintf(`{"request":"询价十台阀门","background":"","changes":"","actions":["确认型号和交期"],"missing":[],"summary":"测试客户，十台阀门，这是第%d次生成，需确认型号和交期。"}`, call)
 	bodyJSON, _ := json.Marshal(map[string]string{"output_text": output})
 	body := string(bodyJSON)
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
@@ -156,8 +156,8 @@ func TestGetOrCreateMailSummaryCachesAndMarksStale(t *testing.T) {
 	if err != nil || first.Cached || first.Record.Status != "ready" {
 		t.Fatalf("first summary: %+v err=%v", first, err)
 	}
-	if first.Record.Summary != "客户：测试客户\n需求：十台阀门\n要求：这是第1次生成，需确认型号和交期。" {
-		t.Fatalf("configured fields were not formatted: %q", first.Record.Summary)
+	if first.Record.Summary != "测试客户，十台阀门，这是第1次生成，需确认型号和交期。" {
+		t.Fatalf("free-text summary was changed: %q", first.Record.Summary)
 	}
 	second, err := GetOrCreateMailSummary(ctx, client, s, encryptionKey, account, message, false)
 	if err != nil || !second.Cached || second.Stale || second.Record.Summary != first.Record.Summary {
@@ -226,8 +226,8 @@ func TestGetOrCreateMailSummaryPreservesQuotesAndUsesOriginalEvidence(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Record.Summary != "客户：测试客户\n需求：十台阀门\n要求：这是第1次生成，需确认型号和交期。" {
-		t.Fatalf("configured fields were not formatted:\n%s", result.Record.Summary)
+	if result.Record.Summary != "测试客户，十台阀门，这是第1次生成，需确认型号和交期。" {
+		t.Fatalf("free-text summary was changed:\n%s", result.Record.Summary)
 	}
 	input := client.lastInput()
 	if strings.Contains(input, parentSummary) || !strings.Contains(input, "Please add CE certificates.") || !strings.Contains(input, "Original request") || !strings.Contains(input, "quotedOrForwardedText") {
@@ -240,33 +240,21 @@ func TestGetOrCreateMailSummaryPreservesQuotesAndUsesOriginalEvidence(t *testing
 	}
 }
 
-func TestConfiguredOutputLabelsControlPromptAndSummaryOrder(t *testing.T) {
+func TestFreeTextSummaryIgnoresOutputLabelsAndPreservesBusinessPreferences(t *testing.T) {
 	agent := AIAgentRecord{Prompt: "重点分析风险和下一步行动。", OutputLabels: []string{"行动", "风险"}}
 	instructions := mailSummaryInstructions(agent)
-	if !strings.Contains(instructions, mailSummarySystemPrompt) || !strings.Contains(instructions, agent.Prompt) || !strings.Contains(instructions, `["行动","风险"]`) {
-		t.Fatalf("final instructions did not combine system prompt, agent prompt, and labels:\n%s", instructions)
-	}
-	got, err := formatTaggedMailSummary(`{"风险":"客户未提供工况参数","行动":"确认压力和温度","额外":"不应接受"}`, agent.OutputLabels)
-	if err == nil {
-		t.Fatalf("unconfigured field was accepted: %q", got)
-	}
-	got, err = formatTaggedMailSummary(`{"风险":"客户未提供工况参数","行动":"确认压力和温度"}`, agent.OutputLabels)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "行动：确认压力和温度\n风险：客户未提供工况参数"; got != want {
-		t.Fatalf("summary order: got %q, want %q", got, want)
+	if !strings.Contains(instructions, agent.Prompt) || !strings.Contains(instructions, "200 个 Unicode 字符") || strings.Contains(instructions, `["行动","风险"]`) || strings.Contains(instructions, "80 个字") {
+		t.Fatal("summary still imposes configured columns or loses business preferences")
 	}
 	model := AIModelRecord{ID: "model", Model: "gpt-test"}
 	before := mailSummaryConfigHash(agent, model, "low")
 	agent.OutputLabels = []string{"风险", "行动"}
-	if after := mailSummaryConfigHash(agent, model, "low"); before == after {
-		t.Fatal("changing output label order did not change the configuration hash")
+	if after := mailSummaryConfigHash(agent, model, "low"); before != after {
+		t.Fatal("irrelevant output labels changed free-text summary configuration")
 	}
-	before = mailSummaryConfigHash(agent, model, "low")
 	model.ExtraParams = `{"temperature":0.1}`
 	if after := mailSummaryConfigHash(agent, model, "low"); before == after {
-		t.Fatal("changing model parameters did not change the configuration hash")
+		t.Fatal("model parameters absent from configuration hash")
 	}
 }
 

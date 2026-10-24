@@ -231,18 +231,6 @@ func (h *AISettingsHandler) HandleSaveTaskBinding(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	if input.TaskType == mailstore.MailSummaryTask {
-		agent, agentErr := h.mailDB.GetAIAgent(c.UserContext(), owner, input.AgentID)
-		if errors.Is(agentErr, mailstore.ErrNotFound) {
-			return fiber.NewError(fiber.StatusBadRequest, "mailbox, agent, or model does not belong to this user")
-		}
-		if agentErr != nil {
-			return fiber.ErrInternalServerError
-		}
-		if len(agent.OutputLabels) == 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "a mail summary agent must have output labels")
-		}
-	}
 	binding, err := h.mailDB.SaveAITaskBinding(c.UserContext(), owner, mailstore.AITaskBindingRecord{
 		AccountID:  account.ID,
 		TaskType:   input.TaskType,

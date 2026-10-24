@@ -1201,8 +1201,9 @@ curl "$INBRIX_URL/api/settings/ai/skills/customer-follow-up" \
 
 To create an alternative automatic-summary workflow, use `kind=mail_summary`,
 then POST its `use-for-mail-summary` endpoint with `{ "revision": 1 }`. This
-workflow applies to all the owner's mailboxes; mailbox model, business prompt,
-output labels and task-enable settings still apply. Dependencies must exist in
+workflow applies to all the owner's mailboxes; mailbox model, business prompt
+and task-enable settings still apply. Automatic summaries use free text of at
+most 200 Unicode characters including punctuation, without fixed output labels. Dependencies must exist in
 the same owner's registry, match the skill's kind, and be acyclic. An enabled
 skill cannot depend on a disabled skill. An active summary cannot be deleted or disabled; any referenced skill cannot
 be deleted, and a dependency of an enabled skill cannot be disabled (**409**).

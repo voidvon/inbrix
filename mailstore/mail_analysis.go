@@ -42,21 +42,23 @@ type MailAnalysisActivity struct {
 	Summary string         `json:"summary"`
 }
 
-// MailAnalysis is durable task output, separate from the short configured
-// display fields. Sources and execution activity are assigned by the server.
+// MailAnalysis is durable task output, including the free-text display summary.
+// Sources and execution activity are assigned by the server.
 type MailAnalysis struct {
-	Retrieval     MailAnalysisRetrieval  `json:"retrieval"`
-	SkillSnapshot AISkillExecution       `json:"skillSnapshot"`
-	Request       string                 `json:"request"`
-	Background    string                 `json:"background"`
-	Changes       string                 `json:"changes"`
-	Actions       []string               `json:"actions"`
-	Missing       []string               `json:"missing"`
-	Fields        map[string]string      `json:"fields"`
-	Sources       []MailAnalysisSource   `json:"sources"`
-	Activity      []MailAnalysisActivity `json:"activity"`
-	Skill         string                 `json:"skill"`
-	AsOf          time.Time              `json:"asOf"`
+	Retrieval     MailAnalysisRetrieval `json:"retrieval"`
+	SkillSnapshot AISkillExecution      `json:"skillSnapshot"`
+	Request       string                `json:"request"`
+	Background    string                `json:"background"`
+	Changes       string                `json:"changes"`
+	Actions       []string              `json:"actions"`
+	Missing       []string              `json:"missing"`
+	Summary       string                `json:"summary,omitempty"`
+	// Fields is retained only to decode historical analyses from before pipeline v12.
+	Fields   map[string]string      `json:"fields,omitempty"`
+	Sources  []MailAnalysisSource   `json:"sources"`
+	Activity []MailAnalysisActivity `json:"activity"`
+	Skill    string                 `json:"skill"`
+	AsOf     time.Time              `json:"asOf"`
 }
 
 type mailAnalysisScope struct {
@@ -370,14 +372,14 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	run, err := agentruntime.Run(ctx, agentruntime.Options{
 		Input:        string(initial),
 		Tools:        MailReadToolSpecs("thread", "conversation", "mailbox"),
-		OutputSchema: mailSummaryOutputSchema(cfg.agent.OutputLabels),
+		OutputSchema: mailSummaryOutputSchema(),
 		Limits:       agentruntime.Limits{Turns: 6, CallsPerTurn: 4, Calls: 12, InputBytes: 96000 - len(instructions), ResultBytes: 18000, ValidationRetries: 2},
 		Complete: func(ctx context.Context, input agentruntime.ModelRequest) (agentruntime.ModelResponse, error) {
 			return CreateAgentResponse(ctx, client, cfg.model, cfg.apiKey, instructions, input, nil, 6000, cfg.effort, nil)
 		},
 		Execute: scope.execute,
 		Validate: func(raw string) error {
-			result, err := parseMailAnalysisOutput(raw, cfg.agent.OutputLabels)
+			result, err := parseMailAnalysisOutput(raw)
 			if err != nil {
 				return err
 			}
@@ -386,7 +388,7 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 					return fmt.Errorf("%w: mail-analysis skill did not finish reading the triggering email; use read_email to read the remaining ranges", ErrInvalidMailAnalysis)
 				}
 			}
-			analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Fields: result.Fields, Sources: scope.sources}
+			analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Summary: result.Summary, Sources: scope.sources}
 			if err := validateMailAnalysisReferences(analysis); err != nil {
 				refs := make([]string, 0, len(scope.sources))
 				for _, source := range scope.sources {
@@ -419,7 +421,7 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	if err != nil {
 		return nil, err
 	}
-	result, err := parseMailAnalysisOutput(run.Text, cfg.agent.OutputLabels)
+	result, err := parseMailAnalysisOutput(run.Text)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +429,7 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	if cfg.skill.ID != "" {
 		skillVersion = fmt.Sprintf("%s/v%d", cfg.skill.ID, cfg.skill.Revision)
 	}
-	analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Fields: result.Fields, Sources: scope.sources, Skill: skillVersion, SkillSnapshot: cfg.skill, Retrieval: scope.retrieval, AsOf: message.Date}
+	analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Summary: result.Summary, Sources: scope.sources, Skill: skillVersion, SkillSnapshot: cfg.skill, Retrieval: scope.retrieval, AsOf: message.Date}
 	for _, source := range scope.sources {
 		if !sourceFullyRead(source) {
 			if source.Folder == message.Folder && source.UID == message.ID {
@@ -495,7 +497,7 @@ func validateMailAnalysisReferences(analysis *MailAnalysis) error {
 	if strings.TrimSpace(analysis.Background) != "" && !mailAnalysisReferenceRE.MatchString(analysis.Background) {
 		return errors.New("mail-analysis background is missing email source references")
 	}
-	texts := append([]string{analysis.Request, analysis.Background, analysis.Changes}, analysis.Actions...)
+	texts := append([]string{analysis.Request, analysis.Background, analysis.Changes, analysis.Summary}, analysis.Actions...)
 	texts = append(texts, analysis.Missing...)
 	for _, value := range analysis.Fields {
 		texts = append(texts, value)

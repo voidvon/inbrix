@@ -18,17 +18,13 @@ func MailReadToolSpecs(scopes ...string) []agentruntime.ToolSpec {
 	}
 }
 
-// The mail-summary API owns this output contract. The shared agent runtime
-// does not know these field names or the configurable display labels.
-func mailSummaryOutputSchema(labels []string) map[string]any {
+// The mail-summary API owns this output contract. The display summary has no
+// configured labels; internal analysis fields retain evidence and task context.
+func mailSummaryOutputSchema() map[string]any {
 	text := map[string]any{"type": "string"}
 	list := map[string]any{"type": "array", "items": text}
-	fields := map[string]any{}
-	for _, label := range labels {
-		fields[label] = text
-	}
 	return map[string]any{"type": "object", "properties": map[string]any{
 		"request": map[string]any{"type": "string", "minLength": 1}, "background": text, "changes": text, "actions": list, "missing": list,
-		"fields": map[string]any{"type": "object", "properties": fields, "required": append([]string{}, labels...), "additionalProperties": false},
-	}, "required": []string{"request", "background", "changes", "actions", "missing", "fields"}, "additionalProperties": false}
+		"summary": map[string]any{"type": "string", "minLength": 1, "maxLength": mailSummaryMaxCharacters, "description": "Free-text mail summary for display, at most 200 Unicode characters including punctuation. No fixed headings or customer/needs/requirements fields."},
+	}, "required": []string{"request", "background", "changes", "actions", "missing", "summary"}, "additionalProperties": false}
 }

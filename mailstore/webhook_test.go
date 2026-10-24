@@ -144,14 +144,14 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err != nil || agent.ID != createdAgent.ID {
 		t.Fatalf("GetWebhookInquiryAgent: %+v, %v", agent, err)
 	}
-	output, _ := json.Marshal(map[string]string{"output_text": `{"request":"询价十台阀门","background":"","changes":"","actions":[],"missing":[],"fields":{"客户":"Acme GmbH","需求":"十台阀门","要求":"确认型号和交期","问题":""}}`})
+	output, _ := json.Marshal(map[string]string{"output_text": `{"request":"询价十台阀门","background":"","changes":"","actions":[],"missing":[],"summary":"Acme GmbH，十台阀门，确认型号和交期。"}`})
 	client := &recordingWebhookClient{status: http.StatusOK, body: string(output)}
 	m := &SyncManager{store: s, key: encryptionKey}
 	summary, err := m.summarizeInquiryForWebhook(ctx, client, Account{OwnerID: "alice", Email: "sales@example.com"}, models.Email{From: "buyer@example.com", To: "sales@example.com", Subject: "Valve RFQ", Body: "Please quote 10 valves", BodyCached: true})
 	if err != nil {
 		t.Fatalf("summarizeInquiryForWebhook: %v", err)
 	}
-	if summary != "客户：Acme GmbH\n需求：十台阀门\n要求：确认型号和交期" {
+	if summary != "Acme GmbH，十台阀门，确认型号和交期。" {
 		t.Fatalf("summary: %q", summary)
 	}
 	if got := client.req.Header.Get("Authorization"); got != "Bearer test-api-key" {
@@ -168,7 +168,7 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err := json.Unmarshal(client.data, &request); err != nil {
 		t.Fatalf("decode OpenAI request: %v", err)
 	}
-	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, `["客户","需求","要求","问题"]`) || request.Reasoning.Effort != "low" || !strings.Contains(agenttest.InputText(request.Input), "Please quote 10 valves") {
+	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, "200 个 Unicode 字符") || request.Reasoning.Effort != "low" || !strings.Contains(agenttest.InputText(request.Input), "Please quote 10 valves") {
 		t.Fatalf("unexpected OpenAI request: %+v", request)
 	}
 }

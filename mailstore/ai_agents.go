@@ -125,18 +125,6 @@ func (s *Store) UpdateAIAgent(ctx context.Context, agent AIAgentRecord) (AIAgent
 	if agent.ID == "" || agent.OwnerID == "" || agent.Name == "" || agent.Prompt == "" {
 		return AIAgentRecord{}, errors.New("mailstore: AI agent id, owner, name, and prompt are required")
 	}
-	if len(agent.OutputLabels) == 0 {
-		var summaryUses int
-		if err := s.db.QueryRowContext(ctx, `
-			SELECT (SELECT COUNT(*) FROM ai_task_bindings WHERE agent_id = ? AND task_type = ?)
-				 + (SELECT COUNT(*) FROM ai_agents WHERE owner_id = ? AND id = ? AND purpose IN ('mail_summary', 'feishu_inquiry_analysis'))`,
-			agent.ID, MailSummaryTask, agent.OwnerID, agent.ID).Scan(&summaryUses); err != nil {
-			return AIAgentRecord{}, fmt.Errorf("mailstore: inspect AI agent summary bindings: %w", err)
-		}
-		if summaryUses > 0 {
-			return AIAgentRecord{}, errors.New("mailstore: a mail summary agent must have output labels")
-		}
-	}
 	labelsJSON, _ := json.Marshal(agent.OutputLabels)
 	profileJSON, _ := json.Marshal(agent.BusinessProfile)
 	result, err := s.db.ExecContext(ctx, `UPDATE ai_agents SET name = ?, prompt = ?, output_labels_json = ?, business_profile_json = ?, updated_at = ? WHERE owner_id = ? AND id = ?`, agent.Name, agent.Prompt, string(labelsJSON), string(profileJSON), time.Now().Unix(), agent.OwnerID, agent.ID)

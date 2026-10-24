@@ -186,6 +186,9 @@ func Markdown(report Report) string {
 				fmt.Fprintf(&b, "- `%s/%s`，全文读取：%t\n", source.Folder, source.UID, fullyRead(source))
 			}
 			b.WriteString("\n**精简输出**：\n\n")
+			if a.Summary != "" {
+				fmt.Fprintf(&b, "%s\n", escapeCell(a.Summary))
+			}
 			keys := []string{}
 			for key := range a.Fields {
 				keys = append(keys, key)

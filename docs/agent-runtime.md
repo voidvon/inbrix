@@ -10,7 +10,7 @@
 | 模型协议适配 | `mailstore/ai_agent_completion.go`、`ai_agent_stream.go` | OpenAI Responses、DeepSeek / Chat Completions、Gemini；转换请求和流式响应，保留供应商要求的续传内容 |
 | 应用工具 | `handlers/web/ai_agent_tools.go`、`mailstore/agent_mail_tools.go` | 声明当前执行可用的工具参数和能力；原有 executor 检查身份、范围、版本及证据 |
 | 工作方法 | 用户管理的 Skill | 按目录选择、按需加载，或显式选择后加载；定义邮件分析、产品核对、报价和合同工作方法 |
-| 任务交付 | 聊天 / 邮件分析入口 | 聊天生成可展示结果及草稿；邮件分析提供输出 schema 和来源校验器，最后持久化结果 |
+| 任务交付 | 聊天 / 邮件分析入口 | 聊天生成可展示结果及草稿；邮件分析提供输出 schema 和来源校验器，最后持久化结果；展示摘要为最多 200 字的自由文本 |
 
 新增工具时，应用入口同时注册 schema 和实现。Skill 可以说明如何使用工具，不能注册工具或扩大权限。已有 Skill 内容、启停和删除状态不因这次升级而覆盖；新的文档完整性指引随默认 Skill 首次初始化，已有用户可通过 Skill 管理自行调整流程。历史 Skill 的文本调用示例不改变服务器使用的原生调用协议。
 

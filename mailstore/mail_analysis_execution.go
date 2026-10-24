@@ -39,11 +39,6 @@ func AnalyzeMailWithConfig(ctx context.Context, client HTTPClient, store *Store,
 	if store == nil || client == nil || strings.TrimSpace(input.APIKey) == "" || input.Model.Model == "" || input.Skill.Instructions == "" {
 		return MailAnalysisExecutionResult{}, errors.New("incomplete mail analysis execution configuration")
 	}
-	labels, err := NormalizeAIAgentOutputLabels(input.Agent.OutputLabels)
-	if err != nil || len(labels) == 0 {
-		return MailAnalysisExecutionResult{}, errors.New("invalid mail analysis output labels")
-	}
-	input.Agent.OutputLabels = labels
 	effort := input.Model.ReasoningEffort
 	if effort == "" {
 		effort = "medium"

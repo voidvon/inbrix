@@ -1299,7 +1299,7 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
                     {(["mail_summary", "email_draft", "reply_suggestion"] as const).map((taskType) => {
                       const binding = bindings.data?.bindings.find((item) => item.accountEmail === account.email && item.taskType === taskType);
                       const label = taskType === "mail_summary" ? copy.mailSummaryAgent : taskType === "email_draft" ? copy.emailDraftAgent : copy.replySuggestionAgent;
-                      const availableAgents = (agents.data?.agents || []).filter((item) => taskType !== "mail_summary" || item.outputLabels.length > 0);
+                      const availableAgents = agents.data?.agents || [];
                       return <AIBindingRow
                         key={taskType}
                         copy={copy}

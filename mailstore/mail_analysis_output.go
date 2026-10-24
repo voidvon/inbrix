@@ -6,20 +6,23 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
+const mailSummaryMaxCharacters = 200
+
 type mailAnalysisOutput struct {
-	Request    string            `json:"request"`
-	Background string            `json:"background"`
-	Changes    string            `json:"changes"`
-	Actions    []string          `json:"actions"`
-	Missing    []string          `json:"missing"`
-	Fields     map[string]string `json:"fields"`
+	Request    string   `json:"request"`
+	Background string   `json:"background"`
+	Changes    string   `json:"changes"`
+	Actions    []string `json:"actions"`
+	Missing    []string `json:"missing"`
+	Summary    string   `json:"summary"`
 }
 
 // Report schema failures without copying model output (which can contain mail
 // bodies) into persistent error logs or API error messages.
-func parseMailAnalysisOutput(raw string, labels []string) (mailAnalysisOutput, error) {
+func parseMailAnalysisOutput(raw string) (mailAnalysisOutput, error) {
 	var result mailAnalysisOutput
 	invalid := func(reason string) (mailAnalysisOutput, error) {
 		return result, fmt.Errorf("%w: mail-analysis skill returned invalid structured output: %s", ErrInvalidMailAnalysis, reason)
@@ -39,7 +42,7 @@ func parseMailAnalysisOutput(raw string, labels []string) (mailAnalysisOutput, e
 	if decoder.Decode(new(any)) != io.EOF {
 		return invalid("trailing output after JSON object")
 	}
-	for _, name := range []string{"request", "background", "changes", "actions", "missing", "fields"} {
+	for _, name := range []string{"request", "background", "changes", "actions", "missing", "summary"} {
 		value, ok := fields[name]
 		if !ok {
 			return invalid("missing required key " + name)
@@ -61,7 +64,7 @@ func parseMailAnalysisOutput(raw string, labels []string) (mailAnalysisOutput, e
 		{"changes", &result.Changes, "a string"},
 		{"actions", &result.Actions, "a string array"},
 		{"missing", &result.Missing, "a string array"},
-		{"fields", &result.Fields, "an object of strings"},
+		{"summary", &result.Summary, "a string"},
 	} {
 		if err := json.Unmarshal(fields[field.name], field.dst); err != nil {
 			return invalid(field.name + " must be " + field.kind)
@@ -70,20 +73,18 @@ func parseMailAnalysisOutput(raw string, labels []string) (mailAnalysisOutput, e
 	if strings.TrimSpace(result.Request) == "" {
 		return invalid("request must be non-empty")
 	}
-	if len(result.Fields) != len(labels) {
-		return invalid("fields must match the configured output labels")
+	result.Summary = strings.TrimSpace(result.Summary)
+	if result.Summary == "" {
+		return invalid("summary must be non-empty")
 	}
-	for _, label := range labels {
-		if _, ok := result.Fields[label]; !ok {
-			return invalid("fields must match the configured output labels")
-		}
+	if utf8.RuneCountInString(result.Summary) > mailSummaryMaxCharacters {
+		return invalid("summary must be at most 200 Unicode characters; rewrite it concisely without truncating key facts")
 	}
 	// encoding/json accepts null for string destinations, so check nested
 	// values explicitly rather than silently turning them into empty strings.
 	var shape struct {
-		Actions []any          `json:"actions"`
-		Missing []any          `json:"missing"`
-		Fields  map[string]any `json:"fields"`
+		Actions []any `json:"actions"`
+		Missing []any `json:"missing"`
 	}
 	encoded, _ := json.Marshal(fields)
 	_ = json.Unmarshal(encoded, &shape)
@@ -96,14 +97,6 @@ func parseMailAnalysisOutput(raw string, labels []string) (mailAnalysisOutput, e
 				return invalid(array.name + " must contain only strings")
 			}
 		}
-	}
-	for _, value := range shape.Fields {
-		if _, ok := value.(string); !ok {
-			return invalid("fields must contain only strings")
-		}
-	}
-	if _, err := formatTaggedMailSummary(string(fields["fields"]), labels); err != nil {
-		return invalid("fields must contain at least one non-empty configured value")
 	}
 	return result, nil
 }

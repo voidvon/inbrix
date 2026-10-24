@@ -194,7 +194,7 @@ func ValidateSuite(suite Suite) error {
 					return fmt.Errorf("rule %s has no patterns", rule.ID)
 				}
 				switch rule.Target {
-				case "request", "background", "changes", "actions", "missing", "fields", "all":
+				case "request", "background", "changes", "actions", "missing", "summary", "fields", "all":
 				default:
 					return fmt.Errorf("rule %s has unknown target", rule.ID)
 				}

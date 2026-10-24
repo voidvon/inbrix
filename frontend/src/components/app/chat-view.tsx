@@ -760,10 +760,18 @@ export function ChatView({
     scroll.addEventListener("wheel", onWheel, { passive: true });
     scroll.addEventListener("touchstart", onTouchStart, { passive: true });
     scroll.addEventListener("touchmove", onTouchMove, { passive: true });
-    const resizeObserver = new ResizeObserver(syncScroll);
+    const resizeObserver = new ResizeObserver((entries) => {
+      // A viewport resize can clamp scrollTop without user input. Retain follow
+      // mode when browser chrome, rotation or the keyboard changes its height.
+      if (stickToBottom.current && entries.some((entry) => entry.target === scroll)) {
+        programmaticTop.current = scroll.scrollTop;
+      }
+      syncScroll();
+    });
     if (!focusActiveRef.current) jumpToLatest();
     captureAnchor();
     resizeObserver.observe(content);
+    resizeObserver.observe(scroll);
     const frame = window.requestAnimationFrame(() => {
       syncScroll();
     });
@@ -891,9 +899,9 @@ export function ChatView({
     const frame = window.requestAnimationFrame(() => {
       focusedNavigation.current = navigation;
       focusActiveRef.current = false;
-      target.scrollIntoView({ block: "center", behavior: "auto" });
       const scroll = scrollRef.current;
       if (scroll) {
+        scroll.scrollTop += target.getBoundingClientRect().top - scroll.getBoundingClientRect().top - (scroll.clientHeight - target.offsetHeight) / 2;
         stickToBottom.current = false;
         programmaticTop.current = scroll.scrollTop;
         scrollAnchor.current = { key: focusKey, top: target.getBoundingClientRect().top - scroll.getBoundingClientRect().top };
@@ -909,9 +917,9 @@ export function ChatView({
   }, [highlightedMessageKey]);
 
   return (
-    <div className={cn("relative flex min-w-0 flex-1 overflow-hidden", className)}>
-      <section data-testid="conversation-detail" className="relative flex min-w-0 flex-1 flex-col bg-surface">
-        <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center border-b bg-card px-3 sm:px-5">
+    <div className={cn("relative flex min-h-0 min-w-0 flex-1 overflow-hidden", className)}>
+      <section data-testid="conversation-detail" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface">
+        <header className="grid h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b bg-card px-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] sm:gap-0 sm:px-5">
           <div className="flex min-w-0 items-center justify-start">
             <Button
               variant="ghost"
@@ -1129,7 +1137,7 @@ export function ChatView({
 
       {/* 移动端全屏 AI 聊天弹出页面 */}
       {isAIChatOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background lg:hidden">
+        <div className="app-viewport z-50 flex min-h-0 flex-col overflow-hidden bg-background lg:hidden">
           <ConversationAIChatPanel
             copy={copy}
             detail={detail}

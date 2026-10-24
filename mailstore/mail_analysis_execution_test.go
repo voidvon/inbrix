@@ -13,6 +13,7 @@ func TestAnalyzeMailWithConfigUsesFrozenSkillWithoutCacheOrQueuedDelivery(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.agent.OutputLabels = []string{}
 	frozen := MailAnalysisExecutionConfig{Model: cfg.model, APIKey: cfg.apiKey, Agent: cfg.agent, Skill: cfg.skill}
 	client := &analysisScriptClient{reply: func(_ int, _ string) string { return standaloneAnalysisOutput }}
 	first, err := AnalyzeMailWithConfig(ctx, client, s, account, message, frozen)

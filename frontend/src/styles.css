@@ -314,6 +314,23 @@
   display: none;
 }
 
+/* The mail app scrolls inside panes, never through the document. This also
+   prevents focus/scrollIntoView from moving its toolbar off screen on mobile. */
+html.app-viewport-active,
+html.app-viewport-active body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.app-viewport {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--app-viewport-top, 0px);
+  height: var(--app-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
 /* Canvas menus use viewport coordinates. A transformed dialog would make
    their fixed positioning relative to the dialog and offset every submenu. */
 [data-slot="dialog-content"].canvas-document-dialog {
