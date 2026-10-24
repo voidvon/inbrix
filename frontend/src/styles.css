@@ -365,7 +365,8 @@ html.app-viewport-active body {
     animation: mobile-page-enter 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  /* Dialog keeps the editor mounted until its closing animation finishes. */
+  /* Both Dialog and plain pages retain their content through the exit. */
+  .mobile-page-enter[data-ending-style],
   [data-slot="dialog-content"].canvas-document-dialog[data-closed] {
     animation: mobile-page-exit 180ms ease-in forwards;
   }

@@ -61,6 +61,7 @@ import {
 import { cn, paginationPageItems } from "../../lib/utils";
 import { getDocument } from "../../lib/api";
 import { zh, en } from "../../lib/locale";
+import { useMobilePageClose } from "../../lib/use-mobile-page-close";
 
 export function DocumentListPage({ createDocument = false, documentId }: { createDocument?: boolean; documentId?: string }) {
   const { copy, accountEmail, openMobileMenu } = useShell();
@@ -69,6 +70,10 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
   const detailRequest = useRef(0);
   const [loading, setLoading] = useState(true);
   const [showAIChat, setShowAIChat] = useState(() => window.location.pathname === "/ai-document");
+  const aiPage = useMobilePageClose<HTMLDivElement>(() => {
+    setShowAIChat(false);
+    void fetchServerDocuments("all").then(setDocuments).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed));
+  });
   const [templates, setTemplates] = useState<StoredTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const templateRequest = useRef(0);
@@ -261,8 +266,11 @@ export function DocumentListPage({ createDocument = false, documentId }: { creat
 
   return (
     <>
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {showAIChat ? <AIDocumentChatPanel copy={copy} accountEmail={accountEmail} onBack={() => { setShowAIChat(false); void fetchServerDocuments("all").then(setDocuments).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)); }} onOpenDocument={record => { void loadTemplates().then(() => showEditor({ kind: "document", record })).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)); }} className="mobile-page-enter min-h-0 flex-1" /> : <>
+      <main inert={aiPage.closing} className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        {showAIChat && <div ref={aiPage.ref} data-ending-style={aiPage.closing ? "" : undefined} inert={aiPage.closing} className={cn("mobile-page-enter flex min-h-0 flex-1 overflow-hidden bg-background", aiPage.closing && "absolute inset-0 z-20")}>
+          <AIDocumentChatPanel copy={copy} accountEmail={accountEmail} onBack={aiPage.close} onOpenDocument={record => { void loadTemplates().then(() => showEditor({ kind: "document", record })).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)); }} className="min-h-0 flex-1" />
+        </div>}
+        {(!showAIChat || aiPage.closing) && <>
         <header className="flex min-h-14 items-center gap-3 border-b bg-card px-3 py-2 sm:px-5">
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={openMobileMenu} aria-label={copy.folders} title={copy.folders}><Menu /></Button>
           <FilePenLine className="size-4 shrink-0 text-muted-foreground" />

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -31,6 +31,7 @@ import { ThreadDraftEntry } from "./thread-draft-entry";
 import { ConversationNoteEntry } from "./conversation-note-entry";
 import { useSaveConversationNote } from "../../lib/conversation-note";
 import { useComposeDraft } from "../../lib/compose-draft";
+import { useMobilePageClose } from "../../lib/use-mobile-page-close";
 import { useShell } from "./shell-context";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
 import { Badge } from "../ui/badge";
@@ -436,6 +437,8 @@ export function ChatPanel({
   onReEdit,
   onConversationEmpty,
   className,
+  panelRef,
+  closing = false,
   focusTarget,
   onLoadOlder,
   loadingOlder,
@@ -458,6 +461,8 @@ export function ChatPanel({
   onReEdit?: (message: ConversationMessage) => void;
   onConversationEmpty: () => void;
   className?: string;
+  panelRef?: Ref<HTMLElement>;
+  closing?: boolean;
   /** Message to scroll to and highlight once the conversation is on screen. */
   focusTarget?: MailFocusTarget | null;
 } & TranscriptPaginationProps) {
@@ -465,7 +470,7 @@ export function ChatPanel({
   // loading the conversation does not restart the mobile page transition.
   const panelClass = cn("mobile-page-enter flex min-h-0 min-w-0 flex-1 flex-col bg-surface", className);
   return (
-    <section className={panelClass}>
+    <section ref={panelRef} className={panelClass} data-ending-style={closing ? "" : undefined} inert={closing}>
       {loading && !detail ? (
         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{copy.loading}</div>
       ) : error && !detail ? (
@@ -604,6 +609,7 @@ export function ChatView({
   };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+  const mobileAIPage = useMobilePageClose<HTMLDivElement>(() => setIsAIChatOpen(false));
   const [focusedMessageIds, setFocusedMessageIds] = useState<string[]>([]);
   const [highlightedMessageKey, setHighlightedMessageKey] = useState<string | null>(null);
   const [aiPanelWidth, setAiPanelWidth] = usePersistedPaneWidth("inbrix-ai-chat-panel-width", 384, 300, 800);
@@ -1131,7 +1137,7 @@ export function ChatView({
 
       {/* 移动端全屏 AI 聊天弹出页面 */}
       {isAIChatOpen && (
-        <div className="mobile-page-enter app-viewport z-50 flex min-h-0 flex-col overflow-hidden bg-background lg:hidden">
+        <div ref={mobileAIPage.ref} data-ending-style={mobileAIPage.closing ? "" : undefined} inert={mobileAIPage.closing} className="mobile-page-enter app-viewport z-50 flex min-h-0 flex-col overflow-hidden bg-background lg:hidden">
           <ConversationAIChatPanel
             copy={copy}
             detail={detail}
@@ -1139,7 +1145,7 @@ export function ChatView({
             focusedMessageIds={focusedMessageIds}
             onRemoveFocusedMessage={handleRemoveFocusedMessage}
             onClearFocusedMessages={handleClearFocusedMessages}
-            onClose={() => setIsAIChatOpen(false)}
+            onClose={mobileAIPage.close}
             onWriteDraft={writeDraftToLatest}
             getActiveDraft={getActiveDraft}
           />

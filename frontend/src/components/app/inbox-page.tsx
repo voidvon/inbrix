@@ -13,6 +13,7 @@ import {
 import { en } from "../../lib/locale";
 import { useConversationsQuery } from "../../lib/use-conversations";
 import { useConversationMessages } from "../../lib/use-conversation-messages";
+import { useMobilePageClose } from "../../lib/use-mobile-page-close";
 import {
   escapeHTML,
   splitRecipientValues,
@@ -355,12 +356,13 @@ export function InboxPage() {
     });
   };
 
-  const closeChat = () => {
+  const chatPage = useMobilePageClose<HTMLElement>(() => {
     setChatOpen(false);
     setSelectedId(null);
     setMessageTarget(null);
     setConversationURL(null, "replace");
-  };
+  });
+  const closeChat = chatPage.close;
 
   const openSearchResult = (result: MailSearchResult) => {
     manuallyUnreadRef.current.delete(result.conversationId);
@@ -376,7 +378,7 @@ export function InboxPage() {
 
   return (
     <>
-      <main className="flex min-w-0 flex-1 overflow-hidden bg-background">
+      <main inert={chatPage.closing} className="relative flex min-w-0 flex-1 overflow-hidden bg-background">
         <ConversationList
           copy={locale}
           data={conversations.data}
@@ -414,10 +416,12 @@ export function InboxPage() {
           showAllConversations={showAllConversations}
           onShowAllChange={setShowAllConversations}
           desktopWidth={listWidth}
-          className={chatOpen ? "hidden lg:flex" : "flex"}
+          className={chatOpen && !chatPage.closing ? "hidden lg:flex" : "flex"}
         />
         {chatOpen && <ResizeHandle label="Resize conversation list" width={listWidth} minWidth={260} maxWidth={560} onResize={setListWidth} />}
         <ChatPanel
+          panelRef={chatPage.ref}
+          closing={chatPage.closing}
           copy={locale}
           detail={serverConversation}
           loading={detail.isPending && Boolean(selectedId)}
@@ -443,7 +447,7 @@ export function InboxPage() {
           onRetrySend={setRetryTarget}
           onReEdit={handleReEditMessage}
           onConversationEmpty={closeChat}
-          className={chatOpen ? "flex" : "hidden lg:flex"}
+          className={chatPage.closing ? "absolute inset-0 z-20 flex" : chatOpen ? "flex" : "hidden lg:flex"}
         />
       </main>
       <Dialog open={Boolean(retryTarget)} onOpenChange={(open) => { if (!open && !retryPending) setRetryTarget(null); }}>
