@@ -461,47 +461,41 @@ export function ChatPanel({
   /** Message to scroll to and highlight once the conversation is on screen. */
   focusTarget?: MailFocusTarget | null;
 } & TranscriptPaginationProps) {
-  const panelClass = cn("min-w-0 flex-1 flex-col bg-surface", className);
-  if (loading && !detail)
-    return (
-      <section className={cn(panelClass, "items-center justify-center")}>
-        <div className="text-sm text-muted-foreground">{copy.loading}</div>
-      </section>
-    );
-  if (error && !detail)
-    return (
-      <section className={panelClass}>
-        <ErrorState copy={copy} />
-      </section>
-    );
-  if (!detail)
-    return (
-      <section className={panelClass}>
-        <EmptyState icon={<MessageCircle />} text={copy.selectConversation} />
-      </section>
-    );
+  // Keep the animated shell mounted while the message request settles, so
+  // loading the conversation does not restart the mobile page transition.
+  const panelClass = cn("mobile-page-enter flex min-h-0 min-w-0 flex-1 flex-col bg-surface", className);
   return (
-    <ChatView
-      copy={copy}
-      detail={detail}
-      className={className}
-      focusTarget={focusTarget}
-      onLoadOlder={onLoadOlder}
-      loadingOlder={loadingOlder}
-      loadOlderError={loadOlderError}
-      onLoadNewer={onLoadNewer}
-      loadingNewer={loadingNewer}
-      loadNewerError={loadNewerError}
-      onGoLatest={onGoLatest}
-      loadingLatest={loadingLatest}
-      onBack={onBack}
-      onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
-      onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
-      onNewMail={(message) => onNewMail(detail, message)}
-      onRetrySend={onRetrySend}
-      onReEdit={onReEdit}
-      onConversationEmpty={onConversationEmpty}
-    />
+    <section className={panelClass}>
+      {loading && !detail ? (
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">{copy.loading}</div>
+      ) : error && !detail ? (
+        <ErrorState copy={copy} />
+      ) : !detail ? (
+        <EmptyState icon={<MessageCircle />} text={copy.selectConversation} />
+      ) : (
+        <ChatView
+          copy={copy}
+          detail={detail}
+          className="flex"
+          focusTarget={focusTarget}
+          onLoadOlder={onLoadOlder}
+          loadingOlder={loadingOlder}
+          loadOlderError={loadOlderError}
+          onLoadNewer={onLoadNewer}
+          loadingNewer={loadingNewer}
+          loadNewerError={loadNewerError}
+          onGoLatest={onGoLatest}
+          loadingLatest={loadingLatest}
+          onBack={onBack}
+          onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
+          onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
+          onNewMail={(message) => onNewMail(detail, message)}
+          onRetrySend={onRetrySend}
+          onReEdit={onReEdit}
+          onConversationEmpty={onConversationEmpty}
+        />
+      )}
+    </section>
   );
 }
 
@@ -1137,7 +1131,7 @@ export function ChatView({
 
       {/* 移动端全屏 AI 聊天弹出页面 */}
       {isAIChatOpen && (
-        <div className="app-viewport z-50 flex min-h-0 flex-col overflow-hidden bg-background lg:hidden">
+        <div className="mobile-page-enter app-viewport z-50 flex min-h-0 flex-col overflow-hidden bg-background lg:hidden">
           <ConversationAIChatPanel
             copy={copy}
             detail={detail}
