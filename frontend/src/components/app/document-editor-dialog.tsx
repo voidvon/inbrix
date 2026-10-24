@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { getDocument } from "../../lib/api";
 import {
   Bold,
   Check,
@@ -38,8 +39,9 @@ import {
   type DocumentEditorTarget,
   type DocumentTemplate,
   documentTemplateHTML,
-  readStoredDocuments,
-  readStoredTemplates,
+  type DocumentSummary,
+  fetchServerDocuments,
+  fetchServerTemplates,
   persistServerDocument,
   persistServerTemplate,
 } from "../../lib/document-storage";
@@ -841,8 +843,32 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
   copy: Copy; accountEmail: string; action: "create" | "import"; onClose: () => void;
   onAttach: (file: File) => void; onBusyChange: (busy: boolean) => void;
 }) {
-  const [templates, setTemplates] = useState(() => readStoredTemplates(copy));
-  const [documents] = useState(() => readStoredDocuments().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  const [templates, setTemplates] = useState<StoredTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(action === "create");
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(action === "import");
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    let active = true;
+    if (action === "create") {
+      setLoadingTemplates(true);
+      void fetchServerTemplates(copy).then(records => {
+        if (!active) return;
+        setTemplates(records);
+        setTarget({ kind: "document", initialTemplate: records.find(record => record.type === "quotation") || records[0] });
+      }).catch(error => {
+        if (active) { toast.error(error instanceof Error ? error.message : copy.loadFailed); callbacksRef.current.onClose(); }
+      }).finally(() => { if (active) setLoadingTemplates(false); });
+    }
+    if (action === "import") {
+      setLoadingDocuments(true);
+      void fetchServerDocuments().then(records => { if (active) setDocuments(records); })
+        .catch(error => { if (active) toast.error(error instanceof Error ? error.message : copy.loadFailed); })
+        .finally(() => { if (active) setLoadingDocuments(false); });
+    }
+    return () => { active = false; mountedRef.current = false; };
+  }, [action, copy]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<StoredDocument | null>(null);
   const [target, setTarget] = useState<DocumentEditorTarget>({ kind: "document", initialTemplate: templates.find((template) => template.type === "quotation") });
@@ -878,13 +904,16 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
     return () => { cancelled = true; conversionRef.current = false; };
   }, [selected, converterReady, copy]);
 
+  if (action === "create" && loadingTemplates) return <Dialog open onOpenChange={open => { if (!open) onClose(); }}><DialogContent><DialogHeader><DialogTitle>{copy.newDocument}</DialogTitle><DialogDescription>{copy.loading}</DialogDescription></DialogHeader></DialogContent></Dialog>;
   if (action === "create") return <DocumentEditorDialog copy={copy} accountEmail={accountEmail} target={target} templates={templates}
     onOpenChange={(open) => { if (!open) onClose(); }} onAttach={onAttach} onBusyChange={onBusyChange}
     onSave={async (kind, record) => {
       if (kind === "template") {
-        await persistServerTemplate(record, copy);
-        const next = [record, ...readStoredTemplates(copy).filter((item) => item.id !== record.id)];
-        setTemplates(next);
+        const saved = await persistServerTemplate(record);
+        setTemplates(current => [saved, ...current.filter(item => item.id !== saved.id)]);
+        setTarget({ kind, record: saved });
+        toast.success(copy.templateSaved);
+        return;
       } else {
         const saved = await persistServerDocument(record);
         setTarget({ kind, record: saved });
@@ -895,6 +924,20 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
       toast.success(copy.documentSaved);
     }} />;
 
+  const selectDocument = async (id: string) => {
+    setBusy(true);
+    onBusyChange(true);
+    try {
+      const { document } = await getDocument(id);
+      if (mountedRef.current) setSelected(document);
+    } catch (error) {
+      if (mountedRef.current) {
+        setBusy(false);
+        onBusyChange(false);
+        toast.error(error instanceof Error ? error.message : copy.loadFailed);
+      }
+    }
+  };
   const filtered = documents.filter((document) => document.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
@@ -902,10 +945,11 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
         <DialogHeader><DialogTitle>{copy === zh ? "引入附件" : "Import attachment"}</DialogTitle><DialogDescription>{copy === zh ? "选择已保存的报价单或合同，自动转换为 PDF 并加入当前邮件，保留排版与印章。" : "Select a saved quotation or contract to attach it as a PDF, preserving its layout and stamps."}</DialogDescription></DialogHeader>
         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy === zh ? "搜索文档" : "Search documents"} aria-label={copy === zh ? "搜索文档" : "Search documents"} disabled={busy} />
         <div className="grid max-h-[50vh] gap-2 overflow-y-auto">
-          {filtered.map((document) => <Button type="button" key={document.id} variant="outline" disabled={busy} className="h-auto justify-start py-3 text-left" onClick={() => { setSelected(document); setBusy(true); onBusyChange(true); }}>
+          {filtered.map((document) => <Button type="button" key={document.id} variant="outline" disabled={busy} className="h-auto justify-start py-3 text-left" onClick={() => void selectDocument(document.id)}>
             <FileText /><span className="min-w-0 flex-1"><span className="block truncate">{document.name}</span><span className="block text-xs font-normal text-muted-foreground">{document.type === "quotation" ? copy.quotation : copy.contract} · {new Date(document.updatedAt).toLocaleString(copy === zh ? "zh-CN" : "en")}</span></span><span className="shrink-0 text-xs">{copy === zh ? "引用为 PDF" : "Attach as PDF"}</span>
           </Button>)}
-          {!filtered.length && <p className="py-6 text-center text-muted-foreground">{documents.length ? (copy === zh ? "没有匹配的文档" : "No matching documents") : copy.noDocuments}</p>}
+          {loadingDocuments && <p role="status" className="py-6 text-center text-muted-foreground">{copy.loading}</p>}
+          {!loadingDocuments && !filtered.length && <p className="py-6 text-center text-muted-foreground">{documents.length ? (copy === zh ? "没有匹配的文档" : "No matching documents") : copy.noDocuments}</p>}
         </div>
         {busy && <p role="status" className="text-sm text-muted-foreground">{copy === zh ? "正在转换 PDF，请稍候…" : "Converting to PDF…"}</p>}
         {selected && <div aria-hidden="true" className="pointer-events-none fixed top-0 left-[-10000px] w-[794px]">

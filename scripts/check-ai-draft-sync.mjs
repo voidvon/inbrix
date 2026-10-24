@@ -66,8 +66,11 @@ const saveEditor = async (id, revision) => {
     await page.waitForFunction(() => !document.querySelector('[data-sonner-toast]'));
     await editor.getByRole('tab', { name: '预览文档', exact: true }).click();
   }
+  const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/documents' && response.request().method() === 'POST');
   await editor.getByRole('button', { name: '保存', exact: true }).click();
-  await page.waitForFunction(({ id, revision }) => JSON.parse(localStorage.getItem('inbrix-documents') || '[]').some(document => document.id === id && document.revision === revision), { id, revision });
+  const { document } = await (await response).json();
+  assert.equal(document.id, id);
+  assert.equal(document.revision, revision);
 };
 const closeEditor = async () => { await page.keyboard.press('Escape'); await editor.waitFor({ state: 'hidden' }); };
 try {

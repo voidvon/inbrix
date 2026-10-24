@@ -91,11 +91,6 @@ func (s *Store) ensureAISkills(ctx context.Context, owner string) error {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO ai_skills(`+aiSkillColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, skill.ID, owner, skill.Name, skill.Description, skill.Instructions, skill.Kind, marshalJSON(skill.DependsOn, "[]"), boolInt(skill.Enabled), 1, 1, now, now); err != nil {
 				return err
 			}
-			skill.OwnerID, skill.BuiltIn, skill.Revision = owner, true, 1
-			skill.CreatedAt, skill.UpdatedAt = timeFromUnix(now), timeFromUnix(now)
-			if err := archiveAISkill(ctx, tx, skill, "seed", 0); err != nil {
-				return err
-			}
 		}
 	}
 	return tx.Commit()
@@ -267,12 +262,9 @@ func validateAISkillGraph(skills []AISkillRecord, activeSummary string) error {
 }
 
 // SaveAISkill uses revision zero for create and compare-and-swap for update.
+// Only the current content is stored; revision is a concurrency check.
 // Validation and write share one transaction, including dependency checks.
 func (s *Store) SaveAISkill(ctx context.Context, skill AISkillRecord, expectedRevision int64) (AISkillRecord, error) {
-	return s.saveAISkill(ctx, skill, expectedRevision, "save", 0)
-}
-
-func (s *Store) saveAISkill(ctx context.Context, skill AISkillRecord, expectedRevision int64, action string, restoredFrom int64) (AISkillRecord, error) {
 	if skill.ID == "" {
 		id, err := newID("skill")
 		if err != nil {
@@ -313,9 +305,7 @@ func (s *Store) saveAISkill(ctx context.Context, skill AISkillRecord, expectedRe
 			return skill, ErrAISkillConflict
 		}
 		skill.BuiltIn = false
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0)+1 FROM ai_skill_versions WHERE owner_id=? AND id=?`, skill.OwnerID, skill.ID).Scan(&skill.Revision); err != nil {
-			return skill, err
-		}
+		skill.Revision = 1
 		skill.CreatedAt = time.Now().UTC()
 		skills = append(skills, skill)
 	} else {
@@ -342,9 +332,6 @@ func (s *Store) saveAISkill(ctx context.Context, skill AISkillRecord, expectedRe
 	skill.UpdatedAt = time.Now().UTC()
 	_, err = tx.ExecContext(ctx, `INSERT INTO ai_skills(`+aiSkillColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id,id) DO UPDATE SET name=excluded.name,description=excluded.description,instructions=excluded.instructions,depends_on_json=excluded.depends_on_json,enabled=excluded.enabled,revision=excluded.revision,updated_at=excluded.updated_at`, skill.ID, skill.OwnerID, skill.Name, skill.Description, skill.Instructions, skill.Kind, marshalJSON(skill.DependsOn, "[]"), boolInt(skill.Enabled), boolInt(skill.BuiltIn), skill.Revision, skill.CreatedAt.Unix(), skill.UpdatedAt.Unix())
 	if err != nil {
-		return skill, err
-	}
-	if err := archiveAISkill(ctx, tx, skill, action, restoredFrom); err != nil {
 		return skill, err
 	}
 	if err := tx.Commit(); err != nil {

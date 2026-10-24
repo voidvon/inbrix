@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -31,73 +30,6 @@ func (h *AISettingsHandler) RegisterSkillRoutes(router fiber.Router) {
 	router.Patch("/skills/:id", h.HandleUpdateSkill)
 	router.Delete("/skills/:id", h.HandleDeleteSkill)
 	router.Post("/skills/:id/use-for-mail-summary", h.HandleUseMailSummarySkill)
-	router.Get("/skills/:id/versions", h.HandleListSkillVersions)
-	router.Get("/skills/:id/versions/:revision", h.HandleGetSkillVersion)
-	router.Post("/skills/:id/restore", h.HandleRestoreSkillVersion)
-}
-
-func skillChangeContext(c *fiber.Ctx) context.Context {
-	source := "browser"
-	if id, _ := c.Locals("api_key_id").(string); id != "" {
-		source = "api_key:" + id
-	}
-	return mailstore.WithAISkillChangeSource(c.UserContext(), source)
-}
-
-func (h *AISettingsHandler) HandleListSkillVersions(c *fiber.Ctx) error {
-	owner, err := h.ready(c)
-	if err != nil {
-		return err
-	}
-	var before int64
-	if value := c.Query("before"); value != "" {
-		before, err = strconv.ParseInt(value, 10, 64)
-		if err != nil || before < 1 {
-			return fiber.NewError(400, "invalid before revision")
-		}
-	}
-	versions, err := h.mailDB.ListAISkillVersions(c.UserContext(), owner, c.Params("id"), before, 50)
-	if err != nil {
-		return skillHTTPError(err)
-	}
-	return c.JSON(fiber.Map{"versions": versions})
-}
-
-func (h *AISettingsHandler) HandleGetSkillVersion(c *fiber.Ctx) error {
-	owner, err := h.ready(c)
-	if err != nil {
-		return err
-	}
-	revision, err := strconv.ParseInt(c.Params("revision"), 10, 64)
-	if err != nil || revision < 1 {
-		return fiber.NewError(400, "invalid revision")
-	}
-	v, err := h.mailDB.GetAISkillVersion(c.UserContext(), owner, c.Params("id"), revision)
-	if err != nil {
-		return skillHTTPError(err)
-	}
-	return c.JSON(v)
-}
-
-func (h *AISettingsHandler) HandleRestoreSkillVersion(c *fiber.Ctx) error {
-	owner, err := h.ready(c)
-	if err != nil {
-		return err
-	}
-	var input struct {
-		Revision         int64 `json:"revision"`
-		ExpectedRevision int64 `json:"expectedRevision"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(c.Body())))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF || input.Revision < 1 || input.ExpectedRevision < 1 {
-		return fiber.NewError(400, "revision and expectedRevision must be positive")
-	}
-	restored, err := h.mailDB.RestoreAISkillVersion(skillChangeContext(c), owner, c.Params("id"), input.Revision, input.ExpectedRevision)
-	if err != nil {
-		return skillHTTPError(err)
-	}
-	return c.JSON(restored)
 }
 
 func skillHTTPError(err error) error {
@@ -170,7 +102,7 @@ func (h *AISettingsHandler) HandleCreateSkill(c *fiber.Ctx) error {
 	}
 	skill := mailstore.AISkillRecord{OwnerID: owner, Enabled: true, Kind: mailstore.AISkillChat, DependsOn: []string{}}
 	applySkillInput(&skill, input)
-	created, err := h.mailDB.SaveAISkill(skillChangeContext(c), skill, 0)
+	created, err := h.mailDB.SaveAISkill(c.UserContext(), skill, 0)
 	if err != nil {
 		return skillHTTPError(err)
 	}
@@ -222,7 +154,7 @@ func (h *AISettingsHandler) HandleUpdateSkill(c *fiber.Ctx) error {
 		expected = *input.Revision
 	}
 	applySkillInput(&skill, input)
-	updated, err := h.mailDB.SaveAISkill(skillChangeContext(c), skill, expected)
+	updated, err := h.mailDB.SaveAISkill(c.UserContext(), skill, expected)
 	if err != nil {
 		return skillHTTPError(err)
 	}

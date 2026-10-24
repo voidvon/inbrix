@@ -401,12 +401,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			owner_id TEXT PRIMARY KEY,
 			mail_summary_skill_id TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS ai_skill_versions (
-			owner_id TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
-			snapshot_json TEXT NOT NULL, action TEXT NOT NULL, source TEXT NOT NULL,
-			restored_from INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-			PRIMARY KEY(owner_id,id,revision)
-		)`,
+		// Skill management keeps current content only. Remove the former
+		// archive on upgrade without touching active skills or run snapshots.
+		`DROP TABLE IF EXISTS ai_skill_versions`,
 		`CREATE TABLE IF NOT EXISTS ai_task_bindings (
 			account_id TEXT NOT NULL,
 			task_type TEXT NOT NULL,
@@ -702,6 +699,10 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_doc_templates_owner ON document_templates(owner_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS document_template_initializations (
+			owner_id TEXT PRIMARY KEY,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS document_stamps (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,
@@ -762,10 +763,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureMessageAnalysisColumn(ctx); err != nil {
 		return err
 	}
-	if err := s.backfillAISkillVersions(ctx); err != nil {
+	if err := s.migrateDocumentRevision(ctx); err != nil {
 		return err
 	}
-	if err := s.migrateDocumentRevision(ctx); err != nil {
+	if err := s.migrateDocumentStampWidth(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateProducts(ctx); err != nil {

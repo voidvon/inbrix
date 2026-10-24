@@ -28,15 +28,15 @@
 
 分析结束前重新检查检索依赖和已读取的历史正文；运行期间发生变化时拒绝保存混合版本的分析并允许任务重试。流水线升级保留旧总结，旧版结果显示为待更新。
 
-## Skill 加载与版本
+## Skill 加载与管理
 
 交互聊天的自动模式只注入有独立大小预算的 Skill 目录。模型通过 `load_skill` 按需读取完整流程和依赖，工具按 Unicode 字符分段，单段最多 2000 字；明确选择的 Skill 则直接加载。依赖代表指令组合，不是服务器强制执行的步骤图。账号范围、品牌权限、工具实现和输出协议始终由服务器控制。
 
 每次执行冻结当前用户的目录和 Skill 内容，中途通过 API 更新只影响后续执行。聊天响应及其持久化结果中的 `skillSnapshots` 记录请求加载的版本；邮件分析的 `skillSnapshot` 保留根流程、完整依赖版本和内容指纹。分页读取某个 Skill 不代表它已全部读完。
 
-`ai_skill_versions` 保存不可变修订，设置 → Skill 管理 → 版本历史可检查旧版并恢复。恢复会创建新的递增版本并校验当前依赖；不会连带回滚依赖。历史记录区分浏览器、API Key 标识和系统来源，不保存密钥。删除当前 Skill 保留历史，再次使用同一标识时继续版本序列。旧数据库迁移只能补存当时仍存在的版本。编辑仍即时应用于后续执行，当前没有草稿发布阶段。
+Skill 管理只保存当前内容，提供新增、编辑、启停、删除和邮件总结流程选择，支持页面与 API Key。保存后供后续执行使用，不保留历史版本或提供恢复接口。`revision` 仅用于并发编辑校验，页面不显示版本号。升级时移除旧的历史归档表，保留当前 Skill、依赖关系和已有执行快照。
 
-设计参考：DeepSeek Harness 的 [Skill 目录与加载器分离](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/skill/tool-skill)，以及 Codex 的 [Skill 实际访问识别](https://github.com/openai/codex/blob/main/codex-rs/skills/src/invocation.rs)。本项目在现有 Go 执行内核和数据库上实现，并增加版本历史及邮件检索依赖，没有引入这些仓库的运行时依赖。
+设计参考：DeepSeek Harness 的 [Skill 目录与加载器分离](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/skill/tool-skill)，以及 Codex 的 [Skill 实际访问识别](https://github.com/openai/codex/blob/main/codex-rs/skills/src/invocation.rs)。本项目在现有 Go 执行内核和数据库上实现，并记录执行快照及邮件检索依赖，没有引入这些仓库的运行时依赖。
 
 ## 通知
 

@@ -51,7 +51,7 @@ export function App() {
   if (path === "/settings") {
     content = <InboxPage />;
   } else if (path === "/ai-document") {
-    content = <DocumentListPage />;
+    content = <DocumentListPage key={path} />;
   } else if (path === "/attachments") {
     content = <AttachmentsPage />;
   } else if (path === "/products") {
@@ -59,7 +59,7 @@ export function App() {
   } else if (path === "/price-lists") {
     content = <ProductsPage />;
   } else if (path === "/documents") {
-    content = <DocumentListPage />;
+    content = <DocumentListPage key={path} />;
   } else if (path === "/documents/new") {
     content = <DocumentListPage key={path} createDocument />;
   } else if (path.startsWith("/documents/")) {

@@ -10,7 +10,7 @@ import {
   type StoredTemplate,
   deleteServerDocumentRevision,
   persistServerDocument,
-  readStoredTemplates,
+  fetchServerTemplates,
 } from "../../lib/document-storage";
 import type { ConversationAIDocumentAction, ConversationAIDocumentDraft } from "../../types";
 import { type Copy, zh } from "../../lib/locale";
@@ -117,7 +117,7 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
     try {
       const record = await buildRecord();
       if (!record) return;
-      setEditor({ record, templates: readStoredTemplates(copy) });
+      setEditor({ record, templates: await fetchServerTemplates(copy) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : copy.loadFailed);
     }
@@ -129,7 +129,7 @@ export function ConversationDocumentCard({ copy, accountEmail, counterpartyEmail
       if (action && !action.baseRevision) throw new Error(isZh ? "此方案缺少文档版本，请让 AI 重新生成" : "Regenerate this proposal to include its document revision");
       const saved = await persistServerDocument(record);
       setSavedRecord(saved);
-      setEditor({ record: saved, templates: readStoredTemplates(copy) });
+      setEditor(previous => previous ? { ...previous, record: saved } : null);
       setDone(isZh ? `已保存《${saved.name}》` : `Saved "${saved.name}"`);
       toast.success(isZh ? "已保存到报价单与合同" : "Saved to quotations & contracts");
     } catch (error) {

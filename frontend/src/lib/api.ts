@@ -686,15 +686,6 @@ export type AISkill = AIBusinessSkill & {
   updatedAt: string;
 };
 export type AISkillInput = Pick<AISkill, "name" | "description" | "instructions" | "kind" | "dependsOn" | "enabled"> & { id?: string; revision?: number };
-export type AISkillVersion = { skill: AISkill; action: string; source: string; restoredFrom?: number; recordedAt: string };
-
-export function getAISkillVersions(id: string, before?: number) {
-  return apiFetch<{ versions: AISkillVersion[] }>(`/api/settings/ai/skills/${encodeURIComponent(id)}/versions${before ? `?before=${before}` : ""}`);
-}
-export function restoreAISkillVersion(id: string, revision: number, expectedRevision: number) {
-  return apiFetch<AISkill>(`/api/settings/ai/skills/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, expectedRevision }) });
-}
-
 export function getAISkills() {
   return apiFetch<{ skills: AISkill[]; mailSummarySkillId: string }>("/api/settings/ai/skills");
 }
@@ -955,6 +946,7 @@ export type ServerDocument = {
 };
 
 export type ServerDocumentTemplate = ServerDocument;
+export type ServerDocumentSummary = Omit<ServerDocument, "html">;
 
 export type ServerDocumentStamp = {
   id: string;
@@ -970,11 +962,11 @@ export type ServerDocumentStamp = {
 
 export function listDocuments(type?: "all" | "quotation" | "contract") {
   const query = type && type !== "all" ? `?type=${encodeURIComponent(type)}` : "";
-  return apiFetch<{ documents: ServerDocument[] }>(`/api/documents${query}`);
+  return apiFetch<{ documents: ServerDocumentSummary[] }>(`/api/documents${query}`, { cache: "no-store" });
 }
 
 export function getDocument(id: string) {
-  return apiFetch<{ document: ServerDocument }>(`/api/documents/${encodeURIComponent(id)}`);
+  return apiFetch<{ document: ServerDocument }>(`/api/documents/${encodeURIComponent(id)}`, { cache: "no-store" });
 }
 
 export function saveDocument(document: {
@@ -1005,8 +997,8 @@ export function batchDeleteDocuments(ids: string[]) {
   });
 }
 
-export function listDocumentTemplates() {
-  return apiFetch<{ templates: ServerDocumentTemplate[] }>("/api/document-templates");
+export function listDocumentTemplates(locale = "zh-CN") {
+  return apiFetch<{ templates: ServerDocumentTemplate[] }>(`/api/document-templates?locale=${encodeURIComponent(locale)}`, { cache: "no-store" });
 }
 
 export function saveDocumentTemplate(template: {
@@ -1028,7 +1020,7 @@ export function deleteDocumentTemplate(id: string) {
 }
 
 export function listDocumentStamps() {
-  return apiFetch<{ stamps: ServerDocumentStamp[] }>("/api/document-stamps");
+  return apiFetch<{ stamps: ServerDocumentStamp[] }>("/api/document-stamps", { cache: "no-store" });
 }
 
 export function saveDocumentStamp(stamp: ServerDocumentStamp) {
@@ -1094,10 +1086,10 @@ export type AIChatSession = {
   messages: Array<Omit<ConversationAIChatMessage, "document" | "documentAction" | "toolCalls"> & { document?: AIAgentDocumentCard; documentAction?: AIAgentDocumentAction; toolCalls?: AIToolCall[] }>;
 };
 export function getAIChatSessions(accountEmail: string, cursor?: string) {
-  return apiFetch<{ sessions: AIChatSession[]; nextCursor?: string }>(`/api/ai/chat-sessions?${new URLSearchParams({ accountEmail, ...(cursor ? { cursor } : {}) })}`);
+  return apiFetch<{ sessions: AIChatSession[]; nextCursor?: string }>(`/api/ai/chat-sessions?${new URLSearchParams({ accountEmail, ...(cursor ? { cursor } : {}) })}`, { cache: "no-store" });
 }
 export function getAIChatSession(accountEmail: string, id: string, before?: number) {
-  return apiFetch<AIChatSession>(`/api/ai/chat-sessions/${encodeURIComponent(id)}?${new URLSearchParams({ accountEmail, ...(before === undefined ? {} : { before: String(before) }) })}`);
+  return apiFetch<AIChatSession>(`/api/ai/chat-sessions/${encodeURIComponent(id)}?${new URLSearchParams({ accountEmail, ...(before === undefined ? {} : { before: String(before) }) })}`, { cache: "no-store" });
 }
 export function createAIChatSession(accountEmail: string, documentType: "quotation" | "contract", title: string) {
   return apiFetch<AIChatSession>("/api/ai/chat-sessions", { method: "POST", body: JSON.stringify({ accountEmail, documentType, title }) });

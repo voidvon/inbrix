@@ -147,3 +147,80 @@ func TestTemplatesAndStampsCRUD(t *testing.T) {
 		t.Errorf("expected 0 stamps after delete, got %d", len(stampsAfter))
 	}
 }
+
+func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "template-owner", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateUser(ctx, "template-other", "Other", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.ListDocumentTemplates(ctx, owner.ID)
+	if err != nil || len(first) != 2 || first[0].Type != "quotation" || first[1].Type != "contract" {
+		t.Fatal(first, err)
+	}
+	first[0].Name, first[0].HTML = "My template", "<p>Edited on server</p>"
+	if _, err := s.SaveDocumentTemplate(ctx, first[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDocumentTemplate(ctx, owner.ID, first[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureDefaultDocumentTemplates(ctx, other.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	// A restart and another read cannot restore a deleted default or its old body.
+	reopened, err := Open(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err := reopened.EnsureDefaultDocumentTemplates(ctx, owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	current, err := reopened.ListDocumentTemplates(ctx, owner.ID)
+	if err != nil || len(current) != 1 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
+		t.Fatal(current, err)
+	}
+	foreign, err := reopened.ListDocumentTemplates(ctx, other.ID)
+	if err != nil || len(foreign) != 2 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
+		t.Fatal(foreign, err)
+	}
+}
+
+func TestStampInsertWidthPersistsOnServerAndMigratesOldSchema(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "stamp-width-owner", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := s.SaveDocumentStamp(ctx, DocumentStampRecord{OwnerID: owner.ID, Name: "Seal", Value: "data:image/png;base64,abc", Width: 100, Height: 100, InsertWidth: 61})
+	if err != nil || stamp.InsertWidth != 61 {
+		t.Fatal(stamp, err)
+	}
+	list, err := s.ListDocumentStamps(ctx, owner.ID)
+	if err != nil || len(list) != 1 || list[0].InsertWidth != 61 {
+		t.Fatal(list, err)
+	}
+	// Recreate the previous schema, which did not persist insertion width.
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE document_stamps DROP COLUMN insert_width`); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	list, err = reopened.ListDocumentStamps(ctx, owner.ID)
+	if err != nil || len(list) != 1 || list[0].InsertWidth != 40 || list[0].Value != stamp.Value {
+		t.Fatal(list, err)
+	}
+}

@@ -1,5 +1,6 @@
 import { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
 import { useAIDocumentSync } from "../../lib/use-ai-document-sync";
+import { useQueryErrorToast } from "../../lib/use-query-error-toast";
 import { AIChatImages } from "./ai-chat-images";
 import type { AIChatAttachment } from "../../types";
 import { ConversationDocumentCard } from "./conversation-document-card";
@@ -38,7 +39,7 @@ import {
 import { copyToClipboard } from "../../lib/email-format";
 import {
   type AIDocumentGeneratedData, type AIDocumentMessage,
-  resolveGeneratedDocument, createInitialSession, toAIDocumentSession, hasLegacyAIDocumentSessions, exportLegacyAIDocumentSessions,
+  resolveGeneratedDocument, createInitialSession, toAIDocumentSession,
 } from "../../lib/ai-document-storage";
 import {
   persistServerDocument,
@@ -90,18 +91,19 @@ export function AIDocumentChatPanel({
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => getAIChatSessions(accountEmail, pageParam),
     getNextPageParam: page => page.nextCursor,
-    refetchInterval: query => query.state.data?.pages.some(page => page.sessions.some(s => s.lastRun?.status === "pending")) ? 3000 : false,
+    refetchInterval: query => query.state.status !== "error" && query.state.data?.pages.some(page => page.sessions.some(s => s.lastRun?.status === "pending")) ? 3000 : false,
     enabled: !!accountEmail,
   });
-  const summaries = [...new Map((sessionsQuery.data?.pages.flatMap(page => page.sessions) || []).map(session => [session.id, session])).values()];
+  const summaries = [...new Map((!sessionsQuery.isError && sessionsQuery.data?.pages.flatMap(page => page.sessions) || []).map(session => [session.id, session])).values()];
   const [activeId, setActiveId] = useState("");
   const selectedId = activeId || summaries[0]?.id || "";
   const sessionQuery = useQuery({
     queryKey: ["ai-document-session", accountEmail, selectedId],
     queryFn: () => getAIChatSession(accountEmail, selectedId),
     enabled: !!accountEmail && !!selectedId,
-    refetchInterval: query => query.state.data?.lastRun?.status === "pending" ? 3000 : false,
+    refetchInterval: query => query.state.status !== "error" && query.state.data?.lastRun?.status === "pending" ? 3000 : false,
   });
+  const sessionData = sessionQuery.isError ? undefined : sessionQuery.data;
   const sessions = summaries.map(session => toAIDocumentSession(session, copy));
   const requestRef = useRef<AbortController | null>(null);
   const retryRef = useRef<{ key: string; payload: AIAgentChatRequest } | null>(null);
@@ -117,7 +119,7 @@ export function AIDocumentChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const currentSession = sessionQuery.data ? toAIDocumentSession(sessionQuery.data, copy) : sessions.find(s => s.id === selectedId) || createInitialSession(copy);
+  const currentSession = sessionData ? toAIDocumentSession(sessionData, copy) : sessions.find(s => s.id === selectedId) || createInitialSession(copy);
   const invalidateSession = async (scope: string, id?: string) => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["ai-document-sessions", scope] }),
@@ -149,14 +151,15 @@ export function AIDocumentChatPanel({
   });
 
   // Fetch user configured AI Agents from backend
-  const { data: agentsData } = useQuery({
-    queryKey: ["ai-agents"],
+  const agentsQuery = useQuery({
+    queryKey: ["document-ai-agents", accountEmail],
     queryFn: getAIAgents,
-    staleTime: 60_000,
   });
-  const agents = agentsData?.agents || [];
-  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings });
-  const defaultAgentId = bindings.data?.bindings.find(b => b.accountEmail === accountEmail && b.taskType === "email_draft")?.agentId || "";
+  const agents = agentsQuery.isError ? [] : agentsQuery.data?.agents || [];
+  const bindings = useQuery({ queryKey: ["document-ai-bindings", accountEmail], queryFn: getAITaskBindings });
+  useQueryErrorToast(agentsQuery.error, copy.loadFailed, "document-agents-error", () => void agentsQuery.refetch(), copy.retry);
+  useQueryErrorToast(bindings.error, copy.loadFailed, "document-bindings-error", () => void bindings.refetch(), copy.retry);
+  const defaultAgentId = (bindings.isError ? undefined : bindings.data)?.bindings.find(b => b.accountEmail === accountEmail && b.taskType === "email_draft")?.agentId || "";
   const businessContext = { ...(currentSession.businessContext || { agentId: currentSession.agentId || "", skillId: "", brands: [] }), agentId: currentSession.agentId || defaultAgentId };
   const currentAgent = agents.find((a) => a.id === businessContext.agentId);
 
@@ -271,13 +274,13 @@ export function AIDocumentChatPanel({
       if (err instanceof ApiError && err.status === 409 && (run?.requestId !== payload?.requestId || run?.status === "failed" && !run.retryable)) retryRef.current = null;
     },
   });
-  const lastRun = sessionQuery.data?.lastRun;
+  const lastRun = sessionData?.lastRun;
   const submitted = mutation.variables;
   const accepted = lastRun?.requestId === (retryRef.current?.payload.requestId || retryRef.current?.payload.retryRequestId);
-  const displayedMessages: AIDocumentMessage[] = [...currentSession.messages,
+  const displayedMessages: AIDocumentMessage[] = sessionsQuery.isError || sessionQuery.isError ? [] : [...currentSession.messages,
     ...(mutation.isPending && submitted && !accepted ? [{ id: "pending-user", role: "user" as const, content: submitted.text, attachments: submitted.attachments, createdAt: new Date().toISOString() }] : []),
   ];
-  const busy = lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
+  const busy = agentsQuery.isError || bindings.isError || lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
   const handleSend = () => {
     const text = input.trim();
     if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || busy) return;
@@ -468,12 +471,6 @@ export function AIDocumentChatPanel({
         </div>
       </header>
 
-      {hasLegacyAIDocumentSessions() && (
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
-          <span>{isZh ? "此设备有未绑定邮箱的旧记录，可导出保留。" : "Unassigned legacy chats are available for export."}</span>
-          <Button size="sm" variant="ghost" onClick={exportLegacyAIDocumentSessions}>{isZh ? "导出旧记录" : "Export legacy chats"}</Button>
-        </div>
-      )}
       {sessionsQuery.isError && <div role="alert" className="px-4 py-2 text-sm text-destructive">{sessionsQuery.error.message}<Button variant="ghost" onClick={() => void sessionsQuery.refetch()}>{isZh ? "重试" : "Retry"}</Button></div>}
       {!mutation.isPending && lastRun?.status === "pending" && <p role="status" className="px-4 py-2 text-xs text-muted-foreground">{isZh ? "会话正在生成回复…" : "A reply is being generated…"}</p>}
       {sessionQuery.isError && <div role="alert" className="px-4 py-2 text-sm text-destructive">{sessionQuery.error.message}<Button variant="ghost" onClick={() => void sessionQuery.refetch()}>{isZh ? "重试" : "Retry"}</Button></div>}
@@ -481,7 +478,7 @@ export function AIDocumentChatPanel({
       {/* Messages Scroll Area */}
       <AIBusinessToolbar copy={copy} accountEmail={accountEmail} value={businessContext} disabled={busy} onChange={value => sessionMutation.mutate({ type: "business", value })} />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-        {sessionQuery.data?.hasMoreMessages && <Button variant="ghost" size="sm" disabled={olderMessages.isPending} onClick={() => olderMessages.mutate()}>{isZh ? "加载更早消息" : "Load earlier messages"}</Button>}
+        {sessionData?.hasMoreMessages && <Button variant="ghost" size="sm" disabled={olderMessages.isPending} onClick={() => olderMessages.mutate()}>{isZh ? "加载更早消息" : "Load earlier messages"}</Button>}
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {displayedMessages.map((msg) => (
             <div

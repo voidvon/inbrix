@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Check, History, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { addAISkill, deleteAISkill, getAISkills, getAISkillVersions, restoreAISkillVersion, updateAISkill, useMailSummarySkill, type AISkill, type AISkillInput } from "../../lib/api";
+import { BookOpen, Check, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { addAISkill, deleteAISkill, getAISkills, updateAISkill, useMailSummarySkill, type AISkill, type AISkillInput } from "../../lib/api";
 import { type Copy, zh } from "../../lib/locale";
 import { toast, toastError } from "../../lib/toast";
 import { useQueryErrorToast } from "../../lib/use-query-error-toast";
@@ -22,9 +22,8 @@ export function SkillSettings({ copy }: { copy: Copy }) {
   const skills = useQuery({ queryKey: ["ai-skills"], queryFn: getAISkills, retry: false });
   const [editor, setEditor] = useState<{ skill: AISkill | null; input: AISkillInput } | null>(null);
   const [removing, setRemoving] = useState<AISkill | null>(null);
-  const [history, setHistory] = useState<AISkill | null>(null);
   const text = isZh ? {
-    title: "Skill 管理", description: "维护可复用的任务流程。保存后，聊天和邮件总结会在下一次执行时使用最新版本。",
+    title: "Skill 管理", description: "维护可复用的任务流程。保存后，聊天和邮件总结会在下一次执行时使用更新后的流程。",
     add: "新增 Skill", edit: "编辑 Skill", remove: "删除 Skill", name: "名称", id: "标识", idHint: "留空自动生成；或使用小写字母、数字、下划线与连字符。", descriptionLabel: "说明", instructions: "流程指令", kind: "用途", chat: "对话任务", summary: "邮件总结", enabled: "启用", builtIn: "内置", activeSummary: "当前邮件总结", useSummary: "用于邮件总结", dependencies: "依赖的 Skill", noDependencies: "此用途暂无其他 Skill", empty: "暂无 Skill", saved: "Skill 已保存", deleted: "Skill 已删除", bound: "邮件总结流程已切换", removeDescription: "删除后不再用于新的执行。被其他 Skill 引用或正在用于邮件总结的流程需要先解除引用。", api: "支持通过 API Key 调用 Skill 接口，自动维护流程配置。", apiLink: "查看 API 文档", defaultHint: "邮件总结流程应用于你的所有邮箱；模型、业务提示词和输出标签仍按邮箱配置。", invalid: "请填写名称和流程指令。", missing: "依赖已不可用，请取消选用后保存。",
   } : {
     title: "Skills", description: "Manage reusable workflows. Saved changes apply to the next chat or email analysis run.",
@@ -57,12 +56,7 @@ export function SkillSettings({ copy }: { copy: Copy }) {
     onSuccess: () => { refresh(); toast.success(text.bound); },
     onError: error => toastError(error, copy.loadFailed),
   });
-  const restore = useMutation({
-    mutationFn: ({ skill, revision }: { skill: AISkill; revision: number }) => restoreAISkillVersion(skill.id, revision, skill.revision),
-    onSuccess: () => { setHistory(null); refresh(); toast.success(isZh ? "已恢复为新版本" : "Restored as a new revision"); },
-    onError: error => toastError(error, copy.loadFailed),
-  });
-  const pending = save.isPending || remove.isPending || toggle.isPending || bind.isPending || restore.isPending;
+  const pending = save.isPending || remove.isPending || toggle.isPending || bind.isPending;
   const patch = (input: Partial<AISkillInput>) => setEditor(value => value ? { ...value, input: { ...value.input, ...input } } : null);
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -84,12 +78,11 @@ export function SkillSettings({ copy }: { copy: Copy }) {
         const active = skill.id === skills.data?.mailSummarySkillId;
         return <article key={skill.id} className="grid gap-3 p-4" data-skill-id={skill.id}>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words text-sm font-semibold">{skill.name}</h3><Badge variant="outline">{skill.kind === "chat" ? text.chat : text.summary}</Badge>{skill.builtIn && <Badge variant="secondary">{text.builtIn}</Badge>}{active && <Badge><Check className="size-3" />{text.activeSummary}</Badge>}</div><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{skill.id} · v{skill.revision}</p></div>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="break-words text-sm font-semibold">{skill.name}</h3><Badge variant="outline">{skill.kind === "chat" ? text.chat : text.summary}</Badge>{skill.builtIn && <Badge variant="secondary">{text.builtIn}</Badge>}{active && <Badge><Check className="size-3" />{text.activeSummary}</Badge>}</div><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{skill.id}</p></div>
             <div className="flex items-center gap-1"><Switch checked={skill.enabled} disabled={pending || active} aria-label={`${text.enabled} ${skill.name}`} onCheckedChange={() => toggle.mutate(skill)} /><Button variant="ghost" size="icon" aria-label={`${text.edit} ${skill.name}`} disabled={pending} onClick={() => setEditor({ skill, input: { name: skill.name, description: skill.description, instructions: skill.instructions, kind: skill.kind, dependsOn: [...skill.dependsOn], enabled: skill.enabled } })}><Pencil /></Button><Button variant="ghost" size="icon" className="text-destructive" aria-label={`${text.remove} ${skill.name}`} disabled={pending || active} onClick={() => setRemoving(skill)}><Trash2 /></Button></div>
           </div>
           {skill.description && <p className="break-words text-sm text-muted-foreground">{skill.description}</p>}
           {skill.dependsOn.length > 0 && <p className="break-words text-xs text-muted-foreground">{text.dependencies}: {skill.dependsOn.map(id => records.find(item => item.id === id)?.name || id).join(" · ")}</p>}
-          <Button className="justify-self-start" size="sm" variant="ghost" disabled={pending} onClick={() => setHistory(skill)}><History />{isZh ? "版本历史" : "Version history"}</Button>
           {skill.kind === "mail_summary" && !active && <Button className="justify-self-start" size="sm" variant="outline" disabled={pending || !skill.enabled} onClick={() => bind.mutate(skill)}>{text.useSummary}</Button>}
         </article>;
       })}
@@ -114,23 +107,5 @@ export function SkillSettings({ copy }: { copy: Copy }) {
     <Dialog open={Boolean(removing)} onOpenChange={open => { if (!open && !remove.isPending) setRemoving(null); }}>
       <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{text.remove}</DialogTitle><DialogDescription>{text.removeDescription}</DialogDescription></DialogHeader><p className="break-words text-sm font-medium">{removing?.name}</p><DialogFooter><Button variant="ghost" disabled={remove.isPending} onClick={() => setRemoving(null)}>{copy.cancel}</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (removing) remove.mutate(removing); }}>{remove.isPending && <LoaderCircle className="animate-spin" />}{text.remove}</Button></DialogFooter></DialogContent>
     </Dialog>
-    <Dialog open={Boolean(history)} onOpenChange={open => { if (!open && !restore.isPending) setHistory(null); }}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{isZh ? "版本历史" : "Version history"} · {history?.name}</DialogTitle><DialogDescription>{isZh ? "查看旧版内容；恢复会创建新版本，并校验当前依赖，不会改写历史。依赖内容保持各自当前版本。" : "Inspect saved revisions. Restore creates a new revision and validates current dependencies; dependency contents keep their current revisions."}</DialogDescription></DialogHeader>{history && <SkillHistory key={history.id} skill={records.find(skill => skill.id === history.id) || history} isZh={isZh} copy={copy} pending={restore.isPending} onRestore={(skill, revision) => restore.mutate({ skill, revision })} />}</DialogContent>
-    </Dialog>
   </section>;
-}
-
-function SkillHistory({ skill, isZh, copy, pending, onRestore }: { skill: AISkill; isZh: boolean; copy: Copy; pending: boolean; onRestore: (skill: AISkill, revision: number) => void }) {
-  const [before, setBefore] = useState<number>();
-  const query = useQuery({ queryKey: ["ai-skill-versions", skill.id, skill.revision, before], queryFn: () => getAISkillVersions(skill.id, before), retry: false });
-  const versions = query.data?.versions || [];
-  return <div className="grid min-w-0 gap-3">
-    {query.isPending && <p className="text-sm text-muted-foreground">{copy.loading}</p>}
-    {query.isError && <Button variant="outline" onClick={() => void query.refetch()}>{copy.retry}</Button>}
-    {versions.map(version => <details className="min-w-0 rounded-lg border p-3" key={version.skill.revision}>
-      <summary className="cursor-pointer break-words text-sm">v{version.skill.revision} · {version.skill.name}{version.skill.revision === skill.revision ? ` · ${isZh ? "当前" : "Current"}` : ""} · {new Date(version.recordedAt).toLocaleString()}</summary>
-      <div className="mt-3 grid min-w-0 gap-3 text-sm"><p className="break-all text-xs text-muted-foreground">{version.source} · {version.action}{version.restoredFrom ? ` · v${version.restoredFrom}` : ""}</p><p className="break-words">{version.skill.description}</p><p className="break-all text-xs">{isZh ? "依赖" : "Dependencies"}: {version.skill.dependsOn.join(" · ") || "—"}</p><pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">{version.skill.instructions}</pre>{version.skill.revision !== skill.revision && <Button className="justify-self-start" size="sm" disabled={pending} onClick={() => onRestore(skill, version.skill.revision)}>{pending && <LoaderCircle className="animate-spin" />}{isZh ? "恢复此版本" : "Restore revision"}</Button>}</div>
-    </details>)}
-    <div className="flex gap-2">{before && <Button variant="ghost" size="sm" onClick={() => setBefore(undefined)}>{isZh ? "最新版本" : "Latest revisions"}</Button>}{versions.length === 50 && <Button variant="outline" size="sm" onClick={() => setBefore(versions.at(-1)?.skill.revision)}>{isZh ? "更早版本" : "Earlier revisions"}</Button>}</div>
-  </div>;
 }

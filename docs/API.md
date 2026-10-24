@@ -1153,9 +1153,6 @@ Browser mutations retain the normal CSRF requirement.
 | PATCH | `/api/settings/ai/skills/:id` | Partially update a skill. |
 | DELETE | `/api/settings/ai/skills/:id` | Delete an unused skill; optional `?revision=N` checks its revision. |
 | POST | `/api/settings/ai/skills/:id/use-for-mail-summary` | Select an enabled mail-summary skill for all the owner's mailboxes. |
-| GET | `/api/settings/ai/skills/:id/versions` | List up to 50 immutable revisions, newest first; optional `?before=N` paginates to revisions older than N. |
-| GET | `/api/settings/ai/skills/:id/versions/:revision` | Read one historical snapshot, including change source. |
-| POST | `/api/settings/ai/skills/:id/restore` | Restore historical content as a new revision with mandatory concurrency protection. |
 
 Create body:
 
@@ -1189,22 +1186,11 @@ returns **409**. Include the revision from GET to protect against overwriting
 an editor's changes. Successful saves increment the revision. Unknown JSON keys
 are rejected; do not send read-only response fields back as updates.
 
-Every successful save atomically appends an immutable version. Version responses
-contain `skill` (the complete historical record), `action`, `source`,
-`restoredFrom` when applicable, and `recordedAt`. Sources distinguish `system`,
-`browser`, and `api_key:<key-id>`; key secrets are never recorded. Deletion removes
-the active skill but retains owner-scoped history. Recreating its id continues
-the revision sequence. Upgrading an existing database archives only the surviving
-revision; older overwritten content cannot be recovered.
-
-Restore body: `{ "revision": 1, "expectedRevision": 3 }`. This creates revision
-4 from revision 1's editable fields. It does not rewind version numbers or
-automatically restore dependencies. The current dependency graph is revalidated;
-missing/disabled dependencies and an invalid active-summary state reject the
-operation. A stale `expectedRevision` returns **409**, missing history **404**.
-Restoring requires an existing active skill record; history remains readable
-after deletion. Rollback is immediately effective for subsequent executions,
-consistent with ordinary saves; there is no separate draft/publication stage.
+Only current Skill content is stored. `revision` is a lightweight concurrency
+check, not a historical version API. Deleting a Skill removes its configuration;
+recreating the same id starts at revision 1. Saves apply to subsequent executions.
+Upgrading removes the former history archive; active content, dependency bindings
+and existing execution snapshots are preserved.
 
 ```sh
 curl "$INBRIX_URL/api/settings/ai/skills/customer-follow-up" \
@@ -1553,10 +1539,9 @@ latest run's request ID, user message ID and pending/complete/failed status;
 clients poll pending runs and refresh after errors.
 
 Requests without `sessionId` remain stateless for compatibility; the application
-uses durable sessions exclusively. Old unscoped browser document histories are
-kept untouched and can be explicitly exported from the document chat. They are
-never silently assigned to the currently logged-in user or mailbox. New document
-chat histories are not written to localStorage.
+uses durable sessions exclusively. Old browser document, template, stamp and document-chat records are removed
+at startup without reading or importing them. Document data and chat history
+are not written to localStorage or used as a fallback for failed server reads.
 
 
 The summary endpoint never reads message payloads. Session and message pages use
@@ -1570,6 +1555,29 @@ Implementation references (design guidance; no harness runtime dependency):
 - [DeepSeek Harness session query](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-query.md): separate lightweight session identity, complete history and model-context projections.
 
 ## Document revisions and authoritative draft context
+
+`GET /api/documents` returns metadata only: `id`, `revision`, `type`, `name`,
+`company`, `createdAt` and `updatedAt`, inside `documents`. Optional
+`?type=quotation` or `?type=contract` filters the owner's documents, ordered by
+last update descending. The list does not query or return `html`, canvas content
+or embedded images. Fetch `GET /api/documents/:id` for the full document before
+opening, editing or converting it to an attachment. Save responses also retain
+full content. The library still paginates the lightweight rows in the browser.
+Document lists and contents are not persisted to browser storage or used as an
+offline fallback. Reads use `no-store`; saves and deletions rely on server
+responses. Startup removes the former document-related localStorage entries.
+
+Templates (`GET /api/document-templates`, optional `locale`) and stamps
+(`GET /api/document-stamps`) also use `no-store`, with errors reported directly.
+Default quotation/contract templates are initialized once per owner on the server;
+subsequent edits and deletions persist across browsers and restarts. Existing
+server templates are preserved. Stamp insertion width (`insertWidth`, millimetres)
+is stored server-side; older records receive the previous 40 mm default.
+
+Document AI session queries retain only the response needed by the active view.
+They always refetch on entry, discard inactive responses immediately, and hide
+previous results on a failed refresh. Session list/detail APIs use `no-store`.
+The editor still holds its current content and undo state while it is open.
 
 Saved documents expose an integer `revision`, starting at 1. POST `/api/documents`
 uses `revision: 0` (or omitted) to create a new ID only. Updates must send the

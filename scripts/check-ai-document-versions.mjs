@@ -79,8 +79,9 @@ try {
   await card('Current update').getByTestId('conversation-document-view').click();
   const editor = page.getByTestId('document-editor-dialog');
   await editor.waitFor();
+  const saved4 = page.waitForResponse(response => new URL(response.url()).pathname === '/api/documents' && response.request().method() === 'POST');
   await editor.getByRole('button', { name: '保存', exact: true }).click();
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('inbrix-documents') || '[]').some(item => item.revision === 4));
+  assert.equal((await (await saved4).json()).document.revision, 4);
   assert.equal(writes.at(-1).revision, 3, 'Reopening a saved proposal uses its new version');
   assert.equal(document.revision, 4);
   if (!process.env.AI_TEST_MOBILE) {
@@ -92,11 +93,13 @@ try {
     await compose.locator('.tiptap').waitFor();
     await compose.getByRole('button', { name: '新建报价单', exact: true }).click();
     await editor.waitFor();
+    const saved1 = page.waitForResponse(response => new URL(response.url()).pathname === '/api/documents' && response.request().method() === 'POST');
     await editor.getByRole('button', { name: '保存', exact: true }).click();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('inbrix-documents') || '[]').some(item => item.id !== 'quote' && item.revision === 1));
+    assert.equal((await (await saved1).json()).document.revision, 1);
     const createdId = writes.at(-1).id;
+    const saved2 = page.waitForResponse(response => new URL(response.url()).pathname === '/api/documents' && response.request().method() === 'POST');
     await editor.getByRole('button', { name: '保存', exact: true }).click();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('inbrix-documents') || '[]').some(item => item.id !== 'quote' && item.revision === 2));
+    assert.equal((await (await saved2).json()).document.revision, 2);
     assert.equal(writes.at(-1).revision, 1, 'Compose keeps the revision returned by its first save');
     assert.equal(writes.at(-1).id, createdId, 'Repeated save edits the same compose document');
   }

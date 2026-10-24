@@ -97,19 +97,6 @@ export function toAIDocumentSession(session: AIChatSession, copy: Copy): AIDocum
   };
 }
 
-// Old browser records have no owner/mailbox identity. They are retained for
-// explicit recovery, never shown or imported as the current user's history.
-export function hasLegacyAIDocumentSessions(): boolean {
-  try { return !!window.localStorage.getItem("inbrix-ai-document-sessions"); } catch { return false; }
-}
-export function exportLegacyAIDocumentSessions() {
-  const raw = window.localStorage.getItem("inbrix-ai-document-sessions");
-  if (!raw) return;
-  const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
-  const link = document.createElement("a"); link.href = url; link.download = "inbrix-legacy-ai-chats.json"; link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedData): StoredDocument {
   let html = generated.html;
   if (!html || html.includes("data-spirax-") || html.trim().startsWith("<div")) {

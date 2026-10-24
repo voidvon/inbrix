@@ -26,6 +26,7 @@ func chatStoreError(err error) error {
 }
 
 func (h *AISettingsHandler) HandleAIChatSessions(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err
@@ -74,6 +75,7 @@ func (h *AISettingsHandler) HandleAIChatSessions(c *fiber.Ctx) error {
 }
 
 func (h *AISettingsHandler) HandleAIChatSession(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err

@@ -25,6 +25,18 @@ type DocumentRecord struct {
 	UpdatedAt time.Time             `json:"updatedAt"`
 }
 
+// DocumentSummary contains only the fields needed to display a library row.
+// Canvas data, embedded images and other document content are fetched by ID.
+type DocumentSummary struct {
+	ID        string    `json:"id"`
+	Revision  int64     `json:"revision"`
+	Type      string    `json:"type"`
+	Name      string    `json:"name"`
+	Company   string    `json:"company"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // DocumentTemplateRecord represents a user-customized document template.
 type DocumentTemplateRecord struct {
 	ID        string    `json:"id"`
@@ -51,8 +63,8 @@ type DocumentStampRecord struct {
 	UpdatedAt   int64   `json:"updatedAt"`
 }
 
-// ListDocuments returns all documents for an owner, optionally filtered by document type.
-func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType string) ([]DocumentRecord, error) {
+// ListDocuments returns metadata for an owner's documents without reading HTML.
+func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType string) ([]DocumentSummary, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -66,14 +78,14 @@ func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType strin
 	var err error
 	if docType == "" || docType == "all" {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, owner_id, type, name, company, html, created_at, updated_at, revision
+			SELECT id, type, name, company, created_at, updated_at, revision
 			FROM documents
 			WHERE owner_id = ?
 			ORDER BY updated_at DESC, id DESC
 		`, ownerID)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, owner_id, type, name, company, html, created_at, updated_at, revision
+			SELECT id, type, name, company, created_at, updated_at, revision
 			FROM documents
 			WHERE owner_id = ? AND type = ?
 			ORDER BY updated_at DESC, id DESC
@@ -84,19 +96,16 @@ func (s *Store) ListDocuments(ctx context.Context, ownerID string, docType strin
 	}
 	defer rows.Close()
 
-	var records []DocumentRecord
+	records := []DocumentSummary{}
 	for rows.Next() {
-		var r DocumentRecord
+		var r DocumentSummary
 		var createdAtMs, updatedAtMs int64
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Type, &r.Name, &r.Company, &r.HTML, &createdAtMs, &updatedAtMs, &r.Revision); err != nil {
+		if err := rows.Scan(&r.ID, &r.Type, &r.Name, &r.Company, &createdAtMs, &updatedAtMs, &r.Revision); err != nil {
 			return nil, fmt.Errorf("mailstore: scan document: %w", err)
 		}
 		r.CreatedAt = time.UnixMilli(createdAtMs)
 		r.UpdatedAt = time.UnixMilli(updatedAtMs)
 		records = append(records, r)
-	}
-	if records == nil {
-		records = []DocumentRecord{}
 	}
 	return records, rows.Err()
 }
@@ -257,7 +266,44 @@ func (s *Store) DeleteDocuments(ctx context.Context, ownerID string, ids []strin
 	return tx.Commit()
 }
 
-// ListDocumentTemplates returns all custom templates for an owner.
+// EnsureDefaultDocumentTemplates seeds the built-in templates once per owner.
+// Later saves and deletions are authoritative and never reset on subsequent reads.
+func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string, english bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_template_initializations(owner_id) VALUES(?)`, owner)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		now := time.Now().UnixMilli()
+		for _, kind := range []string{"quotation", "contract"} {
+			name := "标准报价单模板"
+			if kind == "contract" {
+				name = "标准合同模板"
+			}
+			if english {
+				name = "Standard quotation"
+				if kind == "contract" {
+					name = "Standard contract"
+				}
+			}
+			legacyID := "default-" + kind
+			body := fmt.Sprintf(`<div data-spirax-%s="reference-v1"></div>`, kind)
+			_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at)
+				SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM document_templates WHERE owner_id=? AND id=?)`, legacyID+"-"+owner, owner, kind, name, body, now, now, owner, legacyID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// ListDocumentTemplates returns the owner's saved template catalog.
 func (s *Store) ListDocumentTemplates(ctx context.Context, ownerID string) ([]DocumentTemplateRecord, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
@@ -271,7 +317,7 @@ func (s *Store) ListDocumentTemplates(ctx context.Context, ownerID string) ([]Do
 		SELECT id, owner_id, type, name, html, created_at, updated_at
 		FROM document_templates
 		WHERE owner_id = ?
-		ORDER BY updated_at DESC, id DESC
+		ORDER BY CASE WHEN id LIKE 'default-quotation%' THEN 0 WHEN id LIKE 'default-contract%' THEN 1 ELSE 2 END, updated_at DESC, id DESC
 	`, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: list templates: %w", err)
@@ -378,7 +424,7 @@ func (s *Store) ListDocumentStamps(ctx context.Context, ownerID string) ([]Docum
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_id, name, image_data, width, height, aspect_ratio, created_at, updated_at
+		SELECT id, owner_id, name, image_data, width, height, insert_width, aspect_ratio, created_at, updated_at
 		FROM document_stamps
 		WHERE owner_id = ?
 		ORDER BY created_at DESC, id DESC
@@ -391,7 +437,7 @@ func (s *Store) ListDocumentStamps(ctx context.Context, ownerID string) ([]Docum
 	var records []DocumentStampRecord
 	for rows.Next() {
 		var r DocumentStampRecord
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.DataURL, &r.Width, &r.Height, &r.AspectRatio, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.DataURL, &r.Width, &r.Height, &r.InsertWidth, &r.AspectRatio, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("mailstore: scan stamp: %w", err)
 		}
 		r.Value = r.DataURL
@@ -433,19 +479,23 @@ func (s *Store) SaveDocumentStamp(ctx context.Context, stamp DocumentStampRecord
 	if createdAt <= 0 {
 		createdAt = now
 	}
+	if stamp.InsertWidth < 10 || stamp.InsertWidth > 150 {
+		stamp.InsertWidth = 40
+	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO document_stamps (id, owner_id, name, image_data, width, height, aspect_ratio, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO document_stamps (id, owner_id, name, image_data, width, height, insert_width, aspect_ratio, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			image_data = excluded.image_data,
 			width = excluded.width,
 			height = excluded.height,
+			insert_width = excluded.insert_width,
 			aspect_ratio = excluded.aspect_ratio,
 			updated_at = excluded.updated_at
 		WHERE document_stamps.owner_id = excluded.owner_id
-	`, stampID, ownerID, name, dataURL, stamp.Width, stamp.Height, stamp.AspectRatio, createdAt, now)
+	`, stampID, ownerID, name, dataURL, stamp.Width, stamp.Height, stamp.InsertWidth, stamp.AspectRatio, createdAt, now)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: save stamp: %w", err)
 	}
@@ -458,6 +508,7 @@ func (s *Store) SaveDocumentStamp(ctx context.Context, stamp DocumentStampRecord
 		Value:       dataURL,
 		Width:       stamp.Width,
 		Height:      stamp.Height,
+		InsertWidth: stamp.InsertWidth,
 		AspectRatio: stamp.AspectRatio,
 		CreatedAt:   createdAt,
 		UpdatedAt:   now,
@@ -531,5 +582,30 @@ func (s *Store) migrateDocumentRevision(ctx context.Context) error {
 	if !found {
 		_, err = s.db.ExecContext(ctx, `ALTER TABLE documents ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`)
 	}
+	return err
+}
+
+func (s *Store) migrateDocumentStampWidth(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(document_stamps)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, required, pk int
+		var name, typ string
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &required, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == "insert_width"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || found {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE document_stamps ADD COLUMN insert_width INTEGER NOT NULL DEFAULT 40`)
 	return err
 }

@@ -95,36 +95,16 @@ func TestAPIKeyCanSwitchSummarySkillAndInUseSkillsAreProtected(t *testing.T) {
 	}
 }
 
-func TestAPIKeySkillHistoryRestoreAndActorIsolation(t *testing.T) {
+func TestRemovedSkillHistoryEndpointsAreUnavailable(t *testing.T) {
 	f := newAPIKeyFixture(t)
-	res, body := keyRequest(t, f, "PATCH", "/api/settings/ai/skills/mail-analysis", f.key.Key, `{"instructions":"Updated from API","revision":1}`, nil)
-	if res.StatusCode != 200 {
-		t.Fatal(res.StatusCode, body)
-	}
-	res, body = keyRequest(t, f, "GET", "/api/settings/ai/skills/mail-analysis/versions/2", f.key.Key, "", nil)
-	if res.StatusCode != 200 || !strings.Contains(body, `"source":"api_key:`) || !strings.Contains(body, "Updated from API") || strings.Contains(body, f.key.Key) {
-		t.Fatal(res.StatusCode, body)
-	}
-	res, body = keyRequest(t, f, "GET", "/api/settings/ai/skills/mail-analysis/versions/2", f.otherKey.Key, "", nil)
-	if res.StatusCode != 404 {
-		t.Fatal("cross owner history", res.StatusCode, body)
-	}
-	res, body = keyRequest(t, f, "POST", "/api/settings/ai/skills/mail-analysis/restore", f.key.Key, `{"revision":1,"expectedRevision":2}`, nil)
-	if res.StatusCode != 200 || !strings.Contains(body, `"revision":3`) || strings.Contains(body, "Updated from API") {
-		t.Fatal(res.StatusCode, body)
-	}
-	res, body = keyRequest(t, f, "POST", "/api/settings/ai/skills/mail-analysis/restore", f.key.Key, `{"revision":1,"expectedRevision":2}`, nil)
-	if res.StatusCode != 409 {
-		t.Fatal("stale restore", res.StatusCode, body)
-	}
-	res, body = keyRequest(t, f, "GET", "/api/settings/ai/skills/mail-analysis/versions?before=3", f.key.Key, "", nil)
-	if res.StatusCode != 200 || !strings.Contains(body, "Updated from API") || strings.Contains(body, `"action":"restore"`) {
-		t.Fatal(res.StatusCode, body)
-	}
-	for _, invalid := range []string{`{"revision":1}`, `{"revision":1,"expectedRevision":3,"unknown":true}`, `{"revision":1,"expectedRevision":3} {}`} {
-		res, body = keyRequest(t, f, "POST", "/api/settings/ai/skills/mail-analysis/restore", f.key.Key, invalid, nil)
-		if res.StatusCode != 400 {
-			t.Fatal(res.StatusCode, body)
+	for _, endpoint := range []struct{ method, path string }{
+		{"GET", "/api/settings/ai/skills/mail-analysis/versions"},
+		{"GET", "/api/settings/ai/skills/mail-analysis/versions/1"},
+		{"POST", "/api/settings/ai/skills/mail-analysis/restore"},
+	} {
+		res, body := keyRequest(t, f, endpoint.method, endpoint.path, f.key.Key, "", nil)
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("removed endpoint %s %s: %d %s", endpoint.method, endpoint.path, res.StatusCode, body)
 		}
 	}
 }

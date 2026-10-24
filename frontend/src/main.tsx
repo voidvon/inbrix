@@ -5,6 +5,9 @@ import App from "./App";
 import { AppToaster } from "./components/app/app-toaster";
 import { TooltipProvider } from "./components/ui/tooltip";
 import "./styles.css";
+import { clearLegacyDocumentCache } from "./lib/document-storage";
+
+clearLegacyDocumentCache();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,6 +17,12 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Query state belongs to the current view only. Always read the server again
+// when returning, and discard inactive document responses immediately.
+for (const key of ["ai-document-sessions", "ai-document-session", "document-templates", "document-ai-agents", "document-ai-bindings"]) {
+  queryClient.setQueryDefaults([key], { staleTime: 0, gcTime: 0, refetchOnMount: "always", retry: false });
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -53,8 +53,9 @@ func (h *DocumentsHandler) ready(c *fiber.Ctx) (string, error) {
 	return owner, nil
 }
 
-// HandleListDocuments returns all documents for the current user, optionally filtered by type.
+// HandleListDocuments returns metadata only; full content is fetched by ID.
 func (h *DocumentsHandler) HandleListDocuments(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err
@@ -69,6 +70,7 @@ func (h *DocumentsHandler) HandleListDocuments(c *fiber.Ctx) error {
 
 // HandleGetDocument returns a single document by ID.
 func (h *DocumentsHandler) HandleGetDocument(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err
@@ -176,9 +178,13 @@ func (h *DocumentsHandler) HandleBatchDeleteDocuments(c *fiber.Ctx) error {
 
 // HandleListTemplates returns custom templates for the user.
 func (h *DocumentsHandler) HandleListTemplates(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err
+	}
+	if err := h.mailDB.EnsureDefaultDocumentTemplates(c.UserContext(), owner, strings.HasPrefix(strings.ToLower(c.Query("locale")), "en")); err != nil {
+		return fiber.NewError(500, "Failed to initialize templates")
 	}
 	templates, err := h.mailDB.ListDocumentTemplates(c.UserContext(), owner)
 	if err != nil {
@@ -239,6 +245,7 @@ func (h *DocumentsHandler) HandleDeleteTemplate(c *fiber.Ctx) error {
 
 // HandleListStamps returns all stamps for the user.
 func (h *DocumentsHandler) HandleListStamps(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderCacheControl, "no-store")
 	owner, err := h.ready(c)
 	if err != nil {
 		return err

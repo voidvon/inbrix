@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"inbrix/handlers/web"
@@ -13,6 +14,70 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 )
+
+func TestDocumentListOmitsContentAndDetailKeepsIt(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	ctx := context.Background()
+	largeHTML := "__INBRIX_CANVAS_DOCUMENT__:" + strings.Repeat("EMBEDDED-IMAGE-AND-CANVAS-DATA", 10000)
+	for _, doc := range []mailstore.DocumentRecord{
+		{ID: "quote", OwnerID: f.user.ID, Type: "quotation", Name: "Quote", Company: "Buyer", HTML: largeHTML},
+		{ID: "contract", OwnerID: f.user.ID, Type: "contract", Name: "Contract", Company: "Buyer", HTML: largeHTML},
+		{ID: "foreign", OwnerID: f.other.ID, Type: "quotation", Name: "Foreign private quote", HTML: largeHTML},
+	} {
+		if _, err := f.db.SaveDocument(ctx, doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, filter := range []string{"", "?type=quotation", "?type=contract"} {
+		res, body := keyRequest(t, f, "GET", "/api/documents"+filter, f.key.Key, "", nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatal(res.StatusCode, body)
+		}
+		if res.Header.Get("Cache-Control") != "no-store" {
+			t.Fatal("document lists must not be cached")
+		}
+		var result struct {
+			Documents []map[string]json.RawMessage `json:"documents"`
+		}
+		if err := json.Unmarshal([]byte(body), &result); err != nil {
+			t.Fatal(err)
+		}
+		expectedCount := 1
+		if filter == "" {
+			expectedCount = 2
+		}
+		if len(result.Documents) != expectedCount || len(body) > 1500 || strings.Contains(body, "EMBEDDED-IMAGE") || strings.Contains(body, "Foreign private") {
+			t.Fatalf("list contains excess content: count=%d bytes=%d", len(result.Documents), len(body))
+		}
+		for _, doc := range result.Documents {
+			for _, field := range []string{"id", "revision", "name", "company", "type", "createdAt", "updatedAt"} {
+				if _, ok := doc[field]; !ok {
+					t.Fatalf("missing list field %s", field)
+				}
+			}
+			if len(doc) != 7 {
+				t.Fatalf("unexpected list fields: %v", doc)
+			}
+			if filter != "" && string(doc["type"]) != `"`+strings.TrimPrefix(filter, "?type=")+`"` {
+				t.Fatalf("type filter ignored: %s", doc["type"])
+			}
+		}
+	}
+	res, body := keyRequest(t, f, "GET", "/api/documents/quote", f.key.Key, "", nil)
+	if res.Header.Get("Cache-Control") != "no-store" {
+		t.Fatal("document details must not be cached")
+	}
+	var detail struct {
+		Document mailstore.DocumentRecord `json:"document"`
+	}
+	if err := json.Unmarshal([]byte(body), &detail); err != nil || res.StatusCode != http.StatusOK || detail.Document.HTML != largeHTML || detail.Document.Revision != 1 {
+		t.Fatalf("detail content changed: status=%d err=%v", res.StatusCode, err)
+	}
+	res, _ = keyRequest(t, f, "GET", "/api/documents/quote", f.otherKey.Key, "", nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatal("foreign detail access accepted", res.StatusCode)
+	}
+}
 
 func TestDocumentsHandlerEndpoints(t *testing.T) {
 	ctx := context.Background()

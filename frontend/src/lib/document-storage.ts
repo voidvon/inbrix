@@ -69,6 +69,11 @@ export type StoredDocument = {
 };
 
 export type StoredTemplate = StoredDocument;
+export type DocumentSummary = Omit<StoredDocument, "html" | "aiOrigin">;
+
+export function summarizeDocument(document: DocumentSummary): DocumentSummary {
+  return { id: document.id, revision: document.revision, type: document.type, name: document.name, company: document.company, updatedAt: document.updatedAt };
+}
 
 export type DocumentEditorTarget = {
   kind: "document" | "template";
@@ -76,100 +81,13 @@ export type DocumentEditorTarget = {
   initialTemplate?: StoredTemplate;
 };
 
-export const DOCUMENT_STORAGE_KEY = "inbrix-documents";
 export const DOCUMENT_CHANGED_EVENT = "inbrix-documents-changed";
-export const TEMPLATE_STORAGE_KEY = "inbrix-document-templates";
-export const DELETED_TEMPLATE_STORAGE_KEY = "inbrix-deleted-document-templates";
 export const DOCUMENT_PAGE_SIZE = 20;
 
-export function readStoredDocuments(): StoredDocument[] {
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(DOCUMENT_STORAGE_KEY) || "[]");
-    if (!Array.isArray(value)) return [];
-    return value.filter((item): item is StoredDocument => {
-      if (!item || typeof item !== "object") return false;
-      const document = item as Partial<StoredDocument>;
-      return typeof document.id === "string" &&
-        (document.type === "quotation" || document.type === "contract") &&
-        typeof document.name === "string" &&
-        typeof document.html === "string" &&
-        typeof document.updatedAt === "string";
-    });
-  } catch {
-    return [];
-  }
-}
-
-export function writeStoredDocuments(documents: StoredDocument[]) {
-  try {
-    window.localStorage.setItem(DOCUMENT_STORAGE_KEY, JSON.stringify(documents));
-  } catch {
-    // Ignore quota errors as server is primary store
-  }
-}
-
-export function defaultDocumentTemplates(copy: Copy): StoredTemplate[] {
-  return [
-    { id: "default-quotation", type: "quotation", name: copy.quotationTemplate, html: documentTemplateHTML("quotation", copy), updatedAt: "" },
-    { id: "default-contract", type: "contract", name: copy.contractTemplate, html: documentTemplateHTML("contract", copy), updatedAt: "" },
-  ];
-}
-
-export function readStoredTemplates(copy: Copy): StoredTemplate[] {
-  let stored: StoredTemplate[] = [];
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(TEMPLATE_STORAGE_KEY) || "[]");
-    if (Array.isArray(value)) stored = value.filter((item): item is StoredTemplate => {
-      if (!item || typeof item !== "object") return false;
-      const template = item as Partial<StoredTemplate>;
-      return typeof template.id === "string" &&
-        (template.type === "quotation" || template.type === "contract") &&
-        typeof template.name === "string" &&
-        typeof template.html === "string" &&
-        typeof template.updatedAt === "string";
-    });
-  } catch {
-    stored = [];
-  }
-  let deletedIds = new Set<string>();
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(DELETED_TEMPLATE_STORAGE_KEY) || "[]");
-    if (Array.isArray(value)) deletedIds = new Set(value.filter((id): id is string => typeof id === "string"));
-  } catch {
-    deletedIds = new Set();
-  }
-  const storedById = new Map(stored.filter((template) => !deletedIds.has(template.id)).map((template) => [template.id, template]));
-  const defaults = defaultDocumentTemplates(copy).map((template) => {
-    const storedTemplate = storedById.get(template.id);
-    if (template.id === "default-quotation" && !storedTemplate?.html.includes('data-spirax-quotation="reference-v1"')) return template;
-    if (template.id === "default-contract" && !storedTemplate?.html.includes('data-spirax-contract="reference-v1"')) return template;
-    return storedTemplate || template;
-  });
-  return [...defaults.filter((template) => !deletedIds.has(template.id)), ...stored.filter((template) => !template.id.startsWith("default-") && !deletedIds.has(template.id))];
-}
-
-export function writeStoredTemplates(templates: StoredTemplate[]) {
-  try {
-    window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
-  } catch {
-    // Ignore quota errors as server is primary store
-  }
-}
-
-export function setStoredTemplateDeleted(id: string, deleted: boolean) {
-  let ids = new Set<string>();
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(DELETED_TEMPLATE_STORAGE_KEY) || "[]");
-    if (Array.isArray(value)) ids = new Set(value.filter((item): item is string => typeof item === "string"));
-  } catch {
-    ids = new Set();
-  }
-  if (deleted) ids.add(id);
-  else ids.delete(id);
-  try {
-    window.localStorage.setItem(DELETED_TEMPLATE_STORAGE_KEY, JSON.stringify([...ids]));
-  } catch {
-    // Ignore quota errors
+// Old browser records are discarded, never imported as the current user's data.
+export function clearLegacyDocumentCache() {
+  for (const key of ["inbrix-documents", "inbrix-document-templates", "inbrix-deleted-document-templates", "inbrix-document-stamps", "inbrix-ai-document-sessions"]) {
+    try { window.localStorage.removeItem(key); } catch { /* Storage may be blocked. */ }
   }
 }
 
@@ -177,76 +95,46 @@ export function setStoredTemplateDeleted(id: string, deleted: boolean) {
 // Server Persistence Helpers
 // ---------------------------------------------------------------------------
 
-export async function fetchServerDocuments(filter: DocumentListFilter = "all"): Promise<StoredDocument[]> {
+export async function fetchServerDocuments(filter: DocumentListFilter = "all"): Promise<DocumentSummary[]> {
   const { listDocuments } = await import("./api");
-  try {
-    const res = await listDocuments(filter);
-    if (Array.isArray(res.documents)) {
-      writeStoredDocuments(res.documents);
-      return res.documents;
-    }
-  } catch (err) {
-    console.warn("Failed to fetch documents from server, falling back to local cache", err);
-  }
-  return readStoredDocuments().filter((doc) => filter === "all" || doc.type === filter);
+  const res = await listDocuments(filter);
+  return res.documents.map(summarizeDocument);
 }
 
 export async function fetchServerTemplates(copy: Copy): Promise<StoredTemplate[]> {
-  const defaults = defaultDocumentTemplates(copy);
   const { listDocumentTemplates } = await import("./api");
-  try {
-    const res = await listDocumentTemplates();
-    if (Array.isArray(res.templates)) {
-      const custom = res.templates.filter((t) => !t.id.startsWith("default-"));
-      return [...defaults, ...custom];
-    }
-  } catch (err) {
-    console.warn("Failed to fetch templates from server, falling back to local cache", err);
-  }
-  return readStoredTemplates(copy);
+  const { templates } = await listDocumentTemplates(copy === en ? "en" : "zh-CN");
+  if (!Array.isArray(templates)) throw new Error(copy.loadFailed);
+  return templates;
 }
 
 export async function persistServerDocument(record: StoredDocument): Promise<StoredDocument> {
   const { saveDocument } = await import("./api");
   const res = await saveDocument(record);
-  const saved = (res.document as StoredDocument) || record;
-  const current = readStoredDocuments();
-  writeStoredDocuments([saved, ...current.filter((d) => d.id !== saved.id)]);
+  const saved = res.document;
   window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
   return saved;
 }
 
-export async function persistServerTemplate(record: StoredTemplate, copy?: Copy): Promise<StoredTemplate> {
+export async function persistServerTemplate(record: StoredTemplate): Promise<StoredTemplate> {
   const { saveDocumentTemplate } = await import("./api");
-  const res = await saveDocumentTemplate(record);
-  const saved = (res.template as StoredTemplate) || record;
-  setStoredTemplateDeleted(record.id, false);
-  const current = readStoredTemplates(copy || en);
-  writeStoredTemplates([saved, ...current.filter((t) => t.id !== saved.id)]);
-  return saved;
+  const { template } = await saveDocumentTemplate(record);
+  return template;
 }
 
 export async function deleteServerDocuments(ids: string[]): Promise<void> {
   const { batchDeleteDocuments } = await import("./api");
   await batchDeleteDocuments(ids);
-  const idSet = new Set(ids);
-  const current = readStoredDocuments();
-  writeStoredDocuments(current.filter((d) => !idSet.has(d.id)));
   window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
 }
 
-export async function deleteServerTemplate(id: string, copy?: Copy): Promise<void> {
+export async function deleteServerTemplate(id: string): Promise<void> {
   const { deleteDocumentTemplate } = await import("./api");
   await deleteDocumentTemplate(id);
-  setStoredTemplateDeleted(id, true);
-  const current = readStoredTemplates(copy || en);
-  writeStoredTemplates(current.filter((t) => t.id !== id));
 }
-
 
 export async function deleteServerDocumentRevision(id: string, revision: number): Promise<void> {
   const { deleteDocument } = await import("./api");
   await deleteDocument(id, revision);
-  writeStoredDocuments(readStoredDocuments().filter(document => document.id !== id));
   window.dispatchEvent(new Event(DOCUMENT_CHANGED_EVENT));
 }

@@ -31,8 +31,9 @@ export function AIBusinessProfileFields({ copy, value, onChange, disabled }: { c
     <div className="grid gap-2"><Label htmlFor="assistant-company">{isZh ? "卖方公司" : "Seller company"}</Label><Input id="assistant-company" value={value.company} onChange={e => patch({ company: e.target.value })} disabled={disabled} /></div>
     {(["quotation", "contract"] as const).map(type => {
       const key = type === "quotation" ? "quotationTemplateId" : "contractTemplateId";
-      return <div className="grid gap-2" key={type}><Label>{isZh ? `默认${type === "quotation" ? "报价单" : "合同"}模板` : `Default ${type} template`}</Label><ProductSelect value={value[key]} label={key} disabled={disabled || templates.isPending} onValueChange={id => patch({ [key]: id })} options={[{ value: "", label: isZh ? "系统默认模板" : "System default" }, ...(templates.data || []).filter(t => t.type === type).map(t => ({ value: t.id, label: t.name }))]} /></div>;
+      return <div className="grid gap-2" key={type}><Label>{isZh ? `默认${type === "quotation" ? "报价单" : "合同"}模板` : `Default ${type} template`}</Label><ProductSelect value={value[key]} label={key} disabled={disabled || templates.isPending || templates.isError} onValueChange={id => patch({ [key]: id })} options={[{ value: "", label: isZh ? "系统默认模板" : "System default" }, ...(templates.isError ? [] : templates.data || []).filter(t => t.type === type).map(t => ({ value: t.id, label: t.name }))]} /></div>;
     })}
+    {templates.isError && <p role="alert" className="text-xs text-destructive">{templates.error.message}<Button type="button" variant="link" onClick={() => void templates.refetch()}>{copy.retry}</Button></p>}
     <p className="text-xs text-muted-foreground">{isZh ? "在设置的 Skill 管理中维护任务流程。各品牌共用流程，价格以产品库或已约定的报价为准。" : "Manage workflows in Settings → Skills. Brands share workflows; prices come from the catalog or an agreed quotation."}</p>
   </div>;
 }
