@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mailapi "inbrix/handlers/api"
+	"inbrix/internal/agenttest"
 	"inbrix/models"
 )
 
@@ -27,7 +28,7 @@ type summaryTestClient struct {
 
 func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
 	var request struct {
-		Input string `json:"input"`
+		Input json.RawMessage `json:"input"`
 	}
 	if raw, err := io.ReadAll(req.Body); err == nil {
 		_ = json.Unmarshal(raw, &request)
@@ -35,7 +36,7 @@ func (c *summaryTestClient) Do(req *http.Request) (*http.Response, error) {
 	c.mu.Lock()
 	c.calls++
 	call := c.calls
-	c.inputs = append(c.inputs, request.Input)
+	c.inputs = append(c.inputs, agenttest.InputText(request.Input))
 	c.mu.Unlock()
 	if c.entered != nil {
 		select {

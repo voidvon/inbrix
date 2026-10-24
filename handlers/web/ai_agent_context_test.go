@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	mailapi "inbrix/handlers/api"
+	"inbrix/internal/agenttest"
 	"inbrix/mailstore"
 	"inbrix/models"
 
@@ -26,9 +27,23 @@ type agentTestRequest struct {
 	Instructions string `json:"instructions"`
 }
 
+func (r *agentTestRequest) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Input        json.RawMessage
+		Instructions string
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	r.Input = agenttest.InputText(wire.Input)
+	r.Instructions = wire.Instructions
+	return nil
+}
+
 func agentContextTestApp(t *testing.T, respond func(agentTestRequest) string) (*AISettingsHandler, *fiber.App, mailstore.Account, mailstore.Account) {
 	t.Helper()
 	emailHandler, app, account, other := outboxTestApp(t)
+	sequence := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request agentTestRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -38,7 +53,8 @@ func agentContextTestApp(t *testing.T, respond func(agentTestRequest) string) (*
 			t.Errorf("provider input exceeded budget: %d", len(request.Input)+len(request.Instructions))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"output_text": respond(request)})
+		sequence++
+		_ = json.NewEncoder(w).Encode(agenttest.Response(respond(request), sequence))
 	}))
 	t.Cleanup(provider.Close)
 	emailHandler.config.Encryption.Key = "0123456789abcdef0123456789abcdef"

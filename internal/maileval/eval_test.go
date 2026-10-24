@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"inbrix/internal/agenttest"
 	"inbrix/mailstore"
 )
 
@@ -126,20 +127,22 @@ func TestReplayUsesProductionToolLoopWithIsolatedMailAndNoExpectedAnswers(t *tes
 	c := suite.Cases[1]
 	client := &testClient{reply: func(req *http.Request) (string, error) {
 		var request struct {
-			Input        string `json:"input"`
-			Instructions string `json:"instructions"`
+			Input        json.RawMessage `json:"input"`
+			Instructions string          `json:"instructions"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
 			return "", err
 		}
-		if strings.Contains(request.Input, "humanReview") || strings.Contains(request.Input, "本次诉求保留") || strings.Contains(request.Input, "patterns") {
+		if strings.Contains(agenttest.InputText(request.Input), "humanReview") || strings.Contains(agenttest.InputText(request.Input), "本次诉求保留") || strings.Contains(agenttest.InputText(request.Input), "patterns") {
 			return "", errors.New("grading rubric leaked to model")
 		}
 		text := `{"request":"Q-CHANGE BV-25 数量20台","background":"[Sent/41] 原报价10台，USD25/台","changes":"10台改为20台","actions":["重新确认价格和交期"],"missing":["新价格和交期未确认"],"fields":{"客户":"测试客户","需求":"20台BV-25","要求":"重报价","问题":"新价格交期待确认"}}`
-		if !strings.Contains(request.Input, "[Agent Tool Call]") {
+		if !strings.Contains(agenttest.InputText(request.Input), "[Tool Result (read_email)]") {
 			text = `{"name":"read_email","arguments":{"folder":"Sent","uid":"41"}}`
 		}
-		raw, _ := json.Marshal(map[string]any{"output_text": text, "usage": map[string]int{"input_tokens": 100, "output_tokens": 40}})
+		response := agenttest.Response(text, 1)
+		response["usage"] = map[string]int{"input_tokens": 100, "output_tokens": 40}
+		raw, _ := json.Marshal(response)
 		return string(raw), nil
 	}}
 	cfg := DefaultExecutionConfig()

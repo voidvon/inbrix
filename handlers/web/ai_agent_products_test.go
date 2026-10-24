@@ -171,7 +171,7 @@ func TestProductToolsRejectForeignAndStaleReferences(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"search_products", "read_product", "list_product_categories"} {
-		if !strings.Contains(buildAgentSystemPrompt(agentModeConversation, "", "", nil), name) {
+		if !hasAgentChatTool(name) {
 			t.Fatalf("missing product tool %s", name)
 		}
 	}

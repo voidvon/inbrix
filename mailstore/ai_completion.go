@@ -28,6 +28,9 @@ var reservedAIExtraParamKeys = map[string]struct{}{
 	"contents":          {},
 	"systeminstruction": {},
 	"stream":            {},
+	"tools":             {},
+	"tool_choice":       {},
+	"toolconfig":        {},
 }
 
 // CreateAIResponse calls the configured model backend (OpenAI or Gemini) and returns the output text.
@@ -750,17 +753,16 @@ func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIMode
 		return "", errors.New("DeepSeek returned no choices")
 	}
 
+	switch result.Choices[0].FinishReason {
+	case "length":
+		return "", errors.New("DeepSeek response was truncated: max tokens limit reached during reasoning or generation")
+	case "content_filter":
+		return "", errors.New("DeepSeek response was filtered by content moderation policy")
+	}
+
 	content := strings.TrimSpace(result.Choices[0].Message.Content)
 	content = StripThinkTags(content)
 	if content == "" {
-		if len(result.Choices) > 0 {
-			switch result.Choices[0].FinishReason {
-			case "length":
-				return "", errors.New("DeepSeek response was truncated: max tokens limit reached during reasoning or generation")
-			case "content_filter":
-				return "", errors.New("DeepSeek response was filtered by content moderation policy")
-			}
-		}
 		return "", errors.New("DeepSeek returned empty content")
 	}
 

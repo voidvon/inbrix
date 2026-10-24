@@ -81,3 +81,66 @@ func TestRunOmitsLargeResultsAndHonorsCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunRepairsFinalAnswerWithEvidenceWithinBudget(t *testing.T) {
+	turn, executed := 0, 0
+	out, err := Run(context.Background(), Options{
+		Input: "analyze", Limits: Limits{Turns: 4, CallsPerTurn: 1, Calls: 1, InputBytes: 16000, ResultBytes: 2000, ValidationRetries: 2},
+		Respond: func(ctx context.Context, input string) (string, error) {
+			turn++
+			switch turn {
+			case 1:
+				return "unread citation", nil
+			case 2:
+				if !strings.Contains(input, "read evidence first") || !strings.Contains(input, "unread citation") {
+					t.Fatal("missing rejected answer or validation feedback")
+				}
+				return `{"name":"read_email","args":{}}`, nil
+			default:
+				return "valid", nil
+			}
+		},
+		Execute: func(context.Context, ToolCall) (any, string, error) { executed++; return "evidence", "read", nil },
+		Validate: func(s string) error {
+			if s != "valid" || executed == 0 {
+				return errors.New("read evidence first")
+			}
+			return nil
+		},
+	})
+	if err != nil || out.Text != "valid" || executed != 1 || turn != 3 || len(out.Calls) != 1 {
+		t.Fatalf("out=%+v turn=%d executed=%d err=%v", out, turn, executed, err)
+	}
+}
+
+func TestRunFinalValidationCannotBypassBudgets(t *testing.T) {
+	rejected := errors.New("invalid final answer")
+	for _, tc := range []struct {
+		name                  string
+		turns, retries, calls int
+		tool                  bool
+	}{
+		{"retry limit", 6, 2, 3, false},
+		{"turn limit", 1, 2, 1, false},
+		{"forced final", 1, 2, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			_, err := Run(context.Background(), Options{
+				Limits: Limits{Turns: tc.turns, CallsPerTurn: 1, Calls: 1, InputBytes: 16000, ResultBytes: 2000, ValidationRetries: tc.retries},
+				Respond: func(context.Context, string) (string, error) {
+					calls++
+					if tc.tool && calls == 1 {
+						return `{"name":"read_email","args":{}}`, nil
+					}
+					return "invalid", nil
+				},
+				Execute:  func(context.Context, ToolCall) (any, string, error) { return "body", "read", nil },
+				Validate: func(string) error { return rejected },
+			})
+			if !errors.Is(err, rejected) || calls != tc.calls {
+				t.Fatalf("calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}

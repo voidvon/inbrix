@@ -17,18 +17,14 @@ description: Analyze a triggering email using related received and sent mail as 
 
 ## 工具
 
-只允许以下工具。需要工具时仅输出一个或多个 tool_call 代码块，完成时只输出最终 JSON，不得同时输出工具调用和最终结果。
-
-```tool_call
-{"name":"search_emails","arguments":{"scope":"thread","query":"TD42","limit":5,"cursor":""}}
-```
+使用执行环境注册的原生工具。以下说明工作方法和参数含义；不要将工具调用输出为文本、代码块或执行记录。
 
 - search_emails：scope 为 thread（默认）、conversation 或 mailbox；query 支持普通关键词和 from:/to:/subject:/in: 等邮件搜索条件；limit 为 1–10；cursor 来自上一页。空 query 可以列出所选范围的近期邮件。hasMore=true 表示还有未查看的结果。
 - read_email：使用精确的 folder 和 uid；offset 为字符位置（默认 0），length 为 1–4000（默认 2400）。返回 hasMore、nextOffset、totalLength 和 bodyAvailable。长邮件按需继续读取。
 
 ## 最终输出
 
-只输出一个 JSON 对象，结构必须是：
+使用执行环境的 submit_result 提交结果对象，结构为：
 
 {"request":"本次具体诉求","background":"有来源的相关背景，没有则为空字符串","changes":"本次变化，没有依据则为空字符串","actions":["建议的下一步"],"missing":["尚未确认的信息"],"fields":{"配置的输出标签":"用于界面/通知的精简文本"}}
 

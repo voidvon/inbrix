@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/mail"
 	"regexp"
 	"sort"
@@ -369,12 +368,34 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	}
 	instructions := mailSummaryInstructions(cfg.agent, cfg.skill.Instructions)
 	run, err := agentruntime.Run(ctx, agentruntime.Options{
-		Input:  string(initial),
-		Limits: agentruntime.Limits{Turns: 6, CallsPerTurn: 4, Calls: 12, InputBytes: 96000 - len(instructions), ResultBytes: 18000},
-		Respond: func(ctx context.Context, input string) (string, error) {
-			return CreateAIResponse(ctx, client, cfg.model, cfg.apiKey, instructions, input, 6000, cfg.effort)
+		Input:        string(initial),
+		Tools:        MailReadToolSpecs("thread", "conversation", "mailbox"),
+		OutputSchema: mailSummaryOutputSchema(cfg.agent.OutputLabels),
+		Limits:       agentruntime.Limits{Turns: 6, CallsPerTurn: 4, Calls: 12, InputBytes: 96000 - len(instructions), ResultBytes: 18000, ValidationRetries: 2},
+		Complete: func(ctx context.Context, input agentruntime.ModelRequest) (agentruntime.ModelResponse, error) {
+			return CreateAgentResponse(ctx, client, cfg.model, cfg.apiKey, instructions, input, nil, 6000, cfg.effort, nil)
 		},
 		Execute: scope.execute,
+		Validate: func(raw string) error {
+			result, err := parseMailAnalysisOutput(raw, cfg.agent.OutputLabels)
+			if err != nil {
+				return err
+			}
+			for _, source := range scope.sources {
+				if source.Folder == message.Folder && source.UID == message.ID && !sourceFullyRead(source) {
+					return fmt.Errorf("%w: mail-analysis skill did not finish reading the triggering email; use read_email to read the remaining ranges", ErrInvalidMailAnalysis)
+				}
+			}
+			analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Fields: result.Fields, Sources: scope.sources}
+			if err := validateMailAnalysisReferences(analysis); err != nil {
+				refs := make([]string, 0, len(scope.sources))
+				for _, source := range scope.sources {
+					refs = append(refs, "["+source.Folder+"/"+source.UID+"]")
+				}
+				return fmt.Errorf("%w: %s; already read sources: %s; use read_email before citing any other email", ErrInvalidMailAnalysis, err, strings.Join(refs, ", "))
+			}
+			return nil
+		},
 		OnTool: func(kind string, call agentruntime.ToolCall) error {
 			if kind != "tool_end" || call.Status != "success" || call.Name != "read_email" {
 				return nil
@@ -398,29 +419,9 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	if err != nil {
 		return nil, err
 	}
-	var result struct {
-		Request    string            `json:"request"`
-		Background string            `json:"background"`
-		Changes    string            `json:"changes"`
-		Actions    []string          `json:"actions"`
-		Missing    []string          `json:"missing"`
-		Fields     map[string]string `json:"fields"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(CleanJSONFence(run.Text)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil || result.Fields == nil || result.Actions == nil || result.Missing == nil || strings.TrimSpace(result.Request) == "" || len(result.Fields) != len(cfg.agent.OutputLabels) {
-		return nil, fmt.Errorf("%w: mail-analysis skill returned invalid structured output", ErrInvalidMailAnalysis)
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, fmt.Errorf("%w: mail-analysis skill returned trailing output", ErrInvalidMailAnalysis)
-	}
-	var structure map[string]json.RawMessage
-	if json.Unmarshal([]byte(CleanJSONFence(run.Text)), &structure) != nil || len(structure) != 6 {
-		return nil, fmt.Errorf("%w: mail-analysis skill returned incomplete structured output", ErrInvalidMailAnalysis)
-	}
-	fields, _ := json.Marshal(result.Fields)
-	if _, err := formatTaggedMailSummary(string(fields), cfg.agent.OutputLabels); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidMailAnalysis, err)
+	result, err := parseMailAnalysisOutput(run.Text, cfg.agent.OutputLabels)
+	if err != nil {
+		return nil, err
 	}
 	skillVersion := "mail-analysis/v1"
 	if cfg.skill.ID != "" {
@@ -496,6 +497,9 @@ func validateMailAnalysisReferences(analysis *MailAnalysis) error {
 	}
 	texts := append([]string{analysis.Request, analysis.Background, analysis.Changes}, analysis.Actions...)
 	texts = append(texts, analysis.Missing...)
+	for _, value := range analysis.Fields {
+		texts = append(texts, value)
+	}
 	for _, text := range texts {
 		for _, ref := range mailAnalysisReferenceRE.FindAllStringSubmatch(text, -1) {
 			if !known[ref[1]+"/"+ref[2]] {

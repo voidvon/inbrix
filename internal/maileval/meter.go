@@ -127,13 +127,22 @@ func parseUsage(raw []byte, usage RequestUsage) (RequestUsage, string) {
 			Data       json.RawMessage `json:"data"`
 			OutputText string          `json:"output_text"`
 			Output     []struct {
-				Content []struct {
+				Type      string `json:"type"`
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+				Content   []struct {
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"output"`
 			Choices []struct {
 				Message struct {
-					Content json.RawMessage `json:"content"`
+					Content   json.RawMessage `json:"content"`
+					ToolCalls []struct {
+						Function struct {
+							Name      string
+							Arguments string
+						}
+					} `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
 			Usage json.RawMessage `json:"usage"`
@@ -166,14 +175,22 @@ func parseUsage(raw []byte, usage RequestUsage) (RequestUsage, string) {
 			text = result.OutputText
 			if text == "" {
 				for _, item := range result.Output {
+					if item.Type == "function_call" && item.Name == "submit_result" {
+						text = item.Arguments
+					}
 					for _, content := range item.Content {
 						text += content.Text
 					}
 				}
 			}
 			if text == "" && len(result.Choices) > 0 {
+				for _, call := range result.Choices[0].Message.ToolCalls {
+					if call.Function.Name == "submit_result" {
+						text = call.Function.Arguments
+					}
+				}
 				content := result.Choices[0].Message.Content
-				if json.Unmarshal(content, &text) != nil {
+				if text == "" && json.Unmarshal(content, &text) != nil {
 					var parts []struct {
 						Text string `json:"text"`
 					}

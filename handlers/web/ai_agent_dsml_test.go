@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"inbrix/internal/agenttest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -122,7 +123,7 @@ func TestDSMLStreamingAndHistoryDoNotLeakToolPayloads(t *testing.T) {
 	}
 }
 
-func TestAgentChatContinuesAfterDSMLTools(t *testing.T) {
+func TestAgentChatUsesNativeToolsWithLegacyDSMLHistory(t *testing.T) {
 	for _, provider := range []string{"openai", "openai-compatible"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%v", provider, stream), func(t *testing.T) {
@@ -137,52 +138,59 @@ func TestAgentChatContinuesAfterDSMLTools(t *testing.T) {
 				}
 				var turns atomic.Int32
 				h.client = &http.Client{Transport: agentStreamTransport(func(r *http.Request) (*http.Response, error) {
+
 					var request struct {
-						Input    string `json:"input"`
-						Stream   bool   `json:"stream"`
-						Messages []struct {
-							Content string `json:"content"`
-						} `json:"messages"`
+						Input    json.RawMessage `json:"input"`
+						Stream   bool            `json:"stream"`
+						Messages json.RawMessage `json:"messages"`
 					}
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 						t.Error(err)
 					}
-					for _, message := range request.Messages {
-						request.Input += message.Content
+					input := agenttest.InputText(request.Input)
+					if provider == "openai-compatible" {
+						input = agenttest.InputText(request.Messages)
 					}
-					if strings.Contains(request.Input, dsmlMarker) {
+					if strings.Contains(input, dsmlMarker) {
 						t.Error("historical DSML sent back to provider")
 					}
+					sequence := int(turns.Add(1))
 					text := dsmlReportedCalls
-					if turns.Add(1) > 1 {
-						if !strings.Contains(request.Input, "[Tool Result (list_documents)]") {
-							t.Error("missing tool results in follow-up")
+					if sequence > 1 {
+						if !strings.Contains(input, "[Tool Result (list_documents)]") {
+							t.Error("missing native tool results in follow-up")
 						}
 						text = "Dear customer, please review the attached quotation."
 					}
 					contentType := "application/json"
-					body, _ := json.Marshal(map[string]string{"output_text": text})
+					envelope := agenttest.Response(text, sequence)
 					if provider == "openai-compatible" {
-						// Match ClinePass's nested Chat Completions envelope.
-						body, _ = json.Marshal(map[string]any{"data": map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": text}, "finish_reason": "stop"}}}})
+						envelope = map[string]any{"data": agenttest.CompatibleResponse(text, sequence)}
 					}
+					body, _ := json.Marshal(envelope)
 					if request.Stream {
 						contentType = "text/event-stream"
 						var wire strings.Builder
-						for _, char := range text {
-							frame, _ := json.Marshal(map[string]string{"type": "response.output_text.delta", "delta": string(char)})
-							if provider == "openai-compatible" {
-								frame, _ = json.Marshal(map[string]any{"data": map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": string(char)}}}}})
-							}
+						if provider == "openai" {
+							frame, _ := json.Marshal(map[string]any{"type": "response.completed", "response": envelope})
 							fmt.Fprintf(&wire, "data: %s\n\n", frame)
-						}
-						if provider == "openai-compatible" {
-							wire.WriteString("data: {\"data\":{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}}\n\ndata: [DONE]\n\n")
 						} else {
-							wire.WriteString("data: {\"type\":\"response.completed\"}\n\n")
+							native := agenttest.CompatibleResponse(text, sequence)
+							choice := native["choices"].([]any)[0].(map[string]any)
+							message := choice["message"].(map[string]any)
+							delta := map[string]any{"content": message["content"]}
+							if calls, ok := message["tool_calls"].([]any); ok {
+								for i, value := range calls {
+									value.(map[string]any)["index"] = i
+								}
+								delta["tool_calls"] = calls
+							}
+							frame, _ := json.Marshal(map[string]any{"data": map[string]any{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": choice["finish_reason"]}}}})
+							fmt.Fprintf(&wire, "data: %s\n\ndata: [DONE]\n\n", frame)
 						}
 						body = []byte(wire.String())
 					}
+
 					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
 				})}
 				payload, _ := json.Marshal(AIAgentChatRequest{AccountEmail: account.Email, Messages: []AIAgentChatMessage{

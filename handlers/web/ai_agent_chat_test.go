@@ -236,24 +236,28 @@ func TestExecuteGenerateDocumentExplicitValuesWin(t *testing.T) {
 	}
 }
 
-func TestAgentPromptDemandsCompleteDocuments(t *testing.T) {
+func TestAgentPromptUsesNativeToolsAndSkillWorkflows(t *testing.T) {
 	prompt := buildAgentSystemPrompt(agentModeConversation, "", "", nil)
-	for _, want := range []string{
-		"DOCUMENT COMPLETENESS",
-		"ONE ROW PER PRODUCT",
-		`"values"`,
-		"customer_po",
-		"buyer contact email",
-		"seller_company",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("prompt does not require %q", want)
+	if strings.Contains(prompt, "ONE ROW PER PRODUCT") || strings.Contains(prompt, "```tool_call") {
+		t.Fatal("business workflow or text calling protocol leaked into the generic prompt")
+	}
+	if !strings.Contains(prompt, "Do not invent facts") || !strings.Contains(prompt, "native tools") {
+		t.Fatal("generic execution rules missing")
+	}
+	session := mailstore.NewAISkillSession(mailstore.DefaultAIChatSkills())
+	workflow, err := session.Prompt("quotation")
+	if err != nil || !strings.Contains(workflow, "ONE ROW PER PRODUCT") || !strings.Contains(workflow, "seller_company") {
+		t.Fatal("quotation completeness workflow missing from Skill", err)
+	}
+	for _, tool := range agentChatTools() {
+		if tool.Name == "generate_document" {
+			if tool.Parameters["properties"] == nil {
+				t.Fatal("document arguments missing from native schema")
+			}
+			return
 		}
 	}
-	// Completeness must not weaken the general evidence rule.
-	if !strings.Contains(prompt, "Do not invent facts") {
-		t.Fatal("evidence rule was lost")
-	}
+	t.Fatal("native document tool not registered")
 }
 
 func TestExecuteSearchEmailsEmptyQueryListsRecentMail(t *testing.T) {
@@ -418,7 +422,7 @@ func TestAgentPromptExposesToolsWithoutQuestionSpecificRouting(t *testing.T) {
 		t.Fatal("conversation mode is not framed as an email conversation")
 	}
 	for _, tool := range []string{"search_emails", "read_email", "lookup_price", "calculate_pricing"} {
-		if !strings.Contains(conversation, tool) {
+		if !hasAgentChatTool(tool) {
 			t.Fatalf("tool %s is not exposed", tool)
 		}
 	}
@@ -575,11 +579,11 @@ func TestExecuteUpdateDocumentRejectsUnstructured(t *testing.T) {
 func TestAgentPromptCoversDocumentTools(t *testing.T) {
 	prompt := buildAgentSystemPrompt(agentModeConversation, "", "", nil)
 	for _, tool := range []string{"list_documents", "read_document", "update_document", "delete_document"} {
-		if !strings.Contains(prompt, tool) {
+		if !hasAgentChatTool(tool) {
 			t.Fatalf("prompt does not advertise %s", tool)
 		}
 	}
-	if !strings.Contains(prompt, "only PROPOSE") {
+	if !strings.Contains(prompt, "UI confirmation") {
 		t.Fatal("prompt does not require confirmation for document changes")
 	}
 }
@@ -628,4 +632,13 @@ func TestExecuteUpdateDocumentAppliesExplicitValues(t *testing.T) {
 	if strings.Contains(record.HTML, "35 天") {
 		t.Fatal("proposal wrote to the document")
 	}
+}
+
+func hasAgentChatTool(name string) bool {
+	for _, spec := range agentChatTools() {
+		if spec.Name == name {
+			return true
+		}
+	}
+	return false
 }

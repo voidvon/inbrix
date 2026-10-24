@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"inbrix/internal/agentruntime"
+	"inbrix/internal/agenttest"
 	"inbrix/models"
 )
 
@@ -22,8 +23,8 @@ type analysisScriptClient struct {
 
 func (c *analysisScriptClient) Do(req *http.Request) (*http.Response, error) {
 	var request struct {
-		Input        string `json:"input"`
-		Instructions string `json:"instructions"`
+		Input        json.RawMessage `json:"input"`
+		Instructions string          `json:"instructions"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
 		return nil, err
@@ -31,15 +32,59 @@ func (c *analysisScriptClient) Do(req *http.Request) (*http.Response, error) {
 	if !strings.Contains(request.Instructions, "mail-analysis") {
 		return nil, errors.New("skill was not loaded")
 	}
-	c.inputs = append(c.inputs, request.Input)
-	text := c.reply(len(c.inputs), request.Input)
-	raw, _ := json.Marshal(map[string]string{"output_text": text})
+	input := agenttest.InputText(request.Input)
+	c.inputs = append(c.inputs, input)
+	text := c.reply(len(c.inputs), input)
+	raw, _ := json.Marshal(agenttest.Response(text, len(c.inputs)))
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(raw))), Header: make(http.Header)}, nil
 }
 
 const validAnalysisOutput = `{"request":"数量改为20台","background":"[Sent Messages/41] 上次报价10台，每台USD 25","changes":"数量10台改为20台","actions":["核实新数量价格与交期"],"missing":[],"fields":{"客户":"测试客户","需求":"20台阀门","要求":"确认新报价","问题":""}}`
 
 const standaloneAnalysisOutput = `{"request":"分析当前邮件","background":"","changes":"","actions":[],"missing":[],"fields":{"客户":"测试客户","需求":"20台阀门","要求":"确认新报价","问题":""}}`
+
+func TestMailAnalysisRepairsToolTranscriptAndUnreadCitations(t *testing.T) {
+	s, account, message, key := setupMailSummaryTest(t)
+	message.Body = "Please update the quotation to 20 valves."
+	message.Date = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	message.InReplyTo = "<prior@example.com>"
+	parent := models.Email{ID: "41", Folder: "Sent Messages", From: account.Email, To: message.From, Date: message.Date.Add(-time.Hour), MessageID: message.InReplyTo, Body: "10 valves at USD 25", BodyCached: true}
+	if err := s.UpsertMessages(context.Background(), account.ID, parent.Folder, []models.Email{parent}); err != nil {
+		t.Fatal(err)
+	}
+	client := &analysisScriptClient{reply: func(turn int, input string) string {
+		switch turn {
+		case 1:
+			return `[Agent Tool Call]: read_email({"folder":"Sent Messages","uid":"41"})`
+		case 2:
+			if !strings.Contains(input, "invalid JSON") {
+				t.Fatal("missing format correction feedback")
+			}
+			return validAnalysisOutput
+		case 3:
+			if !strings.Contains(input, "already read sources:") || !strings.Contains(input, "was not read") {
+				t.Fatal("missing evidence correction feedback")
+			}
+			return `{"name":"read_email","arguments":{"folder":"Sent Messages","uid":"41"}}`
+		default:
+			return validAnalysisOutput
+		}
+	}}
+	result, err := GetOrCreateMailSummary(context.Background(), client, s, key, account, message, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.inputs) != 4 || result.Record.Analysis == nil || len(result.Record.Analysis.Sources) != 2 || len(result.Record.Analysis.Activity) != 1 {
+		t.Fatalf("repair lost evidence or exceeded budget: calls=%d analysis=%+v", len(client.inputs), result.Record.Analysis)
+	}
+}
+
+func TestMailAnalysisRejectsUnreadReferencesInDisplayFields(t *testing.T) {
+	analysis := &MailAnalysis{Fields: map[string]string{"需求": "[INBOX/99] 20 valves"}}
+	if err := validateMailAnalysisReferences(analysis); err == nil {
+		t.Fatal("unread reference in display fields accepted")
+	}
+}
 
 func TestMailAnalysisSearchesReadsAndPersistsEvidence(t *testing.T) {
 	s, account, message, key := setupMailSummaryTest(t)

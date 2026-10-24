@@ -1,0 +1,39 @@
+package web
+
+import (
+	"inbrix/internal/agentruntime"
+	"inbrix/mailstore"
+)
+
+// Tool schemas describe server capabilities, not task workflows. The scoped
+// executors still enforce ownership, evidence, revisions and UI confirmation.
+func agentChatTools() []agentruntime.ToolSpec {
+	text := func() map[string]any { return map[string]any{"type": "string"} }
+	integer := func(min, max int) map[string]any {
+		return map[string]any{"type": "integer", "minimum": min, "maximum": max}
+	}
+	object := func(props map[string]any, required ...string) map[string]any {
+		return map[string]any{"type": "object", "properties": props, "required": append([]string{}, required...), "additionalProperties": false}
+	}
+	freeObject := map[string]any{"type": "object", "additionalProperties": true}
+	item := map[string]any{"type": "object", "properties": map[string]any{"name": text(), "model": text(), "description": text(), "qty": text(), "price": text(), "amount": text(), "productId": text(), "productVersion": integer(1, 1<<31-1), "variantId": text(), "priceId": text()}, "additionalProperties": true}
+	items := map[string]any{"type": "array", "items": item}
+	document := map[string]any{"type": map[string]any{"type": "string", "enum": []string{"quotation", "contract"}}, "title": text(), "counterparty": text(), "contact": text(), "email": text(), "phone": text(), "address": text(), "currency": text(), "items": items, "terms": map[string]any{"type": "array", "items": text()}, "notes": text(), "values": freeObject, "sourceQuotationId": text(), "sourceQuotationRevision": integer(1, 1<<31-1)}
+	prices := object(map[string]any{"query": text(), "productId": text(), "version": integer(1, 1<<31-1), "variantId": text(), "priceId": text(), "attributes": freeObject, "qty": text(), "source": text(), "date": text(), "currency": text(), "limit": integer(1, 50), "offset": integer(0, 100000)})
+	tools := mailstore.MailReadToolSpecs("conversation", "mailbox")
+	return append(tools,
+		agentruntime.ToolSpec{Name: "load_skill", Description: "Load a workflow from this execution's catalog. Follow nextOffset until complete; loading grants no permissions.", Parameters: object(map[string]any{"id": text(), "offset": integer(0, 100000), "length": integer(1, 2000)}, "id")},
+		agentruntime.ToolSpec{Name: "read_current_draft", Description: "Read the authoritative current draft, using Unicode offsets and following nextOffset while hasMore.", Parameters: object(map[string]any{"offset": integer(0, 1000000), "length": integer(1, 4000)})},
+		agentruntime.ToolSpec{Name: "search_products", Description: "Locate accessible product candidates by literal keywords/model, category (including descendants) and brand. Chinese substring/Latin keyword search combines terms with AND and normalizes models; it is not semantic or numeric range search. Omit brand for all permitted brands; empty brand selects unbranded. Results are previews, not verified suitability. Follow nextOffset with the same filters and read_product for evidence.", Parameters: object(map[string]any{"query": text(), "categoryId": text(), "brand": text(), "limit": integer(1, 20), "offset": integer(0, 100000)})},
+		agentruntime.ToolSpec{Name: "read_product", Description: "Read product specification evidence at the exact version from search. Offsets count Unicode characters; follow nextOffset and re-search after revision conflicts. Read relevant units, headers, conditions and exclusions before asserting suitability. Cite product name/model, version and section using /products?product=PRODUCT_ID.", Parameters: object(map[string]any{"id": text(), "version": integer(1, 1<<31-1), "offset": integer(0, 1000000), "length": integer(1, 4000)}, "id", "version")},
+		agentruntime.ToolSpec{Name: "list_product_categories", Description: "List accessible product categories with pagination. Results include ids, parentId (empty at roots), direct counts, hasMore and nextOffset. Categories form a hierarchy independent of brands.", Parameters: object(map[string]any{"offset": integer(0, 100000), "limit": integer(1, 50)})},
+		agentruntime.ToolSpec{Name: "query_product_prices", Description: "Read actual catalog variants/prices and required dimensions. Only matched establishes one applicable configuration; do not silently select the first candidate. Preserve product/version/variant/price references. Plain prices do not establish tax terms.", Parameters: prices},
+		agentruntime.ToolSpec{Name: "lookup_price", Description: "Compatibility alias for query_product_prices.", Parameters: prices},
+		agentruntime.ToolSpec{Name: "list_documents", Description: "Locate saved quotations/contracts before reading or proposing changes. Returns metadata and exact document IDs.", Parameters: object(map[string]any{"type": text(), "query": text()})},
+		agentruntime.ToolSpec{Name: "read_document", Description: "Read saved document fields, line items and revision. Preserve this revision when making a contract from an agreed quotation.", Parameters: object(map[string]any{"id": text()}, "id")},
+		agentruntime.ToolSpec{Name: "update_document", Description: "Propose concrete changes to a saved document, subject to the user's UI confirmation. Read it first. Include only changed values; include items only when line items change.", Parameters: object(map[string]any{"id": text(), "instruction": text(), "values": freeObject, "items": items}, "id", "instruction")},
+		agentruntime.ToolSpec{Name: "delete_document", Description: "Propose deletion after explicit user intent, subject to the user's UI confirmation. This call does not delete the document.", Parameters: object(map[string]any{"id": text()}, "id")},
+		agentruntime.ToolSpec{Name: "calculate_pricing", Description: "Calculate decimal amounts from verified quantities/prices and explicit tax terms. Missing tax terms leave the final total unknown.", Parameters: object(map[string]any{"items": map[string]any{"type": "array", "items": freeObject}, "tax_rate": map[string]any{"type": "number"}, "tax_mode": text(), "discount": map[string]any{"type": "number"}, "inland_freight": text(), "freight_tax_rate": text(), "freight_tax_mode": text()}, "items")},
+		agentruntime.ToolSpec{Name: "generate_document", Description: "Produce a reviewable quotation/contract draft. Server validates catalog references and computes totals. To inherit an agreed quotation, pass sourceQuotationId and sourceQuotationRevision; prices then come from that quotation snapshot. This does not send, sign or approve.", Parameters: object(document, "type")},
+	)
+}

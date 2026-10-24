@@ -409,6 +409,26 @@ func TestCreateDeepSeekResponseDefaultMaxTokens(t *testing.T) {
 	}
 }
 
+func TestCreateDeepSeekResponseRejectsPartialAndFilteredContent(t *testing.T) {
+	for _, tc := range []struct{ reason, content, want string }{
+		{"length", `{"request":"unfinished`, "response was truncated"},
+		{"length", `{"request":"apparently complete"}`, "response was truncated"},
+		{"content_filter", "partial answer", "response was filtered"},
+	} {
+		t.Run(tc.reason+tc.content, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": tc.content}, "finish_reason": tc.reason}}})
+			}))
+			defer server.Close()
+			model := AIModelRecord{Provider: "deepseek", BaseURL: server.URL, Model: "deepseek-flash"}
+			text, err := CreateAIResponse(context.Background(), server.Client(), model, "test-key", "inst", "inp", 6000, "medium")
+			if err == nil || !strings.Contains(err.Error(), tc.want) || text != "" {
+				t.Fatalf("text=%q err=%v", text, err)
+			}
+		})
+	}
+}
+
 func TestStripThinkTags(t *testing.T) {
 	tests := []struct {
 		input string

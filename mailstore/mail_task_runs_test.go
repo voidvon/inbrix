@@ -260,7 +260,9 @@ func TestMailTaskInvalidAnalysisStopsAfterOneRetryWithoutRenotifying(t *testing.
 		}
 	}
 	task, err := s.GetMailTask(ctx, MessageSummaryKey{AccountID: account.ID, FolderName: message.Folder, UID: message.ID}, mailTaskAnalysis)
-	if err != nil || task.Status != "failed" || task.Attempts != 2 || len(client.inputs) != 2 || delivery.calls != 1 {
+	// Each durable attempt permits the initial answer plus two bounded schema
+	// corrections; exhausted output still stops after one durable retry.
+	if err != nil || task.Status != "failed" || task.Attempts != 2 || len(client.inputs) != 6 || delivery.calls != 1 {
 		t.Fatal(task, err, len(client.inputs), delivery.calls)
 	}
 	runs, err := s.ListMailTaskRuns(ctx, account.ID, message.Folder, message.ID, mailTaskAnalysis, 10)

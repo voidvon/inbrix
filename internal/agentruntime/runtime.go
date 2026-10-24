@@ -7,29 +7,39 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type ToolCall struct {
-	ID      string         `json:"id,omitempty"`
-	Name    string         `json:"name"`
-	Args    map[string]any `json:"args"`
-	Result  any            `json:"result,omitempty"`
-	Summary string         `json:"summary,omitempty"`
-	Status  string         `json:"status,omitempty"`
+	ID            string         `json:"id,omitempty"`
+	Name          string         `json:"name"`
+	Args          map[string]any `json:"args"`
+	Result        any            `json:"result,omitempty"`
+	Summary       string         `json:"summary,omitempty"`
+	Status        string         `json:"status,omitempty"`
+	ArgumentError string         `json:"-"`
 }
 
 type Limits struct {
 	Turns, CallsPerTurn, Calls, InputBytes, ResultBytes int
+	ValidationRetries                                   int
 }
 
 type Options struct {
-	Input   string
+	Input        string
+	Tools        []ToolSpec
+	OutputSchema map[string]any
+	Complete     func(context.Context, ModelRequest) (ModelResponse, error)
+	// Respond is a legacy text adapter. Production agents use Complete.
 	Limits  Limits
 	Respond func(context.Context, string) (string, error)
 	Execute func(context.Context, ToolCall) (any, string, error)
 	// Project strips presentation-only data before feeding a result to the model.
 	Project func(any) any
 	OnTool  func(string, ToolCall) error
+	// Validate checks final answers before accepting them. Rejected answers may
+	// be corrected within both the turn budget and ValidationRetries limit.
+	Validate func(string) error
 }
 
 type Result struct {
@@ -44,11 +54,30 @@ var ErrIncomplete = errors.New("AI 未完成处理，请重试 / AI requested to
 func Run(ctx context.Context, opts Options) (Result, error) {
 	var out Result
 	l := opts.Limits
-	if opts.Respond == nil || opts.Execute == nil || l.Turns <= 0 || l.CallsPerTurn <= 0 || l.Calls <= 0 || l.ResultBytes < 512 || l.InputBytes < l.ResultBytes+4096 {
+	native := opts.Complete != nil
+	if (!native && opts.Respond == nil) || opts.Execute == nil || l.Turns <= 0 || l.CallsPerTurn <= 0 || l.Calls <= 0 || l.ResultBytes < 512 || l.InputBytes < l.ResultBytes+4096 {
 		return out, errors.New("invalid agent runtime configuration")
 	}
-	input := opts.Input
-	if len(input) > l.InputBytes-l.ResultBytes {
+	allowed := map[string]bool{}
+	if native && opts.OutputSchema != nil {
+		opts.Tools = append(append([]ToolSpec{}, opts.Tools...), ToolSpec{Name: "submit_result", Description: "Submit the completed task result. Call this alone after gathering the evidence required by the task.", Parameters: opts.OutputSchema})
+	}
+	for _, spec := range opts.Tools {
+		if spec.Name == "" || allowed[spec.Name] || spec.Parameters == nil {
+			return out, errors.New("invalid agent tool registry")
+		}
+		allowed[spec.Name] = true
+	}
+	complete := opts.Complete
+	if !native {
+		complete = legacyModel(opts.Respond)
+	}
+	messages := []Message{{Role: "user", Text: opts.Input}}
+	size := func(ms []Message) int {
+		b, _ := json.Marshal(ModelRequest{Messages: ms, Tools: opts.Tools})
+		return len(b)
+	}
+	if size(messages) > l.InputBytes-l.ResultBytes {
 		return out, errors.New("AI context exceeds the input budget")
 	}
 	emit := func(kind string, call ToolCall) error {
@@ -57,46 +86,109 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 		return nil
 	}
+	validationRetries := 0
+	seenIDs := map[string]bool{}
+	checkCalls := func(calls []ToolCall) error {
+		if len(calls) > 128 {
+			return errors.New("AI requested too many tools in one response")
+		}
+		for _, call := range calls {
+			if call.ID == "" || seenIDs[call.ID] {
+				return errors.New("AI returned missing or duplicate tool call IDs")
+			}
+			seenIDs[call.ID] = true
+		}
+		return nil
+	}
 	for turn := 0; turn < l.Turns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		if len(input) > l.InputBytes {
+		if size(messages) > l.InputBytes {
 			return out, errors.New("AI context exceeds the input budget")
 		}
-		raw, err := opts.Respond(ctx, input)
+		response, err := complete(ctx, ModelRequest{Messages: messages, Tools: opts.Tools})
 		if err != nil {
 			return out, err
 		}
-		calls, err := ParseToolCalls(raw)
-		if err != nil {
+		assistant := response.Message
+		assistant.Role = "assistant"
+		answerText := assistant.Text
+		calls := assistant.ToolCalls
+		if err := checkCalls(calls); err != nil {
 			return out, err
+		}
+		var answerErr error
+		terminal := len(calls) == 1 && opts.OutputSchema != nil && calls[0].Name == "submit_result"
+		if terminal {
+			if calls[0].ArgumentError != "" {
+				answerText = ""
+				answerErr = errors.New(calls[0].ArgumentError)
+			} else {
+				raw, _ := json.Marshal(calls[0].Args)
+				answerText = string(raw)
+			}
+			calls = nil
 		}
 		if len(calls) == 0 {
-			out.Text = raw
+			if answerErr == nil && opts.Validate != nil {
+				answerErr = opts.Validate(answerText)
+			}
+			if err := answerErr; err != nil {
+				if turn == l.Turns-1 || validationRetries >= l.ValidationRetries {
+					return out, err
+				}
+				feedback, _ := json.Marshal(map[string]string{"validationError": err.Error(), "instruction": "Correct the answer using the required output contract. Use the remaining tools if evidence is missing."})
+				correction := Message{Role: "user", Text: string(feedback)}
+				if terminal {
+					correction = Message{Role: "tool", ToolCallID: assistant.ToolCalls[0].ID, Name: "submit_result", Text: string(feedback)}
+				}
+				next := append(append([]Message{}, messages...), assistant, correction)
+				if size(next) > l.InputBytes-l.ResultBytes {
+					return out, err
+				}
+				messages = next
+				validationRetries++
+				continue
+			}
+			out.Text = answerText
 			return out, nil
 		}
-		stopReason := ""
+		messages = append(messages, assistant)
+		// Every native call receives a matching result, including calls refused
+		// by policy or budgets. Never leave dangling call IDs in the next request.
+		stop := false
 		for index, call := range calls {
-			if index >= l.CallsPerTurn || len(out.Calls) >= l.Calls || len(input) > l.InputBytes-l.ResultBytes-4096 {
-				stopReason = "Tool/context budget reached. Some requested tools were NOT executed."
-				break
-			}
 			if err := ctx.Err(); err != nil {
 				return out, err
 			}
-			call.ID = fmt.Sprintf("call_%d", len(out.Calls)+1)
+			if index >= l.CallsPerTurn || len(out.Calls) >= l.Calls || size(messages) > l.InputBytes-l.ResultBytes-4096 {
+				stop = true
+				messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Text: `{"error":"Tool/context budget reached; this call was NOT executed."}`})
+				continue
+			}
 			if err := emit("tool_start", call); err != nil {
 				return out, err
 			}
-			result, summary, toolErr := opts.Execute(ctx, call)
-			call.Status, call.Result, call.Summary = "success", result, summary
+			var value any
+			var summary string
+			var toolErr error
+			if native && !allowed[call.Name] {
+				toolErr = errors.New("tool is not available in this execution")
+			} else if call.Name == "submit_result" && opts.OutputSchema != nil {
+				toolErr = errors.New("submit_result must be called alone after completing evidence gathering")
+			} else if call.ArgumentError != "" {
+				toolErr = errors.New(call.ArgumentError)
+			} else {
+				value, summary, toolErr = opts.Execute(ctx, call)
+			}
+			call.Status, call.Result, call.Summary = "success", value, summary
 			if toolErr != nil {
 				call.Status = "error"
 				call.Result = map[string]string{"error": toolErr.Error()}
 				call.Summary = "工具执行出错: " + toolErr.Error()
 			} else if opts.Project != nil {
-				call.Result = opts.Project(result)
+				call.Result = opts.Project(value)
 			}
 			encoded, marshalErr := json.Marshal(call.Result)
 			if marshalErr != nil || len(encoded) > l.ResultBytes {
@@ -107,32 +199,71 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 				return out, err
 			}
 			out.Calls = append(out.Calls, call)
-			args, _ := json.Marshal(call.Args)
-			if len(args) > 2048 {
-				args = []byte(`{"argumentsOmitted":true}`)
-			}
-			input += fmt.Sprintf("\n\n[Agent Tool Call]: %s(%s)\n[Tool Result (%s)]: %s", clip(call.Name, 80), args, clip(call.Name, 80), encoded)
+			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Text: string(encoded)})
 		}
-		if turn == l.Turns-1 || stopReason != "" {
-			input += "\n\n[System]: " + stopReason + " No more tools are available for this response. Give a final answer from the evidence actually read. Explicitly state any unread pages, missing mail bodies, or incomplete coverage; never claim to have reviewed the whole thread unless you did."
-			if len(input) > l.InputBytes {
+		if turn == l.Turns-1 || stop {
+			messages = append(messages, Message{Role: "user", Text: "No more tools are available. Give the final answer from evidence actually read and explicitly state incomplete coverage."})
+			if size(messages) > l.InputBytes {
 				return out, errors.New("AI context exceeds the input budget")
 			}
 			if err := ctx.Err(); err != nil {
 				return out, err
 			}
-			out.Text, err = opts.Respond(ctx, input)
+			final, err := complete(ctx, ModelRequest{Messages: messages, Tools: opts.Tools, DisableTools: true})
 			if err != nil {
 				return out, err
 			}
-			if calls, err := ParseToolCalls(out.Text); err != nil || len(calls) > 0 {
+			if len(final.Message.ToolCalls) == 1 && opts.OutputSchema != nil && final.Message.ToolCalls[0].Name == "submit_result" {
+				if err := checkCalls(final.Message.ToolCalls); err != nil {
+					return out, err
+				}
+				if final.Message.ToolCalls[0].ArgumentError != "" {
+					return out, errors.New(final.Message.ToolCalls[0].ArgumentError)
+				}
+				raw, _ := json.Marshal(final.Message.ToolCalls[0].Args)
+				final.Message.Text = string(raw)
+			} else if len(final.Message.ToolCalls) > 0 {
 				return out, ErrIncomplete
 			}
+			if opts.Validate != nil {
+				if err := opts.Validate(final.Message.Text); err != nil {
+					return out, err
+				}
+			}
+			out.Text = final.Message.Text
 			return out, nil
 		}
-		input += "\n\nBased on the tool results above, continue answering the user or call another tool if needed."
 	}
 	return out, ErrIncomplete
+}
+
+// Legacy formatting is confined to this compatibility adapter, never used as
+// the wire protocol for a native model. It can be removed with text gateways.
+func legacyModel(respond func(context.Context, string) (string, error)) func(context.Context, ModelRequest) (ModelResponse, error) {
+	sequence := 0
+	return func(ctx context.Context, req ModelRequest) (ModelResponse, error) {
+		var text strings.Builder
+		for _, m := range req.Messages {
+			if m.Role == "tool" {
+				fmt.Fprintf(&text, "\n[Tool Result (%s)]: %s", m.Name, m.Text)
+			} else {
+				text.WriteString("\n" + m.Text)
+			}
+		}
+		raw, err := respond(ctx, strings.TrimPrefix(text.String(), "\n"))
+		if err != nil {
+			return ModelResponse{}, err
+		}
+		calls, err := ParseToolCalls(raw)
+		if err != nil {
+			return ModelResponse{}, err
+		}
+		for i := range calls {
+			sequence++
+			calls[i].ID = fmt.Sprintf("call_%d", sequence)
+		}
+		return ModelResponse{Message: Message{Role: "assistant", Text: raw, ToolCalls: calls}}, nil
+	}
 }
 
 func clip(s string, n int) string {

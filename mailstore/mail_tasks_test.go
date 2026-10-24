@@ -163,7 +163,9 @@ func TestMailAnalysisRetriesAfterFallbackWithoutSecondNotification(t *testing.T)
 		t.Fatal(err)
 	}
 	ai := &analysisScriptClient{reply: func(turn int, _ string) string {
-		if turn == 1 {
+		// Exhaust in-run corrections so this still exercises durable retry and
+		// the single fallback notification, rather than successful correction.
+		if turn <= 3 {
 			return "invalid analysis"
 		}
 		return standaloneAnalysisOutput

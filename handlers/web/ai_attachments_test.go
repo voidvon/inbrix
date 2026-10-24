@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"inbrix/internal/agenttest"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -148,7 +149,7 @@ func TestAgentChatImagesRemainAcrossToolTurnsAndHistory(t *testing.T) {
 		if calls == 1 {
 			answer = "```tool_call\n{\"name\":\"search_products\",\"args\":{\"query\":\"valve\"}}\n```"
 		}
-		body, _ := json.Marshal(map[string]string{"output_text": answer})
+		body, _ := json.Marshal(agenttest.Response(answer, calls))
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}
 	app.Post("/api/ai/agent-chat", ai.HandleAgentChat)

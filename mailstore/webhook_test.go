@@ -10,6 +10,7 @@ import (
 	"time"
 
 	mailapi "inbrix/handlers/api"
+	"inbrix/internal/agenttest"
 	"inbrix/models"
 )
 
@@ -157,9 +158,9 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 		t.Fatalf("authorization: %q", got)
 	}
 	var request struct {
-		Model        string `json:"model"`
-		Instructions string `json:"instructions"`
-		Input        string `json:"input"`
+		Model        string          `json:"model"`
+		Instructions string          `json:"instructions"`
+		Input        json.RawMessage `json:"input"`
 		Reasoning    struct {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
@@ -167,7 +168,7 @@ func TestSummarizeInquiryForWebhookUsesConfiguredAgentAndFullBody(t *testing.T) 
 	if err := json.Unmarshal(client.data, &request); err != nil {
 		t.Fatalf("decode OpenAI request: %v", err)
 	}
-	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, `["客户","需求","要求","问题"]`) || request.Reasoning.Effort != "low" || !strings.Contains(request.Input, "Please quote 10 valves") {
+	if request.Model != "gpt-5.6-sol" || !strings.Contains(request.Instructions, mailSummarySystemPrompt) || !strings.Contains(request.Instructions, agent.Prompt) || !strings.Contains(request.Instructions, `["客户","需求","要求","问题"]`) || request.Reasoning.Effort != "low" || !strings.Contains(agenttest.InputText(request.Input), "Please quote 10 valves") {
 		t.Fatalf("unexpected OpenAI request: %+v", request)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"inbrix/internal/agenttest"
 	"io"
 	"net"
 	"net/http"
@@ -71,10 +72,19 @@ func TestAgentChatStreamsToolsAndTextBeforeFinalDocument(t *testing.T) {
 				raw, _ := json.Marshal(map[string]string{"type": kind, "delta": delta})
 				_, _ = fmt.Fprintf(writer, "data: %s\n\n", raw)
 			}
+
+			nativeTurn := func(text string) {
+				response := agenttest.Response(text, int(currentTurn))
+				frame("response.output_text.delta", response["output_text"].(string))
+				for i, item := range response["output"].([]any) {
+					raw, _ := json.Marshal(map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
+					_, _ = fmt.Fprintf(writer, "data: %s\n\n", raw)
+				}
+			}
 			if currentTurn == 1 {
-				frame("response.output_text.delta", "<think>private</think>先检索产品。\n```tool_call\n{\"name\":\"search_products\",\"arguments\":{\"query\":\"test\"}}\n```")
+				nativeTurn("先检索产品。\n```tool_call\n{\"name\":\"search_products\",\"args\":{\"query\":\"test\"}}\n```")
 			} else if currentTurn == 2 {
-				frame("response.output_text.delta", "再查看分类。\n```tool_call\n{\"name\":\"list_product_categories\",\"arguments\":{}}\n```")
+				nativeTurn("再查看分类。\n```tool_call\n{\"name\":\"list_product_categories\",\"args\":{}}\n```")
 			} else {
 				frame("response.output_text.delta", "逐步")
 				select {
@@ -84,6 +94,7 @@ func TestAgentChatStreamsToolsAndTextBeforeFinalDocument(t *testing.T) {
 				}
 				frame("response.output_text.delta", "输出。\n```document\n{\"type\":\"quotation\",\"title\":\"测试报价\",\"counterparty\":\"客户\",\"items\":[]}\n```")
 			}
+
 			frame("response.completed", "")
 		}()
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: reader}, nil
