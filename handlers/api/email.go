@@ -952,8 +952,7 @@ func (c *Client) processMessage(msg *imap.Message, folderName string) (models.Em
 		if email.Body != "" {
 			email.Preview = createPreview(email.Body)
 		} else if email.HTML != "" {
-			stripped := stripHTML(string(email.HTML))
-			email.Preview = createPreview(stripped)
+			email.Preview = createPreview(PlainTextFromHTML(string(email.HTML)))
 		}
 	}
 
@@ -1216,13 +1215,12 @@ func decodeTransfer(r io.Reader, enc string) io.Reader {
 	}
 }
 
-// Simple HTML tag stripping
-// PlainTextFromHTML exposes the tag-free projection used for previews so other
-// packages can search and quote an HTML-only message with the same text the
-// reader sees. It is the plain-text form of an HTML body: styles, scripts,
-// comments, and entities are resolved away.
+// PlainTextFromHTML exposes the structure-aware text projection used for
+// previews and AI evidence: the reader sees the same text an HTML-only message
+// renders — block elements become line breaks and data tables become Markdown
+// pipe tables. Styles, scripts, comments, and entities are resolved away.
 func PlainTextFromHTML(markup string) string {
-	return stripHTML(markup)
+	return htmlToPlainText(markup)
 }
 
 // stripHTML reduces an HTML body to the text a preview snippet should show.
