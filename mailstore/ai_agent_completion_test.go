@@ -209,3 +209,41 @@ func TestNativeGeminiBatchesParallelResultsWithoutInventingProviderIDs(t *testin
 		}
 	}
 }
+
+func TestNativeCallRepairsCommonArgumentDefects(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		arguments string
+		want      map[string]any
+		wantError string
+	}{
+		{"object", `{"folder":"INBOX","uid":"42"}`, map[string]any{"folder": "INBOX", "uid": "42"}, ""},
+		{"string encoded", `"{\"folder\":\"INBOX\",\"uid\":\"42\"}"`, map[string]any{"folder": "INBOX", "uid": "42"}, ""},
+		{"fenced", "```json\n{\"folder\":\"INBOX\"}\n```", map[string]any{"folder": "INBOX"}, ""},
+		{"trailing comma", `{"folder":"INBOX","uid":"42",}`, map[string]any{"folder": "INBOX", "uid": "42"}, ""},
+		{"raw newline in string", "{\"summary\":\"第一行\n第二行\",\"uid\":\"42\"}", map[string]any{"summary": "第一行\n第二行", "uid": "42"}, ""},
+		{"trailing prose", `{"folder":"INBOX"} done`, nil, "must be a JSON object"},
+		{"garbage", `search the inbox`, nil, "must be a JSON object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			call := nativeCall("call1", "read_email", json.RawMessage(tc.arguments))
+			if tc.wantError != "" {
+				if call.ArgumentError == "" || !strings.Contains(call.ArgumentError, tc.wantError) {
+					t.Fatalf("expected argument error, got %q", call.ArgumentError)
+				}
+				return
+			}
+			if call.ArgumentError != "" {
+				t.Fatalf("unexpected argument error: %s", call.ArgumentError)
+			}
+			if len(call.Args) != len(tc.want) {
+				t.Fatalf("args = %+v, want %+v", call.Args, tc.want)
+			}
+			for key, want := range tc.want {
+				if fmt.Sprint(call.Args[key]) != fmt.Sprint(want) {
+					t.Fatalf("args[%s] = %v, want %v", key, call.Args[key], want)
+				}
+			}
+		})
+	}
+}

@@ -287,15 +287,93 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 
 func nativeCall(id, name string, arguments json.RawMessage) agentruntime.ToolCall {
 	call := agentruntime.ToolCall{ID: id, Name: name}
-	var text string
-	if json.Unmarshal(arguments, &text) == nil {
-		arguments = []byte(text)
+	text := []byte(arguments)
+	// Providers may double-encode arguments as a JSON string.
+	for depth := 0; depth < 2; depth++ {
+		var inner string
+		if json.Unmarshal(text, &inner) != nil {
+			break
+		}
+		text = []byte(inner)
 	}
-	if json.Unmarshal(arguments, &call.Args) != nil || call.Args == nil {
-		call.ArgumentError = "tool arguments must be a JSON object"
+	err := json.Unmarshal(text, &call.Args)
+	if err != nil || call.Args == nil {
+		if repaired := repairToolArgumentJSON(text); len(repaired) > 0 {
+			if retryErr := json.Unmarshal(repaired, &call.Args); retryErr == nil && call.Args != nil {
+				err = nil
+			}
+		}
+	}
+	if err != nil || call.Args == nil {
+		// Mirror provider harnesses: the underlying parser error goes back to
+		// the model as feedback instead of a bare rejection.
+		call.ArgumentError = fmt.Sprintf("tool arguments must be a JSON object: %v", err)
 		call.Args = map[string]any{}
 	}
 	return call
+}
+
+// repairToolArgumentJSON fixes common model defects that break strict JSON
+// parsing: markdown fences, trailing commas and raw control characters inside
+// string literals. It never reorders, quotes or drops content.
+func repairToolArgumentJSON(raw []byte) []byte {
+	text := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(text, "```") {
+		if idx := strings.Index(text, "\n"); idx != -1 {
+			text = text[idx+1:]
+		}
+		if idx := strings.LastIndex(text, "```"); idx >= 0 {
+			text = text[:idx]
+		}
+		text = strings.TrimSpace(text)
+	}
+	out := make([]byte, 0, len(text))
+	var inString, escaped bool
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			case c < 0x20:
+				out = append(out, '\\')
+				switch c {
+				case '\n':
+					out = append(out, 'n')
+				case '\r':
+					out = append(out, 'r')
+				case '\t':
+					out = append(out, 't')
+				default:
+					out = append(out, []byte(fmt.Sprintf("u%04x", c))...)
+				}
+				continue
+			}
+			out = append(out, c)
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '}', ']':
+			k := len(out) - 1
+			for k >= 0 && (out[k] == ' ' || out[k] == '\t' || out[k] == '\n' || out[k] == '\r') {
+				k--
+			}
+			if k >= 0 && out[k] == ',' {
+				out = out[:k]
+			}
+		}
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func decodeAgentMessage(raw []byte, provider string, step int) (agentruntime.Message, error) {

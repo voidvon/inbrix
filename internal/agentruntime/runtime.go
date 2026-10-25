@@ -120,6 +120,12 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 		var answerErr error
 		terminal := len(calls) == 1 && opts.OutputSchema != nil && calls[0].Name == "submit_result"
+		if terminal && calls[0].ArgumentError != "" {
+			// A malformed submission is a failed tool call, not a failed answer:
+			// the parse error goes back as its tool result and the turn continues,
+			// mirroring how harnesses recover unparsable tool arguments.
+			terminal = false
+		}
 		if terminal {
 			if calls[0].ArgumentError != "" {
 				answerText = ""
@@ -175,10 +181,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			var toolErr error
 			if native && !allowed[call.Name] {
 				toolErr = errors.New("tool is not available in this execution")
-			} else if call.Name == "submit_result" && opts.OutputSchema != nil {
-				toolErr = errors.New("submit_result must be called alone after completing evidence gathering")
 			} else if call.ArgumentError != "" {
 				toolErr = errors.New(call.ArgumentError)
+			} else if call.Name == "submit_result" && opts.OutputSchema != nil {
+				toolErr = errors.New("submit_result must be called alone after completing evidence gathering")
 			} else {
 				value, summary, toolErr = opts.Execute(ctx, call)
 			}
@@ -209,29 +215,49 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			if err := ctx.Err(); err != nil {
 				return out, err
 			}
-			final, err := complete(ctx, ModelRequest{Messages: messages, Tools: opts.Tools, DisableTools: true})
-			if err != nil {
-				return out, err
-			}
-			if len(final.Message.ToolCalls) == 1 && opts.OutputSchema != nil && final.Message.ToolCalls[0].Name == "submit_result" {
-				if err := checkCalls(final.Message.ToolCalls); err != nil {
+			var finalText string
+			for attempt := 0; ; attempt++ {
+				final, err := complete(ctx, ModelRequest{Messages: messages, Tools: opts.Tools, DisableTools: true})
+				if err != nil {
 					return out, err
 				}
-				if final.Message.ToolCalls[0].ArgumentError != "" {
-					return out, errors.New(final.Message.ToolCalls[0].ArgumentError)
+				if len(final.Message.ToolCalls) == 1 && opts.OutputSchema != nil && final.Message.ToolCalls[0].Name == "submit_result" {
+					if err := checkCalls(final.Message.ToolCalls); err != nil {
+						return out, err
+					}
+					if call := final.Message.ToolCalls[0]; call.ArgumentError != "" && attempt == 0 {
+						// One corrective round for unparsable arguments; a second
+						// failure ends the turn with the parse error.
+						errorPayload, _ := json.Marshal(map[string]string{"error": call.ArgumentError})
+						messages = append(messages,
+							Message{Role: "assistant", Text: final.Message.Text, ToolCalls: final.Message.ToolCalls},
+							Message{Role: "tool", ToolCallID: call.ID, Name: "submit_result", Text: string(errorPayload)})
+						if size(messages) > l.InputBytes {
+							return out, errors.New(call.ArgumentError)
+						}
+						if err := ctx.Err(); err != nil {
+							return out, err
+						}
+						continue
+					}
+					if final.Message.ToolCalls[0].ArgumentError != "" {
+						return out, errors.New(final.Message.ToolCalls[0].ArgumentError)
+					}
+					raw, _ := json.Marshal(final.Message.ToolCalls[0].Args)
+					finalText = string(raw)
+				} else if len(final.Message.ToolCalls) > 0 {
+					return out, ErrIncomplete
+				} else {
+					finalText = final.Message.Text
 				}
-				raw, _ := json.Marshal(final.Message.ToolCalls[0].Args)
-				final.Message.Text = string(raw)
-			} else if len(final.Message.ToolCalls) > 0 {
-				return out, ErrIncomplete
-			}
-			if opts.Validate != nil {
-				if err := opts.Validate(final.Message.Text); err != nil {
-					return out, err
+				if opts.Validate != nil {
+					if err := opts.Validate(finalText); err != nil {
+						return out, err
+					}
 				}
+				out.Text = finalText
+				return out, nil
 			}
-			out.Text = final.Message.Text
-			return out, nil
 		}
 	}
 	return out, ErrIncomplete

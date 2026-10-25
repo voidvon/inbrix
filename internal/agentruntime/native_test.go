@@ -134,3 +134,64 @@ func TestNativeLoopDoesNotExecuteToolLookingText(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestNativeLoopFeedsMalformedSubmissionBackAsToolError(t *testing.T) {
+	opts := nativeOptions()
+	opts.OutputSchema = map[string]any{"type": "object"}
+	turn := 0
+	opts.Complete = func(_ context.Context, req ModelRequest) (ModelResponse, error) {
+		turn++
+		switch turn {
+		case 1:
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "s1", Name: "submit_result", ArgumentError: "tool arguments must be a JSON object: unexpected end of JSON input"}}}}, nil
+		case 2:
+			last := req.Messages[len(req.Messages)-1]
+			if last.Role != "tool" || last.ToolCallID != "s1" || !strings.Contains(last.Text, "must be a JSON object") {
+				t.Fatalf("missing parse-error feedback: %+v", last)
+			}
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "s2", Name: "submit_result", Args: map[string]any{"answer": "ok"}}}}}, nil
+		default:
+			t.Fatal("unexpected generation")
+			return ModelResponse{}, nil
+		}
+	}
+	out, err := Run(context.Background(), opts)
+	if err != nil || out.Text != `{"answer":"ok"}` || turn != 2 {
+		t.Fatal(out, turn, err)
+	}
+}
+
+func TestNativeStopPathRecoversMalformedSubmissionOnce(t *testing.T) {
+	opts := nativeOptions()
+	opts.OutputSchema = map[string]any{"type": "object"}
+	opts.Limits.Turns = 2
+	turn := 0
+	opts.Execute = func(context.Context, ToolCall) (any, string, error) { return "evidence", "read", nil }
+	opts.Complete = func(_ context.Context, req ModelRequest) (ModelResponse, error) {
+		turn++
+		switch turn {
+		case 1:
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "r1", Name: "read_source", Args: map[string]any{}}}}}, nil
+		case 2:
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "s1", Name: "submit_result", ArgumentError: "tool arguments must be a JSON object: unexpected end of JSON input"}}}}, nil
+		case 3:
+			if !req.DisableTools {
+				t.Fatal("expected forced final without tools")
+			}
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "s2", Name: "submit_result", ArgumentError: "tool arguments must be a JSON object: unexpected end of JSON input"}}}}, nil
+		case 4:
+			last := req.Messages[len(req.Messages)-1]
+			if last.Role != "tool" || last.ToolCallID != "s2" || !strings.Contains(last.Text, "must be a JSON object") {
+				t.Fatalf("missing corrective tool result: %+v", last)
+			}
+			return ModelResponse{Message: Message{ToolCalls: []ToolCall{{ID: "s3", Name: "submit_result", Args: map[string]any{"answer": "ok"}}}}}, nil
+		default:
+			t.Fatal("unexpected generation")
+			return ModelResponse{}, nil
+		}
+	}
+	out, err := Run(context.Background(), opts)
+	if err != nil || out.Text != `{"answer":"ok"}` || turn != 4 {
+		t.Fatal(out, turn, err)
+	}
+}
