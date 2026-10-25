@@ -63,7 +63,7 @@ func TestMailSummaryRewritesOverlongTextInsteadOfTruncating(t *testing.T) {
 	}
 }
 
-func TestMailAnalysisRepairsToolTranscriptAndUnreadCitations(t *testing.T) {
+func TestMailAnalysisRepairsToolTranscriptAndKeepsEvidenceHonest(t *testing.T) {
 	s, account, message, key := setupMailSummaryTest(t)
 	message.Body = "Please update the quotation to 20 valves."
 	message.Date = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -80,29 +80,43 @@ func TestMailAnalysisRepairsToolTranscriptAndUnreadCitations(t *testing.T) {
 			if !strings.Contains(input, "invalid JSON") {
 				t.Fatal("missing format correction feedback")
 			}
+			// Citing a preview-only email is accepted; the server records what
+			// was actually read instead of rejecting the answer.
 			return validAnalysisOutput
-		case 3:
-			if !strings.Contains(input, "already read sources:") || !strings.Contains(input, "was not read") {
-				t.Fatal("missing evidence correction feedback")
-			}
-			return `{"name":"read_email","arguments":{"folder":"Sent Messages","uid":"41"}}`
 		default:
-			return validAnalysisOutput
+			t.Fatal("unexpected generation")
+			return ""
 		}
 	}}
 	result, err := GetOrCreateMailSummary(context.Background(), client, s, key, account, message, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(client.inputs) != 4 || result.Record.Analysis == nil || len(result.Record.Analysis.Sources) != 2 || len(result.Record.Analysis.Activity) != 1 {
-		t.Fatalf("repair lost evidence or exceeded budget: calls=%d analysis=%+v", len(client.inputs), result.Record.Analysis)
+	analysis := result.Record.Analysis
+	if len(client.inputs) != 2 || analysis == nil {
+		t.Fatalf("repair exceeded budget: calls=%d analysis=%+v", len(client.inputs), analysis)
+	}
+	if len(analysis.Sources) != 1 || analysis.Sources[0].Folder != "INBOX" || analysis.Sources[0].UID != "42" {
+		t.Fatalf("sources must reflect actual reads only: %+v", analysis.Sources)
 	}
 }
 
-func TestMailAnalysisRejectsUnreadReferencesInDisplayFields(t *testing.T) {
-	analysis := &MailAnalysis{Summary: "[INBOX/99] 20 valves"}
-	if err := validateMailAnalysisReferences(analysis); err == nil {
-		t.Fatal("unread reference in free-text summary accepted")
+func TestMailAnalysisAllowsTriggeringMailCitationWithoutBody(t *testing.T) {
+	s, account, message, key := setupMailSummaryTest(t)
+	ctx := context.Background()
+	message.Body, message.HTML, message.BodyCached = "", "", false
+	output := `{"request":"询价维护套件","background":"[INBOX/42] 客户发送扫描件询价","changes":"","actions":["核实附件内容"],"missing":[],"summary":"客户发送扫描件采购单，待核实。"}`
+	client := &analysisScriptClient{reply: func(int, string) string { return output }}
+	result, err := GetOrCreateMailSummary(ctx, client, s, key, account, message, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Record.Analysis.Sources) != 0 {
+		t.Fatalf("unreadable body must not become a source: %+v", result.Record.Analysis.Sources)
+	}
+	joined := strings.Join(result.Record.Analysis.Missing, "\n")
+	if !strings.Contains(joined, "正文尚未同步") {
+		t.Fatalf("missing body was not reported: %v", result.Record.Analysis.Missing)
 	}
 }
 
@@ -331,11 +345,17 @@ func TestMailAnalysisMigrationKeepsExistingSummary(t *testing.T) {
 	}
 }
 
-func TestMailAnalysisRejectsUnreadCitations(t *testing.T) {
+func TestMailAnalysisAcceptsAnswerWithoutAnyHistoryRead(t *testing.T) {
 	s, account, message, key := setupMailSummaryTest(t)
-	client := &analysisScriptClient{reply: func(_ int, _ string) string { return validAnalysisOutput }}
-	if _, err := SummarizeMail(context.Background(), client, s, key, account, message); err == nil || !strings.Contains(err.Error(), "was not read") {
-		t.Fatalf("unread citation accepted: %v", err)
+	// The durable record keeps the server-assigned sources even when the model
+	// answers directly without historical evidence.
+	client := &analysisScriptClient{reply: func(_ int, _ string) string { return standaloneAnalysisOutput }}
+	result, err := SummarizeMail(context.Background(), client, s, key, account, message)
+	if err != nil {
+		t.Fatalf("answer without history citations rejected: %v", err)
+	}
+	if strings.TrimSpace(result) == "" {
+		t.Fatal("summary was empty")
 	}
 }
 

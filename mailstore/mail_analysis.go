@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +20,9 @@ import (
 //go:embed skills/mail-analysis/SKILL.md
 var mailAnalysisSkill string
 
+// MailAnalysisSource is one email the skill actually read, assigned by the
+// server from read_email calls rather than model claims. Text citations in the
+// analysis are annotation only.
 type MailAnalysisSource struct {
 	Folder      string              `json:"folder"`
 	UID         string              `json:"uid"`
@@ -379,22 +381,13 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 		},
 		Execute: scope.execute,
 		Validate: func(raw string) error {
-			result, err := parseMailAnalysisOutput(raw)
-			if err != nil {
+			if _, err := parseMailAnalysisOutput(raw); err != nil {
 				return err
 			}
 			for _, source := range scope.sources {
 				if source.Folder == message.Folder && source.UID == message.ID && !sourceFullyRead(source) {
 					return fmt.Errorf("%w: mail-analysis skill did not finish reading the triggering email; use read_email to read the remaining ranges", ErrInvalidMailAnalysis)
 				}
-			}
-			analysis := &MailAnalysis{Request: result.Request, Background: result.Background, Changes: result.Changes, Actions: result.Actions, Missing: result.Missing, Summary: result.Summary, Sources: scope.sources}
-			if err := validateMailAnalysisReferences(analysis); err != nil {
-				refs := make([]string, 0, len(scope.sources))
-				for _, source := range scope.sources {
-					refs = append(refs, "["+source.Folder+"/"+source.UID+"]")
-				}
-				return fmt.Errorf("%w: %s; already read sources: %s; use read_email before citing any other email", ErrInvalidMailAnalysis, err, strings.Join(refs, ", "))
 			}
 			return nil
 		},
@@ -455,14 +448,14 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 	if message.Date.IsZero() {
 		analysis.Missing = append(analysis.Missing, "触发邮件时间未知，历史时间范围无法严格确认。")
 	}
+	if !message.BodyCached && strings.TrimSpace(message.Body) == "" && strings.TrimSpace(message.HTML) == "" {
+		analysis.Missing = append(analysis.Missing, "触发邮件正文尚未同步，本次仅基于邮件头信息与历史邮件分析。")
+	}
 	for _, attachment := range message.Attachments {
 		if !attachment.IsInline {
 			analysis.Missing = append(analysis.Missing, "本次仅提供附件信息，未读取附件内容。")
 			break
 		}
-	}
-	if err := validateMailAnalysisReferences(analysis); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidMailAnalysis, err)
 	}
 	if account.ID != "" {
 		current, err := currentMailAnalysisRetrieval(ctx, store, account, message, analysis.Retrieval)
@@ -485,29 +478,4 @@ func runMailAnalysis(ctx context.Context, client HTTPClient, store *Store, accou
 		}
 	}
 	return analysis, nil
-}
-
-var mailAnalysisReferenceRE = regexp.MustCompile(`\[([^\]\n]+)/([0-9]+)\]`)
-
-func validateMailAnalysisReferences(analysis *MailAnalysis) error {
-	known := map[string]bool{}
-	for _, source := range analysis.Sources {
-		known[source.Folder+"/"+source.UID] = true
-	}
-	if strings.TrimSpace(analysis.Background) != "" && !mailAnalysisReferenceRE.MatchString(analysis.Background) {
-		return errors.New("mail-analysis background is missing email source references")
-	}
-	texts := append([]string{analysis.Request, analysis.Background, analysis.Changes, analysis.Summary}, analysis.Actions...)
-	texts = append(texts, analysis.Missing...)
-	for _, value := range analysis.Fields {
-		texts = append(texts, value)
-	}
-	for _, text := range texts {
-		for _, ref := range mailAnalysisReferenceRE.FindAllStringSubmatch(text, -1) {
-			if !known[ref[1]+"/"+ref[2]] {
-				return errors.New("mail-analysis cited an email that was not read")
-			}
-		}
-	}
-	return nil
 }

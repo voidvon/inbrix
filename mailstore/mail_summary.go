@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	mailSummaryPipelineVersion = 12
+	mailSummaryPipelineVersion = 13
 	mailSummaryGenerationLease = 2 * time.Minute
 )
 
@@ -191,7 +191,7 @@ func mailSummaryInstructions(agent AIAgentRecord, skills ...string) string {
 	if len(skills) > 0 && skills[0] != "" {
 		skill = skills[0]
 	}
-	return mailSummarySystemPrompt + "\n\n业务偏好（已配置的智能体提示词）：\n" + agent.Prompt + "\n\n" + skill + "\n\n" + mailAnalysisToolProtocol + "\n\n使用 submit_result 提交最终结果对象，且只能有 request、background、changes、actions、missing、summary 这六个键。request 为非空字符串；background 和 changes 为字符串；actions 和 missing 为字符串数组；background 的事实须以 [folder/uid] 引用实际已读取的邮件。summary 为供界面和飞书展示的自由文本，不超过 200 个 Unicode 字符（含标点），由你根据本次邮件的重要信息组织表达，不要求客户、需求、要求、问题等固定栏目。保留关键型号、数量、变化及待处理事项，信息不足时如实说明，不为了凑栏目重复或填充内容。若旧 Skill 或业务偏好要求 fields、固定标签、分栏或逐字段字数限制，以本次 summary 输出约定为准；不要输出 fields。"
+	return mailSummarySystemPrompt + "\n\n业务偏好（已配置的智能体提示词）：\n" + agent.Prompt + "\n\n" + skill + "\n\n" + mailAnalysisToolProtocol + "\n\n使用 submit_result 提交最终结果对象，且只能有 request、background、changes、actions、missing、summary 这六个键。request 为非空字符串；background 和 changes 为字符串；actions 和 missing 为字符串数组。background 中陈述历史事实时可以用 [folder/uid] 标注来源邮件，且只能标注实际读取过的邮件；不确定或未核实的信息写入 missing，不得当作事实陈述。summary 为供界面和飞书展示的自由文本，不超过 200 个 Unicode 字符（含标点），由你根据本次邮件的重要信息组织表达，不要求客户、需求、要求、问题等固定栏目。保留关键型号、数量、变化及待处理事项，信息不足时如实说明，不为了凑栏目重复或填充内容。若旧 Skill 或业务偏好要求 fields、固定标签、分栏或逐字段字数限制，以本次 summary 输出约定为准；不要输出 fields。"
 }
 
 func directParentMessageID(message models.Email) string {
