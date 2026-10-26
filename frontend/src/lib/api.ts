@@ -1,7 +1,7 @@
 import { getCookie } from "./utils";
 import { CLIENT_ID } from "./client-id";
 import { readAIChatStream, type AIChatStreamEvent } from "./ai-chat-stream";
-import type { AIChatAttachment, ConversationAIChatPart } from "../types";
+import type { AIChatAttachment, AIEmailReplyDraft, ConversationAIChatPart } from "../types";
 import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox } from "../types";
 
 export class ApiError extends Error {
@@ -483,6 +483,7 @@ export type DocumentVariable = {
 };
 
 export type GenerateDocumentInput = {
+  requestId?: string;
   accountEmail: string;
   mode?: "generate" | "rewrite" | "variables" | "apply";
   canvas?: string;
@@ -516,10 +517,11 @@ export type GenerateDocumentResult = {
   items?: QuotationItem[];
 };
 
-export function generateDocument(input: GenerateDocumentInput) {
+export function generateDocument(input: GenerateDocumentInput, signal?: AbortSignal) {
   return apiFetch<GenerateDocumentResult>("/api/ai/write-document", {
     method: "POST",
     body: JSON.stringify(input),
+    signal,
   });
 }
 
@@ -600,6 +602,7 @@ export type AIAgentDocumentAction = {
 };
 
 export type AIAgentChatResponse = {
+  emailDraft?: AIEmailReplyDraft;
   sessionId?: string;
   requestId?: string;
   version?: number;
@@ -628,6 +631,13 @@ export async function chatWithAIAgent(payload: AIAgentChatRequest, options?: {
     return parseAPIResponse<AIAgentChatResponse>(response);
   }
   return readAIChatStream(response, options.onEvent);
+}
+
+export function stopAIGeneration(accountEmail: string, requestId: string, sessionId?: string) {
+  return apiFetch<void>("/api/ai/stop", {
+    method: "POST",
+    body: JSON.stringify({ accountEmail, requestId, sessionId }),
+  });
 }
 
 export type MailSummaryResult = {

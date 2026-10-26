@@ -48,6 +48,7 @@ import {
   outgoingAttachmentURL,
   generateEmail,
   getAIModels,
+  getConversation,
   getAITaskBindings,
   saveConversationStatus,
   summarizeMailMessage,
@@ -64,6 +65,7 @@ import {
 } from "../../lib/email-format";
 import type {
   ConversationDetail,
+  AIEmailReplyDraft,
   ConversationDetailResponse,
   ConversationListResponse,
   ConversationMessage,
@@ -608,6 +610,24 @@ export function ChatView({
       replaceBody: body,
     });
   };
+  const currentConversationId = useRef(detail.id);
+  currentConversationId.current = detail.id;
+  useEffect(() => {
+    currentConversationId.current = detail.id;
+    return () => { currentConversationId.current = ""; };
+  }, [detail.id]);
+  const writeReplyDraft = async (draft: AIEmailReplyDraft) => {
+    const matches = (message: ConversationMessage) => message.id === draft.replyTo.uid && (message.folder || "INBOX") === draft.replyTo.folder;
+    // The chosen source may be outside the transcript's current pagination window.
+    let source = detail.messages.find(matches);
+    if (!source) {
+      const result = await getConversation(detail.id, { around: draft.replyTo.uid, folder: draft.replyTo.folder });
+      source = result.conversation.messages.find(matches);
+    }
+    if (currentConversationId.current !== detail.id) return;
+    if (!source) throw new Error(copy === zh ? "原邮件已不存在，无法打开回复" : "The original email is no longer available");
+    onReply(source, draft.bodyText);
+  };
   const [deleteTarget, setDeleteTarget] = useState<ConversationMessage | null>(null);
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const mobileAIPage = useMobilePageClose<HTMLDivElement>(() => setIsAIChatOpen(false));
@@ -1134,6 +1154,7 @@ export function ChatView({
               onClearFocusedMessages={handleClearFocusedMessages}
               onClose={() => setIsAIChatOpen(false)}
               onWriteDraft={writeDraftToLatest}
+              onWriteReply={writeReplyDraft}
               getActiveDraft={getActiveDraft}
             />
           </aside>
@@ -1152,6 +1173,7 @@ export function ChatView({
             onClearFocusedMessages={handleClearFocusedMessages}
             onClose={mobileAIPage.close}
             onWriteDraft={writeDraftToLatest}
+            onWriteReply={writeReplyDraft}
             getActiveDraft={getActiveDraft}
           />
         </div>

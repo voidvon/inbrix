@@ -30,6 +30,7 @@ import {
 import { toast } from "../../lib/toast";
 import {
   chatWithAIAgent, ApiError,
+  stopAIGeneration,
   getAIAgents,
   getAITaskBindings,
   createAIChatSession, deleteAIChatSession, getAIChatSessions, getAIChatSession, updateAIChatSession,
@@ -106,6 +107,8 @@ export function AIDocumentChatPanel({
   const sessionData = sessionQuery.isError ? undefined : sessionQuery.data;
   const sessions = summaries.map(session => toAIDocumentSession(session, copy));
   const requestRef = useRef<AbortController | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
   const retryRef = useRef<{ key: string; payload: AIAgentChatRequest } | null>(null);
   useEffect(() => {
     const run = sessionQuery.data?.lastRun;
@@ -177,6 +180,7 @@ export function AIDocumentChatPanel({
 
   const selectSession = (id: string) => {
     imageAttachments.discard();
+    setStopped(false);
     setActiveId(id); setInput(""); retryRef.current = null;
   };
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
@@ -233,6 +237,7 @@ export function AIDocumentChatPanel({
       }
 
       const scope = accountEmail;
+      const controller = new AbortController(); requestRef.current = controller;
       let sessionId = currentSession.id;
       let version = currentSession.version;
       if (!sessionId) {
@@ -242,6 +247,7 @@ export function AIDocumentChatPanel({
         queryClient.setQueryData(["ai-document-session", scope, sessionId], session);
         queryClient.setQueryData(["ai-document-sessions", scope], (previous: typeof sessionsQuery.data) => previous ? { ...previous, pages: previous.pages.map((page, index) => index === 0 ? { ...page, sessions: [session, ...page.sessions] } : page) } : { pages: [{ sessions: [session] }], pageParams: [undefined] });
       }
+      controller.signal.throwIfAborted();
       const key = JSON.stringify([scope, sessionId, text, attachments]);
       const payload: AIAgentChatRequest = retryRequestId ? { accountEmail: scope, sessionId, retryRequestId, messages: [] } : retryRef.current?.key === key ? retryRef.current.payload : {
         accountEmail: scope, sessionId, requestId: crypto.randomUUID(), version,
@@ -249,9 +255,9 @@ export function AIDocumentChatPanel({
 
       };
       retryRef.current = { key, payload };
-      const controller = new AbortController(); requestRef.current = controller;
       return await aiState.run(async () => {
         const res = await chatWithAIAgent(payload, { signal: controller.signal });
+        controller.signal.throwIfAborted();
         if (res.toolCalls && res.toolCalls.length > 0) {
           const first = res.toolCalls[0];
           aiState.setToolCall(first.name, first.summary);
@@ -280,12 +286,32 @@ export function AIDocumentChatPanel({
   const displayedMessages: AIDocumentMessage[] = sessionsQuery.isError || sessionQuery.isError ? [] : [...currentSession.messages,
     ...(mutation.isPending && submitted && !accepted ? [{ id: "pending-user", role: "user" as const, content: submitted.text, attachments: submitted.attachments, createdAt: new Date().toISOString() }] : []),
   ];
-  const busy = agentsQuery.isError || bindings.isError || lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
+  const busy = stopping || agentsQuery.isError || bindings.isError || lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
   const handleSend = () => {
     const text = input.trim();
     if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || busy) return;
     imageAttachments.retain();
+    setStopped(false);
     setInput(""); mutation.mutate({ text, attachments: imageAttachments.attachments });
+  };
+  const handleStop = async () => {
+    if (stopping) return;
+    const payload = retryRef.current?.payload;
+    const requestId = payload?.requestId || payload?.retryRequestId || (lastRun?.status === "pending" ? lastRun.requestId : undefined);
+    requestRef.current?.abort();
+    setStopping(true);
+    setStopped(true);
+    aiState.reset();
+    try {
+      if (requestId) await stopAIGeneration(accountEmail, requestId, payload?.sessionId || selectedId);
+      await invalidateSession(accountEmail, payload?.sessionId || selectedId);
+    } catch (error) {
+      setStopped(false);
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      retryRef.current = null;
+      setStopping(false);
+    }
   };
 
   const handleSaveToDocs = async (doc: AIDocumentGeneratedData) => {
@@ -739,6 +765,7 @@ export function AIDocumentChatPanel({
           </div>
 
           {/* Input Box */}
+          {stopped && <p role="status" className="mb-2 text-xs text-muted-foreground">{isZh ? "已停止生成。" : "Generation stopped."}</p>}
           <AIChatInput
             imageAttachments={imageAttachments}
             isZh={isZh}
@@ -746,9 +773,11 @@ export function AIDocumentChatPanel({
             value={input}
             onChange={setInput}
             onSend={handleSend}
+            onStop={() => void handleStop()}
+            isStopping={stopping}
             placeholder={copy.aiDocumentPromptPlaceholder}
             disabled={busy}
-            isPending={mutation.isPending}
+            isPending={mutation.isPending || stopping || lastRun?.status === "pending"}
             sendLabel={copy.send}
             hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
           />

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { getDocument } from "../../lib/api";
+import { getDocument, stopAIGeneration } from "../../lib/api";
 import {
   Bold,
   Check,
@@ -127,6 +127,10 @@ export function DocumentAISidebar({
     },
   ]);
   const [instruction, setInstruction] = useState("");
+  const requestRef = useRef<{ id: string; controller: AbortController } | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  useEffect(() => () => { requestRef.current?.controller.abort(); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -142,9 +146,11 @@ export function DocumentAISidebar({
 
   const mutation = useMutation({
     mutationFn: async (text: string) => {
+      const request = { id: crypto.randomUUID(), controller: new AbortController() };
+      requestRef.current = request;
       return await aiState.run(async () => {
         if (!editor) throw new Error(isZh ? "编辑器尚未就绪" : "Editor is not ready");
-        return updateEditorDocument(editor, accountEmail, type, title, { instruction: text });
+        return updateEditorDocument(editor, accountEmail, type, title, { instruction: text }, { requestId: request.id, signal: request.controller.signal });
       });
     },
     onSuccess: (value) => {
@@ -157,6 +163,7 @@ export function DocumentAISidebar({
       toast.success(isZh ? "文档已智能更新" : "Document updated");
     },
     onError: (error) => {
+      if (error instanceof Error && error.name === "AbortError") return;
       const errMsg = error instanceof Error ? error.message : copy.aiDocumentFailed;
       setMessages((prev) => [
         ...prev,
@@ -174,7 +181,8 @@ export function DocumentAISidebar({
 
   const handleSend = () => {
     const trimmed = instruction.trim();
-    if (!trimmed || mutation.isPending) return;
+    if (!trimmed || mutation.isPending || stopping) return;
+    setStopped(false);
     setMessages((prev) => [
       ...prev,
       {
@@ -186,6 +194,17 @@ export function DocumentAISidebar({
     ]);
     setInstruction("");
     mutation.mutate(trimmed);
+  };
+  const handleStop = async () => {
+    const request = requestRef.current;
+    if (!request || stopping) return;
+    request.controller.abort();
+    setStopping(true);
+    setStopped(true);
+    aiState.reset();
+    try { await stopAIGeneration(accountEmail, request.id); }
+    catch (error) { setStopped(false); toast.error(error instanceof Error ? error.message : String(error)); }
+    finally { setStopping(false); }
   };
 
   return (
@@ -266,13 +285,17 @@ export function DocumentAISidebar({
         )}
       </div>
       <div className="border-t p-2.5 bg-background shrink-0 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+        {stopped && <p role="status" className="mb-2 text-xs text-muted-foreground">{isZh ? "已停止生成。" : "Generation stopped."}</p>}
         <AIChatInput
           value={instruction}
           onChange={setInstruction}
           onSend={handleSend}
+          isZh={isZh}
+          onStop={() => void handleStop()}
+          isStopping={stopping}
           placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
-          disabled={mutation.isPending}
-          isPending={mutation.isPending}
+          disabled={mutation.isPending || stopping}
+          isPending={mutation.isPending || stopping}
           sendLabel={isZh ? "发送" : "Send"}
           hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
         />

@@ -28,12 +28,17 @@ func sendToolEvent(emit func(agentChatEvent) error, kind string, call AIToolCall
 	return emit(agentChatEvent{Type: kind, Tool: &AIToolCall{ID: call.ID, Name: call.Name, Summary: call.Summary, Status: call.Status}})
 }
 
-func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent) error) (*AIAgentChatResponse, error)) error {
+func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent) error) (*AIAgentChatResponse, error), finish ...func()) error {
 	requestContext := c.UserContext()
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache, no-transform")
 	c.Set("X-Accel-Buffering", "no")
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		// Release the request only after the final frame has been flushed.
+		// Cancelling its parent in run would race the successful done event.
+		for _, cleanup := range finish {
+			defer cleanup()
+		}
 		ctx, cancel := context.WithTimeout(requestContext, 10*time.Minute)
 		defer cancel()
 		write := func(event agentChatEvent) error {
@@ -82,6 +87,9 @@ func streamAgentChat(c *fiber.Ctx, run func(context.Context, func(agentChatEvent
 				}
 				if err := write(event); err != nil {
 					return // Cancels upstream HTTP and tool work on disconnect.
+				}
+				if event.Type == "done" || event.Type == "error" {
+					return
 				}
 			case <-heartbeat.C:
 				if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {

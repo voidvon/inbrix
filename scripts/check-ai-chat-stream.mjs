@@ -58,6 +58,7 @@ let savedMessages = [];
 let saveCount = 0;
 let version = 0;
 const errors = [];
+const stopRequests = [];
 page.on('pageerror', error => errors.push(error.stack));
 await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token' } }));
 await page.route('**/api/**', async route => {
@@ -70,6 +71,8 @@ await page.route('**/api/**', async route => {
     json = { ok: true, sessionId: 'stream-session', version, messages: savedMessages };
   } else if (path.startsWith('/api/conversations/')) {
     json = { conversation: { ...conversation, messages: [mail] } };
+  } else if (path === '/api/ai/stop') {
+    stopRequests.push(route.request().postDataJSON());
   } else if (path === '/api/drafts') json = { drafts: [] };
   else json = { calendar: false, notifications: false, models: [], agents: [], bindings: [], documents: [], signatures: [], attachments: [], total: 0 };
   await route.fulfill({ json });
@@ -185,13 +188,33 @@ try {
   assert.equal(await page.evaluate(() => window.aiStreamRequests[0].requestId === window.aiStreamRequests[1].requestId), true, 'Stream retry keeps its request ID');
   await emit({ type: 'text_delta', delta: '重试中' });
   await pending.getByText('重试中', { exact: true }).waitFor();
+  const stop = page.getByRole('button', { name: '停止生成', exact: true });
+  assert.equal(await stop.isEnabled(), true, 'Stop stays clickable while the input is disabled');
+  assert.equal(await input.isDisabled(), true);
+  const stopped = page.waitForResponse(response => response.url().endsWith('/api/ai/stop'));
+  await stop.click();
+  await stopped;
+  await page.waitForFunction(() => window.aiStreamAborted);
+  await page.getByText('已停止生成，已保留收到的内容。', { exact: true }).waitFor();
+  await pending.getByText('重试中', { exact: true }).waitFor();
+  assert.equal(await input.isEnabled(), true, 'A stopped request unlocks the input');
+  assert.equal(await page.getByRole('alert').count(), 0, 'Explicit stop is not shown as an error');
+  assert.deepEqual(stopRequests, [{ accountEmail, sessionId: 'stream-session', requestId: await page.evaluate(() => window.aiStreamRequests.at(-1).requestId) }], 'Stop explicitly cancels the exact backend request');
+
+  await input.fill('停止后新问题');
+  await input.press('Enter');
+  await page.waitForFunction(() => window.aiStreamRequests.length === 3);
+  assert.equal(await page.evaluate(() => window.aiStreamRequests[2].requestId !== window.aiStreamRequests[1].requestId), true, 'New work never reuses a stopped request');
+  await emit({ type: 'text_delta', delta: '新任务中' });
+  await pending.getByText('新任务中', { exact: true }).waitFor();
+  await page.evaluate(() => { window.aiStreamAborted = false; });
   await page.getByRole('button', { name: '关闭 AI 对话', exact: true }).click();
   await page.waitForFunction(() => window.aiStreamAborted);
   await page.getByRole('button', { name: 'AI对话', exact: true }).click();
   await page.locator('p:visible').filter({ hasText: /^已核对，规格正确。$/ }).waitFor();
   assert.equal(await page.getByText('重试中', { exact: true }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log('Passed: text/tool chronology, repeated tools, stable completion and reloaded history, incremental rendering, errors, retry and cancellation.');
+  console.log('Passed: text/tool chronology, persisted history, streaming, errors, retry, clickable stop with backend cancellation, preserved partial output, new requests after stop and closing cancellation.');
 } finally {
   await browser.close();
 }

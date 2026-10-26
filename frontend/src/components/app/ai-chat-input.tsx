@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, ImagePlus, Loader2, X } from "lucide-react";
+import { ArrowUp, ImagePlus, Loader2, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import type { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
 import { cn } from "../../lib/utils";
@@ -10,6 +10,8 @@ export interface AIChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onStop?: () => void;
+  isStopping?: boolean;
   placeholder?: string;
   disabled?: boolean;
   isPending?: boolean;
@@ -37,6 +39,8 @@ export function AIChatInput({
   value,
   onChange,
   onSend,
+  onStop,
+  isStopping = false,
   placeholder,
   disabled = false,
   isPending = false,
@@ -134,6 +138,9 @@ export function AIChatInput({
   }, [value, isMultiLine, textareaRef]);
 
   const canSend = !disabled && !isPending && !imageAttachments?.blocked && (value.trim().length > 0 || Boolean(imageAttachments?.attachments.length));
+  const showStop = isPending && Boolean(onStop);
+  const canAct = showStop ? !isStopping : canSend;
+  const actionLabel = showStop ? (isStopping ? (isZh ? "正在停止…" : "Stopping…") : (isZh ? "停止生成" : "Stop generating")) : sendLabel;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Send on Enter without shift (and not during IME composition)
@@ -149,18 +156,20 @@ export function AIChatInput({
     <Button
       type="button"
       size="sm"
-      disabled={!canSend}
-      onClick={onSend}
-      aria-label={sendLabel}
-      title={sendLabel}
+      disabled={!canAct}
+      onClick={showStop ? onStop : onSend}
+      aria-label={actionLabel}
+      title={actionLabel}
       className={cn(
         "size-7.5 sm:size-8 rounded-full p-0 shrink-0 transition-all",
-        canSend
+        canAct
           ? "bg-primary text-primary-foreground shadow-2xs hover:bg-primary/90"
           : "bg-muted text-muted-foreground/40 opacity-50 cursor-not-allowed shadow-none"
       )}
     >
-      {isPending ? (
+      {showStop && !isStopping ? (
+        <Square className="size-3 sm:size-3.5" fill="currentColor" />
+      ) : isPending ? (
         <Loader2 className="size-3.5 sm:size-4 animate-spin" />
       ) : (
         icon || <ArrowUp className="size-3.5 sm:size-4" strokeWidth={2.5} />

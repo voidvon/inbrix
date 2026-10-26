@@ -140,6 +140,8 @@ export type AIChatAttachment = {
 };
 
 export type ConversationAIChatMessage = {
+  /** Structured reply content, separate from the assistant's explanation. */
+  emailDraft?: AIEmailReplyDraft;
   attachments?: AIChatAttachment[];
   id: string;
   role: "user" | "assistant";
@@ -153,6 +155,11 @@ export type ConversationAIChatMessage = {
   document?: ConversationAIDocumentDraft;
   /** Set when the agent proposed changing a saved document. */
   documentAction?: ConversationAIDocumentAction;
+};
+
+export type AIEmailReplyDraft = {
+  replyTo: { uid: string; folder: string };
+  bodyText: string;
 };
 
 export type ConversationDetail = {

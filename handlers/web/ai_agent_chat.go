@@ -108,6 +108,7 @@ type AIAgentChatPart struct {
 }
 
 type AIAgentChatResponse struct {
+	EmailDraft         *AIEmailReplyDraft           `json:"emailDraft,omitempty"`
 	SkillSnapshots     []mailstore.AISkillExecution `json:"skillSnapshots,omitempty"`
 	SessionID          string                       `json:"sessionId,omitempty"`
 	RequestID          string                       `json:"requestId,omitempty"`
@@ -224,6 +225,17 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 			return sendAIChatReplay(c, replay)
 		}
 	}
+	requestContext, finishRequest, err := h.aiRequests.begin(c.UserContext(), aiRequestKey{owner, account.ID, input.SessionID, input.RequestID})
+	if err != nil {
+		return err
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			finishRequest()
+		}
+	}()
+	c.SetUserContext(requestContext)
 	mailContext, err := h.loadAgentMailContext(c, account, input)
 	if err != nil {
 		return err
@@ -302,7 +314,6 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, e.Error())
 	}
 	var turn mailstore.AIChatTurn
-	handedOff := false
 	// Preflight the current turn before saving it. Older images use a bounded
 	// model projection, while their original references remain in durable history.
 	contextMessages := input.Messages
@@ -390,6 +401,9 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		if e != nil {
 			return nil, e
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if turn.SessionID != "" {
 			// Persist visible activity, without copying mail bodies and tool payloads into history.
 			for i, call := range response.ToolCalls {
@@ -418,8 +432,9 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 	handedOff = true
 	if strings.Contains(c.Get("Accept"), "text/event-stream") {
-		return streamAgentChat(c, run)
+		return streamAgentChat(c, run, finishRequest)
 	}
+	defer finishRequest()
 	ctx, cancel := context.WithTimeout(c.UserContext(), 10*time.Minute)
 	defer cancel()
 	response, err := run(ctx, nil)
@@ -465,6 +480,7 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 	}
 	finalReply := ""
 	var sources []AgentMailReference
+	var emailDraft *AIEmailReplyDraft
 	seenSources := make(map[string]bool)
 
 	parts := make([]AIAgentChatPart, 0)
@@ -522,6 +538,9 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 						generatedDocument = doc
 					}
 				}
+				if draft, ok := result.(*AIEmailReplyDraft); ok {
+					emailDraft = draft
+				}
 				if action, ok := result.(*AIDocumentAction); ok && action != nil {
 					documentAction = action
 				}
@@ -531,6 +550,8 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		Project: func(result any) any {
 			// Editor layout is not model evidence.
 			switch value := result.(type) {
+			case *AIEmailReplyDraft:
+				return map[string]any{"status": "prepared", "replyTo": value.ReplyTo, "note": "The reply editor will open with this body after this turn completes. Mail has not been sent."}
 			case *AIDocumentAction:
 				copy := *value
 				copy.HTML = ""
@@ -600,6 +621,7 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		skillSnapshots = session.Snapshots()
 	}
 	return &AIAgentChatResponse{
+		EmailDraft:      emailDraft,
 		SkillSnapshots:  skillSnapshots,
 		BusinessContext: currentBusiness(ctx).Selection,
 		Parts:           parts,

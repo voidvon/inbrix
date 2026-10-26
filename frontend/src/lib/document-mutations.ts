@@ -9,6 +9,7 @@ export async function updateEditorDocument(
   documentType: "quotation" | "contract",
   title: string,
   change: { instruction: string } | { values: Record<string, string>; items?: QuotationItem[] },
+  options?: { requestId: string; signal: AbortSignal },
 ) {
   const canvas = editor.getDocument();
   const result = await generateDocument({
@@ -16,7 +17,9 @@ export async function updateEditorDocument(
     mode: "instruction" in change ? "variables" : "apply",
     instruction: "instruction" in change ? change.instruction : "",
     ...change,
-  });
+    requestId: options?.requestId,
+  }, options?.signal);
+  options?.signal.throwIfAborted();
   if (editor.getDocument() !== canvas) {
     throw new Error("文档在处理期间已修改，请基于最新内容重试 / Document changed; retry using its latest content");
   }

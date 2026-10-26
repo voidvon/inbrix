@@ -619,6 +619,7 @@ func main() {
 	apiRoutes.Post("/ai/write-email", userAIHandler.HandleWriteEmail)
 	apiRoutes.Post("/ai/write-document", userAIHandler.HandleWriteDocument)
 	apiRoutes.Post("/ai/agent-chat", userAIHandler.HandleAgentChat)
+	apiRoutes.Post("/ai/stop", userAIHandler.HandleStopAI)
 	apiRoutes.Get("/ai/chat-sessions", userAIHandler.HandleAIChatSessions)
 	apiRoutes.Post("/ai/chat-sessions", userAIHandler.HandleAIChatSessions)
 	apiRoutes.Get("/ai/chat-sessions/:id", userAIHandler.HandleAIChatSession)

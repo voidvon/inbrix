@@ -22,6 +22,7 @@ import {
 import { toast } from "../../lib/toast";
 import {
   chatWithAIAgent,
+  stopAIGeneration,
   ApiError,
   deleteConversationAIChat,
   getAIAgents,
@@ -57,11 +58,13 @@ import { ConversationDocumentCard } from "./conversation-document-card";
 import { MarkdownContent } from "./markdown-content";
 import { appendAIChatText, finishAIChatParts, getAIChatParts, upsertAIChatTool } from "../../lib/ai-chat-parts";
 import { useAIStateMachine } from "../../lib/ai-state-machine";
-import type { ConversationAIChatMessage, ConversationAIChatPart, ConversationDetail } from "../../types";
+import type { AIEmailReplyDraft, ConversationAIChatMessage, ConversationAIChatPart, ConversationDetail } from "../../types";
 
 /** Localized label for a tool the agent ran, so the chip reads as an action. */
 function toolDisplayName(name: string, isZh: boolean) {
   switch (name) {
+    case "prepare_email_reply":
+      return isZh ? "准备邮件回复" : "Prepared email reply";
     case "search_emails":
       return isZh ? "检索邮箱邮件" : "Searched mail";
     case "read_email":
@@ -93,6 +96,7 @@ export function ConversationAIChatPanel({
   onRemoveFocusedMessage,
   onClearFocusedMessages,
   onWriteDraft,
+  onWriteReply,
   getActiveDraft,
   className,
 }: {
@@ -105,6 +109,7 @@ export function ConversationAIChatPanel({
   onClearFocusedMessages?: () => void;
   /** Puts an answer into the reply draft in the transcript, creating it if needed. */
   onWriteDraft?: (body: string) => void;
+  onWriteReply?: (draft: AIEmailReplyDraft) => Promise<void>;
   getActiveDraft?: () => AIAgentChatRequest["activeDraft"];
   className?: string;
 }) {
@@ -119,6 +124,9 @@ export function ConversationAIChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const retryRef = useRef<{ key: string; payload: AIAgentChatRequest } | null>(null);
+  const pendingRequestId = useRef<string | undefined>(undefined);
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
   const activeConversationRef = useRef(detail.id);
   activeConversationRef.current = detail.id;
   const followOutputRef = useRef(true);
@@ -151,6 +159,8 @@ export function ConversationAIChatPanel({
     setPendingImages([]);
     setPendingAssistant(null);
     setStreamError(null);
+    setStopping(false);
+    setStopped(false);
     followOutputRef.current = true;
     return () => {
       requestRef.current?.abort();
@@ -167,7 +177,7 @@ export function ConversationAIChatPanel({
       attachments: pendingImages,
       createdAt: new Date().toISOString(),
     };
-    const accepted = chatQuery.data?.lastRun?.requestId === (retryRef.current?.payload.requestId || retryRef.current?.payload.retryRequestId) && messages.some(m => m.id === chatQuery.data?.lastRun?.userMessageId);
+    const accepted = chatQuery.data?.lastRun?.requestId === pendingRequestId.current && messages.some(m => m.id === chatQuery.data?.lastRun?.userMessageId);
     return [...messages, ...(accepted ? [] : [pendingMsg]), ...(pendingAssistant ? [pendingAssistant] : [])];
   }, [messages, pendingUserText, pendingAssistant, pendingImages, chatQuery.data?.lastRun]);
 
@@ -244,6 +254,7 @@ export function ConversationAIChatPanel({
         businessContext, messages: [{ role: "user" as const, content: text, attachments }],
       };
       retryRef.current = { key, payload };
+      pendingRequestId.current = payload.requestId || payload.retryRequestId;
 
       const controller = new AbortController();
       requestRef.current = controller;
@@ -322,6 +333,7 @@ export function ConversationAIChatPanel({
         id: data.res.assistantMessageId || `assistant-${Date.now() + 1}`,
         role: "assistant",
         content: data.res.content || "已处理完成。",
+        emailDraft: data.res.emailDraft,
         sources: data.res.sources,
         parts: data.parts,
         createdAt: now,
@@ -374,13 +386,22 @@ export function ConversationAIChatPanel({
       });
       await queryClient.invalidateQueries({ queryKey: ["conversation-ai-chat", data.conversationId] });
 
+      // Apply only this completed request, never historical messages or partial tool events.
+      if (isCurrent() && data.res.emailDraft && onWriteReply) {
+        try {
+          await onWriteReply(data.res.emailDraft);
+          if (isCurrent() && isMobile) onClose();
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
+      }
       if (isCurrent()) window.setTimeout(scrollToBottom, 50);
     },
   });
 
   const handleSend = (textToSend?: string) => {
     const text = (textToSend ?? input).trim();
-    if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending || chatQuery.isError || chatQuery.data?.lastRun?.status === "pending") return;
+    if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || mutation.isPending || stopping || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending || chatQuery.isError || chatQuery.data?.lastRun?.status === "pending") return;
     if (!detail.accountEmail) {
       toast.error(isZh ? "当前邮件会话缺少关联账户邮箱" : "Account email required");
       return;
@@ -389,11 +410,36 @@ export function ConversationAIChatPanel({
     followOutputRef.current = true;
     setInput("");
     setStreamError(null);
+    setStopped(false);
     setPendingAssistant(null);
     setPendingUserText(text);
     setPendingImages(imageAttachments.attachments);
     window.setTimeout(scrollToBottom, 20);
     mutation.mutate({ text, attachments: imageAttachments.attachments });
+  };
+
+  const handleStop = async () => {
+    if (stopping) return;
+    const conversationId = detail.id;
+    const payload = retryRef.current?.payload;
+    const requestId = payload?.requestId || payload?.retryRequestId || (chatQuery.data?.lastRun?.status === "pending" ? chatQuery.data.lastRun.requestId : undefined);
+    requestRef.current?.abort();
+    setStopping(true);
+    setStopped(true);
+    setStreamError(null);
+    aiState.reset();
+    try {
+      if (requestId && detail.accountEmail) await stopAIGeneration(detail.accountEmail, requestId, payload?.sessionId || chatQuery.data?.sessionId);
+      await chatQuery.refetch();
+    } catch (error) {
+      setStopped(false);
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (activeConversationRef.current === conversationId) {
+        retryRef.current = null;
+        setStopping(false);
+      }
+    }
   };
 
   const handleCopy = async (id: string, text: string) => {
@@ -683,6 +729,14 @@ export function ConversationAIChatPanel({
                           )}
                           disabled={isStreaming}
                           onClick={() => {
+                            if (message.emailDraft && onWriteReply) {
+                              void onWriteReply(message.emailDraft).then(() => {
+                                if (isMobile) onClose();
+                              }).catch((error: unknown) => {
+                                toast.error(error instanceof Error ? error.message : String(error));
+                              });
+                              return;
+                            }
                             const body = markdownToPlainText(message.content);
                             if (!body) return;
                             onWriteDraft(body);
@@ -733,6 +787,7 @@ export function ConversationAIChatPanel({
           })
         )}
 
+        {stopped && <p role="status" className="text-xs text-muted-foreground">{stopping ? (isZh ? "正在停止生成…" : "Stopping generation…") : (isZh ? "已停止生成，已保留收到的内容。" : "Generation stopped. Received content is preserved.")}</p>}
         {streamError && (
           <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
             {isZh ? "回复未完成，已保留收到的内容。可重新发送问题。" : "Reply incomplete. Received text is preserved; you can resend your question."} {streamError}
@@ -798,6 +853,8 @@ export function ConversationAIChatPanel({
           value={input}
           onChange={setInput}
           onSend={() => handleSend()}
+          onStop={() => void handleStop()}
+          isStopping={stopping}
           placeholder={
             focusedMessages.length > 0
               ? (isZh
@@ -805,8 +862,8 @@ export function ConversationAIChatPanel({
                   : `Ask about ${focusedMessages.length} focused email(s)...`)
               : copy.aiChatPlaceholder
           }
-          disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
-          isPending={mutation.isPending}
+          disabled={mutation.isPending || stopping || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
+          isPending={mutation.isPending || stopping || chatQuery.data?.lastRun?.status === "pending"}
           sendLabel={copy.aiChatSend}
           textareaRef={textareaRef}
           autoFocus={!isMobile}

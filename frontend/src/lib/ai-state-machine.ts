@@ -372,6 +372,10 @@ export function useAIStateMachine(options: UseAIStateMachineOptions = {}) {
       } catch (err) {
         isAutoPacedRef.current = false;
         clearAllTimers();
+        if (err instanceof Error && err.name === "AbortError") {
+          reset();
+          throw err;
+        }
         const errorObj = err instanceof Error ? err : new Error(String(err));
         transition("error", {
           error: errorObj,

@@ -19,6 +19,27 @@ type AgentMailReference struct {
 	Folder string `json:"folder"`
 }
 
+// A reply-editor action, returned only after a successful chat turn. It never sends mail.
+type AIEmailReplyDraft struct {
+	ReplyTo  AgentMailReference `json:"replyTo"`
+	BodyText string             `json:"bodyText"`
+}
+
+func prepareEmailReply(scope *agentMailContext, args map[string]any) (any, string, error) {
+	if scope == nil {
+		return nil, "", fmt.Errorf("prepare_email_reply requires a current mail conversation")
+	}
+	ref := AgentMailReference{Folder: parseStringArg(args, "folder"), UID: parseStringArg(args, "uid")}
+	if _, ok := scope.byKey[agentMailKey(ref.Folder, ref.UID)]; !ok {
+		return nil, "", fmt.Errorf("reply target is not in the current conversation")
+	}
+	body, ok := args["bodyText"].(string)
+	if !ok || strings.TrimSpace(body) == "" || len(body) > 48000 {
+		return nil, "", fmt.Errorf("bodyText must contain a reply body of at most 48000 bytes")
+	}
+	return &AIEmailReplyDraft{ReplyTo: ref, BodyText: strings.TrimSpace(body)}, "已准备回复正文，交由邮件编辑器填充（未发送）", nil
+}
+
 type agentMailContext struct {
 	conversation *Conversation
 	byKey        map[string]models.Email
@@ -297,6 +318,13 @@ func (h *AISettingsHandler) readAgentEmail(ctx context.Context, accountID string
 
 func (h *AISettingsHandler) executeScopedAgentTool(ctx context.Context, owner, accountID string, scope *agentMailContext, call AIToolCall, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
 	switch call.Name {
+	case "prepare_email_reply":
+		return prepareEmailReply(scope, call.Args)
+	case "read_current_draft":
+		if scope != nil && scope.draft != nil {
+			return readDraftData(scope.draft, call.Args)
+		}
+		return readCurrentDraft(ctx, call.Args)
 	case "search_emails":
 		return h.searchAgentEmails(ctx, accountID, scope, call.Args)
 	case "read_email":

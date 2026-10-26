@@ -83,9 +83,16 @@ func readCurrentDraft(ctx context.Context, args map[string]any) (any, string, er
 	if doc == nil {
 		return map[string]any{"available": false}, "当前没有草稿", nil
 	}
-	raw, err := json.Marshal(doc)
+	return readDraftData(doc, args)
+}
+
+func readDraftData(draft any, args map[string]any) (any, string, error) {
+	raw, err := json.Marshal(draft)
 	if err != nil {
 		return nil, "", err
+	}
+	if string(raw) == "null" {
+		return map[string]any{"available": false}, "当前没有草稿", nil
 	}
 	text := []rune(string(raw))
 	offset, err := agentIntArg(args, "offset", 0, len(text))

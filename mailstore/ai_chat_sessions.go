@@ -601,6 +601,24 @@ func (s *Store) FailAIChatTurn(ctx context.Context, turn AIChatTurn) error {
 	return err
 }
 
+// CancelAIChatRequest fences late completion and removes retry input for an explicit stop.
+func (s *Store) CancelAIChatRequest(ctx context.Context, owner, accountID, sessionID, requestID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `UPDATE ai_chat_runs SET status='failed' WHERE session_id=? AND request_id=? AND status='pending' AND session_id IN (SELECT s.id FROM ai_chat_sessions s JOIN mail_accounts a ON a.id=s.account_id WHERE a.id=? AND a.owner_id=?)`, sessionID, requestID, accountID, owner)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM ai_chat_run_inputs WHERE session_id=? AND request_id=? AND session_id IN (SELECT r.session_id FROM ai_chat_runs r JOIN ai_chat_sessions s ON s.id=r.session_id JOIN mail_accounts a ON a.id=s.account_id WHERE r.request_id=? AND r.status='failed' AND a.id=? AND a.owner_id=?)`, sessionID, requestID, requestID, accountID, owner)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpdateAIChatBusiness(ctx context.Context, owner, accountID, id string, version int64, business AIBusinessContext) error {
 	raw, _ := json.Marshal(business)
 	res, err := s.db.ExecContext(ctx, `UPDATE ai_chat_sessions SET business_context=?,version=version+1,updated_at=? WHERE id=? AND version=? AND account_id IN(SELECT id FROM mail_accounts WHERE id=? AND owner_id=?) AND NOT EXISTS(SELECT 1 FROM ai_chat_runs WHERE session_id=? AND status='pending' AND lease_until>?)`, string(raw), time.Now().UnixMilli(), id, version, accountID, owner, id, time.Now().Unix())

@@ -33,10 +33,11 @@ const (
 )
 
 type AISettingsHandler struct {
-	sessions *session.Store
-	config   *config.Config
-	mailDB   *mailstore.Store
-	client   *http.Client
+	aiRequests aiRequestRegistry
+	sessions   *session.Store
+	config     *config.Config
+	mailDB     *mailstore.Store
+	client     *http.Client
 }
 
 type aiModelInput struct {
@@ -55,6 +56,7 @@ type aiVariableItem struct {
 }
 
 type aiDocumentInput struct {
+	RequestID    string            `json:"requestId,omitempty"`
 	Canvas       string            `json:"canvas"`
 	Values       map[string]string `json:"values,omitempty"`
 	Items        []AIDocumentItem  `json:"items,omitempty"`
@@ -753,6 +755,12 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
+	requestContext, finishRequest, err := h.aiRequests.begin(c.UserContext(), aiRequestKey{owner, account.ID, "", input.RequestID})
+	if err != nil {
+		return err
+	}
+	defer finishRequest()
+	c.SetUserContext(requestContext)
 	if input.Mode == "variables" || input.Mode == "apply" || input.Canvas != "" {
 		if len(input.Canvas) > 20*1024*1024 {
 			return fiber.NewError(413, "文档过大")
