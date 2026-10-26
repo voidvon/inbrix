@@ -16,6 +16,9 @@ const (
 	MailTranslationTask = "mail_translation"
 )
 
+// ErrAITaskDisabled indicates an intentional mailbox setting, not an AI failure.
+var ErrAITaskDisabled = errors.New("this AI function is disabled for the mailbox")
+
 func scanAITaskBinding(scanner interface{ Scan(...any) error }) (AITaskBindingRecord, error) {
 	var binding AITaskBindingRecord
 	var updatedAt int64

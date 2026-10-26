@@ -83,7 +83,7 @@ func (m *SyncManager) executeMailTask(ctx context.Context, account Account, task
 		} else {
 			_, cfgErr = resolveReplySuggestionConfig(ctx, m.store, m.key, account)
 		}
-		if errors.Is(cfgErr, ErrNotFound) {
+		if errors.Is(cfgErr, ErrNotFound) || errors.Is(cfgErr, ErrAITaskDisabled) {
 			return true, nil
 		}
 		if cfgErr != nil {
@@ -108,6 +108,10 @@ func (m *SyncManager) executeMailTask(ctx context.Context, account Account, task
 			if err == nil {
 				err = m.store.recordMailTaskCacheResult(ctx, result.Cached, false, result.Record)
 			}
+		}
+		// The mailbox setting may have changed while its body was loading.
+		if errors.Is(err, ErrAITaskDisabled) {
+			return true, nil
 		}
 		if err != nil {
 			return false, err

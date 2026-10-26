@@ -48,6 +48,7 @@ import {
   outgoingAttachmentURL,
   generateEmail,
   getAIModels,
+  getAITaskBindings,
   saveConversationStatus,
   summarizeMailMessage,
   translateMailMessage,
@@ -653,6 +654,9 @@ export function ChatView({
   const [suggestionTargetKey, setSuggestionTargetKey] = useState<string | null>(persistedSuggestionKey);
   const [suggestionGeneration, setSuggestionGeneration] = useState(0);
   const aiSettings = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, retry: false });
+  const aiBindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, retry: false });
+  const replyBinding = aiBindings.data?.bindings.find((binding) => binding.accountEmail === detail.accountEmail && binding.taskType === "reply_suggestion");
+  const canGenerateSuggestedReply = Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length) && Boolean(aiBindings.data) && replyBinding?.enabled !== false;
 
   useEffect(() => {
     setSuggestionTargetKey(persistedSuggestionKey);
@@ -997,7 +1001,7 @@ export function ChatView({
             )}
             {detail.messages.map((message, index) => {
               const messageKey = messageKeyOf(message);
-              const canGenerateReply = !message.outgoing && Boolean(detail.accountEmail) && Boolean(aiSettings.data?.models.length);
+              const canGenerateReply = !message.outgoing && canGenerateSuggestedReply;
               return (
                 <Fragment key={messageKey}>
                   <MessageBubble
@@ -1027,6 +1031,7 @@ export function ChatView({
                       detail={detail}
                       message={message}
                       generation={suggestionGeneration}
+                      canGenerate={canGenerateSuggestedReply}
                       onReply={(body) => onReply(message, body)}
                       onReplyAll={(body) => onReplyAll(message, body)}
                     />
@@ -1160,6 +1165,7 @@ export function SuggestedReplyBubble({
   detail,
   message,
   generation,
+  canGenerate,
   onReply,
   onReplyAll,
 }: {
@@ -1167,6 +1173,7 @@ export function SuggestedReplyBubble({
   detail: ConversationDetail;
   message: ConversationMessage;
   generation: number;
+  canGenerate: boolean;
   onReply: (body: string) => void;
   onReplyAll: (body: string) => void;
 }) {
@@ -1207,10 +1214,11 @@ export function SuggestedReplyBubble({
   });
 
   useEffect(() => {
+    if (!canGenerate) return;
     if (previousGenerationRef.current === generation) return;
     previousGenerationRef.current = generation;
     suggestion.mutate();
-  }, [generation]);
+  }, [generation, canGenerate]);
 
   // A failed generation is reported by toast; there is no reply body to show.
   if (suggestion.isError && !body) return null;
@@ -1256,18 +1264,20 @@ export function SuggestedReplyBubble({
         )}
       </ContextMenu>
       <div className="mt-1.5 flex min-h-7 justify-end gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          disabled={suggestion.isPending}
-          onClick={() => suggestion.mutate()}
-          aria-label={copy.regenerateSuggestedReply}
-          title={copy.regenerateSuggestedReply}
-        >
-          <RotateCcw className={cn("size-3.5", suggestion.isPending && "animate-spin")} />
-        </Button>
+        {canGenerate && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            disabled={suggestion.isPending}
+            onClick={() => suggestion.mutate()}
+            aria-label={copy.regenerateSuggestedReply}
+            title={copy.regenerateSuggestedReply}
+          >
+            <RotateCcw className={cn("size-3.5", suggestion.isPending && "animate-spin")} />
+          </Button>
+        )}
         {body && (
           <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onReply(body)}>
             <Send className="size-3.5" />

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,42 @@ func TestValidateOpenAIBaseURL(t *testing.T) {
 		if err := validateOpenAIBaseURL(raw); err == nil {
 			t.Errorf("invalid URL accepted: %q", raw)
 		}
+	}
+}
+
+func TestWriteEmailDisabledReplySuggestionReturnsPreconditionWithoutErrorLog(t *testing.T) {
+	emailHandler, app, account, _ := outboxTestApp(t)
+	ctx := context.Background()
+	model, err := emailHandler.mailDB.CreateAIModel(ctx, mailstore.AIModelRecord{OwnerID: account.OwnerID, BaseURL: "https://api.openai.com/v1", Model: "test-model", EncryptedAPIKey: "unused-while-disabled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := emailHandler.mailDB.CreateAIAgent(ctx, mailstore.AIAgentRecord{OwnerID: account.OwnerID, Name: "Reply writer", Prompt: "Write a reply."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := emailHandler.mailDB.SaveAITaskBinding(ctx, account.OwnerID, mailstore.AITaskBindingRecord{AccountID: account.ID, TaskType: mailstore.ReplySuggestionTask, AgentID: agent.ID, ModelID: model.ID, EnabledSet: true}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)
+	app.Post("/api/ai/write-email", h.HandleWriteEmail)
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/write-email", strings.NewReader(`{"accountEmail":"me@example.com","taskType":"reply_suggestion","folder":"INBOX","messageId":"1","instruction":"Write a reply."}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body strings.Builder
+	if _, err := io.Copy(&body, res.Body); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusPreconditionRequired || !strings.Contains(body.String(), "disabled for the mailbox") {
+		t.Fatalf("disabled suggestion response: %d %s", res.StatusCode, body.String())
+	}
+	logs, err := emailHandler.mailDB.ListAIErrorLogs(ctx, account.OwnerID, 100)
+	if err != nil || len(logs) != 0 {
+		t.Fatalf("disabled suggestion logged errors: %+v, %v", logs, err)
 	}
 }
 

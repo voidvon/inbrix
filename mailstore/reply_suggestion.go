@@ -37,7 +37,7 @@ func resolveReplySuggestionConfig(ctx context.Context, store *Store, encryptionK
 	binding, err := store.GetAITaskBinding(ctx, account.OwnerID, account.ID, ReplySuggestionTask)
 	if err == nil {
 		if !binding.Enabled {
-			return replySuggestionConfig{}, ErrNotFound
+			return replySuggestionConfig{}, ErrAITaskDisabled
 		}
 		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
 		if err == nil {
@@ -82,6 +82,9 @@ func GetOrCreateReplySuggestion(ctx context.Context, client HTTPClient, store *S
 		return ReplySuggestionResult{}, err
 	}
 	cfg, err := resolveReplySuggestionConfig(ctx, store, encryptionKey, account)
+	if errors.Is(err, ErrAITaskDisabled) {
+		return ReplySuggestionResult{}, err
+	}
 	if err != nil {
 		_ = store.RecordAIError(ctx, AIErrorLogRecord{
 			OwnerID:      account.OwnerID,

@@ -656,6 +656,12 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 			return fiber.ErrInternalServerError
 		}
 		result, suggestionErr := mailstore.GetOrCreateReplySuggestion(c.UserContext(), h.client, h.mailDB, h.config.Encryption.Key, account, message, true)
+		if errors.Is(suggestionErr, mailstore.ErrAITaskDisabled) {
+			return fiber.NewError(fiber.StatusPreconditionRequired, suggestionErr.Error())
+		}
+		if errors.Is(suggestionErr, mailstore.ErrNotFound) {
+			return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model or reply suggestion agent is configured")
+		}
 		if suggestionErr != nil {
 			return fiber.NewError(fiber.StatusUnprocessableEntity, suggestionErr.Error())
 		}
