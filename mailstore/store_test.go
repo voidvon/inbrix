@@ -703,3 +703,50 @@ func TestPublishAccountEventResolvesOwnerAndAccount(t *testing.T) {
 		t.Fatalf("event payload = %+v", got[0])
 	}
 }
+
+func TestBatchSyncFlagsWaitsForConcurrentWriter(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	account := testAccount(t, s, "owner", "sales@example.com", true)
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{{ID: "598"}}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := Open(s.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	writer, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Rollback()
+	if _, err := writer.ExecContext(ctx, `UPDATE messages SET preview='concurrent update' WHERE account_id=?`, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := other.BatchSyncFlags(ctx, account.ID, "INBOX", []api.MessageFlagItem{{UID: 598, Flags: []string{seenFlag}}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("flag sync did not wait for the concurrent writer: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("flag sync failed after writer committed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("flag sync did not finish")
+	}
+	message, err := s.GetMessage(ctx, account.ID, "INBOX", "598")
+	if err != nil || len(message.Flags) != 1 || message.Flags[0] != seenFlag || message.Preview != "concurrent update" {
+		t.Fatalf("concurrent updates were lost: %+v %v", message, err)
+	}
+}

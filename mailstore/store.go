@@ -187,7 +187,11 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	dsn := "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+	// Reserve the writer before transactional reads. Deferred read-then-write
+	// upgrades can fail immediately with SQLITE_BUSY under WAL, bypassing the
+	// busy timeout when another connection writes concurrently (e.g. flag sync
+	// and mail task workers). BEGIN IMMEDIATE waits before taking a snapshot.
+	dsn := "file:" + filepath.ToSlash(path) + "?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 	// A pooled :memory: database must share its schema across connections.
 	// Give each Store a unique name so separate users/tests never share memory.
 	if path == ":memory:" {
@@ -195,7 +199,7 @@ func Open(path string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		dsn = "file:" + id + "?mode=memory&cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+		dsn = "file:" + id + "?mode=memory&cache=shared&_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -1630,7 +1634,9 @@ func (s *Store) MarkFolderSync(ctx context.Context, accountID, folderName string
 	if errValue != nil {
 		message = errValue.Error()
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE folders SET sync_complete = ?, last_sync_at = ?, last_error = ? WHERE account_id = ? AND name = ?`, boolInt(complete), time.Now().Unix(), message, accountID, folderName)
+	// Only successful scans establish/advance the baseline. In particular, a
+	// partial first scan must remain initial history when it is retried.
+	_, err := s.db.ExecContext(ctx, `UPDATE folders SET sync_complete = ?, last_sync_at = CASE WHEN ? THEN ? ELSE last_sync_at END, last_error = ? WHERE account_id = ? AND name = ?`, boolInt(complete), errValue == nil, time.Now().Unix(), message, accountID, folderName)
 	return err
 }
 

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/emersion/go-imap"
 )
 
 // SyncManager owns one long-lived polling loop per persisted mailbox account.
@@ -511,13 +513,26 @@ func isNoSelect(attributes []string) bool {
 	return false
 }
 
-func (m *SyncManager) syncFolder(ctx context.Context, client *api.Client, accountID, folderName string) error {
+type folderSyncClient interface {
+	Select(string, bool) (*imap.MailboxStatus, error)
+	FetchMessagesPaged(string, uint32, uint32) ([]models.Email, error)
+	FetchMessagesSinceUID(string, uint32, uint32) ([]models.Email, error)
+	FetchMessageFlagsPaged(string, uint32, uint32) ([]api.MessageFlagItem, error)
+	FetchMessageUIDs(string) ([]uint32, error)
+	FetchSingleMessage(string, string) (models.Email, error)
+	FetchAttachmentMetadata(string, string) ([]models.Attachment, error)
+}
+
+func (m *SyncManager) syncFolder(ctx context.Context, client folderSyncClient, accountID, folderName string) error {
 	state, stateErr := m.store.GetSyncState(ctx, accountID, folderName)
+	if stateErr != nil && !errors.Is(stateErr, ErrNotFound) {
+		return fmt.Errorf("read folder sync state: %w", stateErr)
+	}
 	// A capped initial scan is intentionally marked incomplete, but it still
-	// establishes a valid high-water mark. Only a missing state or a recorded
-	// fetch error needs another full header scan. UpsertFolder creates the state
-	// before this method runs, so a zero sync timestamp is the reliable marker
-	// that the initial mailbox baseline has not been established yet.
+	// establishes a valid high-water mark. A transient error must preserve that
+	// baseline: a full history scan would store new mail without its tasks.
+	// UpsertFolder creates the state before this method runs; a zero sync
+	// timestamp means the initial mailbox baseline is not established yet.
 	full := needsInitialFolderSync(state, stateErr)
 	if !full {
 		return m.syncFolderIncremental(ctx, client, accountID, folderName)
@@ -581,14 +596,14 @@ func (m *SyncManager) syncFolder(ctx context.Context, client *api.Client, accoun
 }
 
 func needsInitialFolderSync(state SyncState, stateErr error) bool {
-	return stateErr != nil || state.LastError != "" || state.LastSyncAt.IsZero()
+	return stateErr != nil || state.LastSyncAt.IsZero()
 }
 
 // syncFolderIncremental queries remote mailbox metadata first (UidNext, Messages)
 // to short-circuit sync when nothing has changed. It pulls only new messages
 // (UID > lastUID), refreshes flags using lightweight UID+FLAGS (without heavy
 // headers), and skips full remote UID scans unless message counts prove deletions.
-func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Client, accountID, folderName string) error {
+func (m *SyncManager) syncFolderIncremental(ctx context.Context, client folderSyncClient, accountID, folderName string) error {
 	batch := uint32(m.config.BatchSize)
 
 	// Step 1: Open remote mailbox to inspect server status (UidNext, Messages, Unseen)
@@ -724,7 +739,7 @@ func (m *SyncManager) syncFolderIncremental(ctx context.Context, client *api.Cli
 	return nil
 }
 
-func (m *SyncManager) syncBodies(ctx context.Context, client *api.Client, accountID, folderName string, page []models.Email) error {
+func (m *SyncManager) syncBodies(ctx context.Context, client folderSyncClient, accountID, folderName string, page []models.Email) error {
 	// The page contains newly discovered messages that may need a full body
 	// fetch. The local query adds every older row whose attachment metadata
 	// predates the marker, so an incremental sync also repairs the historical
