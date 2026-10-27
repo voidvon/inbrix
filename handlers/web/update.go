@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,12 +30,13 @@ const (
 )
 
 type UpdateHandler struct {
-	version     string
-	httpClient  *http.Client
-	latestURL   string
-	fallbackURL string
-	executable  func() (string, error)
-	restart     func() error
+	version          string
+	httpClient       *http.Client
+	latestURL        string
+	fallbackURL      string
+	executable       func() (string, error)
+	restart          func() error
+	operationTimeout time.Duration
 }
 
 type updateStatus struct {
@@ -58,12 +61,13 @@ type githubAsset struct {
 
 func NewUpdateHandler(version string, restart func() error) *UpdateHandler {
 	return &UpdateHandler{
-		version:     strings.TrimSpace(version),
-		httpClient:  &http.Client{Timeout: 45 * time.Second},
-		latestURL:   "https://api.github.com/repos/" + updateRepository + "/releases/latest",
-		fallbackURL: updateRepositoryURL + "/releases/latest",
-		executable:  os.Executable,
-		restart:     restart,
+		version:          strings.TrimSpace(version),
+		operationTimeout: 90 * time.Second,
+		httpClient:       &http.Client{Timeout: 45 * time.Second},
+		latestURL:        "https://api.github.com/repos/" + updateRepository + "/releases/latest",
+		fallbackURL:      updateRepositoryURL + "/releases/latest",
+		executable:       os.Executable,
+		restart:          restart,
 	}
 }
 
@@ -72,17 +76,21 @@ func (h *UpdateHandler) HandleInfo(c *fiber.Ctx) error {
 }
 
 func (h *UpdateHandler) HandleCheck(c *fiber.Ctx) error {
-	release, err := h.latestRelease(c.UserContext())
+	ctx, cancel := context.WithTimeout(c.UserContext(), h.operationTimeout)
+	defer cancel()
+	release, err := h.latestRelease(ctx)
 	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not check GitHub for updates: " + err.Error()})
+		return updateRequestError(c, "check_release", "Could not check GitHub for updates", err)
 	}
 	return c.JSON(h.status(release))
 }
 
 func (h *UpdateHandler) HandleInstall(c *fiber.Ctx) error {
-	release, err := h.latestRelease(c.UserContext())
+	ctx, cancel := context.WithTimeout(c.UserContext(), h.operationTimeout)
+	defer cancel()
+	release, err := h.latestRelease(ctx)
 	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not check GitHub for updates: " + err.Error()})
+		return updateRequestError(c, "check_release", "Could not check GitHub for updates", err)
 	}
 	status := h.status(release)
 	if !status.UpdateAvailable {
@@ -97,17 +105,17 @@ func (h *UpdateHandler) HandleInstall(c *fiber.Ctx) error {
 	if assetURL == "" || manifestURL == "" {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "The GitHub release does not contain the required update files"})
 	}
-	manifest, err := h.download(c.UserContext(), manifestURL, 1<<20)
+	manifest, err := h.download(ctx, manifestURL, 1<<20)
 	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not download the release checksum: " + err.Error()})
+		return updateRequestError(c, "download_checksum", "Could not download the release checksum", err)
 	}
 	wantDigest, err := manifestDigest(manifest, assetName)
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
 	}
-	archive, err := h.download(c.UserContext(), assetURL, maxReleaseFileSize)
+	archive, err := h.download(ctx, assetURL, maxReleaseFileSize)
 	if err != nil {
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Could not download the update: " + err.Error()})
+		return updateRequestError(c, "download_archive", "Could not download the update", err)
 	}
 	digest := sha256.Sum256(archive)
 	if !bytes.Equal(digest[:], wantDigest) {
@@ -116,6 +124,9 @@ func (h *UpdateHandler) HandleInstall(c *fiber.Ctx) error {
 	binary, err := binaryFromArchive(archive)
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "The update archive is invalid: " + err.Error()})
+	}
+	if err := ctx.Err(); err != nil {
+		return updateRequestError(c, "verify_archive", "Could not verify the update within the time limit", err)
 	}
 	executable, err := h.executable()
 	if err != nil {
@@ -131,6 +142,23 @@ func (h *UpdateHandler) HandleInstall(c *fiber.Ctx) error {
 		}
 	}
 	return c.JSON(fiber.Map{"ok": true, "version": status.LatestVersion, "restarting": h.restart != nil})
+}
+
+// Return a JSON error before the reverse proxy's response timeout, so the
+// client can display the failing stage instead of a generic proxy error page.
+func updateRequestError(c *fiber.Ctx, stage, message string, err error) error {
+	status := fiber.StatusBadGateway
+	code := "update_request_failed"
+	var networkError net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+		status = fiber.StatusGatewayTimeout
+		code = "update_timeout"
+		message += ": request timed out while contacting GitHub. Check the server's connection to GitHub and release-assets.githubusercontent.com, then retry."
+	} else {
+		message += ": " + err.Error()
+	}
+	log.Printf("update: stage=%s code=%s error=%v", stage, code, err)
+	return c.Status(status).JSON(fiber.Map{"error": message, "code": code, "stage": stage})
 }
 
 func (h *UpdateHandler) status(release githubRelease) updateStatus {

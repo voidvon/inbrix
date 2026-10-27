@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -166,4 +168,57 @@ func updateTestArchive(t *testing.T, binary []byte) []byte {
 		t.Fatal(err)
 	}
 	return out.Bytes()
+}
+
+func TestUpdateInstallTimeoutReturnsStageWithoutReplacingExecutable(t *testing.T) {
+	for _, stage := range []string{"check_release", "download_checksum", "download_archive"} {
+		t.Run(stage, func(t *testing.T) {
+			assetName := releaseAssetName("1.17.0")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				blocked := (stage == "check_release" && r.URL.Path == "/latest") ||
+					(stage == "download_checksum" && r.URL.Path == "/sums") ||
+					(stage == "download_archive" && r.URL.Path == "/asset")
+				if blocked {
+					<-r.Context().Done()
+					return
+				}
+				switch r.URL.Path {
+				case "/latest":
+					_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.17.0", Assets: []githubAsset{
+						{Name: assetName, BrowserDownloadURL: "http://" + r.Host + "/asset"},
+						{Name: "SHA256SUMS", BrowserDownloadURL: "http://" + r.Host + "/sums"},
+					}})
+				case "/sums":
+					_, _ = fmt.Fprintf(w, "%x  %s\n", sha256.Sum256([]byte("archive")), assetName)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			handler := NewUpdateHandler("1.16.0", func() error { t.Error("restart called after timeout"); return nil })
+			handler.httpClient = server.Client()
+			handler.latestURL = server.URL + "/latest"
+			handler.fallbackURL = server.URL + "/fallback"
+			handler.operationTimeout = 100 * time.Millisecond
+			handler.executable = func() (string, error) { t.Error("executable accessed after timeout"); return "", nil }
+			app := fiber.New()
+			app.Post("/install", handler.HandleInstall)
+			response, err := app.Test(httptest.NewRequest(http.MethodPost, "/install", nil), 2000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			var body struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+				Stage string `json:"stage"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != http.StatusGatewayTimeout || body.Code != "update_timeout" || body.Stage != stage || !strings.Contains(body.Error, "timed out") {
+				t.Fatalf("unexpected timeout response: status=%d body=%+v", response.StatusCode, body)
+			}
+		})
+	}
 }
