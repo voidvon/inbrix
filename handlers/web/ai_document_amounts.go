@@ -47,11 +47,7 @@ func documentTax(rate, mode string) (*big.Rat, string, error) {
 	if n.Cmp(big.NewRat(1, 1)) > 0 {
 		return nil, "", fmt.Errorf("税率必须在 0 到 1 之间，或使用百分号")
 	}
-	// Legacy explicit tax_rate means tax added to the unit price. No rate is
-	// ever inferred when absent; tax_mode can explicitly request included tax.
-	if mode == "" {
-		mode = "excluded"
-	}
+
 	return n, mode, nil
 }
 
@@ -70,6 +66,8 @@ func calculateDocumentAmounts(card *AIDocumentCard, prices map[int]mailstore.Pro
 	if card.Values == nil {
 		card.Values = map[string]string{}
 	}
+	ensureDocumentLineIDs(card.Items)
+	card.PricingValidation = &DocumentPricingValidation{Status: "complete", Issues: []DocumentPricingIssue{}}
 	previousTotal := card.Values["total_amount"]
 	if previousTotal == "" {
 		previousTotal = card.Values["contract_amount"]
@@ -106,14 +104,33 @@ func calculateDocumentAmounts(card *AIDocumentCard, prices map[int]mailstore.Pro
 	if card.Values["freight_tax_mode"] == "" {
 		freightMode = ""
 	}
+	if freight.Sign() > 0 && (freightRate == nil || freightMode == "") {
+		card.PricingValidation.add("missing_freight_tax", "freight_tax_rate", 0, "运费已单列，税率或含税口径待确认")
+	}
 	subtotal := new(big.Rat)
 	amounts := make([]*big.Rat, len(card.Items))
 	complete := len(card.Items) > 0
+	if !complete {
+		card.PricingValidation.add("missing_items", "items", 0, "尚未填写产品明细")
+	}
 	for i := range card.Items {
 		item := &card.Items[i]
 		item.Amount = ""
+		if price, catalog := prices[i]; catalog {
+			if price.TaxRate == "" || price.TaxMode == "" {
+				card.PricingValidation.add("missing_catalog_tax", "tax_rate", i+1, fmt.Sprintf("第 %d 项产品库价格缺少税率或含税口径", i+1))
+			}
+		} else if rate == nil || mode == "" {
+			card.PricingValidation.add("missing_tax", "tax_rate", i+1, fmt.Sprintf("第 %d 项税率待确认（需确认含税或未税口径）", i+1))
+		}
 		if strings.TrimSpace(item.Qty) == "" || strings.TrimSpace(item.Price) == "" {
 			complete = false
+			if strings.TrimSpace(item.Qty) == "" {
+				card.PricingValidation.add("missing_quantity", "qty", i+1, fmt.Sprintf("第 %d 项缺少数量", i+1))
+			}
+			if strings.TrimSpace(item.Price) == "" {
+				card.PricingValidation.add("missing_price", "price", i+1, fmt.Sprintf("第 %d 项缺少单价", i+1))
+			}
 			continue
 		}
 		q, err := documentNumber(item.Qty)
@@ -152,7 +169,7 @@ func calculateDocumentAmounts(card *AIDocumentCard, prices map[int]mailstore.Pro
 					return err
 				}
 			}
-			if r == nil {
+			if r == nil || m == "" {
 				known = false
 				continue
 			}

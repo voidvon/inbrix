@@ -1,1 +1,0 @@
-# Keep frontend/dist present before the first Vite build so go:embed compiles.

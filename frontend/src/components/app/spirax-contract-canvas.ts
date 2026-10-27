@@ -5,7 +5,7 @@ import clock3Icon from "../../assets/lucide/clock-3.svg?raw";
 import tagIcon from "../../assets/lucide/tag.svg?raw";
 import spiraxQuotationReference from "../../assets/spirax-sarco-quotation-reference.html?raw";
 
-import { collectProductImageValues } from "./product-document-images";
+
 
 const BLUE = "#005691";
 
@@ -117,6 +117,7 @@ function inlineLucideIcon(svg: string, size = 18): IElement[] {
 }
 
 export type ContractItem = {
+  lineId?: string;
   productId?: string;
   productVersion?: number;
   variantId?: string;
@@ -132,74 +133,6 @@ export type ContractItem = {
 export type SpiraxContractValues = Record<string, string> & {
   items?: ContractItem[];
 };
-
-export function extractLegacySpiraxContractValues(main: Array<ReturnType<import("@hufe921/canvas-editor").default["command"]["getValue"]>["data"]["main"][number]>): SpiraxContractValues {
-  const values: SpiraxContractValues = {};
-  const visit = (elements: typeof main) => {
-    for (const el of elements) {
-      if (el.type === ElementType.CONTROL && el.control?.conceptId) {
-        let textVal = "";
-        if (el.control.value && Array.isArray(el.control.value)) {
-          textVal = el.control.value.map((v) => v.value || "").join("").trim();
-        }
-        if (textVal) {
-          values[el.control.conceptId] = textVal;
-        }
-      }
-      if (el.type === ElementType.TABLE && el.trList) {
-        for (const tr of el.trList) {
-          if (!tr.tdList) continue;
-          for (const td of tr.tdList) {
-            if (td.value) visit(td.value);
-          }
-        }
-      }
-      if (el.valueList) {
-        visit(el.valueList);
-      }
-    }
-  };
-  visit(main);
-  collectProductImageValues(main, values);
-
-  const extractedItems: ContractItem[] = [];
-  let index = 0;
-  while (`item_desc_${index}` in values || `item_description_${index}` in values || `item_model_${index}` in values) {
-    extractedItems.push({
-      model: values[`item_model_${index}`] || "",
-      picture: values[`item_picture_${index}`],
-      productId: values[`item_product_id_${index}`],
-      productVersion: Number(values[`item_product_version_${index}`]) || undefined,
- variantId: values[`item_variant_id_${index}`],
- priceId: values[`item_price_id_${index}`],
-      description: values[`item_desc_${index}`] || values[`item_description_${index}`] || "",
-      qty: values[`item_qty_${index}`] || "",
-      price: values[`item_price_${index}`] || "",
-      amount: values[`item_amount_${index}`] || "",
-    });
-    index++;
-  }
-  if (extractedItems.length > 0) {
-    values.items = extractedItems;
-  } else if (values.item_description || values.item_model) {
-    values.items = [
-      {
-        model: values.item_model || "",
-        picture: values.item_picture,
-        productId: values.item_product_id,
-        productVersion: Number(values.item_product_version) || undefined,
- variantId: values.item_variant_id,
- priceId: values.item_price_id,
-        description: values.item_description || "",
-        qty: values.item_qty || "",
-        price: values.item_price || "",
-        amount: values.item_amount || "",
-      },
-    ];
-  }
-
-  return values;
-}
 
 function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValues) {
   const widths = [40, 358, 70, 125, 125];
@@ -228,11 +161,10 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
       ];
 
   const itemRows = activeItems.map((item, index) => {
-    const isSingle = activeItems.length === 1;
-    const descId = isSingle ? "item_description" : `item_desc_${index}`;
-    const qtyId = isSingle ? "item_qty" : `item_qty_${index}`;
-    const priceId = isSingle ? "item_price" : `item_price_${index}`;
-    const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
+    const descId = `item_desc_${index}`;
+    const qtyId = `item_qty_${index}`;
+    const priceId = `item_price_${index}`;
+    const amountId = `item_amount_${index}`;
 
     const descValue = item.description || (item.model ? `Equipment\nModel: ${item.model}` : "");
     const descriptionControl = controlText(descId, descValue, "Description & Specification", { size: 10.5, rowMargin: 0.28 });
@@ -252,7 +184,7 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
 
   const subtotalVal = values?.subtotal || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
   const freightVal = values?.inland_freight || "";
-  const totalVal = values?.total_amount ?? (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
+  const totalVal = values?.total_amount ?? "";
   const sayTotalVal = values?.say_total || "";
 
   return table(widths, [

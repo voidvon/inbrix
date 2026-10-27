@@ -92,7 +92,7 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 					item := card.Items[index]
 					e["extension"] = map[string]any{"productId": item.ProductID, "productVersion": item.ProductVersion, "variantId": item.VariantID, "priceId": item.PriceID, "model": item.Model}
 				}
-				value, exists := values[id]
+				value, exists := values[documentFieldKey(id)]
 				seller := strings.HasPrefix(id, "seller_") || strings.HasPrefix(id, "bank_") || strings.HasPrefix(id, "supplier_") || strings.HasPrefix(id, "beneficiary_") || id == "swift_code" || id == "iban"
 				if exists || !seller {
 					run := map[string]any{"value": value}
@@ -179,7 +179,7 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 			rewrite(els, -1)
 		}
 	}
-	if err := setCanvasBusiness(payload, card.Values); err != nil {
+	if err := setCanvasBusiness(payload, card.Values, card.Items); err != nil {
 		return "", err
 	}
 	raw, err := json.Marshal(payload)
@@ -187,7 +187,7 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 		return "", err
 	}
 	out := canvasDocumentPrefix + string(raw)
-	_, rendered, ok := canvasDocumentContent(out)
+	_, rendered, ok := canvasProjectionContent(out)
 	if len(card.Items) > 0 {
 		if !ok || len(rendered) != len(card.Items) {
 			return "", fmt.Errorf("默认模板无法完整展示产品明细，请使用包含产品表格的模板")

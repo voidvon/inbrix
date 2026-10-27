@@ -65,6 +65,7 @@ func main() {
 	documents := web.NewDocumentsHandler(nil, db)
 	app.Get("/api/documents", documents.HandleListDocuments)
 	app.Post("/api/documents", documents.HandleSaveDocument)
+	app.Post("/api/documents/validate", documents.HandleValidateDocument)
 	app.Get("/api/documents/:id", documents.HandleGetDocument)
 	app.Get("/api/document-templates", documents.HandleListTemplates)
 	app.Get("/api/document-stamps", documents.HandleListStamps)

@@ -10,6 +10,13 @@ import (
 func canvasBody(t *testing.T, template string, main []map[string]any) string {
 	t.Helper()
 	payload := map[string]any{"template": template, "data": map[string]any{"main": main}}
+	values := map[string]string{}
+	raw, _ := json.Marshal(main)
+	var elements []canvasElement
+	_ = json.Unmarshal(raw, &elements)
+	collectCanvasControls(elements, values)
+	collectCanvasProductImages(elements, values)
+	seedCanonicalTestSnapshot(payload, values, canvasDocumentItems(values))
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +112,7 @@ func TestCanvasDocumentContentReadsFieldsAndItems(t *testing.T) {
 	if !ok {
 		t.Fatal("canvas document not recognised")
 	}
-	if values["buyer_company"] != "上海宝钢" || values["quote_number"] != "SQ-202610" {
+	if values["customer_company"] != "上海宝钢" || values["quote_number"] != "SQ-202610" {
 		t.Fatalf("fields = %+v", values)
 	}
 	if value, present := values["seller_bank"]; !present || value != "" {

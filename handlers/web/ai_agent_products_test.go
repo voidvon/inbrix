@@ -185,7 +185,7 @@ func TestCanvasProductImageSurvivesStructuredRead(t *testing.T) {
 		{Value: []canvasElement{{Control: &canvasControl{ConceptID: "item_qty_0", Value: []canvasElement{{Value: "2"}}}}}},
 	}}}}}
 	data, _ := json.Marshal(payload)
-	_, items, ok := canvasDocumentContent(canvasDocumentPrefix + string(data))
+	_, items, ok := canvasDocumentContent(canonicalTestCanvas(canvasDocumentPrefix + string(data)))
 	if !ok || len(items) != 1 || items[0].Picture != "/api/product-images/pimg_snapshot" || items[0].Qty != "2" {
 		t.Fatalf("snapshot image missing: %+v", items)
 	}

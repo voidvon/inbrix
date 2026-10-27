@@ -16,7 +16,11 @@ func withDocumentBusiness(t *testing.T, body string, values map[string]string) s
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(body, canvasDocumentPrefix)), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := setCanvasBusiness(payload, values); err != nil {
+	old, _, _ := canvasDocumentContent(body)
+	for k, v := range values {
+		old[k] = v
+	}
+	if err := setCanvasBusiness(payload, old, func() []AIDocumentItem { _, items, _ := canvasDocumentContent(body); return items }()); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := json.Marshal(payload)
@@ -53,7 +57,7 @@ func TestDocumentCommercialRoundtrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i := 0; i < 2; i++ {
-				result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "items": []any{map[string]any{"model": "MANUAL", "description": "Manual valve", "qty": "2", "price": "100.00"}}}, mailstore.AIModelRecord{}, "")
+				result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "items": []any{map[string]any{"model": "MANUAL", "description": "Manual valve", "qty": "2", "price": "100.00"}}}, mailstore.AIModelRecord{}, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -84,17 +88,15 @@ func TestDocumentCommercialRoundtrip(t *testing.T) {
 func TestBusinessMetadataControlPrecedenceAndVersions(t *testing.T) {
 	body := withDocumentBusiness(t, businessCanvas(map[string]string{"tax_rate": "", "discount": ""}), map[string]string{"tax_rate": "13%", "tax_mode": "included", "discount": "10.00", "payment_terms": "Net60"})
 	values, _, ok := canvasDocumentContent(body)
-	if !ok || values["tax_rate"] != "" || values["discount"] != "" || values["tax_mode"] != "included" {
-		t.Fatalf("empty controls did not win: %+v", values)
+	if !ok || values["tax_rate"] != "13%" || values["discount"] != "10.00" || values["tax_mode"] != "included" {
+		t.Fatalf("projection overrode canonical data: %+v", values)
 	}
-	if _, exists := values["payment_terms"]; exists {
-		t.Fatal("arbitrary invisible fields allowed")
+	if values["payment_terms"] != "Net60" {
+		t.Fatal("canonical inputs lost")
 	}
 	for _, malformed := range []string{`null`, `{"version":2,"values":{}}`, `{"version":1}`, `{"version":1,"values":{"tax_rate":13}}`} {
 		bad := canvasDocumentPrefix + `{"business":` + malformed + `,"data":{"main":[{"value":"x"}]}}`
-		if malformed == "null" {
-			continue
-		} // null is treated as absent for legacy compatibility.
+
 		if _, _, ok := canvasDocumentContent(bad); ok {
 			t.Fatalf("unsupported metadata accepted: %s", bad)
 		}
@@ -119,15 +121,16 @@ func TestDocumentUpdateRejectsMissingScalarAndWritesNestedControls(t *testing.T)
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()
 	body := canvasDocumentPrefix + `{"data":{"main":[{"value":"TEXT"},{"valueList":[{"type":"control","control":{"conceptId":"nested","value":[]}}]}],"header":[{"type":"control","control":{"conceptId":"header","value":[]}}],"footer":[{"type":"control","control":{"conceptId":"footer","value":[]}}]}}`
+	body = canonicalTestCanvas(body)
 	record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Nested", HTML: body}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"header": "Changed", "payment_terms": "Net60"}}, mailstore.AIModelRecord{}, "")
+	result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"header": "Changed", "payment_terms": "Net60"}}, mailstore.AIModelRecord{}, "")
 	if err == nil || result != nil || !strings.Contains(err.Error(), "payment_terms") {
 		t.Fatal("missing field silently accepted", result, err)
 	}
-	result, _, err = h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"nested": "N", "header": "H", "footer": "F"}}, mailstore.AIModelRecord{}, "")
+	result, _, err = executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"nested": "N", "header": "H", "footer": "F"}}, mailstore.AIModelRecord{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +167,7 @@ func TestDocumentAmountWordsInvalidated(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args["id"] = record.ID
-			result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, tt.args, mailstore.AIModelRecord{}, "")
+			result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, tt.args, mailstore.AIModelRecord{}, "")
 			if err != nil {
 				t.Fatal(err)
 			}

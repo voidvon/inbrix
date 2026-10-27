@@ -106,8 +106,25 @@ func (h *DocumentsHandler) HandleSaveDocument(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
+	if len(input.HTML) > 20*1024*1024 {
+		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "Document is too large")
+	}
 	if strings.TrimSpace(input.HTML) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Document content cannot be empty")
+	}
+	var previous *mailstore.DocumentRecord
+	if input.ID != "" {
+		previous, _ = h.mailDB.GetDocument(c.UserContext(), owner, input.ID)
+	}
+	normalized, validation, err := normalizeCommercialDocument(c.UserContext(), h.mailDB, owner, input.HTML, input.Type, previous)
+	if err != nil {
+		return fiber.NewError(422, err.Error())
+	}
+	input.HTML = normalized
+	values, _, _ := canvasDocumentContent(normalized)
+	input.Company = values["customer_company"]
+	if input.Company == "" {
+		input.Company = values["buyer_company"]
 	}
 	record := mailstore.DocumentRecord{
 		AIOrigin: input.AIOrigin,
@@ -125,7 +142,7 @@ func (h *DocumentsHandler) HandleSaveDocument(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to save document: "+err.Error())
 	}
-	return c.JSON(fiber.Map{"ok": true, "document": saved})
+	return c.JSON(fiber.Map{"ok": true, "document": saved, "validation": validation})
 }
 
 // HandleDeleteDocument deletes a single document by ID.
@@ -319,4 +336,34 @@ func (h *DocumentsHandler) HandleDeleteStamp(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete stamp: "+err.Error())
 	}
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// HandleValidateDocument checks the exact editor snapshot without saving it.
+func (h *DocumentsHandler) HandleValidateDocument(c *fiber.Ctx) error {
+	owner, err := h.ready(c)
+	if err != nil {
+		return err
+	}
+	var input saveDocumentInput
+	if c.BodyParser(&input) != nil {
+		return fiber.ErrBadRequest
+	}
+	if len(input.HTML) > 20*1024*1024 {
+		return fiber.NewError(413, "文档过大")
+	}
+	var previous *mailstore.DocumentRecord
+	if input.ID != "" {
+		previous, err = h.mailDB.GetDocument(c.UserContext(), owner, input.ID)
+		if err != nil || previous == nil {
+			return fiber.ErrNotFound
+		}
+		if input.Revision != previous.Revision {
+			return fiber.NewError(409, "文档已修改，请重新打开")
+		}
+	}
+	html, validation, err := normalizeCommercialDocument(c.UserContext(), h.mailDB, owner, input.HTML, input.Type, previous)
+	if err != nil {
+		return fiber.NewError(422, err.Error())
+	}
+	return c.JSON(fiber.Map{"html": html, "validation": validation})
 }

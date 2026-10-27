@@ -148,14 +148,14 @@ func (h *AISettingsHandler) applyQuotationSnapshot(ctx context.Context, owner st
 	if err := h.checkBusinessItems(ctx, owner, items); err != nil {
 		return err
 	}
-	if card.Values == nil {
-		card.Values = map[string]string{}
+	contractFields := map[string]string{}
+	for _, key := range []string{"contract_number", "contract_date", "contract_title"} {
+		if value, exists := card.Values[key]; exists {
+			contractFields[key] = value
+		}
 	}
-	// Unknown commercial inputs in a historical source must stay unknown; do
-	// not retain guesses supplied while generating this contract.
-	for key := range documentBusinessKeys {
-		delete(card.Values, key)
-	}
+	card.Values = contractFields
+
 	// Commercial source fields override generated guesses; contract-specific terms remain editable.
 	for k, v := range values {
 		if !strings.HasPrefix(k, "item_") && k != "contract_number" && k != "contract_date" && k != "quote_number" && k != "issue_date" {

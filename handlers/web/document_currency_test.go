@@ -52,7 +52,10 @@ func TestCatalogCurrencyValidatedAcrossDocumentEntrypoints(t *testing.T) {
 	if _, err := h.proposeCanvasDocumentUpdate(ctx, user.ID, body, nil, []AIDocumentItem{{Model: "BV", Description: "Valve", Qty: "2", Price: "1"}}); err == nil {
 		t.Fatal("catalog refs downgraded to manual")
 	}
-	action, err := h.proposeCanvasDocumentUpdate(ctx, user.ID, body, nil, []AIDocumentItem{{Model: "BV", Description: "Valve", Qty: "2", Price: "100"}})
+	_, target, _ := canvasDocumentContent(body)
+	target[0].Qty = "2"
+	target[0].Description = "Valve"
+	action, err := h.proposeCanvasDocumentUpdate(ctx, user.ID, body, nil, target)
 	if err != nil || action.Items[0].PriceID != price.ID || action.Values["total_amount"] != "200.00" {
 		t.Fatal("identity not retained", action, err)
 	}

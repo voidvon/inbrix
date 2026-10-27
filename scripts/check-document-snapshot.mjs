@@ -1,0 +1,105 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+// Uses only the temporary database in product-library-harness.go.
+const base = process.env.DOCUMENT_TEST_URL || 'http://127.0.0.1:3219';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+page.setDefaultTimeout(20000);
+const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await page.goto(`${base}/documents`);
+  const saved = await page.evaluate(async () => {
+    const { createSpiraxQuotationCanvasDocument } = await import('/src/components/app/spirax-quotation-canvas.ts');
+    const { createDocumentBusiness, projectDocumentBusiness } = await import('/src/lib/document-business.ts');
+    const { saveDocument } = await import('/src/lib/api.ts');
+    const values = { customer_company: 'Snapshot Buyer', seller_company: 'Snapshot Seller', currency: 'CNY', payment_terms: 'Net30', lead_time: '2 weeks', validity: '30 days', quote_number: 'SNAPSHOT-Q-1', issue_date: '2026-10-27', tax_rate: '13%', tax_mode: 'excluded' };
+    const business = createDocumentBusiness(values, [
+      { model: 'A', description: 'Valve A', qty: '1', price: '100', amount: '' },
+      { model: 'B', description: 'Valve B', qty: '2', price: '50', amount: '' },
+    ]);
+    const data = { main: createSpiraxQuotationCanvasDocument('2026-10-27', 'SNAPSHOT-Q-1', values, business.items) };
+    projectDocumentBusiness(data, business);
+    const html = '__INBRIX_CANVAS_DOCUMENT__:' + JSON.stringify({ template: 'spirax-quotation', data, business });
+    return (await saveDocument({ type: 'quotation', name: 'Snapshot regression', html })).document;
+  });
+  await page.goto(`${base}/documents/${saved.id}`);
+  const dialog = page.getByTestId('document-editor-dialog');
+  await dialog.locator('canvas').first().waitFor();
+  // Read the real imperative editor handle through React's test-only fiber
+  // traversal, without exposing debug state in production components.
+  await page.waitForFunction(() => {
+    const host = document.querySelector('.canvas-document-editor');
+    if (!host) return false;
+    let fiber = host[Object.keys(host).find(key => key.startsWith('__reactFiber$'))];
+    for (; fiber; fiber = fiber.return) {
+      if (fiber.ref?.current?.getDocument) { window.snapshotEditor = fiber.ref.current; return true; }
+    }
+    return false;
+  });
+  const initial = await page.evaluate(() => JSON.parse(window.snapshotEditor.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]));
+  assert.equal(initial.business.version, 2);
+  assert.equal(initial.business.calculated.total_amount, '226.00');
+  assert.notEqual(initial.business.items[0].lineId, initial.business.items[1].lineId);
+  await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '3' }]));
+  await page.waitForFunction(() => {
+    const doc = JSON.parse(window.snapshotEditor.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]);
+    return doc.business.items[0].qty === '3' && !doc.business.calculated.total_amount;
+  });
+  const changed = await page.evaluate(() => ({ data: window.snapshotEditor.getDocumentData(), controls: window.snapshotEditor.getControls() }));
+  assert.equal(changed.data.items[0].lineId, initial.business.items[0].lineId);
+  assert.equal(changed.data.items[0].price, '100');
+  assert.equal(changed.data.items[1].qty, '2');
+  assert.equal(changed.controls.find(control => control.conceptId === 'total_amount')?.value || '', '');
+  const reviewed = page.waitForResponse(response => response.url().endsWith('/api/documents/validate') && response.status() === 200);
+  await dialog.getByRole('button', { name: '检查完整性', exact: true }).click();
+  const checked = await (await reviewed).json();
+  assert.equal(checked.validation.status, 'ready');
+  assert.equal(JSON.parse(checked.html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]).business.calculated.total_amount, '452.00');
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '452.00');
+  const saving = page.waitForResponse(response => response.url().endsWith('/api/documents') && response.request().method() === 'POST');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  const result = await (await saving).json();
+  assert.equal(result.document.revision, saved.revision + 1);
+  assert.equal(result.validation.status, 'ready');
+  await page.waitForTimeout(200);
+  const readyDownload = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: '导出', exact: true }).click();
+  await page.getByRole('menuitem', { name: '下载 PDF', exact: true }).click();
+  const pdf = await readyDownload;
+  assert.equal(await pdf.failure(), null);
+  assert.match(pdf.suggestedFilename(), /\.pdf$/);
+  await page.waitForTimeout(200);
+  await page.evaluate(() => {
+    const doc = JSON.parse(window.snapshotEditor.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]);
+    doc.business.values.tax_mode = '';
+    window.snapshotEditor.setHTML('__INBRIX_CANVAS_DOCUMENT__:' + JSON.stringify(doc));
+  });
+  const incompleteResponse = page.waitForResponse(response => response.url().endsWith('/api/documents/validate') && response.status() === 200);
+  await dialog.getByRole('button', { name: '检查完整性', exact: true }).click();
+  const incomplete = await (await incompleteResponse).json();
+  assert.equal(incomplete.validation.status, 'draft');
+  assert(incomplete.validation.issues.some(issue => issue.code === 'missing_tax'));
+  await dialog.getByText('草稿，需补充以下内容', { exact: false }).waitFor();
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await dialog.getByRole('button', { name: '导出', exact: true }).click();
+  const blocked = page.waitForResponse(response => response.url().endsWith('/api/documents/validate'));
+  await page.getByRole('menuitem', { name: '下载 PDF', exact: true }).click();
+  await blocked;
+  await page.waitForTimeout(250);
+  assert.equal(downloads, 0, 'Incomplete commercial documents must not export');
+  const saveDraft = page.waitForResponse(response => response.url().endsWith('/api/documents') && response.request().method() === 'POST');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  assert.equal((await (await saveDraft).json()).validation.status, 'draft');
+  await page.screenshot({ path: '/tmp/inbrix-document-snapshot-desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.getByRole('tab', { name: '预览文档', exact: true }).click();
+  await page.getByTestId('document-editor-dialog').locator('canvas').first().waitFor();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: '/tmp/inbrix-document-snapshot-mobile.png' });
+  assert.deepEqual(errors, []);
+  console.log('Canonical snapshot, stable IDs, manual edits, server totals, delivery blocking, and draft saving passed.');
+} finally { await browser.close(); }

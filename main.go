@@ -550,6 +550,7 @@ func main() {
 		// Document management routes
 		apiRoutes.Get("/documents", webDocumentsHandler.HandleListDocuments)
 		apiRoutes.Post("/documents", webDocumentsHandler.HandleSaveDocument)
+		apiRoutes.Post("/documents/validate", webDocumentsHandler.HandleValidateDocument)
 		apiRoutes.Post("/documents/batch-delete", webDocumentsHandler.HandleBatchDeleteDocuments)
 		apiRoutes.Get("/documents/:id", webDocumentsHandler.HandleGetDocument)
 		apiRoutes.Delete("/documents/:id", webDocumentsHandler.HandleDeleteDocument)

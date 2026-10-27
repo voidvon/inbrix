@@ -101,7 +101,7 @@ export function toAIDocumentSession(session: AIChatSession, copy: Copy): AIDocum
 
 export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedData): StoredDocument {
   let html = generated.html;
-  if (!html || html.includes("data-spirax-") || html.trim().startsWith("<div")) {
+  if (!html || html.includes("data-spirax-")) {
     if (generated.type === "quotation" || generated.type === "contract") {
       const isQuotation = generated.type === "quotation";
       const date = new Date().toLocaleDateString("zh-CN");
@@ -115,7 +115,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : "spirax-contract",
           data: { main },
-          business: createDocumentBusiness(generated.values),
+          business: createDocumentBusiness(generated.values, generated.items),
         };
         html = `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify(canvasDoc)}`;
       } catch (e) {

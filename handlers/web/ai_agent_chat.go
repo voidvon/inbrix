@@ -30,6 +30,8 @@ type AIAgentChatMessage struct {
 type AIToolCall = agentruntime.ToolCall
 
 type AIDocumentCard struct {
+	Validation        *DocumentValidation        `json:"validation,omitempty"`
+	PricingValidation *DocumentPricingValidation `json:"pricingValidation,omitempty"`
 	// Only server-loaded records can establish a source snapshot. JSON supplied
 	// by the model cannot set this field or bypass the initial revision check.
 	sourceQuotation         *mailstore.DocumentRecord
@@ -131,16 +133,18 @@ type AIAgentChatResponse struct {
 // contract. Values and Items are the complete field set to write, so applying it
 // is deterministic and reviewable.
 type AIDocumentAction struct {
-	HTML         string            `json:"html,omitempty"`
-	BaseRevision int64             `json:"baseRevision"`
-	Kind         string            `json:"kind"` // "update" | "delete"
-	DocumentID   string            `json:"documentId"`
-	Type         string            `json:"type,omitempty"`
-	Name         string            `json:"name,omitempty"`
-	Company      string            `json:"company,omitempty"`
-	Values       map[string]string `json:"values,omitempty"`
-	Items        []AIDocumentItem  `json:"items,omitempty"`
-	Summary      string            `json:"summary,omitempty"`
+	Validation        *DocumentValidation        `json:"validation,omitempty"`
+	PricingValidation *DocumentPricingValidation `json:"pricingValidation,omitempty"`
+	HTML              string                     `json:"html,omitempty"`
+	BaseRevision      int64                      `json:"baseRevision"`
+	Kind              string                     `json:"kind"` // "update" | "delete"
+	DocumentID        string                     `json:"documentId"`
+	Type              string                     `json:"type,omitempty"`
+	Name              string                     `json:"name,omitempty"`
+	Company           string                     `json:"company,omitempty"`
+	Values            map[string]string          `json:"values,omitempty"`
+	Items             []AIDocumentItem           `json:"items,omitempty"`
+	Summary           string                     `json:"summary,omitempty"`
 }
 
 var (
@@ -890,6 +894,9 @@ func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID st
 		result, summary, err := executeGenerateDocument(call.Args)
 		if card, ok := result.(*AIDocumentCard); ok && err == nil {
 			err = h.finishBusinessDocument(ctx, owner, card)
+			if err == nil {
+				summary = generatedDocumentSummary(card)
+			}
 		}
 		return result, summary, err
 
@@ -1059,48 +1066,59 @@ func (h *AISettingsHandler) executeUpdateDocument(ctx context.Context, owner str
 		return "缺少文档 id。请先调用 list_documents 获取。", "缺少文档 id", nil
 	}
 	instruction := strings.TrimSpace(parseStringArg(args, "instruction", "change", "request", "content"))
-	explicitValues := parseStringMapArg(args, "values", "fields", "updates", "changes")
-	explicitItems := parseItemsArg(args, "items", "line_items", "lineItems")
-	if instruction == "" && len(explicitValues) == 0 && len(explicitItems) == 0 {
-		return "缺少修改要求：请给出 instruction，或直接给出要改的 values / items。", "缺少修改要求", nil
-	}
 	record, err := h.mailDB.GetDocument(ctx, owner, id)
 	if err != nil || record == nil {
-		return "未找到该文档，可能已被删除。", "未找到文档", nil
+		return nil, "", fmt.Errorf("未找到文档")
 	}
-	values, _, ok := canvasDocumentContent(record.HTML)
-	if !ok {
-		return "该文档不是结构化模板文档，无法安全地按字段修改。请在「报价单与合同」页面用编辑器直接修改。", "文档不支持结构化修改", nil
+	if _, _, ok := canvasDocumentContent(record.HTML); !ok {
+		return nil, "", fmt.Errorf("需要 version=2 商业快照")
 	}
-	// The agent usually knows the exact fields (it read the document first), so an
-	// explicit update is applied directly. Only when it sends a bare instruction
-	// does the server ask a model to resolve it into fields.
-	updates, updatedItems := explicitValues, explicitItems
-	if len(updates) == 0 && len(updatedItems) == 0 {
-		// Resolving a bare instruction needs a model; explicit fields do not.
-		if model.ID == "" || apiKey == "" {
-			return "请直接给出要修改的字段（values），当前没有可用的 AI 模型来解析自然语言要求。", "缺少 AI 模型", nil
+	var request struct {
+		BaseRevision int64             `json:"baseRevision"`
+		Commands     []DocumentCommand `json:"commands"`
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return nil, "", err
+	}
+	if err = json.Unmarshal(encoded, &request); err != nil {
+		return nil, "", err
+	}
+	if request.BaseRevision != record.Revision {
+		return nil, "", fmt.Errorf("需要最新 baseRevision，请重新读取文档")
+	}
+	for _, key := range []string{"items", "values", "fields", "updates", "changes", "itemUpdates"} {
+		if _, exists := args[key]; exists {
+			return nil, "", fmt.Errorf("仅支持 commands 修改文档")
 		}
-		variables := make([]aiVariableItem, 0, len(values))
+	}
+	if len(request.Commands) == 0 {
+		if instruction == "" || model.ID == "" || apiKey == "" {
+			return nil, "", fmt.Errorf("请提供 commands 或有效的修改指令")
+		}
+		values, _, ok := canvasDocumentContent(record.HTML)
+		if !ok {
+			return nil, "", fmt.Errorf("需要 version=2 商业快照")
+		}
+		variables := []aiVariableItem{}
 		for _, key := range documentValueKeys(values) {
-			variables = append(variables, aiVariableItem{ConceptID: key, Label: key, CurrentValue: values[key]})
+			if !documentCalculatedKeys[key] {
+				variables = append(variables, aiVariableItem{ConceptID: key, Label: key, CurrentValue: values[key]})
+			}
 		}
-		instructions, prompt := buildDocumentVariablesPrompt(aiDocumentInput{
-			DocumentType: record.Type,
-			Title:        record.Name,
-			Instruction:  instruction,
-			CurrentHTML:  record.HTML,
-			Variables:    variables,
-		})
-		body, err := h.createAIResponseWithInstructions(ctx, model, apiKey, instructions, prompt, 4096)
+		instructions, prompt := buildDocumentVariablesPrompt(aiDocumentInput{DocumentType: record.Type, Title: record.Name, Instruction: instruction, Canvas: record.HTML, CurrentHTML: record.HTML, Variables: variables})
+		body, e := h.createAIResponseWithInstructions(ctx, model, apiKey, instructions, prompt, 4096)
+		if e != nil {
+			return nil, "", e
+		}
+		request.Commands, err = decodeDocumentCommands(body)
 		if err != nil {
-			return fmt.Sprintf("解析修改要求出错: %v", err), "解析修改要求出错", nil
+			return nil, "", err
 		}
-		resolved, resolvedItems, err := parseAIDocumentUpdateResponse(body)
-		if err != nil {
-			return fmt.Sprintf("模型返回的修改内容无法解析: %v", err), "修改内容无法解析", nil
-		}
-		updates, updatedItems = resolved, resolvedItems
+	}
+	updates, updatedItems, err := applyDocumentCommands(record.HTML, request.Commands)
+	if err != nil {
+		return nil, "", err
 	}
 	action, err := h.proposeCanvasDocumentUpdate(ctx, owner, record.HTML, updates, updatedItems)
 	if err != nil {
@@ -1111,6 +1129,7 @@ func (h *AISettingsHandler) executeUpdateDocument(ctx context.Context, owner str
 	}
 	action.DocumentID, action.BaseRevision = record.ID, record.Revision
 	action.Type, action.Name, action.Company = record.Type, record.Name, record.Company
+	action.Validation = validateCommercialDocument(record.Type, action.HTML, &AIDocumentCard{Values: action.Values, Items: action.Items, PricingValidation: action.PricingValidation})
 	return action, fmt.Sprintf("已生成《%s》的修改方案；%s", record.Name, action.Summary), nil
 }
 
@@ -1252,8 +1271,8 @@ func executeCalculatePricing(args map[string]any) (any, string, error) {
 		}
 		items = append(items, map[string]string{"name": name, "qty": item.Qty, "unitPrice": item.Price, "amount": item.Amount})
 	}
-	result := map[string]any{"subtotal": card.Subtotal, "tax_rate": card.TaxRate, "tax_amount": card.TaxAmount, "discount": card.Values["discount"], "inland_freight": card.Values["inland_freight"], "freight_tax_rate": card.Values["freight_tax_rate"], "freight_tax_mode": card.Values["freight_tax_mode"], "total": card.Total, "items": items}
-	summary := "精确核算完成，缺少税务条件或明细时最终金额留空"
+	result := map[string]any{"subtotal": card.Subtotal, "tax_rate": card.TaxRate, "tax_amount": card.TaxAmount, "discount": card.Values["discount"], "inland_freight": card.Values["inland_freight"], "freight_tax_rate": card.Values["freight_tax_rate"], "freight_tax_mode": card.Values["freight_tax_mode"], "total": card.Total, "items": items, "pricingValidation": card.PricingValidation}
+	summary := "金额核算待补充：" + card.PricingValidation.summary()
 	if card.Total != "" {
 		summary = fmt.Sprintf("精确核算完成: 总额 %s", card.Total)
 	}
@@ -1309,6 +1328,9 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 	// the buyer's coordinates, the customer's PO, commercial terms, and any other
 	// field the documents read by concept id.
 	mergeDocumentValueArgs(card, args)
+	card.Counterparty = card.Values["customer_company"]
+	card.Contact = card.Values["customer_contact"]
+	card.Currency = card.Values["currency"]
 	for _, key := range []string{"tax_rate", "tax_mode", "discount", "inland_freight", "freight_tax_rate", "freight_tax_mode"} {
 		if text := parseStringArg(args, key); text != "" {
 			card.Values[key] = text
@@ -1318,12 +1340,19 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 		return nil, "", err
 	}
 
+	return card, generatedDocumentSummary(card), nil
+}
+
+func generatedDocumentSummary(card *AIDocumentCard) string {
 	docName := "报价单"
-	if docType == "contract" {
+	if card.Type == "contract" {
 		docName = "合同"
 	}
-	summary := fmt.Sprintf("已生成%s: %s (买方: %s)", docName, title, counterparty)
-	return card, summary, nil
+	summary := fmt.Sprintf("已生成%s: %s (买方: %s)", docName, card.Title, card.Counterparty)
+	if card.PricingValidation != nil && card.PricingValidation.Status == "incomplete" {
+		summary += "；金额待补充：" + card.PricingValidation.summary()
+	}
+	return summary
 }
 
 // mergeDocumentValueArgs fills the rest of a generated document from the agent's
@@ -1345,12 +1374,10 @@ func mergeDocumentValueArgs(card *AIDocumentCard, args map[string]any) {
 	}
 	set := func(key, value string) {
 		if value = strings.TrimSpace(value); value != "" {
-			card.Values[key] = value
+			card.Values[documentFieldKey(key)] = value
 		}
 	}
-	// Both spellings exist in the templates: quotations read customer_*, contracts
-	// read buyer_* (and fall back to customer_*). Write both so the same document
-	// renders correctly whichever type the user keeps it as.
+	// Headline facts are canonicalized before rendering template aliases.
 	if email := parseStringArg(args, "email", "buyer_email", "customer_email", "contact_email"); email != "" {
 		set("buyer_email", email)
 		set("customer_email", email)
@@ -1406,14 +1433,14 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 	isContract := card.Type == "contract"
 	dateStr := time.Now().Format("2006年01月02日")
 
-	if card.Counterparty != "" {
-		card.Values["buyer_company"] = card.Counterparty
+	if _, exists := card.Values["customer_company"]; !exists {
 		card.Values["customer_company"] = card.Counterparty
 	}
-	if card.Contact != "" {
-		card.Values["buyer_contact"] = card.Contact
+	card.Counterparty = card.Values["customer_company"]
+	if _, exists := card.Values["customer_contact"]; !exists {
 		card.Values["customer_contact"] = card.Contact
 	}
+	card.Contact = card.Values["customer_contact"]
 	if card.Total != "" {
 		card.Values["total_amount"] = card.Total
 		card.Values["contract_amount"] = card.Total
@@ -1433,12 +1460,16 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 	}
 
 	if isContract {
-		card.Values["contract_date"] = dateStr
+		if _, exists := card.Values["contract_date"]; !exists {
+			card.Values["contract_date"] = dateStr
+		}
 		if card.Values["contract_number"] == "" {
 			card.Values["contract_number"] = fmt.Sprintf("SC-%s", time.Now().Format("200601021504"))
 		}
 	} else {
-		card.Values["issue_date"] = dateStr
+		if _, exists := card.Values["issue_date"]; !exists {
+			card.Values["issue_date"] = dateStr
+		}
 		if card.Values["quote_number"] == "" {
 			card.Values["quote_number"] = fmt.Sprintf("SQ-%s", time.Now().Format("200601021504"))
 		}

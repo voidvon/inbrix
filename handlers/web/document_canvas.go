@@ -66,7 +66,7 @@ func parseStoredCanvasDocument(body string) (canvasPayload, bool) {
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(body, canvasDocumentPrefix)), &payload); err != nil {
 		return canvasPayload{}, false
 	}
-	if (payload.Business != nil && (payload.Business.Version != 1 || payload.Business.Values == nil)) || len(payload.Data.Main) == 0 {
+	if payload.Business.validate() != nil || len(payload.Data.Main) == 0 {
 		return canvasPayload{}, false
 	}
 	return payload, true
@@ -250,19 +250,13 @@ func canvasDocumentContent(body string) (map[string]string, []AIDocumentItem, bo
 		return nil, nil, false
 	}
 	values := make(map[string]string)
-	if payload.Business != nil {
-		for key, value := range payload.Business.Values {
-			if documentBusinessKeys[key] {
-				values[key] = value
-			}
-		}
+	for k, v := range payload.Business.Values {
+		values[k] = v
 	}
-	// Visible controls, including explicitly empty ones, override saved metadata.
-	for _, elements := range [][]canvasElement{payload.Data.Main, payload.Data.Header, payload.Data.Footer} {
-		collectCanvasControls(elements, values)
-		collectCanvasProductImages(elements, values)
+	for k, v := range payload.Business.Calculated {
+		values[k] = v
 	}
-	return values, canvasDocumentItems(values), true
+	return values, append([]AIDocumentItem{}, payload.Business.Items...), true
 }
 
 func collectCanvasProductImages(elements []canvasElement, values map[string]string) {
@@ -310,4 +304,18 @@ func documentValueKeys(values map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Rendering checks deliberately read only the projection, never the canonical snapshot.
+func canvasProjectionContent(body string) (map[string]string, []AIDocumentItem, bool) {
+	payload, ok := parseStoredCanvasDocument(body)
+	if !ok {
+		return nil, nil, false
+	}
+	values := map[string]string{}
+	for _, elements := range [][]canvasElement{payload.Data.Main, payload.Data.Header, payload.Data.Footer} {
+		collectCanvasControls(elements, values)
+		collectCanvasProductImages(elements, values)
+	}
+	return values, canvasDocumentItems(values), true
 }

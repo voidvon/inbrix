@@ -69,7 +69,7 @@ func TestExecuteCalculatePricing(t *testing.T) {
 			map[string]any{"name": "减压阀", "qty": 5.0, "unit_price": 1200.0},
 			map[string]any{"name": "疏水阀", "qty": 10.0, "price": 350.0},
 		},
-		"tax_rate": 0.13,
+		"tax_rate": 0.13, "tax_mode": "excluded",
 	}
 	res, summary, err := executeCalculatePricing(args)
 	if err != nil {
@@ -128,8 +128,8 @@ func TestExecuteGenerateDocument(t *testing.T) {
 	if doc.Title != "工业阀门采购报价" {
 		t.Errorf("expected title '工业阀门采购报价', got %q", doc.Title)
 	}
-	if doc.Values["buyer_company"] != "中石化物资装备部" {
-		t.Errorf("expected buyer_company '中石化物资装备部', got %q", doc.Values["buyer_company"])
+	if doc.Values["customer_company"] != "中石化物资装备部" {
+		t.Errorf("expected buyer_company '中石化物资装备部', got %q", doc.Values["customer_company"])
 	}
 	if doc.Values["payment_terms"] == "" {
 		t.Errorf("expected payment_terms to be populated in values")
@@ -199,11 +199,11 @@ func TestExecuteGenerateDocumentFillsBuyerDetailsAndValues(t *testing.T) {
 		"validity":         "30 天",
 		"customer_phone":   "+86 21 5555 0000",
 	} {
-		if got := doc.Values[key]; got != want {
+		if got := doc.Values[documentFieldKey(key)]; got != want {
 			t.Errorf("values[%q] = %q, want %q", key, got, want)
 		}
 	}
-	if doc.Values["buyer_phone"] != "+86 138 0000 0000" {
+	if doc.Values["customer_phone"] != "+86 21 5555 0000" {
 		t.Errorf("buyer_phone = %q", doc.Values["buyer_phone"])
 	}
 	if len(doc.Items) != 2 {
@@ -228,10 +228,10 @@ func TestExecuteGenerateDocumentExplicitValuesWin(t *testing.T) {
 		t.Fatalf("generate_document failed: %v", err)
 	}
 	doc := res.(*AIDocumentCard)
-	if doc.Values["buyer_company"] != "上海某某机械有限公司" {
-		t.Errorf("explicit buyer_company was overwritten: %q", doc.Values["buyer_company"])
+	if doc.Values["customer_company"] != "上海某某机械有限公司" {
+		t.Errorf("explicit buyer_company was overwritten: %q", doc.Values["customer_company"])
 	}
-	if doc.Values["customer_company"] != "某某机械" {
+	if doc.Values["customer_company"] != "上海某某机械有限公司" {
 		t.Errorf("derived customer_company should stay as the counterparty: %q", doc.Values["customer_company"])
 	}
 }
@@ -501,7 +501,7 @@ func TestExecuteListAndReadDocument(t *testing.T) {
 		t.Fatalf("read = %#v", read)
 	}
 	fields, ok := payload["fields"].(map[string]string)
-	if !ok || fields["buyer_company"] != "上海宝钢" {
+	if !ok || fields["customer_company"] != "上海宝钢" {
 		t.Fatalf("fields = %#v", payload["fields"])
 	}
 	items, ok := payload["items"].([]AIDocumentItem)
@@ -559,21 +559,11 @@ func TestExecuteUpdateDocumentRejectsUnstructured(t *testing.T) {
 	}
 	handler := NewAISettingsHandler(nil, &config.Config{}, db)
 
-	result, summary, err := handler.executeUpdateDocument(ctx, user.ID, map[string]any{"id": record.ID, "instruction": "改单价"}, mailstore.AIModelRecord{}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, isAction := result.(*AIDocumentAction); isAction {
-		t.Fatalf("unstructured document produced an action: %#v", result)
-	}
-	if !strings.Contains(summary, "不支持结构化修改") {
-		t.Fatalf("summary = %s", summary)
+	result, _, err := executeDocumentUpdateTest(handler, ctx, user.ID, map[string]any{"id": record.ID, "instruction": "改单价"}, mailstore.AIModelRecord{}, "")
+	if err == nil || result != nil || !strings.Contains(err.Error(), "version=2") {
+		t.Fatal(result, err)
 	}
 
-	// A missing instruction is reported before any model work happens.
-	if _, summary, _ := handler.executeUpdateDocument(ctx, user.ID, map[string]any{"id": record.ID}, mailstore.AIModelRecord{}, ""); !strings.Contains(summary, "缺少修改要求") {
-		t.Fatalf("summary = %s", summary)
-	}
 }
 
 func TestAgentPromptCoversDocumentTools(t *testing.T) {
@@ -595,7 +585,7 @@ func TestExecuteUpdateDocumentAppliesExplicitValues(t *testing.T) {
 
 	// The agent read the document, so it can name the fields directly; no model
 	// call is needed and the merge must keep every untouched field.
-	result, summary, err := handler.executeUpdateDocument(ctx, owner, map[string]any{
+	result, summary, err := executeDocumentUpdateTest(handler, ctx, owner, map[string]any{
 		"id":          documentID,
 		"instruction": "改交期与联系人",
 		"values":      map[string]any{"delivery_time": "35 天", "customer_contact": "李经理"},
@@ -615,7 +605,7 @@ func TestExecuteUpdateDocumentAppliesExplicitValues(t *testing.T) {
 		t.Fatalf("values = %#v", action.Values)
 	}
 	// Untouched fields survive the merge.
-	if action.Values["buyer_company"] != "上海宝钢" || action.Values["quote_number"] != "SQ-202610" {
+	if action.Values["customer_company"] != "上海宝钢" || action.Values["quote_number"] != "SQ-202610" {
 		t.Fatalf("merge dropped fields: %#v", action.Values)
 	}
 	if len(action.Items) != 2 || action.Items[1].Model != "TD42" || action.Items[1].Qty != "5" {

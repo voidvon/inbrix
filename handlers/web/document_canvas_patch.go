@@ -66,7 +66,7 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 			}
 			if c, ok := e["control"].(map[string]any); ok {
 				id, _ := c["conceptId"].(string)
-				value, exists := values[id]
+				value, exists := values[documentFieldKey(id)]
 				if field, slot, itemControl := canvasItemConcept(id); itemControl {
 					exists = false
 					if replaceItems {
@@ -88,7 +88,7 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 							extension = map[string]any{}
 						}
 						e["extension"] = extension
-						for k, v := range map[string]any{"model": items[i].Model, "productId": items[i].ProductID, "productVersion": items[i].ProductVersion, "variantId": items[i].VariantID, "priceId": items[i].PriceID} {
+						for k, v := range map[string]any{"lineId": items[i].LineID, "model": items[i].Model, "productId": items[i].ProductID, "productVersion": items[i].ProductVersion, "variantId": items[i].VariantID, "priceId": items[i].PriceID} {
 							extension[k] = v
 						}
 						c["extension"] = extension
@@ -133,7 +133,19 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 				}
 			}
 			if rows, ok := e["trList"].([]any); ok {
-				var next []any
+				tableExtension, _ := e["extension"].(map[string]any)
+				if tableExtension == nil {
+					tableExtension = map[string]any{}
+					e["extension"] = tableExtension
+				}
+				// A table keeps a row prototype even when its last commercial line is
+				// removed. Re-adding a line never requires reconstructing the document.
+				if len(indexes) == 0 && replaceItems && len(items) > 0 && tableExtension["lineTemplate"] != nil {
+					rows = append(rows, clone(tableExtension["lineTemplate"]))
+					positions[0] = 0
+					indexes = []int{0}
+				}
+				next := make([]any, 0)
 				for _, rawRow := range rows {
 					row, _ := rawRow.(map[string]any)
 					cells, _ := row["tdList"].([]any)
@@ -178,6 +190,7 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 						continue
 					}
 					seed := clone(rawRow)
+					tableExtension["lineTemplate"] = clone(seed)
 					if i < len(items) {
 						if err := writeRow(rawRow, i); err != nil {
 							return err
@@ -205,7 +218,7 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 			}
 		}
 	}
-	if err := setCanvasBusiness(payload, values); err != nil {
+	if err := setCanvasBusiness(payload, values, items); err != nil {
 		return "", err
 	}
 	raw, err := json.Marshal(payload)
@@ -214,7 +227,7 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 	}
 	out := canvasDocumentPrefix + string(raw)
 	if replaceItems {
-		_, rendered, ok := canvasDocumentContent(out)
+		_, rendered, ok := canvasProjectionContent(out)
 		if !ok || len(rendered) != len(items) {
 			return "", fmt.Errorf("当前文档无法完整展示修改后的明细，请在编辑器调整表格")
 		}

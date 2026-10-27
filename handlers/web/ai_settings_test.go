@@ -359,47 +359,12 @@ func TestCleanJSONResponse(t *testing.T) {
 	}
 }
 
-func TestParseAIDocumentUpdateResponse(t *testing.T) {
-	input := `{
-		"values": {
-			"customer_company": "IT Vision Networks",
-			"total_amount": "24,326.00"
-		},
-		"items": [
-			{
-				"model": "CLIN001 Part # 67980 PC20",
-				"description": "Universal Connector",
-				"qty": "18",
-				"price": "450.00",
-				"amount": "8,100.00"
-			},
-			{
-				"model": "CLIN002 Part # 1465300 UFT32-4.5",
-				"description": "Steam Trap",
-				"qty": "12",
-				"price": "1000.00",
-				"amount": "12,000.00"
-			}
-		]
-	}`
-	values, items, err := parseAIDocumentUpdateResponse(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestParseDocumentCommandsRejectsLegacyResponse(t *testing.T) {
+	if _, err := decodeDocumentCommands(`{"values":{"total_amount":"123"},"items":[]}`); err == nil {
+		t.Fatal("accepted old protocol")
 	}
-	if values["customer_company"] != "IT Vision Networks" {
-		t.Errorf("customer_company = %q, want %q", values["customer_company"], "IT Vision Networks")
-	}
-	if values["total_amount"] != "24,326.00" {
-		t.Errorf("total_amount = %q, want %q", values["total_amount"], "24,326.00")
-	}
-	if len(items) != 2 {
-		t.Fatalf("items count = %d, want 2", len(items))
-	}
-	if items[0].Model != "CLIN001 Part # 67980 PC20" || items[0].Qty != "18" {
-		t.Errorf("item[0] mismatch: %+v", items[0])
-	}
-	if items[1].Model != "CLIN002 Part # 1465300 UFT32-4.5" || items[1].Amount != "12,000.00" {
-		t.Errorf("item[1] mismatch: %+v", items[1])
+	if commands, err := decodeDocumentCommands(`{"commands":[{"type":"set_fields","fields":{"payment_terms":"Net30"}}]}`); err != nil || len(commands) != 1 {
+		t.Fatal(commands, err)
 	}
 }
 

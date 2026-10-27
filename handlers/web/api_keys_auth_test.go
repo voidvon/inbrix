@@ -319,7 +319,8 @@ func TestAPIKeysDoNotCreateOrOverwriteBrowserSessionsAndKeepCSRF(t *testing.T) {
 
 func TestAPIKeyCanReadAndWriteExistingOwnerScopedData(t *testing.T) {
 	f := newAPIKeyFixture(t)
-	res, body := keyRequest(t, f, "POST", "/api/documents", f.key.Key, `{"type":"quotation","name":"API-created document","html":"<p>Stored through the existing backend API.</p>"}`, nil)
+	payload, _ := json.Marshal(map[string]string{"type": "quotation", "name": "API-created document", "html": commercialAPITestCanvas()})
+	res, body := keyRequest(t, f, "POST", "/api/documents", f.key.Key, string(payload), nil)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("existing write API failed with a key: %d %s", res.StatusCode, body)
 	}

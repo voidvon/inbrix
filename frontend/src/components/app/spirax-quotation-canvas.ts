@@ -116,6 +116,7 @@ function sectionTitleCells(title: string, iconIndex: number) {
 }
 
 export type QuotationItem = {
+  lineId?: string;
   productId?: string;
   productVersion?: number;
   variantId?: string;
@@ -154,12 +155,11 @@ function productTable(items?: QuotationItem[], values?: SpiraxQuotationValues) {
       ];
 
   const itemRows = activeItems.map((item, index) => {
-    const isSingle = activeItems.length === 1;
-    const modelId = isSingle ? "item_model" : `item_model_${index}`;
-    const descId = isSingle ? "item_description" : `item_description_${index}`;
-    const qtyId = isSingle ? "item_qty" : `item_qty_${index}`;
-    const priceId = isSingle ? "item_price" : `item_price_${index}`;
-    const amountId = isSingle ? "item_amount" : `item_amount_${index}`;
+    const modelId = `item_model_${index}`;
+    const descId = `item_description_${index}`;
+    const qtyId = `item_qty_${index}`;
+    const priceId = `item_price_${index}`;
+    const amountId = `item_amount_${index}`;
     const modelControl = controlText(modelId, item.model, "Model", { size: 10 });
     modelControl.control!.extension = { model: item.model, productId: item.productId, productVersion: item.productVersion, variantId: item.variantId, priceId: item.priceId };
 

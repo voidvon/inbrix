@@ -1,11 +1,11 @@
-import { collectBusinessControlValues, createDocumentBusiness, readDocumentBusiness } from "../../lib/document-business";
+import { captureDocumentBusiness, documentControlUpdates, createBusinessFromTemplate, projectDocumentBusiness, readDocumentBusiness, type DocumentBusiness } from "../../lib/document-business";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
-import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type SpiraxQuotationValues, type QuotationItem } from "./spirax-quotation-canvas";
-import { controlText, createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, extractLegacySpiraxContractValues, SPIRAX_CONTRACT_SELLER_COMPANY } from "./spirax-contract-canvas";
+import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type QuotationItem } from "./spirax-quotation-canvas";
+import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument } from "./spirax-contract-canvas";
 
-import { collectProductImageValues } from "./product-document-images";
+
 
 const CANVAS_DOCUMENT_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
 const MAX_DOCUMENT_ATTACHMENT_BYTES = 3 * 1024 * 1024;
@@ -28,196 +28,6 @@ function parseStoredCanvasDocument(value: string): StoredCanvasDocument | null {
   } catch {
     return null;
   }
-}
-
-function extractPlainText(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]> | undefined): string {
-  if (!elements) return "";
-  let text = "";
-  for (const el of elements) {
-    if (el.value) text += el.value;
-    else if (el.control?.value) text += extractPlainText(el.control.value);
-  }
-  return text.trim();
-}
-
-function hasControls(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): boolean {
-  for (const el of elements) {
-    if (el.type === ElementType.CONTROL || el.control?.conceptId) return true;
-    if (el.trList) {
-      for (const tr of el.trList) {
-        for (const td of tr.tdList || []) {
-          if (td.value && hasControls(td.value)) return true;
-        }
-      }
-    }
-    if (el.valueList && hasControls(el.valueList)) return true;
-  }
-  return false;
-}
-
-function extractLegacySpiraxValues(main: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): SpiraxQuotationValues {
-  const values: SpiraxQuotationValues = {};
-  const visit = (elements: typeof main) => {
-    for (const el of elements) {
-      if (el.type === ElementType.CONTROL && el.control?.conceptId) {
-        let textVal = "";
-        if (el.control.value && Array.isArray(el.control.value)) {
-          textVal = el.control.value.map((v) => v.value || "").join("").trim();
-        }
-        if (textVal) {
-          values[el.control.conceptId] = textVal;
-        }
-      }
-      if (el.type === ElementType.TABLE && el.trList) {
-        for (const tr of el.trList) {
-          if (!tr.tdList) continue;
-          for (const td of tr.tdList) {
-            if (td.value) visit(td.value);
-          }
-          if (tr.tdList.length === 2 || tr.tdList.length === 3) {
-            const label = extractPlainText(tr.tdList[0].value);
-            const val = extractPlainText(tr.tdList[tr.tdList.length - 1].value);
-            if (!val || val === label) continue;
-            if (label.includes("Quote No.")) values.quote_number = val;
-            else if (label.includes("Issue Date")) values.issue_date = val;
-            else if (label.includes("Currency")) values.currency = val;
-            else if (label.includes("Validity")) values.validity = val;
-            else if (label.includes("Lead Time")) values.lead_time = val;
-            else if (label.includes("Payment Terms")) values.payment_terms = val;
-            else if (label.includes("Notes")) values.notes = val;
-          }
-          if (tr.tdList.length === 6) {
-            const first = extractPlainText(tr.tdList[0].value);
-            if (first && !first.includes("MODEL")) {
-              values.item_model = first;
-              const imgEl = tr.tdList[1].value?.find((el) => el.type === ElementType.IMAGE);
-              if (imgEl?.value) {
-                values.item_picture = imgEl.value;
-              }
-              values.item_description = extractPlainText(tr.tdList[2].value);
-              values.item_qty = extractPlainText(tr.tdList[3].value);
-              values.item_price = extractPlainText(tr.tdList[4].value);
-              values.item_amount = extractPlainText(tr.tdList[5].value);
-            }
-          } else if (tr.tdList.length === 5) {
-            const first = extractPlainText(tr.tdList[0].value);
-            if (first && !first.includes("MODEL")) {
-              values.item_model = first;
-              values.item_description = extractPlainText(tr.tdList[1].value);
-              values.item_qty = extractPlainText(tr.tdList[2].value);
-              values.item_price = extractPlainText(tr.tdList[3].value);
-              values.item_amount = extractPlainText(tr.tdList[4].value);
-            }
-          }
-        }
-      }
-      if (el.valueList) {
-        visit(el.valueList);
-      }
-    }
-  };
-  visit(main);
-  collectProductImageValues(main, values);
-
-  const extractedItems: QuotationItem[] = [];
-  let index = 0;
-  while (`item_model_${index}` in values) {
-    extractedItems.push({
-      model: values[`item_model_${index}`] || "",
-      picture: values[`item_picture_${index}`],
-      productId: values[`item_product_id_${index}`],
-      productVersion: Number(values[`item_product_version_${index}`]) || undefined,
- variantId: values[`item_variant_id_${index}`],
- priceId: values[`item_price_id_${index}`],
-      description: values[`item_description_${index}`] || "",
-      qty: values[`item_qty_${index}`] || "",
-      price: values[`item_price_${index}`] || "",
-      amount: values[`item_amount_${index}`] || "",
-    });
-    index++;
-  }
-  if (extractedItems.length > 0) {
-    values.items = extractedItems;
-  } else if (values.item_model) {
-    values.items = [
-      {
-        model: values.item_model,
-        picture: values.item_picture,
-        productId: values.item_product_id,
-        productVersion: Number(values.item_product_version) || undefined,
- variantId: values.item_variant_id,
- priceId: values.item_price_id,
-        description: values.item_description || "",
-        qty: values.item_qty || "",
-        price: values.item_price || "",
-        amount: values.item_amount || "",
-      },
-    ];
-  }
-
-  return values;
-}
-
-function hasNestedTables(elements: Array<ReturnType<CanvasEditor["command"]["getValue"]>["data"]["main"][number]>): boolean {
-  for (const el of elements) {
-    if (el.type === ElementType.TABLE && el.trList) {
-      for (const tr of el.trList) {
-        if (!tr.tdList) continue;
-        for (const td of tr.tdList) {
-          if (td.value && td.value.some((child) => child.type === ElementType.TABLE)) {
-            return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function migrateLegacySpiraxDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
-  if (hasControls(data.main) && !hasNestedTables(data.main)) {
-    return data;
-  }
-  const extracted = extractLegacySpiraxValues(data.main);
-  return {
-    ...data,
-    main: createSpiraxQuotationCanvasDocument("", "", extracted),
-  };
-}
-
-function migrateLegacySpiraxContractDocument(data: StoredCanvasDocument["data"]): StoredCanvasDocument["data"] {
-  if (hasControls(data.main) && !hasNestedTables(data.main)) {
-    const migrated = structuredClone(data);
-    const heroElements = migrated.main[0]?.trList?.[0]?.tdList?.[0]?.value;
-    if (!heroElements || heroElements.some((element) => element.control?.conceptId === "seller_company")) return data;
-    for (let start = 0; start < heroElements.length; start++) {
-      if (!heroElements[start].value.trim()) continue;
-      let company = "";
-      for (let end = start; end < heroElements.length; end++) {
-        const element = heroElements[end];
-        if (element.type && element.type !== ElementType.TEXT) break;
-        company += element.value;
-        if (company.trim().replace(/\.$/, "") === SPIRAX_CONTRACT_SELLER_COMPANY) {
-          const first = heroElements[start];
-          heroElements.splice(start, end - start + 1, controlText("seller_company", SPIRAX_CONTRACT_SELLER_COMPANY, "Seller Company", {
-            bold: first.bold,
-            size: first.size,
-            color: first.color,
-            font: first.font,
-          }));
-          if (heroElements[start + 1]?.value === ".") heroElements.splice(start + 1, 1);
-          return migrated;
-        }
-        if (company.trim().length > SPIRAX_CONTRACT_SELLER_COMPANY.length + 1) break;
-      }
-    }
-    return data;
-  }
-  const extracted = extractLegacySpiraxContractValues(data.main);
-  return {
-    ...data,
-    main: createSpiraxContractCanvasDocument("", "", extracted),
-  };
 }
 
 function readFileAsDataURL(file: Blob | File) {
@@ -272,6 +82,8 @@ export type DocumentDataPayload = {
 export type CanvasDocumentEditorHandle = {
   getHTML: () => string;
   getDocument: () => string;
+  setReadOnly: (value: boolean) => void;
+  isReadOnly: () => boolean;
   importDocx: (file: File) => Promise<void>;
   exportDocx: (name: string) => Promise<void>;
   insertAttachment: (file: File) => Promise<void>;
@@ -403,7 +215,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const storedDocument = parseStoredCanvasDocument(initialHTML);
   const initialTemplateKind = resolveDocumentTemplateKind(initialHTML, storedDocument);
   const templateRef = useRef<DocumentTemplateKind>(initialTemplateKind);
-  const businessRef = useRef<unknown>(storedDocument?.business);
+  const businessRef = useRef<DocumentBusiness | null>(storedDocument ? readDocumentBusiness(storedDocument.business) : null);
 
   useEffect(() => {
     readyRef.current = onReady;
@@ -448,16 +260,12 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     };
     editorRef.current = editor;
     templateRef.current = initialTemplateKind;
-    businessRef.current = storedDocument?.business;
+    businessRef.current = storedDocument ? readDocumentBusiness(storedDocument.business) : null;
     if (storedDocument) {
       if (storedDocument.options) editor.command.executeUpdateOptions(storedDocument.options);
-      editor.command.executeSetValue(
-        initialTemplateKind === "spirax-quotation"
-          ? migrateLegacySpiraxDocument(storedDocument.data)
-          : initialTemplateKind === "spirax-contract"
-          ? migrateLegacySpiraxContractDocument(storedDocument.data)
-          : storedDocument.data
-      );
+      const data = structuredClone(storedDocument.data);
+      projectDocumentBusiness(data, businessRef.current!);
+      editor.command.executeSetValue(data);
     } else if (initialTemplateKind === "spirax-contract") {
       editor.command.executeSetValue({ main: createSpiraxContractCanvasDocument(new Date().toLocaleDateString(locale), contractNumber(initialHTML)) });
     } else if (initialTemplateKind === "spirax-quotation") {
@@ -465,6 +273,28 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     } else {
       editor.command.executeSetHTML({ main: normalizeDocumentHTML(initialHTML) });
     }
+    if (!businessRef.current) businessRef.current = createBusinessFromTemplate(editor.command.getValue().data);
+    const initialized = editor.command.getValue().data;
+    projectDocumentBusiness(initialized, businessRef.current);
+    editor.command.executeSetValue(initialized);
+    let synchronizing = false;
+    editor.listener.contentChange = () => {
+      if (synchronizing || !businessRef.current) return;
+      try {
+        const { data } = editor.command.getValue();
+        const next = captureDocumentBusiness(data, businessRef.current);
+        const updates = documentControlUpdates(data, next);
+        businessRef.current = next;
+        if (updates.length) {
+          synchronizing = true;
+          try { editor.command.executeSetControlValueList(updates); }
+          finally { synchronizing = false; }
+        }
+      } catch (error) {
+        // Invalid bindings still fail getDocument/save; do not guess identities.
+        console.error("Commercial control synchronization failed", error);
+      }
+    };
     readyRef.current?.();
 
     return () => {
@@ -475,12 +305,17 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
   useImperativeHandle(forwardedRef, () => ({
     getHTML: () => editorRef.current?.command.getHTML().main || "",
+    setReadOnly: (value) => editorRef.current?.command.executeMode(value ? EditorMode.READONLY : EditorMode.EDIT),
+    isReadOnly: () => editorRef.current?.command.getOptions().mode === EditorMode.READONLY,
     getDocument: () => {
       const editor = editorRef.current;
       if (!editor) return "";
-      const { data, options } = editor.command.getValue();
+      const { data, options: editorOptions } = editor.command.getValue();
+      const options = { ...editorOptions };
+      delete options.mode;
       const currentTemplate = templateRef.current !== "document" ? templateRef.current : "document";
-      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options, business: createDocumentBusiness(collectBusinessControlValues(data, readDocumentBusiness(businessRef.current))) })}`;
+      const business = captureDocumentBusiness(data, businessRef.current!);
+      return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options, business })}`;
     },
     importDocx: async (file) => {
       const editor = editorRef.current;
@@ -491,7 +326,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.command.executeUpdateOptions(snapshot.options);
       editor.command.executeSetValue(snapshot.data);
       templateRef.current = "document";
-      businessRef.current = undefined;
+      businessRef.current = createBusinessFromTemplate(snapshot.data);
     },
     exportDocx: async (name) => {
       const editor = editorRef.current;
@@ -570,18 +405,14 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       }
 
       templateRef.current = nextTemplate;
-      businessRef.current = stored?.business;
+      businessRef.current = stored ? readDocumentBusiness(stored.business) : null;
       editor.command.executeUpdateOptions(getCanvasEditorOptions(nextTemplate));
 
       if (stored) {
         if (stored.options) editor.command.executeUpdateOptions(stored.options);
-        editor.command.executeSetValue(
-          nextTemplate === "spirax-quotation"
-            ? migrateLegacySpiraxDocument(stored.data)
-            : nextTemplate === "spirax-contract"
-            ? migrateLegacySpiraxContractDocument(stored.data)
-            : stored.data
-        );
+        const data = structuredClone(stored.data);
+        projectDocumentBusiness(data, businessRef.current!);
+        editor.command.executeSetValue(data);
       } else if (nextTemplate === "spirax-contract" && isContractPlaceholder) {
         editor.command.executeSetValue({ main: createSpiraxContractCanvasDocument(new Date().toLocaleDateString(locale), contractNumber(html)) });
       } else if (nextTemplate === "spirax-quotation" && isQuotationPlaceholder) {
@@ -589,6 +420,10 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       } else {
         editor.command.executeSetHTML({ main: normalizeDocumentHTML(html) });
       }
+      if (!businessRef.current) businessRef.current = createBusinessFromTemplate(editor.command.getValue().data);
+      const initialized = editor.command.getValue().data;
+      projectDocumentBusiness(initialized, businessRef.current);
+      editor.command.executeSetValue(initialized);
     },
     focus: () => editorRef.current?.command.executeFocus(),
     bold: () => editorRef.current?.command.executeBold(),
@@ -799,48 +634,10 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       }
       controls.push(...Array.from(map.values()));
 
-      let values: Record<string, string> = readDocumentBusiness(businessRef.current);
-      let items: QuotationItem[] = [];
-
-      try {
-        const snapshot = editor?.command.getValue();
-        if (snapshot?.data?.main) {
-          if (currentTemplate === "spirax-quotation") {
-            const quotationValues = extractLegacySpiraxValues(snapshot.data.main);
-            values = { ...values, ...quotationValues };
-            if (quotationValues.items && quotationValues.items.length > 0) {
-              items = quotationValues.items;
-              delete (values as { items?: unknown }).items;
-            }
-          } else if (currentTemplate === "spirax-contract") {
-            const contractValues = extractLegacySpiraxContractValues(snapshot.data.main);
-            values = { ...values, ...contractValues };
-            if (contractValues.items && contractValues.items.length > 0) {
-              items = contractValues.items.map((it) => ({
-                model: it.model,
-                picture: it.picture,
-                productId: it.productId,
-                productVersion: it.productVersion,
- variantId: it.variantId,
- priceId: it.priceId,
-                description: it.description,
-                qty: it.qty,
-                price: it.price,
-                amount: it.amount,
-              }));
-              delete (values as { items?: unknown }).items;
-            }
-          }
-        }
-      } catch (err) {
-        console.error("getDocumentData extraction error", err);
-      }
-
-      for (const c of controls) {
-        if (c.conceptId) {
-          values[c.conceptId] = c.value || "";
-        }
-      }
+      const snapshot = editor?.command.getValue();
+      const business = captureDocumentBusiness(snapshot?.data, businessRef.current!);
+      const values = { ...business.values, ...business.calculated };
+      const items = business.items;
 
       return {
         template: currentTemplate,

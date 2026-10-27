@@ -1364,8 +1364,7 @@ final document fence. Manual and catalog line amounts are computed with decimal
 arithmetic and rounded to cents before summing. Supplied line amounts and totals
 are not trusted. Missing quantities/prices leave aggregates blank. Manual prices
 use explicit `tax_rate` (decimal or percentage), `tax_mode` (`included` or
-`excluded`) and optional `discount` (an amount deducted before tax). An explicit
-legacy `tax_rate` without a mode means excluded tax; absent tax terms leave tax
+`excluded`) and optional `discount` (an amount deducted before tax). Both tax rate and mode must be explicit; missing tax terms leave tax
 and final totals blank instead of assuming 13%. Catalog lines retain their
 stored tax conditions. `calculate_pricing`, new drafts and saved-document
 commercial edits use the same calculations; contact-only edits retain historical
@@ -1377,12 +1376,20 @@ product references come from that snapshot, rather than a client variable list.
 The response includes the validated `html` canvas and a `summary`. The editor
 applies exactly that canvas and rejects responses if its content changed while
 waiting. Legacy variable-only replies cannot be applied. `mode: "apply"` accepts
-`canvas`, `values` and optional `items` to validate variable-form changes without
+`canvas` and `commands` to validate variable-form changes without
 calling a model. Both modes enforce the mailbox's brand scope. Unknown controls
 or unsupported layouts fail atomically, preserving manual clauses, stamps,
 header/footer content and formatting. Omitting references on an otherwise
 unchanged catalog product does not downgrade its price to an unchecked manual
 price.
+Commercial snapshots require `business.version=2` with canonical `values`, stable-ID
+`items`, and server-derived `calculated`. Canvas controls are a rendering projection.
+Old business versions and old values/items mutation payloads are rejected.
+Commands are `set_fields` (`fields`), `update_line` (`lineId`, `fields`),
+`add_line` (`fields`, server assigns ID), and `remove_line` (`lineId`).
+Calculated amounts and provenance fields cannot be changed through commands.
+`update_document` requires an exact `baseRevision` for all changes.
+
 Catalog currency validation is shared by generation, final model document cards
 and modifications. Catalog prices use CNY; CNY/RMB/人民币/¥ aliases are normalized.
 Changing the currency of existing amounts to a different currency is rejected:
@@ -1585,6 +1592,13 @@ uses `revision: 0` (or omitted) to create a new ID only. Updates must send the
 revision returned by GET or the preceding save. Each successful update increments
 it atomically; an outdated version or a deleted target returns 409 without writing.
 The save response contains the content and revision from that exact write.
+
+Saving recalculates commercial amounts and returns `validation` with
+`status: "draft" | "ready"` and `issues`. Incomplete drafts may be saved.
+`POST /api/documents/validate` accepts `{html, type, id?, revision?}` and returns
+normalized `{html, validation}` without saving. Saved-document checks verify
+ownership and revision. All editor export, print, and attachment paths validate
+the exact current snapshot and block delivery when it is incomplete.
 
 AI `documentAction` cards include `baseRevision` for both update and delete
 proposals. Applying a proposal sends this revision; deletion uses

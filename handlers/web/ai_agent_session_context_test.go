@@ -283,6 +283,7 @@ func TestAgentUsesHumanSavedCanvasRevision(t *testing.T) {
 		if revision == 0 {
 			input.AIOrigin = &mailstore.AIChatDocumentOrigin{SessionID: session.ID, MessageID: message.ID}
 		}
+		input.HTML = canonicalTestCanvas(input.HTML)
 		raw, _ := json.Marshal(input)
 		req := httptest.NewRequest("POST", "/api/documents", strings.NewReader(string(raw)))
 		req.Header.Set("Content-Type", "application/json")
@@ -326,11 +327,11 @@ func TestAgentUsesHumanSavedCanvasRevision(t *testing.T) {
 func TestAgentDocumentProposalsUseRevisionAndHTTPRejectsStaleConfirmation(t *testing.T) {
 	h, app, account, other := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()
-	record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{ID: "quote", OwnerID: account.OwnerID, Type: "quotation", Name: "Quote", HTML: canvasDocumentPrefix + `{"data":{"main":[{"type":"control","control":{"conceptId":"customer_company","value":[{"value":"Buyer"}]}}]}}`}, 0)
+	record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{ID: "quote", OwnerID: account.OwnerID, Type: "quotation", Name: "Quote", HTML: businessCanvas(map[string]string{"customer_company": "Buyer"})}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	update, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"customer_company": "AI buyer"}}, mailstore.AIModelRecord{}, "")
+	update, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"customer_company": "AI buyer"}}, mailstore.AIModelRecord{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +348,7 @@ func TestAgentDocumentProposalsUseRevisionAndHTTPRejectsStaleConfirmation(t *tes
 	app.Delete("/api/documents/:id", handler.HandleDeleteDocument)
 	request := func(method, path string, revision int64, foreign bool) int {
 		t.Helper()
-		raw, _ := json.Marshal(map[string]any{"id": record.ID, "revision": revision, "type": "quotation", "name": "Quote", "html": "human price"})
+		raw, _ := json.Marshal(map[string]any{"id": record.ID, "revision": revision, "type": "quotation", "name": "Quote", "html": businessCanvas(map[string]string{"customer_company": "Human buyer"})})
 		req := httptest.NewRequest(method, path, strings.NewReader(string(raw)))
 		req.Header.Set("Content-Type", "application/json")
 		if foreign {

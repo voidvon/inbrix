@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { getDocument, stopAIGeneration } from "../../lib/api";
+import { getDocument, stopAIGeneration, validateDocument, type DocumentValidation } from "../../lib/api";
 import {
   Bold,
   Check,
@@ -337,7 +337,9 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
   const [type, setType] = useState<DocumentTemplate>(initialType);
   const [editorReady, setEditorReady] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [validation, setValidation] = useState<DocumentValidation | null>(null);
   const [saving, setSaving] = useState(false);
+  useEffect(() => { editorRef.current?.setReadOnly(exporting || saving); }, [exporting, saving, editorReady]);
   const [open, setOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false));
   useEffect(() => {
@@ -423,7 +425,11 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     editorRef.current?.setHTML(documentTemplateHTML(next, copy));
     window.requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, left: 0 }));
   };
-  const downloadDocument = () => {
+  const downloadDocument = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await prepareDelivery();
     const body = editorRef.current?.getHTML() || "";
     if (!body) return;
     const blob = new Blob([body], { type: "text/html;charset=utf-8" });
@@ -433,6 +439,8 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     anchor.download = `${resolveExportName()}.html`;
     anchor.click();
     URL.revokeObjectURL(url);
+    } catch (error) { toast.error(error instanceof Error ? error.message : copy.loadFailed); }
+    finally { setExporting(false); }
   };
   const importDocx = async (file: File) => {
     if (!editorRef.current || exporting) return;
@@ -460,25 +468,50 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     }
     return name.trim() || defaultDocNumber || (target.kind === "template" ? copy.newTemplate : copy.newDocument);
   };
+  const reviewSnapshot = async () => {
+    const editor = editorRef.current;
+    if (!editor) throw new Error(copy.loadFailed);
+    if (target.kind === "template") return null;
+    const before = editor.getDocument();
+    const result = await validateDocument({ html: before, type, id: target.record?.revision ? target.record.id : undefined, revision: target.record?.revision });
+    if (editor.getDocument() !== before) throw new Error(copy === zh ? "文档已修改，请重试" : "Document changed; retry");
+    editor.setHTML(result.html);
+    setValidation(result.validation);
+    return result;
+  };
+  const prepareDelivery = async () => {
+    const result = await reviewSnapshot();
+    if (result && result.validation.status !== "ready") throw new Error(result.validation.issues.map(issue => issue.message).join("；"));
+  };
+  const printDocument = async () => {
+    if (!editorRef.current || exporting) return;
+    setExporting(true);
+    try { await prepareDelivery(); await editorRef.current.print(); }
+    catch (error) { toast.error(error instanceof Error ? error.message : copy.loadFailed); }
+    finally { setExporting(false); }
+  };
   const exportDocument = async (format: "docx" | "pdf" | "image-pdf" | "jpg") => {
     if (!editorRef.current || exporting) return;
     setExporting(true);
     const exportName = resolveExportName();
     try {
+      await prepareDelivery();
       if (format === "docx") await editorRef.current.exportDocx(exportName);
       else await exportDocumentPages(await editorRef.current.getPageImages(), exportName, format);
       toast.success(copy === zh ? "文档已导出" : "Document exported");
     } catch (error) {
       console.error("Document export failed", error);
-      toast.error(copy === zh ? "导出失败，请重试或使用打印功能另存为 PDF。" : "Export failed. Try again or use Print to save as PDF.");
+      toast.error(error instanceof Error ? error.message : copy.loadFailed);
     } finally { setExporting(false); }
   };
   const save = async () => {
-    const html = editorRef.current?.getDocument();
+    let html = editorRef.current?.getDocument();
     if (!html || saving) return;
     const company = extractDocumentCompany(editorRef.current) || extractDocumentCompany(html);
     setSaving(true);
     try {
+      const reviewed = await reviewSnapshot();
+      if (reviewed) html = reviewed.html;
       await onSave(target.kind, {
         id: target.record?.id || crypto.randomUUID(),
         revision: target.record?.revision,
@@ -503,6 +536,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     onBusyChange?.(true);
     const exportName = resolveExportName();
     try {
+      await prepareDelivery();
       const file = await createDocumentPDF(await editorRef.current.getPageImages(), exportName);
       onAttach(file);
       toast.success(copy === zh ? "PDF 已添加到邮件附件" : "PDF added to email attachments");
@@ -672,7 +706,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
               size="sm"
               className="h-8 text-xs shrink-0"
               disabled={!editorReady || exporting}
-              onClick={() => void editorRef.current?.print().catch(() => toast.error(copy.loadFailed))}
+              onClick={() => void printDocument()}
             >
               <Printer />
               <span className="hidden sm:inline">{copy.printDocument}</span>
@@ -695,11 +729,14 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
                 <DropdownMenuItem className="whitespace-nowrap" onClick={() => void exportDocument("jpg")}>
                   {copy === zh ? "下载图片" : "Download Image"}
                 </DropdownMenuItem>
-                <DropdownMenuItem className="whitespace-nowrap" onClick={downloadDocument}>
+                <DropdownMenuItem className="whitespace-nowrap" onClick={() => void downloadDocument()}>
                   {copy.downloadHTML}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            {target.kind === "document" && <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting || saving} onClick={() => { setExporting(true); void prepareDelivery().then(() => toast.success(copy === zh ? "文档检查通过" : "Document is ready")).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)).finally(() => setExporting(false)); }}>
+              {copy === zh ? "检查完整性" : "Check completeness"}
+            </Button>}
             <Button type="button" size="sm" className="h-8 text-xs shrink-0 font-medium" disabled={!editorReady || exporting || saving} onClick={() => void save()}>
               <Check />
               {saving ? (copy === zh ? "正在保存…" : "Saving…") : copy.saveDocument}
@@ -718,6 +755,10 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
           </div>
         </div>
 
+        {validation && <div className="max-h-28 shrink-0 overflow-y-auto border-b px-4 py-2 text-xs" role="status">
+          <p className="font-medium">{copy === zh ? "上次检查结果：" : "Last review: "}{validation.status === "ready" ? (copy === zh ? "可以交付" : "Ready") : (copy === zh ? "草稿，需补充以下内容" : "Draft, missing information")}</p>
+          {validation.issues.length > 0 && <ul className="mt-1 list-inside list-disc text-muted-foreground">{validation.issues.map((issue, index) => <li key={`${issue.code}-${issue.field}-${index}`}>{issue.message}</li>)}</ul>}
+        </div>}
         <div className="flex min-h-0 flex-1 overflow-hidden relative">
           {/* Mobile AI Chat View */}
           {isMobile && activeTab === "chat" ? (
@@ -908,7 +949,14 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
     let cancelled = false;
     const convert = async () => {
       try {
-        const pages = await converterRef.current!.getPageImages();
+        const editor = converterRef.current!;
+        const before = editor.getDocument();
+        const checked = await validateDocument({ html: before, type: selected.type, id: selected.revision ? selected.id : undefined, revision: selected.revision });
+        if (cancelled) return;
+        if (editor.getDocument() !== before) throw new Error(copy === zh ? "文档已修改，请重试" : "Document changed; retry");
+        editor.setHTML(checked.html);
+        if (checked.validation.status !== "ready") throw new Error(checked.validation.issues.map(issue => issue.message).join("；"));
+        const pages = await editor.getPageImages();
         const file = await createDocumentPDF(pages, selected.name);
         if (cancelled) return;
         callbacksRef.current.onAttach(file);

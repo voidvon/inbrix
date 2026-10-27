@@ -148,7 +148,9 @@ func businessCanvas(values map[string]string) string {
 	for k, v := range values {
 		main = append(main, map[string]any{"type": "control", "control": map[string]any{"conceptId": k, "value": []any{map[string]any{"value": v}}}})
 	}
-	raw, _ := json.Marshal(map[string]any{"template": "spirax-quotation", "data": map[string]any{"main": main}})
+	payload := map[string]any{"template": "spirax-quotation", "data": map[string]any{"main": main}}
+	seedCanonicalTestSnapshot(payload, values, canvasDocumentItems(values))
+	raw, _ := json.Marshal(payload)
 	return canvasDocumentPrefix + string(raw)
 }
 func TestContractQuotationSnapshotDoesNotReprice(t *testing.T) {

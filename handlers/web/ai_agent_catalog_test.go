@@ -106,7 +106,7 @@ func TestEmailAgentStructuredConfigurationPricing(t *testing.T) {
 func TestCanvasCatalogReferenceWithoutImage(t *testing.T) {
 	payload := map[string]any{"data": map[string]any{"main": []any{map[string]any{"control": map[string]any{"conceptId": "item_model", "value": []any{map[string]any{"value": "BV-F"}}}, "extension": map[string]any{"productId": "p", "productVersion": 3, "variantId": "v", "priceId": "price"}}}}}
 	b, _ := json.Marshal(payload)
-	_, items, ok := canvasDocumentContent(canvasDocumentPrefix + string(b))
+	_, items, ok := canvasDocumentContent(canonicalTestCanvas(canvasDocumentPrefix + string(b)))
 	if !ok || len(items) != 1 || items[0].VariantID != "v" || items[0].PriceID != "price" || items[0].ProductVersion != 3 {
 		t.Fatal(items, ok)
 	}
@@ -129,12 +129,12 @@ func TestSavedCatalogQuoteKeepsSnapshotForContactChanges(t *testing.T) {
 	model := control("item_model", "BV-F")
 	model["extension"] = map[string]any{"productId": "deleted-product", "productVersion": 1, "variantId": "old-variant", "priceId": "old-price"}
 	raw, _ := json.Marshal(map[string]any{"data": map[string]any{"main": []any{model, control("item_qty", "2"), control("item_price", "10.00"), control("item_amount", "20.00"), control("customer_contact", "Old contact")}}})
-	doc, err := db.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: user.ID, Name: "Saved quote", HTML: canvasDocumentPrefix + string(raw)})
+	doc, err := db.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: user.ID, Name: "Saved quote", HTML: canonicalTestCanvas(canvasDocumentPrefix + string(raw))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := NewAISettingsHandler(nil, &config.Config{}, db)
-	result, _, err := handler.executeTool(ctx, user.ID, "", AIToolCall{Name: "update_document", Args: map[string]any{"id": doc.ID, "values": map[string]any{"customer_contact": "New contact"}}}, mailstore.AIModelRecord{}, "")
+	result, _, err := handler.executeTool(ctx, user.ID, "", AIToolCall{Name: "update_document", Args: map[string]any{"id": doc.ID, "baseRevision": doc.Revision, "commands": testCommands(doc.HTML, map[string]string{"customer_contact": "New contact"}, nil)}}, mailstore.AIModelRecord{}, "")
 	if err != nil {
 		t.Fatal("unrelated change revalidated historical price", err)
 	}
@@ -144,9 +144,25 @@ func TestSavedCatalogQuoteKeepsSnapshotForContactChanges(t *testing.T) {
 	}
 }
 
+func TestCatalogSnapshotCannotSilentlyBecomeManual(t *testing.T) {
+	old := AIDocumentItem{LineID: "stable", ProductID: "product", VariantID: "variant", PriceID: "price", Qty: "2", Price: "10", TaxRate: "0.13", TaxMode: "excluded"}
+	h := &AISettingsHandler{}
+	card := &AIDocumentCard{Values: map[string]string{"currency": "CNY"}, Items: []AIDocumentItem{old}}
+	if err := h.finalizeDocumentAmounts(context.Background(), "owner", card, []AIDocumentItem{old}); err != nil {
+		t.Fatal(err)
+	}
+	if card.Values["total_amount"] != "22.60" {
+		t.Fatal(card.Values)
+	}
+	card.Items[0].PriceID = ""
+	if err := h.finalizeDocumentAmounts(context.Background(), "owner", card, []AIDocumentItem{old}); err == nil {
+		t.Fatal("catalog source was discarded")
+	}
+}
+
 func TestContractIndexedCatalogDescriptionAndSKU(t *testing.T) {
 	body := canvasDocumentPrefix + `{"data":{"main":[{"control":{"conceptId":"item_desc_0","value":[{"value":"连接方式: 法兰"}]},"extension":{"model":"BV-F","productId":"p","productVersion":2,"variantId":"v","priceId":"price"}},{"control":{"conceptId":"item_qty_0","value":[{"value":"10"}]}}]}}`
-	_, items, ok := canvasDocumentContent(body)
+	_, items, ok := canvasDocumentContent(canonicalTestCanvas(body))
 	if !ok || len(items) != 1 || items[0].Model != "BV-F" || items[0].Description != "连接方式: 法兰" || items[0].PriceID != "price" {
 		t.Fatal(items, ok)
 	}

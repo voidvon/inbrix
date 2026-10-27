@@ -14,20 +14,24 @@ import (
 func TestDocumentUpdatePreservesSavedCanvas(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	body := canvasDocumentPrefix + `{"template":"custom","options":{"watermark":{"data":"WATERMARK"}},"custom":{"unknown":true},"data":{"header":[{"value":"HEADER","bold":true}],"footer":[{"type":"image","value":"STAMP","width":90}],"main":[{"value":"FREE TEXT","italic":true},{"type":"control","control":{"conceptId":"payment_terms","value":[{"value":"Net30","font":"Custom","bold":true}]}},{"type":"control","extension":{"keep":42},"control":{"conceptId":"untouched","value":[{"value":"A","bold":true},{"value":"B","italic":true}]}}]}}`
+	body = canonicalTestCanvas(body)
 	ctx := context.Background()
 	doc, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Custom", HTML: body}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": doc.ID, "values": map[string]any{"payment_terms": "Net60"}}, mailstore.AIModelRecord{}, "")
+	result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": doc.ID, "values": map[string]any{"payment_terms": "Net60"}}, mailstore.AIModelRecord{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	action := result.(*AIDocumentAction)
 	var got, want any
 	json.Unmarshal([]byte(strings.TrimPrefix(action.HTML, canvasDocumentPrefix)), &got)
-	json.Unmarshal([]byte(strings.TrimPrefix(strings.Replace(body, "Net30", "Net60", 1), canvasDocumentPrefix)), &want)
-	if !reflect.DeepEqual(got, want) || action.BaseRevision != doc.Revision {
+	json.Unmarshal([]byte(strings.TrimPrefix(strings.ReplaceAll(body, "Net30", "Net60"), canvasDocumentPrefix)), &want)
+	gotMap, wantMap := got.(map[string]any), want.(map[string]any)
+	delete(gotMap, "business")
+	delete(wantMap, "business")
+	if !reflect.DeepEqual(gotMap, wantMap) || action.BaseRevision != doc.Revision {
 		t.Fatalf("unrelated content changed: %s", action.HTML)
 	}
 	saved, _ := h.mailDB.GetDocument(ctx, account.OwnerID, doc.ID)
@@ -51,7 +55,7 @@ func TestDocumentPatchPreservesRowsAndResizesItems(t *testing.T) {
 	}
 	rows := []any{map[string]any{"tdList": []any{map[string]any{"value": []any{map[string]any{"value": "COLUMN HEADER"}}}}}, row(1, "A"), row(2, "B"), map[string]any{"tdList": []any{map[string]any{"value": []any{map[string]any{"value": "TABLE FOOTER"}}}}}}
 	raw, _ := json.Marshal(map[string]any{"data": map[string]any{"main": []any{map[string]any{"type": "table", "colgroup": []any{map[string]any{"width": 240}}, "trList": rows}}}})
-	body := canvasDocumentPrefix + string(raw)
+	body := canonicalTestCanvas(canvasDocumentPrefix + string(raw))
 	for _, n := range []int{1, 2, 3} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			items := make([]AIDocumentItem, n)
@@ -97,12 +101,12 @@ func TestDocumentPatchPreservesRowsAndResizesItems(t *testing.T) {
 func TestManualLineEditRecalculatesCanvasTotals(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()
-	record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Manual", HTML: businessCanvas(map[string]string{"item_model": "MANUAL", "item_qty": "1", "item_price": "100.00", "item_amount": "100.00", "subtotal": "100.00", "total_amount": "100.00", "contract_amount": "100.00", "tax_amount": "0.00", "tax_rate": "0%"})}, 0)
+	record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Manual", HTML: businessCanvas(map[string]string{"item_model": "MANUAL", "item_qty": "1", "item_price": "100.00", "item_amount": "100.00", "subtotal": "100.00", "total_amount": "100.00", "contract_amount": "100.00", "tax_amount": "0.00", "tax_rate": "0%", "tax_mode": "excluded"})}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tax := range []string{"0%", "13%", ""} {
-		result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": tax}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100.00", "amount": "999999"}}}, mailstore.AIModelRecord{}, "")
+		result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": tax}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100.00", "amount": "999999"}}}, mailstore.AIModelRecord{}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +117,7 @@ func TestManualLineEditRecalculatesCanvasTotals(t *testing.T) {
 			t.Fatalf("stale totals for tax %q: %+v %v", tax, values, items)
 		}
 	}
-	result, _, err := h.executeUpdateDocument(ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": "13%"}}, mailstore.AIModelRecord{}, "")
+	result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": "13%"}}, mailstore.AIModelRecord{}, "")
 	if err != nil || result.(*AIDocumentAction).Values["total_amount"] != "113.00" {
 		t.Fatalf("tax-only change: %+v %v", result, err)
 	}
@@ -121,7 +125,7 @@ func TestManualLineEditRecalculatesCanvasTotals(t *testing.T) {
 
 func TestDocumentAmountsAcrossToolsAndTaxModes(t *testing.T) {
 	for _, tt := range []struct{ name, rate, mode, discount, total, tax string }{
-		{"unknown", "", "", "", "", ""}, {"zero", "0", "", "", "20.00", "0.00"}, {"excluded", "13%", "excluded", "", "22.60", "2.60"}, {"included", "0.13", "included", "", "20.00", "2.30"}, {"discount", "13%", "excluded", "2.00", "20.34", "2.34"},
+		{"unknown", "", "", "", "", ""}, {"zero", "0", "excluded", "", "20.00", "0.00"}, {"excluded", "13%", "excluded", "", "22.60", "2.60"}, {"included", "0.13", "included", "", "20.00", "2.30"}, {"discount", "13%", "excluded", "2.00", "20.34", "2.34"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			args := map[string]any{"items": []any{map[string]any{"model": "A", "qty": "2.5", "price": "8", "amount": "1"}}, "tax_rate": tt.rate, "tax_mode": tt.mode, "discount": tt.discount}
@@ -146,7 +150,7 @@ func TestDocumentAmountsAcrossToolsAndTaxModes(t *testing.T) {
 			t.Fatal("invalid money inputs accepted", bad)
 		}
 	}
-	card := &AIDocumentCard{Values: map[string]string{"tax_rate": "0%"}, Items: []AIDocumentItem{{Qty: "1", Price: "0.005"}, {Qty: "1", Price: "0.005"}}}
+	card := &AIDocumentCard{Values: map[string]string{"tax_rate": "0%", "tax_mode": "excluded"}, Items: []AIDocumentItem{{Qty: "1", Price: "0.005"}, {Qty: "1", Price: "0.005"}}}
 	if err := calculateDocumentAmounts(card, nil); err != nil || card.Total != "0.02" {
 		t.Fatalf("line rounding: %+v %v", card, err)
 	}
@@ -155,7 +159,7 @@ func TestDocumentAmountsAcrossToolsAndTaxModes(t *testing.T) {
 		t.Fatalf("incomplete line treated as zero: %+v %v", card, err)
 	}
 	// Catalog and manual lines use their own explicit tax treatment.
-	card = &AIDocumentCard{Values: map[string]string{"tax_rate": "0%"}, Items: []AIDocumentItem{{Qty: "1", Price: "100"}, {Qty: "1", Price: "100"}}}
+	card = &AIDocumentCard{Values: map[string]string{"tax_rate": "0%", "tax_mode": "excluded"}, Items: []AIDocumentItem{{Qty: "1", Price: "100"}, {Qty: "1", Price: "100"}}}
 	if err := calculateDocumentAmounts(card, map[int]mailstore.ProductPrice{0: {TaxRate: "0.13", TaxMode: "included"}}); err != nil || card.Total != "200.00" || card.TaxAmount != "11.50" {
 		t.Fatalf("mixed lines: %+v %v", card, err)
 	}

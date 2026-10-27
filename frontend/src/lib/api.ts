@@ -482,13 +482,15 @@ export type DocumentVariable = {
   currentValue?: string;
 };
 
+export type DocumentCommand = { type: "set_fields" | "update_line" | "add_line" | "remove_line"; lineId?: string; fields?: Record<string, string | number> };
+export type DocumentValidation = { status: "draft" | "ready"; issues: Array<{ code: string; field: string; line?: number; message: string }> };
+
 export type GenerateDocumentInput = {
+  commands?: DocumentCommand[];
   requestId?: string;
   accountEmail: string;
-  mode?: "generate" | "rewrite" | "variables" | "apply";
+  mode?: "variables" | "apply";
   canvas?: string;
-  values?: Record<string, string>;
-  items?: QuotationItem[];
   documentType: "quotation" | "contract";
   title: string;
   instruction: string;
@@ -497,6 +499,7 @@ export type GenerateDocumentInput = {
 };
 
 export type QuotationItem = {
+  lineId?: string;
   productId?: string;
   productVersion?: number;
   variantId?: string;
@@ -511,7 +514,7 @@ export type QuotationItem = {
 
 export type GenerateDocumentResult = {
   summary?: string;
-  mode?: "variables" | "rewrite" | "generate";
+  mode?: "variables" | "apply";
   html?: string;
   values?: Record<string, string>;
   items?: QuotationItem[];
@@ -978,6 +981,10 @@ export function listDocuments(type?: "all" | "quotation" | "contract") {
 
 export function getDocument(id: string) {
   return apiFetch<{ document: ServerDocument }>(`/api/documents/${encodeURIComponent(id)}`, { cache: "no-store" });
+}
+
+export function validateDocument(input: { html: string; type: "quotation" | "contract"; id?: string; revision?: number }) {
+  return apiFetch<{ html: string; validation: DocumentValidation }>("/api/documents/validate", { method: "POST", body: JSON.stringify(input) });
 }
 
 export function saveDocument(document: {

@@ -1,3 +1,4 @@
+import { calculatedDocumentFields, documentFieldKey } from "../../lib/document-business";
 import { updateEditorDocument } from "../../lib/document-mutations";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -174,9 +175,8 @@ export function DocumentVariableForm({
     if (!editor || applying || !data) return;
     setApplying(true);
     try {
-      const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => !key.startsWith("item_") && value !== (data.values[key] || "")));
+      const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => !key.startsWith("item_") && !calculatedDocumentFields.has(key) && !key.startsWith("source_quotation_") && value !== (data.values[key] || "")));
       const itemsChanged = JSON.stringify(items) !== JSON.stringify(data.items);
-      if (itemsChanged && items.length === 0) throw new Error(isZh ? "请至少保留一项产品明细" : "Keep at least one line item");
       const result = await updateEditorDocument(editor, accountEmail, documentType, title, {
         values: changed, items: itemsChanged ? items : undefined,
       });
@@ -208,8 +208,8 @@ export function DocumentVariableForm({
       ["contract_number", "contract_date", "contract_title", "customer_po", "buyer_company", "buyer_contact", "buyer_email", "buyer_address", "seller_company", "seller_sign_company", "seller_sign_date", "trade_term", "lead_time", "origin", "port_of_loading", "payment_terms", "bank_account_name", "bank_account_no", "bank_swift", "bank_name", "bank_address", "bank_country", "bank_account_type", "payment_method", "payment_memo", "order_note_1", "order_note_2", "order_note_3", "order_note_4"].forEach((k) => allKeys.add(k));
     }
 
-    for (const key of allKeys) {
-      if (key.startsWith("item_")) continue; // Handled in items table
+    for (const key of new Set([...allKeys].map(documentFieldKey))) {
+      if (key.startsWith("item_") || calculatedDocumentFields.has(key) || key.startsWith("source_quotation_")) continue; // Handled in items table
       const meta = VARIABLE_LABELS[key];
       const label = meta ? (isZh ? meta.zh : meta.en) : key.replace(/^[\[_]+|[\]_]+$/g, "");
       const val = values[key] ?? "";

@@ -121,7 +121,7 @@ func TestDocumentsHandlerEndpoints(t *testing.T) {
 		"type":    "quotation",
 		"name":    "Web 报价单",
 		"company": "测试企业",
-		"html":    "<div>web quote</div>",
+		"html":    commercialAPITestCanvas(),
 	}
 	payloadBytes, _ := json.Marshal(savePayload)
 	req := httptest.NewRequest(http.MethodPost, "/api/documents", bytes.NewReader(payloadBytes))
@@ -230,4 +230,8 @@ func TestDocumentsHandlerEndpoints(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("DELETE /api/document-stamps/:id failed: code=%d", resp.StatusCode)
 	}
+}
+
+func commercialAPITestCanvas() string {
+	return `__INBRIX_CANVAS_DOCUMENT__:{"template":"document","business":{"version":2,"values":{},"calculated":{},"items":[]},"data":{"main":[{"value":"API document"}]}}`
 }

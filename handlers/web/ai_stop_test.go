@@ -47,7 +47,7 @@ func TestStopAICancelsSilentProviderAndReleasesSession(t *testing.T) {
 			path := "/api/ai/agent-chat"
 			if accept == "write-document" {
 				path = "/api/ai/write-document"
-				body, _ = json.Marshal(aiDocumentInput{AccountEmail: account.Email, RequestID: input.RequestID, DocumentType: "quotation", Mode: "rewrite", Instruction: "Rewrite", CurrentHTML: "<p>Original document</p>"})
+				body, _ = json.Marshal(aiDocumentInput{AccountEmail: account.Email, RequestID: input.RequestID, DocumentType: "quotation", Mode: "variables", Instruction: "Change buyer", Canvas: businessCanvas(map[string]string{"customer_company": "Original buyer"})})
 			}
 			request, _ := http.NewRequest(http.MethodPost, base+path, strings.NewReader(string(body)))
 			request.Header.Set("Content-Type", "application/json")
