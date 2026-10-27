@@ -258,6 +258,76 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       });
       return { preventDefault: true };
     };
+    // Floating stamps must move independently of text/control drop targets. The
+    // native text-drop path can reject a protected control before clearing its ghost.
+    let cancelStampDrag: (() => void) | undefined;
+    editor.eventBus.on("imageMousedown", ({ evt, element }) => {
+      if (evt.button !== 0 || editor.command.getOptions().mode === EditorMode.READONLY ||
+          !(element.extension as { stampId?: string } | undefined)?.stampId || element.imgDisplay !== ImageDisplay.FLOAT_TOP ||
+          !element.id || !element.imgFloatPosition) return;
+      cancelStampDrag?.();
+      const id = element.id;
+      const origin = { ...element.imgFloatPosition };
+      const scale = editor.command.getOptions().scale;
+      const canvas = evt.target instanceof HTMLCanvasElement ? evt.target : null;
+      if (!canvas) return;
+      const bounds = canvas.getBoundingClientRect();
+      const preview = document.createElement("img");
+      preview.src = element.value;
+      Object.assign(preview.style, {
+        position: "fixed", pointerEvents: "none", zIndex: "2147483647",
+        width: `${element.width! * scale}px`, height: `${element.height! * scale}px`,
+        opacity: "0.6", display: "none",
+      });
+      document.body.append(preview);
+      let dx = 0;
+      let dy = 0;
+      let moved = false;
+      const move = (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dx = event.clientX - evt.clientX;
+        dy = event.clientY - evt.clientY;
+        moved ||= Math.abs(dx) + Math.abs(dy) > 3;
+        if (!moved) return;
+        // Keep the preview aligned with table-relative stamps too.
+        if (preview.style.display === "none") {
+          const nativePreview = container.querySelector<HTMLElement>(".ce-float-image");
+          if (nativePreview) nativePreview.style.display = "block";
+          const rect = nativePreview?.getBoundingClientRect();
+          if (nativePreview) nativePreview.style.display = "none";
+          preview.dataset.left = String(rect?.width ? rect.left : bounds.left + origin.x * scale);
+          preview.dataset.top = String(rect?.height ? rect.top : bounds.top + origin.y * scale);
+        }
+        preview.style.display = "block";
+        preview.style.left = `${Number(preview.dataset.left) + dx}px`;
+        preview.style.top = `${Number(preview.dataset.top) + dy}px`;
+      };
+      const cleanup = () => {
+        window.removeEventListener("mousemove", move, true);
+        window.removeEventListener("mouseup", up, true);
+        window.removeEventListener("blur", cleanup);
+        preview.remove();
+        const nativePreview = container.querySelector<HTMLElement>(".ce-float-image");
+        if (nativePreview) nativePreview.style.display = "none";
+        cancelStampDrag = undefined;
+        // The native editor resets selection/drag flags on document mouseup.
+        document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      };
+      const up = (event: MouseEvent) => {
+        // Skip native text-drop handling after committing a coordinate move.
+        cleanup();
+        if (!moved) return;
+        event.stopPropagation();
+        editor.command.executeUpdateElementById({
+          id, properties: { imgFloatPosition: { ...origin, x: origin.x + dx / scale, y: origin.y + dy / scale } },
+        });
+      };
+      window.addEventListener("mousemove", move, true);
+      window.addEventListener("mouseup", up, true);
+      window.addEventListener("blur", cleanup);
+      cancelStampDrag = cleanup;
+    });
     editorRef.current = editor;
     templateRef.current = initialTemplateKind;
     businessRef.current = storedDocument ? readDocumentBusiness(storedDocument.business) : null;
@@ -298,6 +368,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     readyRef.current?.();
 
     return () => {
+      cancelStampDrag?.();
       editor.destroy();
       editorRef.current = null;
     };
