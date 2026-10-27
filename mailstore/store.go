@@ -707,6 +707,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			owner_id TEXT PRIMARY KEY,
 			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS document_builtin_template_seeds (
+ owner_id TEXT NOT NULL,
+ template_key TEXT NOT NULL,
+ PRIMARY KEY(owner_id,template_key),
+ FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+ )`,
 		`CREATE TABLE IF NOT EXISTS document_stamps (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,

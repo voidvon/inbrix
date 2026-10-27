@@ -3,6 +3,7 @@ package mailstore
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -163,7 +164,7 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(first) != 2 || first[0].Type != "quotation" || first[1].Type != "contract" {
+	if err != nil || len(first) != 3 || first[0].Type != "quotation" || first[1].Type != "contract" {
 		t.Fatal(first, err)
 	}
 	first[0].Name, first[0].HTML = "My template", "<p>Edited on server</p>"
@@ -186,11 +187,11 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := reopened.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(current) != 1 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
+	if err != nil || len(current) != 2 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
 		t.Fatal(current, err)
 	}
 	foreign, err := reopened.ListDocumentTemplates(ctx, other.ID)
-	if err != nil || len(foreign) != 2 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
+	if err != nil || len(foreign) != 3 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
 		t.Fatal(foreign, err)
 	}
 }
@@ -222,5 +223,38 @@ func TestStampInsertWidthPersistsOnServerAndMigratesOldSchema(t *testing.T) {
 	list, err = reopened.ListDocumentStamps(ctx, owner.ID)
 	if err != nil || len(list) != 1 || list[0].InsertWidth != 40 || list[0].Value != stamp.Value {
 		t.Fatal(list, err)
+	}
+}
+
+func TestChineseContractTemplateSeedsForExistingOwnerOnce(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	owner, err := s.CreateUser(ctx, "cn-contract", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an account that already initialized the older built-ins.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO document_template_initializations(owner_id) VALUES(?)`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	templates, err := s.ListDocumentTemplates(ctx, owner.ID)
+	if err != nil || len(templates) != 1 || templates[0].Name != "中文购销合同模板" {
+		t.Fatal(templates, err)
+	}
+	if !strings.Contains(templates[0].HTML, `"version": 2`) || !strings.Contains(templates[0].HTML, "item_price_0") {
+		t.Fatal("not a structured commercial template")
+	}
+	if err := s.DeleteDocumentTemplate(ctx, owner.ID, templates[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	templates, err = s.ListDocumentTemplates(ctx, owner.ID)
+	if err != nil || len(templates) != 0 {
+		t.Fatal("deleted template was recreated", templates, err)
 	}
 }

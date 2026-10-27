@@ -1,0 +1,2300 @@
+{
+  "template": "document",
+  "options": {
+    "margins": [
+      40,
+      52,
+      40,
+      52
+    ],
+    "defaultFont": "Microsoft YaHei",
+    "defaultSize": 10,
+    "defaultRowMargin": 0.5,
+    "table": {
+      "tdPadding": [
+        4,
+        6,
+        4,
+        6
+      ]
+    }
+  },
+  "data": {
+    "main": [
+      {
+        "value": "购 销 合 同",
+        "font": "Microsoft YaHei",
+        "size": 24,
+        "color": "#17365d",
+        "bold": true,
+        "rowFlex": "center"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "产品采购 · 商业条款 · 双方确认",
+        "font": "Microsoft YaHei",
+        "size": 9,
+        "color": "#64748b",
+        "rowFlex": "center"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 345
+          },
+          {
+            "width": 345
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "合同编号：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "contract_number",
+                      "placeholder": "合同编号",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "签订日期：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "contract_date",
+                      "placeholder": "签订日期",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "签订地点：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "signing_place",
+                      "placeholder": "签订地点",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "采购订单号：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_po",
+                      "placeholder": "采购订单号",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "一  合同双方",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 345
+          },
+          {
+            "width": 345
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "买方（甲方）",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#f1f5f9"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "卖方（乙方）",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#f1f5f9"
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "单位名称：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_company",
+                      "placeholder": "单位名称",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "单位名称：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_company",
+                      "placeholder": "单位名称",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "纳税人识别号：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_tax_id",
+                      "placeholder": "纳税人识别号",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "纳税人识别号：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_tax_id",
+                      "placeholder": "纳税人识别号",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系地址：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_address",
+                      "placeholder": "联系地址",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系地址：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_address",
+                      "placeholder": "联系地址",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系人：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_contact",
+                      "placeholder": "联系人",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系人：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_contact",
+                      "placeholder": "联系人",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系电话：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_phone",
+                      "placeholder": "联系电话",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "联系电话：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_phone",
+                      "placeholder": "联系电话",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "电子邮箱：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "customer_email",
+                      "placeholder": "电子邮箱",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "电子邮箱：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_email",
+                      "placeholder": "电子邮箱",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "二  产品明细与合同价款",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 32
+          },
+          {
+            "width": 110
+          },
+          {
+            "width": 260
+          },
+          {
+            "width": 60
+          },
+          {
+            "width": 110
+          },
+          {
+            "width": 118
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "序号",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "产品型号",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "产品名称及规格要求",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "数量",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "单价",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "金额",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#edf2f7"
+              }
+            ]
+          },
+          {
+            "height": 48,
+            "minHeight": 48,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "1",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b"
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "item_model_0",
+                      "placeholder": "产品型号",
+                      "value": null,
+                      "extension": {
+                        "lineId": "cn-contract-template-line-1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "item_description_0",
+                      "placeholder": "产品名称及规格要求",
+                      "value": null,
+                      "extension": {
+                        "lineId": "cn-contract-template-line-1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "item_qty_0",
+                      "placeholder": "数量",
+                      "value": null,
+                      "extension": {
+                        "lineId": "cn-contract-template-line-1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "item_price_0",
+                      "placeholder": "单价",
+                      "value": null,
+                      "extension": {
+                        "lineId": "cn-contract-template-line-1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "item_amount_0",
+                      "placeholder": "金额",
+                      "value": null,
+                      "extension": {
+                        "lineId": "cn-contract-template-line-1"
+                      },
+                      "disabled": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 5,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "商品小计",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "subtotal",
+                      "placeholder": "商品小计",
+                      "value": null,
+                      "disabled": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 5,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "税额",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "tax_amount",
+                      "placeholder": "税额",
+                      "value": null,
+                      "disabled": true
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 5,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "合同总金额",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "total_amount",
+                      "placeholder": "合同总金额",
+                      "value": null,
+                      "disabled": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 230
+          },
+          {
+            "width": 230
+          },
+          {
+            "width": 230
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "币种：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "currency",
+                      "placeholder": "币种",
+                      "value": [
+                        {
+                          "value": "CNY",
+                          "font": "Microsoft YaHei",
+                          "size": 10,
+                          "color": "#1e293b"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "税率：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "tax_rate",
+                      "placeholder": "税率",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "计税方式：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "tax_mode",
+                      "placeholder": "计税方式",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "折扣金额：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "discount",
+                      "placeholder": "折扣金额",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "运费：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "inland_freight",
+                      "placeholder": "运费",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "金额大写：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "say_total",
+                      "placeholder": "金额大写",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "运费税率：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "freight_tax_rate",
+                      "placeholder": "运费税率",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "运费计税方式：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "freight_tax_mode",
+                      "placeholder": "运费计税方式",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "发票类型：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "invoice_type",
+                      "placeholder": "发票类型",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "计税方式填写 included（含税）或 excluded（未税）；运费非零时须填写运费税率及计税方式。金额由系统计算。",
+        "font": "Microsoft YaHei",
+        "size": 8,
+        "color": "#64748b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "三  付款与交付约定",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 345
+          },
+          {
+            "width": 345
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "付款条件：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "payment_terms",
+                      "placeholder": "付款条件",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "交货期限：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "lead_time",
+                      "placeholder": "交货期限",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "交货地址：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "delivery_address",
+                      "placeholder": "交货地址",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "运输方式：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "delivery_method",
+                      "placeholder": "运输方式",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "运费承担：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "freight_bearer",
+                      "placeholder": "运费承担",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "开票要求：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "invoice_terms",
+                      "placeholder": "开票要求",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "pageBreak",
+        "value": ""
+      },
+      {
+        "value": "购销合同 · 条款与签署",
+        "font": "Microsoft YaHei",
+        "size": 17,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "四  验收、质量与售后",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "验收标准与期限：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "acceptance_terms",
+          "placeholder": "验收标准与期限",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "质量标准及技术文件：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "quality_terms",
+          "placeholder": "质量标准及技术文件",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "质保期限与售后安排：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "warranty_terms",
+          "placeholder": "质保期限与售后安排",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "五  履约与其他约定",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "违约责任：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "breach_terms",
+          "placeholder": "违约责任",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "不可抗力处理：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "force_majeure_terms",
+          "placeholder": "不可抗力处理",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "争议解决方式：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "dispute_terms",
+          "placeholder": "争议解决方式",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "生效条件及合同份数：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "effective_terms",
+          "placeholder": "生效条件及合同份数",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "附件及技术文件清单：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "attachments",
+          "placeholder": "附件及技术文件清单",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "其他约定：",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "color": "#1e293b",
+        "bold": true
+      },
+      {
+        "type": "control",
+        "value": "",
+        "font": "Microsoft YaHei",
+        "size": 10,
+        "control": {
+          "type": "text",
+          "conceptId": "additional_terms",
+          "placeholder": "其他约定",
+          "value": null
+        }
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "六  收款账户",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 345
+          },
+          {
+            "width": 345
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "账户名称：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "bank_account_name",
+                      "placeholder": "账户名称",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "开户银行：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "bank_name",
+                      "placeholder": "开户银行",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "银行账号：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "bank_account_no",
+                      "placeholder": "银行账号",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "汇款附言：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "payment_memo",
+                      "placeholder": "汇款附言",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "七  双方签署",
+        "font": "Microsoft YaHei",
+        "size": 12,
+        "color": "#17365d",
+        "bold": true
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "type": "table",
+        "value": "",
+        "colgroup": [
+          {
+            "width": 345
+          },
+          {
+            "width": 345
+          }
+        ],
+        "trList": [
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "买方（甲方）签字 / 盖章",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#f1f5f9"
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "卖方（乙方）签字 / 盖章",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#17365d",
+                    "bold": true
+                  }
+                ],
+                "backgroundColor": "#f1f5f9"
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "授权代表：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "buyer_signatory",
+                      "placeholder": "授权代表",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "授权代表：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_signatory",
+                      "placeholder": "授权代表",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 70,
+            "minHeight": 70,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "\n\n\n",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b"
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "\n\n\n",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "height": 28,
+            "minHeight": 28,
+            "tdList": [
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "签署日期：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "buyer_sign_date",
+                      "placeholder": "签署日期",
+                      "value": null
+                    }
+                  }
+                ]
+              },
+              {
+                "colspan": 1,
+                "rowspan": 1,
+                "verticalAlign": "middle",
+                "value": [
+                  {
+                    "value": "签署日期：",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "color": "#1e293b",
+                    "bold": true
+                  },
+                  {
+                    "type": "control",
+                    "value": "",
+                    "font": "Microsoft YaHei",
+                    "size": 10,
+                    "control": {
+                      "type": "text",
+                      "conceptId": "seller_sign_date",
+                      "placeholder": "签署日期",
+                      "value": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "borderType": "all",
+        "borderColor": "#cbd5e1",
+        "borderWidth": 1
+      },
+      {
+        "value": "\n",
+        "font": "Microsoft YaHei",
+        "size": 6,
+        "color": "#1e293b"
+      },
+      {
+        "value": "本合同中的产品、金额及交易条件以双方最终确认的填写内容和附件为准。",
+        "font": "Microsoft YaHei",
+        "size": 9,
+        "color": "#64748b"
+      }
+    ]
+  },
+  "business": {
+    "version": 2,
+    "values": {
+      "contract_number": "",
+      "contract_date": "",
+      "signing_place": "",
+      "customer_po": "",
+      "customer_company": "",
+      "seller_company": "",
+      "customer_tax_id": "",
+      "seller_tax_id": "",
+      "customer_address": "",
+      "seller_address": "",
+      "customer_contact": "",
+      "seller_contact": "",
+      "customer_phone": "",
+      "seller_phone": "",
+      "customer_email": "",
+      "seller_email": "",
+      "currency": "CNY",
+      "tax_rate": "",
+      "tax_mode": "",
+      "discount": "",
+      "inland_freight": "",
+      "say_total": "",
+      "freight_tax_rate": "",
+      "freight_tax_mode": "",
+      "invoice_type": "",
+      "payment_terms": "",
+      "lead_time": "",
+      "delivery_address": "",
+      "delivery_method": "",
+      "freight_bearer": "",
+      "invoice_terms": "",
+      "acceptance_terms": "",
+      "quality_terms": "",
+      "warranty_terms": "",
+      "breach_terms": "",
+      "force_majeure_terms": "",
+      "dispute_terms": "",
+      "effective_terms": "",
+      "attachments": "",
+      "additional_terms": "",
+      "bank_account_name": "",
+      "bank_name": "",
+      "bank_account_no": "",
+      "payment_memo": "",
+      "buyer_signatory": "",
+      "seller_signatory": "",
+      "buyer_sign_date": "",
+      "seller_sign_date": ""
+    },
+    "calculated": {
+      "subtotal": "",
+      "tax_amount": "",
+      "total_amount": "",
+      "contract_amount": ""
+    },
+    "items": [
+      {
+        "lineId": "cn-contract-template-line-1",
+        "model": "",
+        "description": "",
+        "qty": "",
+        "price": "",
+        "amount": ""
+      }
+    ]
+  }
+}

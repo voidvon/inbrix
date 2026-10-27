@@ -3,11 +3,15 @@ package mailstore
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+//go:embed templates/chinese-sales-contract.json
+var chineseSalesContractTemplate string
 
 var ErrDocumentConflict = errors.New("文档已修改或删除，请重新打开最新文档，或让 AI 重新生成修改方案 / Document changed or was deleted; reopen it or regenerate the proposal")
 
@@ -298,6 +302,20 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	// Each built-in addition is seeded independently, so existing owners receive
+	// it once while their subsequent edits and deletions remain authoritative.
+	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "chinese-sales-contract")
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		now := time.Now().UnixMilli()
+		_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "chinese-sales-contract-"+owner, owner, "contract", "中文购销合同模板", "__INBRIX_CANVAS_DOCUMENT__:"+strings.TrimSpace(chineseSalesContractTemplate), now, now)
+		if err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
