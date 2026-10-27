@@ -35,29 +35,29 @@ func TestAtomicDocumentCommandsPreserveIdentity(t *testing.T) {
 
 func TestPricingValidationExplainsIncompleteTotalsAndResets(t *testing.T) {
 	card := &AIDocumentCard{Items: []AIDocumentItem{{Model: "A", Qty: "1"}}, Values: map[string]string{"inland_freight": "20"}}
-	if err := calculateDocumentAmounts(card, nil); err != nil {
+	if err := calculateDocumentAmounts(card); err != nil {
 		t.Fatal(err)
 	}
 	issues := map[string]bool{}
 	for _, issue := range card.PricingValidation.Issues {
 		issues[issue.Code] = true
 	}
-	if card.Total != "" || card.PricingValidation.Status != "incomplete" || !issues["missing_price"] || !issues["missing_tax"] || !issues["missing_freight_tax"] {
+	if card.Total != "" || card.PricingValidation.Status != "incomplete" || !issues["missing_price"] || issues["missing_tax"] || issues["missing_freight_tax"] {
 		t.Fatal("missing actionable issues", card.PricingValidation)
 	}
 	card.Items[0].Price = "100"
 	card.Values["tax_mode"] = "excluded"
 	card.Values["tax_rate"], card.Values["freight_tax_rate"], card.Values["freight_tax_mode"] = "0%", "0%", "included"
-	if err := calculateDocumentAmounts(card, nil); err != nil || card.Total != "120.00" || card.PricingValidation.Status != "complete" || len(card.PricingValidation.Issues) != 0 {
+	if err := calculateDocumentAmounts(card); err != nil || card.Total != "120.00" || card.PricingValidation.Status != "complete" || len(card.PricingValidation.Issues) != 0 {
 		t.Fatal("stale validation after completion", card, err)
 	}
 	catalog := &AIDocumentCard{Items: []AIDocumentItem{{Qty: "1", Price: "10"}}, Values: map[string]string{"tax_rate": "0%"}}
-	if err := calculateDocumentAmounts(catalog, map[int]mailstore.ProductPrice{0: {}}); err != nil || catalog.PricingValidation.Issues[0].Code != "missing_catalog_tax" {
-		t.Fatal("missing catalog-specific explanation", catalog, err)
+	if err := calculateDocumentAmounts(catalog); err != nil || catalog.Total != "10.00" || len(catalog.PricingValidation.Issues) != 0 {
+		t.Fatal("catalog prices should not require tax", catalog, err)
 	}
 }
 
-func TestAgentSparseUpdatesRequireCurrentRevisionAndExplainMissingTotal(t *testing.T) {
+func TestAgentSparseUpdatesRequireCurrentRevisionAndComputeTotalWithoutTax(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	body := businessCanvas(map[string]string{"item_model": "A", "item_qty": "1", "item_price": "10", "item_amount": "10.00", "total_amount": "10.00"})
 	record, err := h.mailDB.SaveDocument(context.Background(), mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Test", HTML: body}, 0)
@@ -75,7 +75,7 @@ func TestAgentSparseUpdatesRequireCurrentRevisionAndExplainMissingTotal(t *testi
 		t.Fatal(err)
 	}
 	action := result.(*AIDocumentAction)
-	if action.Items[0].Price != "10" || action.Values["subtotal"] != "20.00" || action.Values["total_amount"] != "" || action.PricingValidation.Status != "incomplete" || !strings.Contains(action.Summary, "税率待确认") {
+	if action.Items[0].Price != "10" || action.Values["subtotal"] != "20.00" || action.Values["total_amount"] != "20.00" || action.PricingValidation.Status != "complete" || strings.Contains(action.Summary, "税率待确认") {
 		t.Fatal("missing actionable mutation result", action)
 	}
 }

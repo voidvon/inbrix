@@ -488,6 +488,7 @@ export type DocumentCommand = { type: "set_fields" | "update_line" | "add_line" 
 export type DocumentValidation = { status: "draft" | "ready"; issues: Array<{ code: string; field: string; line?: number; message: string }> };
 
 export type GenerateDocumentInput = {
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
   commands?: DocumentCommand[];
   requestId?: string;
   accountEmail: string;
@@ -515,6 +516,7 @@ export type QuotationItem = {
 };
 
 export type GenerateDocumentResult = {
+  changed?: boolean;
   summary?: string;
   mode?: "variables" | "apply";
   html?: string;
@@ -554,8 +556,6 @@ export type AIAgentDocumentCard = {
   terms?: string[];
   notes?: string;
   subtotal?: string;
-  taxRate?: string;
-  taxAmount?: string;
   total?: string;
   values?: Record<string, string>;
   html?: string;

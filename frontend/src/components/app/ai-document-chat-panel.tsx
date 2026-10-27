@@ -560,7 +560,7 @@ export function AIDocumentChatPanel({
                                 : tc.name === "lookup_price"
                                 ? (isZh ? "查询价格表" : "Look Up Price")
                                 : tc.name === "calculate_pricing"
-                                ? (isZh ? "核算价格与税费" : "Calculate Pricing")
+                                ? (isZh ? "核算价格" : "Calculate Pricing")
                                 : tc.name === "generate_document"
                                 ? (isZh ? "生成结构化文档" : "Generate Document")
                                 : tc.name}

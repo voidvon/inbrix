@@ -67,6 +67,9 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 			if c, ok := e["control"].(map[string]any); ok {
 				id, _ := c["conceptId"].(string)
 				value, exists := values[documentFieldKey(id)]
+				if retiredDocumentFields[id] {
+					value, exists = "", true
+				}
 				if field, slot, itemControl := canvasItemConcept(id); itemControl {
 					exists = false
 					if replaceItems {

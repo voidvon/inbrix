@@ -105,27 +105,27 @@ func TestManualLineEditRecalculatesCanvasTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tax := range []string{"0%", "13%", ""} {
-		result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": tax}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100.00", "amount": "999999"}}}, mailstore.AIModelRecord{}, "")
+	for _, discount := range []string{"0", "10", ""} {
+		result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"discount": discount}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100.00", "amount": "999999"}}}, mailstore.AIModelRecord{}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		action := result.(*AIDocumentAction)
-		want := map[string]string{"0%": "200.00", "13%": "226.00", "": ""}[tax]
+		want := map[string]string{"0": "200.00", "10": "190.00", "": "200.00"}[discount]
 		values, items, ok := canvasDocumentContent(action.HTML)
 		if !ok || items[0].Amount != "200.00" || values["subtotal"] != "200.00" || values["total_amount"] != want || values["contract_amount"] != want || action.Values["total_amount"] != want {
-			t.Fatalf("stale totals for tax %q: %+v %v", tax, values, items)
+			t.Fatalf("stale totals for discount %q: %+v %v", discount, values, items)
 		}
 	}
-	result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"tax_rate": "13%"}}, mailstore.AIModelRecord{}, "")
-	if err != nil || result.(*AIDocumentAction).Values["total_amount"] != "113.00" {
-		t.Fatalf("tax-only change: %+v %v", result, err)
+	result, _, err := executeDocumentUpdateTest(h, ctx, account.OwnerID, map[string]any{"id": record.ID, "values": map[string]any{"discount": "10"}}, mailstore.AIModelRecord{}, "")
+	if err != nil || result.(*AIDocumentAction).Values["total_amount"] != "90.00" {
+		t.Fatalf("discount-only change: %+v %v", result, err)
 	}
 }
 
-func TestDocumentAmountsAcrossToolsAndTaxModes(t *testing.T) {
+func TestDocumentAmountsAcrossToolsIgnoreLegacyTaxModes(t *testing.T) {
 	for _, tt := range []struct{ name, rate, mode, discount, total, tax string }{
-		{"unknown", "", "", "", "", ""}, {"zero", "0", "excluded", "", "20.00", "0.00"}, {"excluded", "13%", "excluded", "", "22.60", "2.60"}, {"included", "0.13", "included", "", "20.00", "2.30"}, {"discount", "13%", "excluded", "2.00", "20.34", "2.34"},
+		{"unknown", "", "", "", "20.00", ""}, {"zero", "0", "excluded", "", "20.00", ""}, {"excluded", "13%", "excluded", "", "20.00", ""}, {"included", "0.13", "included", "", "20.00", ""}, {"discount", "13%", "excluded", "2.00", "18.00", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			args := map[string]any{"items": []any{map[string]any{"model": "A", "qty": "2.5", "price": "8", "amount": "1"}}, "tax_rate": tt.rate, "tax_mode": tt.mode, "discount": tt.discount}
@@ -139,28 +139,28 @@ func TestDocumentAmountsAcrossToolsAndTaxModes(t *testing.T) {
 			}
 			card := generated.(*AIDocumentCard)
 			values := calc.(map[string]any)
-			if card.Subtotal != "20.00" || card.Items[0].Amount != "20.00" || card.Total != tt.total || card.TaxAmount != tt.tax || values["total"] != tt.total || values["tax_amount"] != tt.tax {
+			if card.Subtotal != "20.00" || card.Items[0].Amount != "20.00" || card.Total != tt.total || card.TaxAmount != tt.tax || values["total"] != tt.total || values["tax_amount"] != nil {
 				t.Fatalf("inconsistent math: %+v %+v", card, values)
 			}
 		})
 	}
-	for _, bad := range []map[string]any{{"tax_rate": "abc"}, {"tax_rate": "130%"}, {"tax_mode": "guess"}, {"discount": "21"}, {"discount": "-1"}} {
+	for _, bad := range []map[string]any{{"discount": "21"}, {"discount": "-1"}} {
 		bad["items"] = []any{map[string]any{"qty": "2", "price": "10"}}
 		if _, _, err := executeCalculatePricing(bad); err == nil {
 			t.Fatal("invalid money inputs accepted", bad)
 		}
 	}
 	card := &AIDocumentCard{Values: map[string]string{"tax_rate": "0%", "tax_mode": "excluded"}, Items: []AIDocumentItem{{Qty: "1", Price: "0.005"}, {Qty: "1", Price: "0.005"}}}
-	if err := calculateDocumentAmounts(card, nil); err != nil || card.Total != "0.02" {
+	if err := calculateDocumentAmounts(card); err != nil || card.Total != "0.02" {
 		t.Fatalf("line rounding: %+v %v", card, err)
 	}
 	card = &AIDocumentCard{Values: map[string]string{"total_amount": "999"}, Items: []AIDocumentItem{{Qty: "1", Price: "20"}, {Qty: "1", Amount: "999"}}}
-	if err := calculateDocumentAmounts(card, nil); err != nil || card.Subtotal != "" || card.Total != "" || card.Items[1].Amount != "" {
+	if err := calculateDocumentAmounts(card); err != nil || card.Subtotal != "" || card.Total != "" || card.Items[1].Amount != "" {
 		t.Fatalf("incomplete line treated as zero: %+v %v", card, err)
 	}
-	// Catalog and manual lines use their own explicit tax treatment.
+	// Catalog and manual lines use the same unit-price calculation.
 	card = &AIDocumentCard{Values: map[string]string{"tax_rate": "0%", "tax_mode": "excluded"}, Items: []AIDocumentItem{{Qty: "1", Price: "100"}, {Qty: "1", Price: "100"}}}
-	if err := calculateDocumentAmounts(card, map[int]mailstore.ProductPrice{0: {TaxRate: "0.13", TaxMode: "included"}}); err != nil || card.Total != "200.00" || card.TaxAmount != "11.50" {
+	if err := calculateDocumentAmounts(card); err != nil || card.Total != "200.00" || card.TaxAmount != "" {
 		t.Fatalf("mixed lines: %+v %v", card, err)
 	}
 }

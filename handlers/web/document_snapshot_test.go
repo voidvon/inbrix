@@ -19,6 +19,33 @@ func readyCommercialTestDocument() string {
 	})
 }
 
+func TestQuotationTotalWithoutTaxFields(t *testing.T) {
+	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
+	body := businessCanvas(map[string]string{
+		"quote_number": "SP-20261028-F85E992F", "currency": "USD",
+		"item_qty_0": "1", "item_price_0": "3731.00", "item_amount_0": "3731.00", "total_amount": "",
+	})
+	normalized, report, err := normalizeCommercialDocument(context.Background(), h.mailDB, account.OwnerID, body, "quotation", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, items, _ := canvasDocumentContent(normalized)
+	visible, _, _ := canvasProjectionContent(normalized)
+	if values["total_amount"] != "3731.00" || visible["total_amount"] != "3731.00" || items[0].Amount != "3731.00" {
+		t.Fatal("missing quotation total", values, visible, items)
+	}
+	for _, issue := range report.Issues {
+		if retiredDocumentFields[issue.Field] {
+			t.Fatal("retired tax field blocked total", issue)
+		}
+	}
+	for key := range retiredDocumentFields {
+		if _, exists := values[key]; exists {
+			t.Fatal("retired field survived", key)
+		}
+	}
+}
+
 func TestCanonicalSnapshotIgnoresProjectionAndRecalculatesOutputs(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	body := readyCommercialTestDocument()
@@ -34,23 +61,23 @@ func TestCanonicalSnapshotIgnoresProjectionAndRecalculatesOutputs(t *testing.T) 
 	}
 	actual, lines, _ := canvasDocumentContent(normalized)
 	visible, _, _ := canvasProjectionContent(normalized)
-	if actual["total_amount"] != "226.00" || visible["total_amount"] != "226.00" || lines[0].Amount != "200.00" || lines[0].LineID != items[0].LineID {
+	if actual["total_amount"] != "200.00" || visible["total_amount"] != "200.00" || lines[0].Amount != "200.00" || lines[0].LineID != items[0].LineID {
 		t.Fatal(actual, visible, lines)
 	}
-	// The same explicit rate without included/excluded mode is still incomplete.
-	incomplete := withDocumentBusiness(t, normalized, map[string]string{"tax_mode": ""})
+	// Missing commercial terms still keep an otherwise priced document in draft.
+	incomplete := withDocumentBusiness(t, normalized, map[string]string{"payment_terms": ""})
 	_, report, err = normalizeCommercialDocument(context.Background(), h.mailDB, account.OwnerID, incomplete, "quotation", nil)
 	if err != nil || report.Status != "draft" {
 		t.Fatal(report, err)
 	}
 	found := false
 	for _, issue := range report.Issues {
-		if issue.Code == "missing_tax" {
+		if issue.Code == "missing_field" && issue.Field == "payment_terms" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("missing tax mode was not explained", report)
+		t.Fatal("missing payment terms were not explained", report)
 	}
 	for _, invalid := range []string{
 		canvasDocumentPrefix + `{"data":{"main":[{"value":"x"}]}}`,
@@ -121,10 +148,10 @@ func TestSaveAndDeliveryValidationUseSameCurrentSnapshot(t *testing.T) {
 		t.Fatal(report)
 	}
 	values, _, _ := canvasDocumentContent(doc.HTML)
-	if values["total_amount"] != "226.00" {
+	if values["total_amount"] != "200.00" {
 		t.Fatal("save trusted fake total", values)
 	}
-	missing := withDocumentBusiness(t, doc.HTML, map[string]string{"tax_mode": ""})
+	missing := withDocumentBusiness(t, doc.HTML, map[string]string{"payment_terms": ""})
 	status, checked := post("/api/documents/validate", saveDocumentInput{ID: doc.ID, Revision: doc.Revision, Type: doc.Type, HTML: missing}, false)
 	_ = json.Unmarshal(checked["validation"], &report)
 	if status != 200 || report.Status != "draft" {

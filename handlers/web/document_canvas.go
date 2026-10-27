@@ -251,12 +251,20 @@ func canvasDocumentContent(body string) (map[string]string, []AIDocumentItem, bo
 	}
 	values := make(map[string]string)
 	for k, v := range payload.Business.Values {
-		values[k] = v
+		if !retiredDocumentFields[k] {
+			values[k] = v
+		}
 	}
 	for k, v := range payload.Business.Calculated {
-		values[k] = v
+		if !retiredDocumentFields[k] {
+			values[k] = v
+		}
 	}
-	return values, append([]AIDocumentItem{}, payload.Business.Items...), true
+	items := append([]AIDocumentItem{}, payload.Business.Items...)
+	for i := range items {
+		items[i].TaxRate, items[i].TaxMode = "", ""
+	}
+	return values, items, true
 }
 
 func collectCanvasProductImages(elements []canvasElement, values map[string]string) {

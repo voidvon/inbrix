@@ -11,7 +11,7 @@ import (
 	"inbrix/mailstore"
 )
 
-func TestCatalogDocumentReferencesAndTax(t *testing.T) {
+func TestCatalogDocumentReferencesWithoutTax(t *testing.T) {
 	ctx := context.Background()
 	db, err := mailstore.Open(":memory:")
 	if err != nil {
@@ -23,7 +23,7 @@ func TestCatalogDocumentReferencesAndTax(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewAISettingsHandler(nil, &config.Config{}, db)
-	for _, tt := range []struct{ mode, rate, total, tax string }{{"excluded", "0.13", "22.60", "2.60"}, {"included", "0.13", "20.00", "2.30"}, {"", "0.13", "", ""}, {"excluded", "0", "20.00", "0.00"}} {
+	for _, tt := range []struct{ mode, rate, total, tax string }{{"excluded", "0.13", "20.00", ""}, {"included", "0.13", "20.00", ""}, {"", "0.13", "20.00", ""}, {"excluded", "0", "20.00", ""}} {
 		t.Run(tt.mode+tt.rate, func(t *testing.T) {
 			product, err := db.SaveProduct(ctx, user.ID, "", mailstore.ProductInput{Name: "阀门", Model: "BV", Catalog: &mailstore.ProductCatalog{Dimensions: []mailstore.ProductDimension{{Key: "connection", Label: "连接方式", Type: "text"}}, Variants: []mailstore.ProductVariant{{SKU: "BV-F", Attributes: map[string]string{"connection": "法兰"}, Prices: []mailstore.ProductPrice{{Amount: "10.00", TaxMode: tt.mode, TaxRate: tt.rate, MinQty: "2", MaxQty: "10"}}}}}})
 			if err != nil {
@@ -42,7 +42,7 @@ func TestCatalogDocumentReferencesAndTax(t *testing.T) {
 				t.Fatal(card.Items)
 			}
 			if card.Currency != "CNY" || card.Subtotal != "20.00" || card.Total != tt.total || card.TaxAmount != tt.tax || card.Values["total_amount"] != tt.total {
-				t.Fatalf("wrong tax result: %+v", card)
+				t.Fatalf("wrong amount result: %+v", card)
 			}
 			item["qty"] = "1"
 			if _, _, err = handler.executeTool(ctx, user.ID, "", AIToolCall{Name: "generate_document", Args: args}, mailstore.AIModelRecord{}, ""); err == nil {
@@ -151,7 +151,7 @@ func TestCatalogSnapshotCannotSilentlyBecomeManual(t *testing.T) {
 	if err := h.finalizeDocumentAmounts(context.Background(), "owner", card, []AIDocumentItem{old}); err != nil {
 		t.Fatal(err)
 	}
-	if card.Values["total_amount"] != "22.60" {
+	if card.Values["total_amount"] != "20.00" {
 		t.Fatal(card.Values)
 	}
 	card.Items[0].PriceID = ""

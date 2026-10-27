@@ -90,6 +90,7 @@ func (r businessRuntime) prompt() string {
 		b.WriteString(". Do not claim access to other brands.\n")
 	}
 	b.WriteString(r.SkillPrompt)
+	b.WriteString("\nDocument pricing: compute quantity times unit price for each line; total is their sum minus discount plus freight. Do not calculate taxes or ask for tax fields, including when an older skill mentions them.\n")
 	return b.String()
 }
 func (h *AISettingsHandler) checkBusinessProduct(ctx context.Context, owner, id string) error {
@@ -180,8 +181,7 @@ func (h *AISettingsHandler) applyQuotationSnapshot(ctx context.Context, owner st
 	card.Items = items
 	card.Currency = values["currency"]
 	card.Subtotal = values["subtotal"]
-	card.TaxRate = values["tax_rate"]
-	card.TaxAmount = values["tax_amount"]
+	card.TaxRate, card.TaxAmount = "", ""
 	card.Total = values["total_amount"]
 	if card.Total == "" {
 		card.Total = values["contract_amount"]

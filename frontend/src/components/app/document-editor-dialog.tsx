@@ -121,8 +121,8 @@ export function DocumentAISidebar({
       id: "initial-msg",
       role: "assistant",
       content: isZh
-        ? "我是您的 AI 文档助手。请输入您对当前文档的修改要求（如更改客户名称、调整产品单价、交货期、补充特别条款等），我将直接为您精准更新文档变量并保留排版。"
-        : "I am your AI Document Assistant. Tell me what to update (customer name, prices, delivery dates, special clauses), and I will update the document variables while keeping formatting.",
+        ? "我是您的 AI 文档助手。可以询问字段含义和填写建议，也可以告诉我具体修改要求。我会解答问题，并按您的要求更新文档、保留排版。"
+        : "I am your AI Document Assistant. Ask about fields and how to fill them, or tell me what to change. I will answer your questions and apply requested updates while keeping formatting.",
       time: new Date().toISOString(),
     },
   ]);
@@ -145,22 +145,23 @@ export function DocumentAISidebar({
   });
 
   const mutation = useMutation({
-    mutationFn: async (text: string) => {
+    mutationFn: async ({ text, history }: { text: string; history: Array<{ role: "user" | "assistant"; content: string }> }) => {
       const request = { id: crypto.randomUUID(), controller: new AbortController() };
       requestRef.current = request;
       return await aiState.run(async () => {
         if (!editor) throw new Error(isZh ? "编辑器尚未就绪" : "Editor is not ready");
-        return updateEditorDocument(editor, accountEmail, type, title, { instruction: text }, { requestId: request.id, signal: request.controller.signal });
+        return updateEditorDocument(editor, accountEmail, type, title, { instruction: text, history }, { requestId: request.id, signal: request.controller.signal });
       });
     },
     onSuccess: (value) => {
-      editor?.focus();
+      const changed = value.changed !== false;
+      if (changed) editor?.focus();
       setMessages((prev) => [...prev, {
         id: `asst-${Date.now()}`, role: "assistant",
-        content: value.summary || (isZh ? "文档已更新" : "Document updated"),
-        time: new Date().toISOString(), hasUpdate: true,
+        content: value.summary || (changed ? (isZh ? "文档已更新" : "Document updated") : (isZh ? "本次未修改文档" : "No document changes")),
+        time: new Date().toISOString(), hasUpdate: changed,
       }]);
-      toast.success(isZh ? "文档已智能更新" : "Document updated");
+      if (changed) toast.success(isZh ? "文档已智能更新" : "Document updated");
     },
     onError: (error) => {
       if (error instanceof Error && error.name === "AbortError") return;
@@ -193,7 +194,8 @@ export function DocumentAISidebar({
       },
     ]);
     setInstruction("");
-    mutation.mutate(trimmed);
+    const history = messages.filter(message => message.id !== "initial-msg" && !message.error).slice(-12).map(({ role, content }) => ({ role, content }));
+    mutation.mutate({ text: trimmed, history });
   };
   const handleStop = async () => {
     const request = requestRef.current;

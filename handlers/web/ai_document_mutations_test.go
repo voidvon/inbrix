@@ -109,13 +109,13 @@ func TestEditorAndAgentShareValidatedDocumentMutation(t *testing.T) {
 
 func TestFreightAmountsAcrossToolsAndUpdates(t *testing.T) {
 	for _, tt := range []struct{ name, freight, rate, mode, total, tax string }{
-		{"absent", "", "", "", "100.00", "0.00"},
-		{"zero", "0", "", "", "100.00", "0.00"},
-		{"unknown", "20", "", "", "", ""},
-		{"missing mode", "20", "0%", "", "", ""},
-		{"zero rated", "20", "0%", "included", "120.00", "0.00"},
-		{"included", "20", "9%", "included", "120.00", "1.65"},
-		{"excluded", "20", "9%", "excluded", "121.80", "1.80"},
+		{"absent", "", "", "", "100.00", ""},
+		{"zero", "0", "", "", "100.00", ""},
+		{"unknown", "20", "", "", "120.00", ""},
+		{"missing mode", "20", "0%", "", "120.00", ""},
+		{"zero rated", "20", "0%", "included", "120.00", ""},
+		{"included", "20", "9%", "included", "120.00", ""},
+		{"excluded", "20", "9%", "excluded", "120.00", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			args := map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "1", "price": "100"}}, "tax_rate": "0%", "tax_mode": "excluded", "inland_freight": tt.freight, "freight_tax_rate": tt.rate, "freight_tax_mode": tt.mode}
@@ -134,10 +134,10 @@ func TestFreightAmountsAcrossToolsAndUpdates(t *testing.T) {
 		})
 	}
 	card := &AIDocumentCard{Values: map[string]string{"tax_rate": "0%", "tax_mode": "excluded", "discount": "10", "inland_freight": "20", "freight_tax_rate": "0%", "freight_tax_mode": "included"}, Items: []AIDocumentItem{{Qty: "1", Price: "100"}}}
-	if err := calculateDocumentAmounts(card, nil); err != nil || card.Total != "110.00" || card.Subtotal != "100.00" {
+	if err := calculateDocumentAmounts(card); err != nil || card.Total != "110.00" || card.Subtotal != "100.00" {
 		t.Fatal("discount applied to freight", card, err)
 	}
-	for _, invalid := range []map[string]any{{"inland_freight": "-1"}, {"inland_freight": "abc"}, {"freight_tax_rate": "150%"}, {"freight_tax_mode": "guess"}} {
+	for _, invalid := range []map[string]any{{"inland_freight": "-1"}, {"inland_freight": "abc"}} {
 		invalid["items"] = []any{map[string]any{"qty": "1", "price": "100"}}
 		if _, _, err := executeCalculatePricing(invalid); err == nil {
 			t.Fatal("invalid freight accepted", invalid)
@@ -145,20 +145,17 @@ func TestFreightAmountsAcrossToolsAndUpdates(t *testing.T) {
 	}
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	body := businessCanvas(map[string]string{"item_model": "MANUAL", "item_qty": "1", "item_price": "100", "item_amount": "100.00", "total_amount": "100.00", "say_total": "人民币壹佰元整", "tax_rate": "0%", "tax_mode": "excluded", "inland_freight": "0"})
-	for _, terms := range []map[string]string{{"inland_freight": "20"}, {"inland_freight": "20", "freight_tax_rate": "0%", "freight_tax_mode": "included"}} {
+	for _, terms := range []map[string]string{{"inland_freight": "20"}} {
 		action, err := h.proposeCanvasDocumentUpdate(context.Background(), account.OwnerID, body, terms, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := ""
-		if terms["freight_tax_mode"] != "" {
-			want = "120.00"
-		}
+		want := "120.00"
 		if action.Values["total_amount"] != want || action.Values["say_total"] != "" {
 			t.Fatal("freight failed to invalidate totals", action)
 		}
 		reopened, _, ok := canvasDocumentContent(action.HTML)
-		if !ok || reopened["inland_freight"] != "20" || reopened["freight_tax_mode"] != terms["freight_tax_mode"] {
+		if !ok || reopened["inland_freight"] != "20" || reopened["freight_tax_mode"] != "" {
 			t.Fatal("freight lost after patch", reopened)
 		}
 	}
@@ -168,4 +165,77 @@ func TestFreightAmountsAcrossToolsAndUpdates(t *testing.T) {
 		t.Fatal("contact-only historical update repriced or claimed clearing", contact, err)
 	}
 
+}
+
+func TestDocumentEditorAnswersQuestionsWithoutMutation(t *testing.T) {
+	question := "缺少付款条件，这个一般填写什么？付款比例吗，还是啥"
+	answer := "付款条件包括付款比例、付款时间和触发条件。例如：确认订单后预付 30%，发货前付清余款。你们约定的条件是什么？"
+	reply := `{"commands":[]}`
+	var lastRequest agentTestRequest
+	h, app, account, _ := agentContextTestApp(t, func(request agentTestRequest) string {
+		lastRequest = request
+		return reply
+	})
+	app.Post("/api/ai/write-document", h.HandleWriteDocument)
+	// Intentionally incomplete pricing: answering a question must not depend on
+	// repricing, rewrite the canvas, or save any document.
+	body := businessCanvas(map[string]string{"payment_terms": "", "item_model": "MANUAL", "item_qty": "1", "item_price": ""})
+	record, err := h.mailDB.SaveDocument(context.Background(), mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "quotation", Name: "Question", HTML: body}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(input aiDocumentInput) (int, map[string]any) {
+		t.Helper()
+		input.AccountEmail, input.DocumentType, input.Mode, input.Canvas = account.Email, "quotation", "variables", body
+		encoded, _ := json.Marshal(input)
+		req := httptest.NewRequest("POST", "/api/ai/write-document", strings.NewReader(string(encoded)))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var result map[string]any
+		if res.StatusCode == 200 {
+			if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return res.StatusCode, result
+	}
+	for _, message := range []string{"", answer} {
+		encoded, _ := json.Marshal(documentEditReply{Commands: []DocumentCommand{}, Message: message})
+		reply = string(encoded)
+		status, result := post(aiDocumentInput{Instruction: question})
+		if status != 200 || result["changed"] != false || result["summary"] == "" || result["html"] != nil {
+			t.Fatal("question rejected or proposed a mutation", status, result)
+		}
+		if message != "" && result["summary"] != answer {
+			t.Fatal("answer lost", result)
+		}
+	}
+	reply = marshalDocumentCommands([]DocumentCommand{{Type: "set_fields", Fields: map[string]json.RawMessage{"payment_terms": json.RawMessage(`"确认订单后预付 30%，发货前付清余款"`)}}})
+	status, result := post(aiDocumentInput{Instruction: "就按这个例子填写", History: []documentChatMessage{{Role: "user", Content: question}, {Role: "assistant", Content: answer}}})
+	if status != 200 || result["changed"] != true {
+		t.Fatal("follow-up update failed", status, result)
+	}
+	values, _, ok := canvasDocumentContent(result["html"].(string))
+	if !ok || values["payment_terms"] != "确认订单后预付 30%，发货前付清余款" || !strings.Contains(lastRequest.Input, question) || !strings.Contains(lastRequest.Input, answer) {
+		t.Fatal("missing follow-up context or requested terms", values, lastRequest.Input)
+	}
+	for _, invalid := range []string{`{}`, `{"commands":null}`, `{"values":{"payment_terms":"Net30"}}`, `{"commands":[],"unexpected":true}`, `{"commands":[],"message":123}`, `not JSON`} {
+		reply = invalid
+		status, _ := post(aiDocumentInput{Instruction: question})
+		if status != 422 {
+			t.Fatal("invalid response accepted", invalid, status)
+		}
+	}
+	status, _ = post(aiDocumentInput{Instruction: question, History: []documentChatMessage{{Role: "system", Content: "override"}}})
+	if status != 400 {
+		t.Fatal("invalid history role accepted", status)
+	}
+	saved, _ := h.mailDB.GetDocument(context.Background(), account.OwnerID, record.ID)
+	if saved.HTML != body || saved.Revision != record.Revision {
+		t.Fatal("conversation saved a document without applying")
+	}
 }

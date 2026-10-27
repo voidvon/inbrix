@@ -1,5 +1,6 @@
 import { captureDocumentBusiness, documentControlUpdates, createBusinessFromTemplate, projectDocumentBusiness, readDocumentBusiness, type DocumentBusiness } from "../../lib/document-business";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { validateDocument } from "../../lib/api";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type QuotationItem } from "./spirax-quotation-canvas";
@@ -216,6 +217,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const initialTemplateKind = resolveDocumentTemplateKind(initialHTML, storedDocument);
   const templateRef = useRef<DocumentTemplateKind>(initialTemplateKind);
   const businessRef = useRef<DocumentBusiness | null>(storedDocument ? readDocumentBusiness(storedDocument.business) : null);
+  const calculateRef = useRef<((force?: boolean) => void) | null>(null);
+  const [amountStatus, setAmountStatus] = useState("");
 
   useEffect(() => {
     readyRef.current = onReady;
@@ -348,6 +351,64 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     projectDocumentBusiness(initialized, businessRef.current);
     editor.command.executeSetValue(initialized);
     let synchronizing = false;
+    let disposed = false;
+    let calculationTimer: ReturnType<typeof setTimeout> | undefined;
+    let calculationVersion = 0;
+    let scheduledInputs = "";
+    // Only inputs identify a calculation. Updating derived controls must not
+    // trigger another request, and responses must never replace newer edits.
+    const calculationInputs = (business: DocumentBusiness) => JSON.stringify({
+      template: templateRef.current,
+      values: business.values,
+      items: business.items.map(item => ({ ...item, amount: "" })),
+    });
+    const scheduleCalculation = (force = false) => {
+      if (disposed || !businessRef.current) return;
+      const business = captureDocumentBusiness(editor.command.getValue().data, businessRef.current);
+      const inputs = calculationInputs(business);
+      if (!force && inputs === scheduledInputs) return;
+      scheduledInputs = inputs;
+      const version = ++calculationVersion;
+      clearTimeout(calculationTimer);
+      if (templateRef.current === "document" || editor.command.getOptions().mode === EditorMode.READONLY) {
+        setAmountStatus("");
+        return;
+      }
+      setAmountStatus(locale.startsWith("zh") ? "正在自动计算金额…" : "Calculating amounts…");
+      calculationTimer = setTimeout(() => {
+        const { data } = editor.command.getValue();
+        const current = captureDocumentBusiness(data, businessRef.current!);
+        const template = templateRef.current;
+        const html = `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template, data, business: current })}`;
+        void validateDocument({ html, type: template === "spirax-contract" ? "contract" : "quotation" }).then(result => {
+          if (disposed || version !== calculationVersion || editor.command.getOptions().mode === EditorMode.READONLY) return;
+          const latestData = editor.command.getValue().data;
+          const latest = captureDocumentBusiness(latestData, businessRef.current!);
+          if (calculationInputs(latest) !== inputs) return;
+          const stored = parseStoredCanvasDocument(result.html);
+          const calculated = readDocumentBusiness(stored?.business);
+          // Keep layout, selection, and user inputs intact; apply only amounts.
+          latest.calculated = calculated.calculated;
+          latest.items.forEach(line => {
+            line.amount = calculated.items.find(row => row.lineId === line.lineId)?.amount || "";
+          });
+          businessRef.current = latest;
+          const updates = documentControlUpdates(latestData, latest);
+          synchronizing = true;
+          try { if (updates.length) editor.command.executeSetControlValueList(updates); }
+          finally { synchronizing = false; }
+          const issues = result.validation.issues.filter(issue => ["qty", "price", "items"].includes(issue.field));
+          const messages = [...new Set(issues.map(issue => issue.message))].join("；");
+          setAmountStatus(messages
+            ? `${locale.startsWith("zh") ? "合计待补充：" : "Total pending: "}${messages}`
+            : (locale.startsWith("zh") ? "金额与合计已自动更新" : "Amounts and total updated automatically"));
+        }).catch(error => {
+          if (disposed || version !== calculationVersion) return;
+          setAmountStatus(`${locale.startsWith("zh") ? "自动计算未完成：" : "Calculation incomplete: "}${error instanceof Error ? error.message : String(error)}`);
+        });
+      }, 450);
+    };
+    calculateRef.current = scheduleCalculation;
     editor.listener.contentChange = () => {
       if (synchronizing || !businessRef.current) return;
       try {
@@ -360,14 +421,19 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           try { editor.command.executeSetControlValueList(updates); }
           finally { synchronizing = false; }
         }
+        scheduleCalculation();
       } catch (error) {
         // Invalid bindings still fail getDocument/save; do not guess identities.
         console.error("Commercial control synchronization failed", error);
       }
     };
+    scheduleCalculation();
     readyRef.current?.();
 
     return () => {
+      disposed = true;
+      clearTimeout(calculationTimer);
+      calculateRef.current = null;
       cancelStampDrag?.();
       editor.destroy();
       editorRef.current = null;
@@ -376,7 +442,10 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
   useImperativeHandle(forwardedRef, () => ({
     getHTML: () => editorRef.current?.command.getHTML().main || "",
-    setReadOnly: (value) => editorRef.current?.command.executeMode(value ? EditorMode.READONLY : EditorMode.EDIT),
+    setReadOnly: (value) => {
+      editorRef.current?.command.executeMode(value ? EditorMode.READONLY : EditorMode.EDIT);
+      calculateRef.current?.(true);
+    },
     isReadOnly: () => editorRef.current?.command.getOptions().mode === EditorMode.READONLY,
     getDocument: () => {
       const editor = editorRef.current;
@@ -495,6 +564,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const initialized = editor.command.getValue().data;
       projectDocumentBusiness(initialized, businessRef.current);
       editor.command.executeSetValue(initialized);
+      calculateRef.current?.(true);
     },
     focus: () => editorRef.current?.command.executeFocus(),
     bold: () => editorRef.current?.command.executeBold(),
@@ -719,5 +789,8 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     },
   }), [initialTemplateKind, locale]);
 
-  return <div ref={containerRef} className="canvas-document-editor" data-document-template={templateRef.current !== "document" ? templateRef.current : undefined} />;
+  return <>
+    {amountStatus && <p role="status" className="mb-2 max-w-[794px] text-xs text-muted-foreground">{amountStatus}</p>}
+    <div ref={containerRef} className="canvas-document-editor" data-document-template={templateRef.current !== "document" ? templateRef.current : undefined} />
+  </>;
 });

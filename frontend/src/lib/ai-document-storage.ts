@@ -26,7 +26,6 @@ export type AIDocumentGeneratedData = {
   terms?: string[];
   notes?: string;
   subtotal?: string;
-  taxAmount?: string;
   total?: string;
   updatedAt: string;
 };

@@ -1,5 +1,5 @@
 import type { CanvasDocumentEditorHandle } from "../components/app/canvas-document-editor";
-import { generateDocument, type DocumentCommand, type QuotationItem } from "./api";
+import { generateDocument, type DocumentCommand, type GenerateDocumentInput, type QuotationItem } from "./api";
 
 // AI and the variable form apply the exact server-validated snapshot. Never
 // rebuild a template locally or apply a reply over intervening editor changes.
@@ -8,7 +8,7 @@ export async function updateEditorDocument(
   accountEmail: string,
   documentType: "quotation" | "contract",
   title: string,
-  change: { instruction: string } | { values: Record<string, string>; items?: QuotationItem[] },
+  change: { instruction: string; history?: GenerateDocumentInput["history"] } | { values: Record<string, string>; items?: QuotationItem[] },
   options?: { requestId: string; signal: AbortSignal },
 ) {
   const canvas = editor.getDocument();
@@ -31,10 +31,12 @@ export async function updateEditorDocument(
     accountEmail, documentType, title, canvas,
     mode: "instruction" in change ? "variables" : "apply",
     instruction: "instruction" in change ? change.instruction : "",
+    history: "instruction" in change ? change.history : undefined,
     commands: "instruction" in change ? undefined : commands,
     requestId: options?.requestId,
   }, options?.signal);
   options?.signal.throwIfAborted();
+  if (result.changed === false) return result;
   if (editor.isReadOnly()) throw new Error("文档正在保存或导出，请稍后重试 / Document is being saved or exported; retry later");
   if (editor.getDocument() !== canvas) {
     throw new Error("文档在处理期间已修改，请基于最新内容重试 / Document changed; retry using its latest content");

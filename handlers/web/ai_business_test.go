@@ -138,8 +138,8 @@ func TestBusinessFinalDocumentFenceCannotBypassBrandAndTaxValidation(t *testing.
 	v := a.Catalog.Variants[0]
 	reply = fmt.Sprintf("```document\n{\"type\":\"quotation\",\"total\":\"99999\",\"items\":[{\"productId\":%q,\"productVersion\":1,\"variantId\":%q,\"priceId\":%q,\"qty\":\"2\",\"price\":\"100\",\"amount\":\"1\"}]}\n```", a.ID, v.ID, v.Prices[0].ID)
 	status, result, raw := postAgentContext(t, app, req)
-	if status != http.StatusOK || result.Document.Subtotal != "200.00" || result.Document.Total != "" {
-		t.Fatalf("fenced amount/tax not verified: %d %s", status, raw)
+	if status != http.StatusOK || result.Document.Subtotal != "200.00" || result.Document.Total != "200.00" {
+		t.Fatalf("fenced amount not verified: %d %s", status, raw)
 	}
 }
 

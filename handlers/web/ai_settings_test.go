@@ -466,7 +466,7 @@ func TestBuildDocumentVariablesPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "[image]") || !strings.Contains(prompt, "[svg-graphic]") {
 		t.Error("prompt missing lightened placeholders")
 	}
-	// 5. instructions 要求 values 的 key 只能来自允许列表
+	// 5. set_fields 只能使用允许列表
 	if !strings.Contains(instructions, "ALLOWED VARIABLE IDS") {
 		t.Error("instructions missing allowed-ids requirement")
 	}
@@ -485,8 +485,8 @@ func TestBuildDocumentVariablesPromptNoHTML(t *testing.T) {
 	if strings.Contains(prompt, "Full Document Content") {
 		t.Error("prompt should not contain Full Document Content when CurrentHTML is empty")
 	}
-	if !strings.Contains(prompt, `"total_amount"`) {
-		t.Error("prompt missing allowed variable id total_amount")
+	if strings.Contains(prompt, `"total_amount"`) {
+		t.Error("calculated total offered as an editable field")
 	}
 }
 

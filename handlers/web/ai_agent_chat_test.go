@@ -80,16 +80,15 @@ func TestExecuteCalculatePricing(t *testing.T) {
 		t.Fatalf("expected map[string]any result")
 	}
 	// Subtotal: 5 * 1200 = 6000 + 10 * 350 = 3500 => 9500.00
-	// Tax: 9500 * 0.13 = 1235.00
-	// Total: 10735.00
+	// Legacy tax arguments do not change the unit-price total.
 	if resMap["subtotal"] != "9500.00" {
 		t.Errorf("expected subtotal '9500.00', got %v", resMap["subtotal"])
 	}
-	if resMap["tax_amount"] != "1235.00" {
-		t.Errorf("expected tax_amount '1235.00', got %v", resMap["tax_amount"])
+	if resMap["tax_amount"] != nil {
+		t.Errorf("unexpected legacy tax amount, got %v", resMap["tax_amount"])
 	}
-	if resMap["total"] != "10735.00" {
-		t.Errorf("expected total '10735.00', got %v", resMap["total"])
+	if resMap["total"] != "9500.00" {
+		t.Errorf("expected total '9500.00', got %v", resMap["total"])
 	}
 	if summary == "" {
 		t.Errorf("expected non-empty summary")

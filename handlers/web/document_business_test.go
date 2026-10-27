@@ -63,7 +63,7 @@ func TestDocumentCommercialRoundtrip(t *testing.T) {
 				}
 				action := result.(*AIDocumentAction)
 				values, items, ok := canvasDocumentContent(action.HTML)
-				if !ok || len(items) != 1 || items[0].Amount != "200.00" || values["total_amount"] != "190.00" || values["discount"] != "10.00" || values["tax_mode"] != "included" || values["tax_rate"] != "13%" {
+				if !ok || len(items) != 1 || items[0].Amount != "200.00" || values["total_amount"] != "190.00" || values["discount"] != "10.00" || values["tax_mode"] != "" || values["tax_rate"] != "" {
 					t.Fatalf("lost commercial basis: %+v %+v", values, items)
 				}
 				record.HTML = action.HTML
@@ -77,7 +77,7 @@ func TestDocumentCommercialRoundtrip(t *testing.T) {
 				if err := h.applyQuotationSnapshot(ctx, account.OwnerID, card); err != nil {
 					t.Fatal(err)
 				}
-				if card.Values["discount"] != "10.00" || card.Values["tax_mode"] != "included" || card.Values["source_quotation_id"] != record.ID || card.Total != "190.00" {
+				if card.Values["discount"] != "10.00" || card.Values["tax_mode"] != "" || card.Values["source_quotation_id"] != record.ID || card.Total != "190.00" {
 					t.Fatalf("lost quotation terms: %+v", card)
 				}
 			}
@@ -88,7 +88,7 @@ func TestDocumentCommercialRoundtrip(t *testing.T) {
 func TestBusinessMetadataControlPrecedenceAndVersions(t *testing.T) {
 	body := withDocumentBusiness(t, businessCanvas(map[string]string{"tax_rate": "", "discount": ""}), map[string]string{"tax_rate": "13%", "tax_mode": "included", "discount": "10.00", "payment_terms": "Net60"})
 	values, _, ok := canvasDocumentContent(body)
-	if !ok || values["tax_rate"] != "13%" || values["discount"] != "10.00" || values["tax_mode"] != "included" {
+	if !ok || values["tax_rate"] != "" || values["discount"] != "10.00" || values["tax_mode"] != "" {
 		t.Fatalf("projection overrode canonical data: %+v", values)
 	}
 	if values["payment_terms"] != "Net60" {
@@ -112,7 +112,7 @@ func TestBusinessMetadataControlPrecedenceAndVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, _, _ = canvasDocumentContent(custom)
-	if values["tax_mode"] != "included" || values["discount"] != "10.00" {
+	if values["tax_mode"] != "" || values["discount"] != "10.00" {
 		t.Fatal("custom template lost terms")
 	}
 }
@@ -162,7 +162,7 @@ func TestDocumentAmountWordsInvalidated(t *testing.T) {
 		{"contact", map[string]any{"values": map[string]any{"customer_company": "New buyer"}}, true},
 		{"same total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "50"}}}, true},
 		{"changed total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, false},
-		{"unknown total", map[string]any{"values": map[string]any{"tax_rate": ""}}, false},
+		{"unknown total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "1", "price": ""}}}, false},
 		{"guessed totals cannot validate words", map[string]any{"values": map[string]any{"total_amount": "200.00"}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

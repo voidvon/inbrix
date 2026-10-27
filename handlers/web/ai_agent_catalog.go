@@ -88,7 +88,6 @@ func (h *AISettingsHandler) finalizeDocumentAmounts(ctx context.Context, owner s
 			previous[line.LineID] = line
 		}
 	}
-	prices := map[int]mailstore.ProductPrice{}
 	for i := range card.Items {
 		item := &card.Items[i]
 		if old, exists := previous[item.LineID]; exists && old.PriceID != "" && (item.PriceID == "" || item.ProductID == "" || item.VariantID == "") {
@@ -98,8 +97,6 @@ func (h *AISettingsHandler) finalizeDocumentAmounts(ctx context.Context, owner s
 			continue
 		}
 		if old, ok := previous[item.LineID]; ok && old.ProductID == item.ProductID && old.ProductVersion == item.ProductVersion && old.VariantID == item.VariantID && old.PriceID == item.PriceID && old.Price == item.Price && old.Qty == item.Qty {
-			item.TaxRate, item.TaxMode = old.TaxRate, old.TaxMode
-			prices[i] = mailstore.ProductPrice{Amount: old.Price, TaxRate: old.TaxRate, TaxMode: old.TaxMode}
 			continue
 		}
 		_, price, err := h.mailDB.ResolveProductPrice(ctx, owner, item.ProductID, item.VariantID, item.PriceID, item.ProductVersion, item.Qty)
@@ -110,8 +107,6 @@ func (h *AISettingsHandler) finalizeDocumentAmounts(ctx context.Context, owner s
 			return fmt.Errorf("catalog price mismatch")
 		}
 		item.Price = price.Amount
-		item.TaxRate, item.TaxMode = price.TaxRate, price.TaxMode
-		prices[i] = price
 	}
-	return calculateDocumentAmounts(card, prices)
+	return calculateDocumentAmounts(card)
 }

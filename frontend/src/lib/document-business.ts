@@ -1,11 +1,14 @@
 import type { QuotationItem } from "./api";
+import { calculateLineAmount } from "./document-amounts";
 
 export const calculatedDocumentFields = new Set(["subtotal", "tax_amount", "total_amount", "contract_amount"]);
+// Old saved documents may still contain these fields; discard them on read.
+export const retiredDocumentFields = new Set(["tax_rate", "tax_mode", "tax_amount", "freight_tax_rate", "freight_tax_mode"]);
 export function documentFieldKey(key: string) {
   const aliases: Record<string, string> = { buyer_company: "customer_company", buyer_contact: "customer_contact", buyer_email: "customer_email", buyer_phone: "customer_phone", buyer_address: "customer_address" };
   return aliases[key] || key;
 }
-const pricingFields = new Set(["tax_rate", "tax_mode", "discount", "currency", "inland_freight", "freight_tax_rate", "freight_tax_mode"]);
+const pricingFields = new Set(["discount", "currency", "inland_freight"]);
 export type DocumentBusiness = {
   version: 2;
   values: Record<string, string>;
@@ -23,12 +26,46 @@ function walk(node: unknown, visit: (element: Node) => void) {
     if (Array.isArray(element[key])) walk(element[key], visit);
   }
 }
-function itemConcept(id: string): { field: string; index: number } | null {
+type ItemField = "model" | "description" | "qty" | "price" | "amount" | "picture";
+function itemConcept(id: string): { field: ItemField; index: number } | null {
   const match = /^item_(model|description|desc|qty|price|amount|picture)_(\d+)$/.exec(id);
-  return match ? { field: match[1] === "desc" ? "description" : match[1], index: Number(match[2]) } : null;
+  return match ? { field: match[1] === "desc" ? "description" : match[1] as ItemField, index: Number(match[2]) } : null;
 }
 function controlText(control: Node) {
   return ((control.value || []) as Array<{ value?: string }>).map(run => run.value || "").join("").trim();
+}
+
+// Remove dedicated legacy tax rows/cells while preserving the table width.
+function removeRetiredControls(data: unknown) {
+  const concepts = (node: unknown) => {
+    const ids: string[] = [];
+    walk(node, element => {
+      const control = element.control as Node | undefined;
+      if (typeof control?.conceptId === "string") ids.push(control.conceptId);
+    });
+    return ids;
+  };
+  walk(data, element => {
+    if (typeof element.value === "string" && element.value.startsWith("计税方式填写 included（含税）或 excluded（未税）")) {
+      element.value = "明细金额按数量 × 单价计算；合计为明细金额之和减折扣、加运费。";
+    }
+    if (!Array.isArray(element.trList)) return;
+    element.trList = (element.trList as Node[]).filter(row => {
+      const ids = concepts(row);
+      if (!ids.some(id => retiredDocumentFields.has(id))) return true;
+      if (ids.every(id => retiredDocumentFields.has(id))) return false;
+      let removedSpan = 0;
+      row.tdList = (row.tdList as Node[]).filter(cell => {
+        const cellIds = concepts(cell);
+        if (!cellIds.length || !cellIds.every(id => retiredDocumentFields.has(id))) return true;
+        removedSpan += Number(cell.colspan || 1);
+        return false;
+      });
+      const cells = row.tdList as Node[];
+      if (removedSpan && cells.length) cells[cells.length - 1].colspan = Number(cells[cells.length - 1].colspan || 1) + removedSpan;
+      return true;
+    });
+  });
 }
 
 export function readDocumentBusiness(value: unknown): DocumentBusiness {
@@ -43,12 +80,22 @@ export function readDocumentBusiness(value: unknown): DocumentBusiness {
     if (!line || typeof line.lineId !== "string" || !line.lineId || ids.has(line.lineId)) throw new Error("产品明细 lineId 缺失或重复 / Invalid line identity");
     ids.add(line.lineId);
   }
-  return structuredClone(b);
+  const business = structuredClone(b);
+  for (const key of retiredDocumentFields) {
+    delete business.values[key];
+    delete business.calculated[key];
+  }
+  business.items.forEach(item => {
+    Reflect.deleteProperty(item, "taxRate");
+    Reflect.deleteProperty(item, "taxMode");
+  });
+  return business;
 }
 
 export function createDocumentBusiness(values: Record<string, string> = {}, items: QuotationItem[] = []): DocumentBusiness {
   const inputs: Record<string, string> = {}, calculated: Record<string, string> = {};
   for (const [key, value] of Object.entries(values)) {
+    if (retiredDocumentFields.has(key)) continue;
     if (key.startsWith("item_")) continue;
     const canonical = documentFieldKey(key), target = calculatedDocumentFields.has(key) ? calculated : inputs;
     if (canonical in target && target[canonical] !== value) throw new Error(`字段 ${canonical} 与模板别名冲突 / Conflicting party fields`);
@@ -78,6 +125,7 @@ export function createBusinessFromTemplate(data: unknown): DocumentBusiness {
 // Bind the projection to stable business identities. All control values are
 // rendered from the canonical snapshot, including explicitly empty values.
 export function projectDocumentBusiness(data: unknown, business: DocumentBusiness) {
+  removeRetiredControls(data);
   walk(data, element => {
     const c = element.control as Node | undefined;
     if (!c || typeof c.conceptId !== "string") return;
@@ -86,8 +134,8 @@ export function projectDocumentBusiness(data: unknown, business: DocumentBusines
     if (item) {
       const line = business.items[item.index];
       if (!line) return;
-      c.extension = { ...(c.extension as Node || {}), lineId: line.lineId };
-      value = String((line as unknown as Node)[item.field] || "");
+      c.extension = { ...(c.extension && typeof c.extension === "object" ? c.extension : {}), lineId: line.lineId };
+      value = line[item.field] || "";
     } else value = business.calculated[c.conceptId] ?? business.values[documentFieldKey(c.conceptId)] ?? "";
     if (item?.field === "amount" || calculatedDocumentFields.has(c.conceptId)) c.disabled = true;
     const runs = (c.value || []) as Node[];
@@ -109,9 +157,11 @@ export function captureDocumentBusiness(data: unknown, previous: DocumentBusines
     const c = element.control as Node | undefined;
     if (!c || typeof c.conceptId !== "string") return;
     const id = documentFieldKey(c.conceptId), value = controlText(c), item = itemConcept(id);
+    if (retiredDocumentFields.has(id)) return;
     if (item) {
       if (["amount", "picture"].includes(item.field)) return;
       const lineId = (c.extension as Node | undefined)?.lineId;
+      if (typeof lineId !== "string") throw new Error("明细控件未绑定产品行 / Unbound line control");
       const line = next.items.find(row => row.lineId === lineId);
       if (!line) throw new Error("明细控件未绑定产品行，请使用产品表单调整 / Unbound line control");
       const key = item.field as "model" | "description" | "qty" | "price";
@@ -128,7 +178,7 @@ export function captureDocumentBusiness(data: unknown, previous: DocumentBusines
   if (pricingChanged) {
     next.calculated = {};
     next.values.say_total = "";
-    next.items.forEach(line => { line.amount = ""; });
+    next.items.forEach(line => { line.amount = calculateLineAmount(line.qty, line.price); });
   }
   return next;
 }
@@ -140,7 +190,7 @@ export function documentControlUpdates(data: unknown, business: DocumentBusiness
     if (!c || typeof c.conceptId !== "string") return;
     const item = itemConcept(c.conceptId);
     const value = item
-      ? String((business.items.find(line => line.lineId === (c.extension as Node | undefined)?.lineId) as unknown as Node | undefined)?.[item.field] || "")
+      ? business.items.find(line => line.lineId === (c.extension as Node | undefined)?.lineId)?.[item.field] || ""
       : business.calculated[c.conceptId] ?? business.values[documentFieldKey(c.conceptId)] ?? "";
     if (controlText(c) !== value) updates.set(c.conceptId, value);
   });

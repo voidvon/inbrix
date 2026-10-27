@@ -106,7 +106,7 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 		// Check derived fields too: the model does not explicitly request them,
 		// but a stale visible control must never override a calculated amount.
 		visible, _, _ := canvasProjectionContent(action.HTML)
-		for _, key := range []string{"subtotal", "tax_amount", "total_amount", "contract_amount", "say_total"} {
+		for _, key := range []string{"subtotal", "total_amount", "contract_amount", "say_total"} {
 			if shown, exists := visible[key]; patchedValues[key] != action.Values[key] || (exists && shown != action.Values[key]) {
 				return nil, fmt.Errorf("金额字段 %s 未完整写入文档，请检查模板控件", key)
 			}
@@ -119,7 +119,7 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 
 	return action, nil
 }
-func (h *AISettingsHandler) respondCanvasDocumentUpdate(c *fiber.Ctx, owner string, input aiDocumentInput, commands []DocumentCommand) error {
+func (h *AISettingsHandler) respondCanvasDocumentUpdate(c *fiber.Ctx, owner string, input aiDocumentInput, commands []DocumentCommand, message string) error {
 	values, items, err := applyDocumentCommands(input.Canvas, commands)
 	if err != nil {
 		return fiber.NewError(422, err.Error())
@@ -129,8 +129,11 @@ func (h *AISettingsHandler) respondCanvasDocumentUpdate(c *fiber.Ctx, owner stri
 		return fiber.NewError(422, err.Error())
 	}
 	if action == nil {
-		return c.JSON(fiber.Map{"mode": "variables", "html": input.Canvas, "summary": "没有需要应用的变更"})
+		return c.JSON(fiber.Map{"mode": "variables", "changed": false, "html": input.Canvas, "summary": "没有需要应用的变更"})
 	}
 	action.Validation = validateCommercialDocument(input.DocumentType, action.HTML, &AIDocumentCard{Values: action.Values, Items: action.Items, PricingValidation: action.PricingValidation})
-	return c.JSON(fiber.Map{"mode": "variables", "html": action.HTML, "values": action.Values, "items": action.Items, "summary": action.Summary, "pricingValidation": action.PricingValidation, "validation": action.Validation})
+	if message != "" {
+		action.Summary = message + "\n\n" + action.Summary
+	}
+	return c.JSON(fiber.Map{"mode": "variables", "changed": action.HTML != input.Canvas, "html": action.HTML, "values": action.Values, "items": action.Items, "summary": action.Summary, "pricingValidation": action.PricingValidation, "validation": action.Validation})
 }

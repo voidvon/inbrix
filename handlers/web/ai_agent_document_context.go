@@ -44,8 +44,7 @@ func sessionDocumentContext(session mailstore.AIChatSession, question string) (*
 			doc.Contact = values["customer_contact"]
 			doc.Currency = values["currency"]
 			doc.Subtotal = values["subtotal"]
-			doc.TaxRate = values["tax_rate"]
-			doc.TaxAmount = values["tax_amount"]
+			doc.TaxRate, doc.TaxAmount = "", ""
 			doc.Total = values["total_amount"]
 		}
 	} else if session.CurrentSavedDocumentMissing {

@@ -9,13 +9,15 @@ import (
 // Inputs and calculated outputs are separate. Canvas controls are projections,
 // never a fallback source of commercial facts.
 var documentBusinessKeys = map[string]bool{
-	"inland_freight": true, "freight_tax_rate": true, "freight_tax_mode": true,
-	"tax_rate": true, "tax_mode": true, "discount": true, "currency": true,
-	"subtotal": true, "tax_amount": true, "total_amount": true, "contract_amount": true, "say_total": true,
+	"inland_freight": true, "discount": true, "currency": true,
+	"subtotal": true, "total_amount": true, "contract_amount": true, "say_total": true,
 	"source_quotation_id": true, "source_quotation_revision": true,
 	"source_quotation_name": true, "source_quotation_updated_at": true,
 }
 var documentCalculatedKeys = map[string]bool{"subtotal": true, "tax_amount": true, "total_amount": true, "contract_amount": true}
+
+// Read older snapshots, but omit these retired fields from new projections.
+var retiredDocumentFields = map[string]bool{"tax_rate": true, "tax_mode": true, "tax_amount": true, "freight_tax_rate": true, "freight_tax_mode": true}
 
 // Template labels can vary; party data has exactly one canonical spelling.
 func documentFieldKey(key string) string {
@@ -79,6 +81,9 @@ func ensureDocumentLineIDs(items []AIDocumentItem) {
 func setCanvasBusiness(payload map[string]any, values map[string]string, items []AIDocumentItem) error {
 	inputs, calculated := map[string]string{}, map[string]string{}
 	for key, value := range values {
+		if retiredDocumentFields[key] {
+			continue
+		}
 		if strings.HasPrefix(key, "item_") {
 			continue
 		}
@@ -94,6 +99,9 @@ func setCanvasBusiness(payload map[string]any, values map[string]string, items [
 	}
 	if items == nil {
 		items = []AIDocumentItem{}
+	}
+	for i := range items {
+		items[i].TaxRate, items[i].TaxMode = "", ""
 	}
 	ensureDocumentLineIDs(items)
 	snapshot := documentBusiness{Version: 2, Values: inputs, Calculated: calculated, Items: items}

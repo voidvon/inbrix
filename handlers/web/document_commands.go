@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -14,14 +15,33 @@ type DocumentCommand struct {
 	Fields map[string]json.RawMessage `json:"fields,omitempty"`
 }
 
-func decodeDocumentCommands(body string) ([]DocumentCommand, error) {
-	var result struct {
-		Commands []DocumentCommand `json:"commands"`
-	}
+type documentEditReply struct {
+	Commands []DocumentCommand `json:"commands"`
+	Message  string            `json:"message,omitempty"`
+}
+
+// A conversation can answer a question without proposing a document mutation.
+func decodeDocumentEditReply(body string) (documentEditReply, error) {
+	var result documentEditReply
 	decoder := json.NewDecoder(strings.NewReader(cleanJSONResponse(body)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
-		return nil, fmt.Errorf("文档修改命令无效: %w", err)
+		return result, fmt.Errorf("文档助手回复无效: %w", err)
+	}
+	if result.Commands == nil {
+		return result, fmt.Errorf("回复需要 commands 数组")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return result, fmt.Errorf("回复只能包含一个 JSON 对象")
+	}
+	result.Message = strings.TrimSpace(result.Message)
+	return result, nil
+}
+
+func decodeDocumentCommands(body string) ([]DocumentCommand, error) {
+	result, err := decodeDocumentEditReply(body)
+	if err != nil {
+		return nil, err
 	}
 	if len(result.Commands) == 0 {
 		return nil, fmt.Errorf("请提供非空 commands")
@@ -53,7 +73,7 @@ func applyDocumentCommands(body string, commands []DocumentCommand) (map[string]
 				return nil, nil, fmt.Errorf("set_fields 需要非空 fields，不能指定 lineId")
 			}
 			for key, raw := range command.Fields {
-				if strings.HasPrefix(key, "item_") || documentCalculatedKeys[key] || strings.HasPrefix(key, "source_quotation_") {
+				if retiredDocumentFields[key] || strings.HasPrefix(key, "item_") || documentCalculatedKeys[key] || strings.HasPrefix(key, "source_quotation_") {
 					return nil, nil, fmt.Errorf("字段 %s 不能直接修改", key)
 				}
 				if _, exists := values[key]; !exists && !documentBusinessKeys[key] {

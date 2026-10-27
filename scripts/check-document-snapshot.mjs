@@ -40,7 +40,7 @@ try {
   });
   const initial = await page.evaluate(() => JSON.parse(window.snapshotEditor.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]));
   assert.equal(initial.business.version, 2);
-  assert.equal(initial.business.calculated.total_amount, '226.00');
+  assert.equal(initial.business.calculated.total_amount, '200.00');
   assert.notEqual(initial.business.items[0].lineId, initial.business.items[1].lineId);
   await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '3' }]));
   await page.waitForFunction(() => {
@@ -52,12 +52,88 @@ try {
   assert.equal(changed.data.items[0].price, '100');
   assert.equal(changed.data.items[1].qty, '2');
   assert.equal(changed.controls.find(control => control.conceptId === 'total_amount')?.value || '', '');
+  // Totals update without saving or pressing Check completeness.
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '400.00');
+  const automatic = await page.evaluate(() => window.snapshotEditor.getControls());
+  assert.equal(automatic.find(control => control.conceptId === 'item_amount_0')?.value, '300.00');
+  assert.equal(automatic.find(control => control.conceptId === 'total_amount')?.value, '400.00');
+
+  // A slower calculation for an older quantity must not replace newer edits.
+  let releaseOld;
+  let oldStarted;
+  const oldRequest = new Promise(resolve => { oldStarted = resolve; });
+  const delayed = new Promise(resolve => { releaseOld = resolve; });
+  await page.route('**/api/documents/validate', async route => {
+    const input = route.request().postDataJSON();
+    const snapshot = JSON.parse(input.html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]);
+    if (snapshot.business.items[0].qty === '4') {
+      const response = await route.fetch();
+      oldStarted();
+      await delayed;
+      await route.fulfill({ response });
+    } else await route.continue();
+  });
+  await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '4' }]));
+  await oldRequest;
+  await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '5' }]));
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '600.00');
+  releaseOld();
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.snapshotEditor.getDocumentData().values.total_amount), '600.00');
+  await page.unroute('**/api/documents/validate');
+  await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '3' }]));
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '400.00');
+
+  const lineAmounts = await page.evaluate(async () => {
+    const { calculateLineAmount } = await import('/src/lib/document-amounts.ts');
+    return [['1', '1.005'], ['2.5', '8'], ['3', '0.1'], ['1,000', '0.005'], ['1', '0'], ['', '10'], ['0', '10'], ['1.', '10']].map(([qty, price]) => calculateLineAmount(qty, price));
+  });
+  assert.deepEqual(lineAmounts, ['1.01', '20.00', '0.30', '5.00', '0.00', '', '', '']);
+
+  // Exercise typing across a completed background calculation, including the
+  // editor's active control and caret, rather than only imperative updates.
+  await page.evaluate(() => {
+    const host = document.querySelector('.canvas-document-editor');
+    let fiber = host[Object.keys(host).find(key => key.startsWith('__reactFiber$'))];
+    for (; fiber; fiber = fiber.return) {
+      for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+        const native = hook.memoizedState?.current;
+        if (!native?.command?.executeLocationControl) continue;
+        const control = native.command.getControlList().find(element => element.control?.conceptId === 'item_qty_0');
+        native.command.executeLocationControl(control.controlId, { position: 'after' });
+        return;
+      }
+    }
+    throw new Error('Missing native canvas editor');
+  });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('12', { delay: 30 });
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '1300.00').catch(async error => {
+    console.log(await page.evaluate(() => ({ data: window.snapshotEditor.getDocumentData(), focus: document.activeElement?.outerHTML })));
+    throw error;
+  });
+  await page.keyboard.type('3');
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '12400.00');
+  assert.equal(await page.evaluate(() => window.snapshotEditor.getDocumentData().items[0].qty), '123');
+  await page.evaluate(() => window.snapshotEditor.setControlValues([{ conceptId: 'item_qty_0', value: '3' }]));
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '400.00');
+
+  await dialog.getByRole('tab', { name: '变量列表', exact: true }).click();
+  const lineInputs = dialog.locator('table tbody tr').first().locator('input');
+  await lineInputs.nth(2).fill('2.5');
+  await lineInputs.nth(3).fill('1.005');
+  assert.equal(await lineInputs.nth(4).inputValue(), '2.51');
+  assert.equal(await lineInputs.nth(4).getAttribute('readonly'), '');
+  assert.equal(await dialog.locator('#tax_rate, #tax_mode, #freight_tax_rate, #freight_tax_mode, #tax_amount').count(), 0);
+  await dialog.locator('#inland_freight').waitFor();
+  await dialog.getByRole('button', { name: '重新读取', exact: true }).click();
+  await dialog.getByRole('tab', { name: '文档排版', exact: true }).click();
   const reviewed = page.waitForResponse(response => response.url().endsWith('/api/documents/validate') && response.status() === 200);
   await dialog.getByRole('button', { name: '检查完整性', exact: true }).click();
   const checked = await (await reviewed).json();
   assert.equal(checked.validation.status, 'ready');
-  assert.equal(JSON.parse(checked.html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]).business.calculated.total_amount, '452.00');
-  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '452.00');
+  assert.equal(JSON.parse(checked.html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]).business.calculated.total_amount, '400.00');
+  await page.waitForFunction(() => window.snapshotEditor.getDocumentData().values.total_amount === '400.00');
   const saving = page.waitForResponse(response => response.url().endsWith('/api/documents') && response.request().method() === 'POST');
   await dialog.getByRole('button', { name: '保存', exact: true }).click();
   const result = await (await saving).json();
@@ -73,14 +149,17 @@ try {
   await page.waitForTimeout(200);
   await page.evaluate(() => {
     const doc = JSON.parse(window.snapshotEditor.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]);
-    doc.business.values.tax_mode = '';
+    doc.business.items[0].price = '';
     window.snapshotEditor.setHTML('__INBRIX_CANVAS_DOCUMENT__:' + JSON.stringify(doc));
   });
+  await page.getByText('合计待补充：', { exact: false }).waitFor();
+  assert.equal(await page.evaluate(() => window.snapshotEditor.getDocumentData().items[0].amount), '');
+  assert.equal(await page.evaluate(() => window.snapshotEditor.getDocumentData().values.total_amount), '');
   const incompleteResponse = page.waitForResponse(response => response.url().endsWith('/api/documents/validate') && response.status() === 200);
   await dialog.getByRole('button', { name: '检查完整性', exact: true }).click();
   const incomplete = await (await incompleteResponse).json();
   assert.equal(incomplete.validation.status, 'draft');
-  assert(incomplete.validation.issues.some(issue => issue.code === 'missing_tax'));
+  assert(incomplete.validation.issues.some(issue => issue.code === 'missing_price'));
   await dialog.getByText('草稿，需补充以下内容', { exact: false }).waitFor();
   let downloads = 0;
   page.on('download', () => downloads++);
@@ -101,5 +180,5 @@ try {
   await page.waitForTimeout(500);
   await page.screenshot({ path: '/tmp/inbrix-document-snapshot-mobile.png' });
   assert.deepEqual(errors, []);
-  console.log('Canonical snapshot, stable IDs, manual edits, server totals, delivery blocking, and draft saving passed.');
+  console.log('Automatic amounts and totals, stale response protection, decimal rounding, variable form, no tax inputs, delivery blocking, and draft saving passed.');
 } finally { await browser.close(); }

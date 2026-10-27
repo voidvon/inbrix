@@ -1255,12 +1255,12 @@ func (h *AISettingsHandler) executeLookupPrice(ctx context.Context, owner string
 
 func executeCalculatePricing(args map[string]any) (any, string, error) {
 	card := &AIDocumentCard{Items: parseItemsArg(args, "items"), Values: map[string]string{}}
-	for _, key := range []string{"tax_rate", "tax_mode", "discount", "inland_freight", "freight_tax_rate", "freight_tax_mode"} {
+	for _, key := range []string{"discount", "inland_freight"} {
 		if text := parseStringArg(args, key); text != "" {
 			card.Values[key] = text
 		}
 	}
-	if err := calculateDocumentAmounts(card, nil); err != nil {
+	if err := calculateDocumentAmounts(card); err != nil {
 		return nil, "", err
 	}
 	var items []map[string]string
@@ -1271,7 +1271,7 @@ func executeCalculatePricing(args map[string]any) (any, string, error) {
 		}
 		items = append(items, map[string]string{"name": name, "qty": item.Qty, "unitPrice": item.Price, "amount": item.Amount})
 	}
-	result := map[string]any{"subtotal": card.Subtotal, "tax_rate": card.TaxRate, "tax_amount": card.TaxAmount, "discount": card.Values["discount"], "inland_freight": card.Values["inland_freight"], "freight_tax_rate": card.Values["freight_tax_rate"], "freight_tax_mode": card.Values["freight_tax_mode"], "total": card.Total, "items": items, "pricingValidation": card.PricingValidation}
+	result := map[string]any{"subtotal": card.Subtotal, "discount": card.Values["discount"], "inland_freight": card.Values["inland_freight"], "total": card.Total, "items": items, "pricingValidation": card.PricingValidation}
 	summary := "金额核算待补充：" + card.PricingValidation.summary()
 	if card.Total != "" {
 		summary = fmt.Sprintf("精确核算完成: 总额 %s", card.Total)
@@ -1331,12 +1331,12 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 	card.Counterparty = card.Values["customer_company"]
 	card.Contact = card.Values["customer_contact"]
 	card.Currency = card.Values["currency"]
-	for _, key := range []string{"tax_rate", "tax_mode", "discount", "inland_freight", "freight_tax_rate", "freight_tax_mode"} {
+	for _, key := range []string{"discount", "inland_freight"} {
 		if text := parseStringArg(args, key); text != "" {
 			card.Values[key] = text
 		}
 	}
-	if err := calculateDocumentAmounts(card, nil); err != nil {
+	if err := calculateDocumentAmounts(card); err != nil {
 		return nil, "", err
 	}
 

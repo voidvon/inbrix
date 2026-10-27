@@ -920,46 +920,6 @@
                 "verticalAlign": "middle",
                 "value": [
                   {
-                    "value": "税额",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "color": "#1e293b",
-                    "bold": true
-                  }
-                ]
-              },
-              {
-                "colspan": 1,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
-                    "type": "control",
-                    "value": "",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "control": {
-                      "type": "text",
-                      "conceptId": "tax_amount",
-                      "placeholder": "税额",
-                      "value": null,
-                      "disabled": true
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "height": 28,
-            "minHeight": 28,
-            "tdList": [
-              {
-                "colspan": 5,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
                     "value": "合同总金额",
                     "font": "Microsoft YaHei",
                     "size": 10,
@@ -1054,12 +1014,12 @@
                 ]
               },
               {
-                "colspan": 1,
+                "colspan": 2,
                 "rowspan": 1,
                 "verticalAlign": "middle",
                 "value": [
                   {
-                    "value": "税率：",
+                    "value": "发票类型：",
                     "font": "Microsoft YaHei",
                     "size": 10,
                     "color": "#1e293b",
@@ -1072,34 +1032,8 @@
                     "size": 10,
                     "control": {
                       "type": "text",
-                      "conceptId": "tax_rate",
-                      "placeholder": "税率",
-                      "value": null
-                    }
-                  }
-                ]
-              },
-              {
-                "colspan": 1,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
-                    "value": "计税方式：",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "color": "#1e293b",
-                    "bold": true
-                  },
-                  {
-                    "type": "control",
-                    "value": "",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "control": {
-                      "type": "text",
-                      "conceptId": "tax_mode",
-                      "placeholder": "计税方式",
+                      "conceptId": "invoice_type",
+                      "placeholder": "发票类型",
                       "value": null
                     }
                   }
@@ -1190,90 +1124,6 @@
                 ]
               }
             ]
-          },
-          {
-            "height": 28,
-            "minHeight": 28,
-            "tdList": [
-              {
-                "colspan": 1,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
-                    "value": "运费税率：",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "color": "#1e293b",
-                    "bold": true
-                  },
-                  {
-                    "type": "control",
-                    "value": "",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "control": {
-                      "type": "text",
-                      "conceptId": "freight_tax_rate",
-                      "placeholder": "运费税率",
-                      "value": null
-                    }
-                  }
-                ]
-              },
-              {
-                "colspan": 1,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
-                    "value": "运费计税方式：",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "color": "#1e293b",
-                    "bold": true
-                  },
-                  {
-                    "type": "control",
-                    "value": "",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "control": {
-                      "type": "text",
-                      "conceptId": "freight_tax_mode",
-                      "placeholder": "运费计税方式",
-                      "value": null
-                    }
-                  }
-                ]
-              },
-              {
-                "colspan": 1,
-                "rowspan": 1,
-                "verticalAlign": "middle",
-                "value": [
-                  {
-                    "value": "发票类型：",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "color": "#1e293b",
-                    "bold": true
-                  },
-                  {
-                    "type": "control",
-                    "value": "",
-                    "font": "Microsoft YaHei",
-                    "size": 10,
-                    "control": {
-                      "type": "text",
-                      "conceptId": "invoice_type",
-                      "placeholder": "发票类型",
-                      "value": null
-                    }
-                  }
-                ]
-              }
-            ]
           }
         ],
         "borderType": "all",
@@ -1287,7 +1137,7 @@
         "color": "#1e293b"
       },
       {
-        "value": "计税方式填写 included（含税）或 excluded（未税）；运费非零时须填写运费税率及计税方式。金额由系统计算。",
+        "value": "明细金额按数量 × 单价计算；合计为明细金额之和减折扣、加运费。",
         "font": "Microsoft YaHei",
         "size": 8,
         "color": "#64748b"
@@ -2248,13 +2098,9 @@
       "customer_email": "",
       "seller_email": "",
       "currency": "CNY",
-      "tax_rate": "",
-      "tax_mode": "",
       "discount": "",
       "inland_freight": "",
       "say_total": "",
-      "freight_tax_rate": "",
-      "freight_tax_mode": "",
       "invoice_type": "",
       "payment_terms": "",
       "lead_time": "",
@@ -2282,7 +2128,6 @@
     },
     "calculated": {
       "subtotal": "",
-      "tax_amount": "",
       "total_amount": "",
       "contract_amount": ""
     },

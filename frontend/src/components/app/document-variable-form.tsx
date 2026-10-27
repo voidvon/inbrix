@@ -1,5 +1,6 @@
-import { calculatedDocumentFields, documentFieldKey } from "../../lib/document-business";
+import { calculatedDocumentFields, documentFieldKey, retiredDocumentFields } from "../../lib/document-business";
 import { updateEditorDocument } from "../../lib/document-mutations";
+import { calculateLineAmount } from "../../lib/document-amounts";
 import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
@@ -72,11 +73,7 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
   payment_memo: { zh: "付款备注标识", en: "Payment Memo", group: "terms" },
   total_amount: { zh: "总计金额", en: "Total Amount", group: "terms" },
   subtotal: { zh: "小计金额", en: "Subtotal", group: "terms" },
-  tax_rate: { zh: "商品税率（如 13%）", en: "Goods tax rate (e.g. 13%)", group: "terms" },
-  tax_mode: { zh: "商品含税口径（included / excluded）", en: "Goods tax mode (included / excluded)", group: "terms" },
   discount: { zh: "商品折扣金额", en: "Goods discount amount", group: "terms" },
-  freight_tax_rate: { zh: "运费税率（如 0%）", en: "Freight tax rate (e.g. 0%)", group: "terms" },
-  freight_tax_mode: { zh: "运费含税口径（included / excluded）", en: "Freight tax mode (included / excluded)", group: "terms" },
   inland_freight: { zh: "内陆运费", en: "Inland Freight", group: "terms" },
   say_total: { zh: "大写总额", en: "Say Total in Words", group: "terms" },
   order_note_1: { zh: "条款 1: 排产交期", en: "Clause 1: Production Schedule", group: "terms" },
@@ -147,7 +144,7 @@ export function DocumentVariableForm({
       const next = [...prev];
       const cur = { ...next[index], [field]: val };
 
-      if (field === "qty" || field === "price") cur.amount = "";
+      if (field === "qty" || field === "price") cur.amount = calculateLineAmount(cur.qty, cur.price);
       next[index] = cur;
 
       return next;
@@ -198,7 +195,7 @@ export function DocumentVariableForm({
     const other: Array<{ key: string; label: string; value: string }> = [];
 
     // All known variables or keys currently in values
-    const allKeys = new Set([...Object.keys(values), "tax_rate", "tax_mode", "discount", "freight_tax_rate", "freight_tax_mode"]);
+    const allKeys = new Set([...Object.keys(values), "discount", "inland_freight"]);
 
     // Also include template-typical keys even if currently empty
     const templateKind = data?.template || "document";
@@ -209,7 +206,7 @@ export function DocumentVariableForm({
     }
 
     for (const key of new Set([...allKeys].map(documentFieldKey))) {
-      if (key.startsWith("item_") || calculatedDocumentFields.has(key) || key.startsWith("source_quotation_")) continue; // Handled in items table
+      if (retiredDocumentFields.has(key) || key.startsWith("item_") || calculatedDocumentFields.has(key) || key.startsWith("source_quotation_")) continue; // Handled in items table
       const meta = VARIABLE_LABELS[key];
       const label = meta ? (isZh ? meta.zh : meta.en) : key.replace(/^[\[_]+|[\]_]+$/g, "");
       const val = values[key] ?? "";
@@ -459,6 +456,10 @@ export function DocumentVariableForm({
               </Button>
             </div>
 
+            <p className="text-xs text-muted-foreground">{isZh
+              ? "金额按数量 × 单价自动计算，合计为明细金额之和减折扣、加运费。应用后更新文档。"
+              : "Amounts are quantity × unit price. Total is the sum of line amounts minus discount plus freight. Apply to update the document."}</p>
+
             {items.length === 0 ? (
               <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-lg">
                 <p>{isZh ? "暂无产品明细，点击上方按钮添加产品行" : "No items listed. Click 'Add Item' above."}</p>
@@ -516,8 +517,9 @@ export function DocumentVariableForm({
                         <td className="py-2 px-2">
                           <Input
                             value={item.amount}
-                            onChange={(e) => handleItemChange(idx, "amount", e.target.value)}
-                            placeholder="0.00"
+                            readOnly
+                            aria-label={isZh ? `第 ${idx + 1} 项自动计算金额` : `Calculated amount for item ${idx + 1}`}
+                            placeholder={isZh ? "自动计算" : "Automatic"}
                             className="h-7 text-xs text-right font-medium"
                           />
                         </td>
