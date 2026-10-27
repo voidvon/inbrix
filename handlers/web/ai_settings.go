@@ -26,8 +26,6 @@ const (
 	defaultOpenAIModel     = "gpt-5.6-sol"
 	defaultGeminiBaseURL   = "https://generativelanguage.googleapis.com"
 	defaultGeminiModel     = "gemini-3.8-flash"
-	defaultDeepSeekBaseURL = "https://api.deepseek.com"
-	defaultDeepSeekModel   = "deepseek-chat"
 	defaultReasoningEffort = "medium"
 	maxSummaryInputBytes   = 200_000
 )
@@ -41,6 +39,7 @@ type AISettingsHandler struct {
 }
 
 type aiModelInput struct {
+	SupportsImages  *bool  `json:"supportsImages"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"baseUrl"`
 	Model           string `json:"model"`
@@ -71,6 +70,7 @@ type aiDocumentInput struct {
 }
 
 type aiModelPublic struct {
+	SupportsImages  bool   `json:"supportsImages"`
 	ID              string `json:"id"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"baseUrl"`
@@ -114,6 +114,7 @@ func (h *AISettingsHandler) ready(c *fiber.Ctx) (string, error) {
 
 func publicAIModel(model mailstore.AIModelRecord) aiModelPublic {
 	return aiModelPublic{
+		SupportsImages:  model.SupportsImageInput(),
 		ID:              model.ID,
 		Provider:        model.Provider,
 		BaseURL:         model.BaseURL,
@@ -141,7 +142,7 @@ func (h *AISettingsHandler) HandleListModels(c *fiber.Ctx) error {
 }
 
 func validProvider(p string) bool {
-	return p == "openai" || p == "openai-compatible" || p == "gemini" || p == "deepseek"
+	return p == "openai" || p == "openai-compatible" || p == "gemini"
 }
 
 func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
@@ -158,7 +159,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -168,8 +169,6 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		switch input.Provider {
 		case "gemini":
 			input.BaseURL = defaultGeminiBaseURL
-		case "deepseek":
-			input.BaseURL = defaultDeepSeekBaseURL
 		default:
 			input.BaseURL = defaultOpenAIBaseURL
 		}
@@ -178,8 +177,6 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		switch input.Provider {
 		case "gemini":
 			input.Model = defaultGeminiModel
-		case "deepseek":
-			input.Model = defaultDeepSeekModel
 		default:
 			input.Model = defaultOpenAIModel
 		}
@@ -206,6 +203,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		return fiber.ErrInternalServerError
 	}
 	created, err := h.mailDB.CreateAIModel(c.UserContext(), mailstore.AIModelRecord{
+		SupportsImages:  input.SupportsImages,
 		OwnerID:         owner,
 		Provider:        input.Provider,
 		BaseURL:         strings.TrimRight(input.BaseURL, "/"),
@@ -244,7 +242,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -274,7 +272,8 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		}
 	}
 	updated, err := h.mailDB.UpdateAIModel(c.UserContext(), mailstore.AIModelRecord{
-		ID: c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams, EncryptedAPIKey: encryptedKey,
+		SupportsImages: input.SupportsImages,
+		ID:             c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams, EncryptedAPIKey: encryptedKey,
 	})
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return fiber.ErrNotFound
@@ -299,7 +298,7 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -309,8 +308,6 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		switch input.Provider {
 		case "gemini":
 			input.BaseURL = defaultGeminiBaseURL
-		case "deepseek":
-			input.BaseURL = defaultDeepSeekBaseURL
 		default:
 			input.BaseURL = defaultOpenAIBaseURL
 		}
@@ -319,8 +316,6 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		switch input.Provider {
 		case "gemini":
 			input.Model = defaultGeminiModel
-		case "deepseek":
-			input.Model = defaultDeepSeekModel
 		default:
 			input.Model = defaultOpenAIModel
 		}
@@ -376,7 +371,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or deepseek")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -991,11 +986,6 @@ func validateAIBaseURL(provider, raw string) error {
 		trimmedPath := strings.TrimRight(u.Path, "/")
 		if strings.HasSuffix(trimmedPath, ":generateContent") || strings.HasSuffix(trimmedPath, "/models") {
 			return errors.New("Base URL must be the API root (e.g. https://generativelanguage.googleapis.com)")
-		}
-	case "deepseek":
-		trimmedPath := strings.TrimRight(u.Path, "/")
-		if strings.HasSuffix(trimmedPath, "/chat/completions") {
-			return errors.New("Base URL must be the API root (e.g. https://api.deepseek.com), without /chat/completions")
 		}
 	case "openai-compatible":
 		trimmedPath := strings.TrimRight(u.Path, "/")

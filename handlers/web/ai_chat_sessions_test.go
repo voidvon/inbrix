@@ -291,7 +291,8 @@ func TestAgentSessionTextModelImagePreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := h.mailDB.CreateAIModel(ctx, mailstore.AIModelRecord{OwnerID: account.OwnerID, Provider: "deepseek", BaseURL: base.BaseURL, Model: "deepseek-chat", EncryptedAPIKey: base.EncryptedAPIKey})
+	disabled := false
+	text, err := h.mailDB.CreateAIModel(ctx, mailstore.AIModelRecord{OwnerID: account.OwnerID, Provider: "openai-compatible", BaseURL: base.BaseURL, Model: "text-model", SupportsImages: &disabled, EncryptedAPIKey: base.EncryptedAPIKey})
 	if err != nil {
 		t.Fatal(err)
 	}

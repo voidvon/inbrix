@@ -12,7 +12,7 @@ import (
 )
 
 func TestMailTaskProviderErrorsPreserveStatusAndRetryAfter(t *testing.T) {
-	for _, provider := range []string{"openai", "openai-compatible", "gemini", "deepseek"} {
+	for _, provider := range []string{"openai", "openai-compatible", "gemini"} {
 		t.Run(provider, func(t *testing.T) {
 			_, err := CreateAIResponse(context.Background(), taskHTTPClient{status: 429, retryAfter: "120", body: `{"error":{"message":"too many requests"}}`}, AIModelRecord{Provider: provider, BaseURL: "https://model.example.com/v1", Model: "test"}, "secret-key", "instructions", "input", 500, "medium")
 			var upstream *UpstreamHTTPError

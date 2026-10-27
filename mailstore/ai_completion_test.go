@@ -219,38 +219,7 @@ func TestCleanJSONFence(t *testing.T) {
 	}
 }
 
-func TestBuildDeepSeekURL(t *testing.T) {
-	tests := []struct {
-		baseURL string
-		want    string
-	}{
-		{
-			baseURL: "https://api.deepseek.com",
-			want:    "https://api.deepseek.com/chat/completions",
-		},
-		{
-			baseURL: "https://api.deepseek.com/v1",
-			want:    "https://api.deepseek.com/v1/chat/completions",
-		},
-		{
-			baseURL: "https://api.deepseek.com/chat/completions",
-			want:    "https://api.deepseek.com/chat/completions",
-		},
-		{
-			baseURL: "",
-			want:    "https://api.deepseek.com/chat/completions",
-		},
-	}
-
-	for _, tt := range tests {
-		got := BuildDeepSeekURL(tt.baseURL)
-		if got != tt.want {
-			t.Errorf("BuildDeepSeekURL(%q) = %q; want %q", tt.baseURL, got, tt.want)
-		}
-	}
-}
-
-func TestCreateDeepSeekResponseHappyPath(t *testing.T) {
+func TestChatCompletionsServiceResponseHappyPath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method: got %s, want POST", r.Method)
@@ -299,7 +268,7 @@ func TestCreateDeepSeekResponseHappyPath(t *testing.T) {
 	defer server.Close()
 
 	model := AIModelRecord{
-		Provider: "deepseek",
+		Provider: "openai-compatible",
 		BaseURL:  server.URL,
 		Model:    "deepseek-chat",
 	}
@@ -314,7 +283,7 @@ func TestCreateDeepSeekResponseHappyPath(t *testing.T) {
 	}
 }
 
-func TestCreateDeepSeekResponseError(t *testing.T) {
+func TestChatCompletionsServiceResponseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(w, `{"error": {"message": "Authentication failed", "type": "authentication_error"}}`)
@@ -322,7 +291,7 @@ func TestCreateDeepSeekResponseError(t *testing.T) {
 	defer server.Close()
 
 	model := AIModelRecord{
-		Provider: "deepseek",
+		Provider: "openai-compatible",
 		BaseURL:  server.URL,
 		Model:    "deepseek-chat",
 	}
@@ -336,7 +305,7 @@ func TestCreateDeepSeekResponseError(t *testing.T) {
 	}
 }
 
-func TestCreateDeepSeekResponseTruncatedByLength(t *testing.T) {
+func TestChatCompletionsServiceResponseTruncatedByLength(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
@@ -355,7 +324,7 @@ func TestCreateDeepSeekResponseTruncatedByLength(t *testing.T) {
 	defer server.Close()
 
 	model := AIModelRecord{
-		Provider: "deepseek",
+		Provider: "openai-compatible",
 		BaseURL:  server.URL,
 		Model:    "deepseek-reasoner",
 	}
@@ -369,14 +338,14 @@ func TestCreateDeepSeekResponseTruncatedByLength(t *testing.T) {
 	}
 }
 
-func TestCreateDeepSeekResponseDefaultMaxTokens(t *testing.T) {
+func TestChatCompletionsServiceResponseOmitsUnspecifiedMaxTokens(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if maxTok, ok := req["max_tokens"].(float64); !ok || int(maxTok) != 8192 {
-			t.Errorf("expected max_tokens to default to 8192 when maxOutputTokens <= 0, got: %v", req["max_tokens"])
+		if _, ok := req["max_tokens"]; ok {
+			t.Errorf("unspecified max_tokens should be omitted, got: %v", req["max_tokens"])
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -395,7 +364,7 @@ func TestCreateDeepSeekResponseDefaultMaxTokens(t *testing.T) {
 	defer server.Close()
 
 	model := AIModelRecord{
-		Provider: "deepseek",
+		Provider: "openai-compatible",
 		BaseURL:  server.URL,
 		Model:    "deepseek-flash",
 	}
@@ -409,7 +378,7 @@ func TestCreateDeepSeekResponseDefaultMaxTokens(t *testing.T) {
 	}
 }
 
-func TestCreateDeepSeekResponseRejectsPartialAndFilteredContent(t *testing.T) {
+func TestChatCompletionsServiceResponseRejectsPartialAndFilteredContent(t *testing.T) {
 	for _, tc := range []struct{ reason, content, want string }{
 		{"length", `{"request":"unfinished`, "response was truncated"},
 		{"length", `{"request":"apparently complete"}`, "response was truncated"},
@@ -420,7 +389,7 @@ func TestCreateDeepSeekResponseRejectsPartialAndFilteredContent(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": tc.content}, "finish_reason": tc.reason}}})
 			}))
 			defer server.Close()
-			model := AIModelRecord{Provider: "deepseek", BaseURL: server.URL, Model: "deepseek-flash"}
+			model := AIModelRecord{Provider: "openai-compatible", BaseURL: server.URL, Model: "deepseek-flash"}
 			text, err := CreateAIResponse(context.Background(), server.Client(), model, "test-key", "inst", "inp", 6000, "medium")
 			if err == nil || !strings.Contains(err.Error(), tc.want) || text != "" {
 				t.Fatalf("text=%q err=%v", text, err)

@@ -123,6 +123,7 @@ type AIModelRecord struct {
 	Model           string
 	ReasoningEffort string
 	ExtraParams     string
+	SupportsImages  *bool
 	EncryptedAPIKey string
 	IsDefault       bool
 	CreatedAt       time.Time
@@ -367,6 +368,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			model TEXT NOT NULL,
 			reasoning_effort TEXT NOT NULL DEFAULT 'medium',
 			extra_params TEXT NOT NULL DEFAULT '{}',
+			supports_images INTEGER,
 			encrypted_api_key TEXT NOT NULL,
 			is_default INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
@@ -804,6 +806,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAIModelExtraParamsColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAIModelSupportsImagesColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureUserRoleColumn(ctx); err != nil {

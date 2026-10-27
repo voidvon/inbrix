@@ -400,21 +400,23 @@ export function saveReplyTemplates(templates: ReplyTemplate[]) {
 
 export type AIModel = {
   id: string;
-  provider: "openai" | "openai-compatible" | "gemini" | "deepseek";
+  provider: "openai" | "openai-compatible" | "gemini";
   baseUrl: string;
   model: string;
   reasoningEffort: "low" | "medium" | "high";
   extraParams: string;
+  supportsImages: boolean;
   isDefault: boolean;
 };
 
 export type AddAIModelInput = {
-  provider?: "openai" | "openai-compatible" | "gemini" | "deepseek";
+  provider?: "openai" | "openai-compatible" | "gemini";
   baseUrl: string;
   model: string;
   apiKey: string;
   reasoningEffort: "low" | "medium" | "high";
   extraParams?: string;
+  supportsImages?: boolean;
 };
 
 export function getAIModels() {

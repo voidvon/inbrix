@@ -14,7 +14,7 @@ import (
 )
 
 func TestAIResponseStreamsBeforeCompletion(t *testing.T) {
-	for _, provider := range []string{"openai", "openai-compatible", "deepseek", "gemini"} {
+	for _, provider := range []string{"openai", "openai-compatible", "gemini"} {
 		t.Run(provider, func(t *testing.T) {
 			release := make(chan struct{})
 			defer close(release)
@@ -99,7 +99,7 @@ func TestAIStreamRejectsIncompleteAndFailedResponses(t *testing.T) {
 		{"incomplete", "openai", `data: {"type":"response.incomplete"}` + "\n\n"},
 		{"failed", "openai", `data: {"type":"response.failed","response":{"error":{"message":"failed"}}}` + "\n\n"},
 		{"gateway error", "openai-compatible", `data: {"data":{"error":"gateway failed"}}` + "\n\n"},
-		{"length", "deepseek", `data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}` + "\n\n"},
+		{"length", "openai-compatible", `data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}` + "\n\n"},
 		{"blocked", "gemini", `data: {"promptFeedback":{"blockReason":"SAFETY"}}` + "\n\n"},
 		{"invalid", "openai", "data: invalid\n\n"},
 		{"done without finish", "openai-compatible", "data: [DONE]\n\n"},

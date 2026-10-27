@@ -80,6 +80,9 @@ func CreateAgentResponse(ctx context.Context, client HTTPClient, model AIModelRe
 }
 
 func agentRequest(model AIModelRecord, provider, instructions string, messages []agentruntime.Message, tools []agentruntime.ToolSpec, disabled bool, images []AIInputImage, maxTokens int, effort string, stream bool) (map[string]any, string, error) {
+	if len(images) > 0 && !model.SupportsImageInput() {
+		return nil, "", errors.New("当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
+	}
 	nativeTools := []any{}
 	for _, tool := range tools {
 		function := map[string]any{"name": tool.Name, "description": tool.Description, "parameters": tool.Parameters}
@@ -140,10 +143,7 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 			}
 		}
 		return p, strings.TrimRight(model.BaseURL, "/") + "/responses", nil
-	case "deepseek", "openai-compatible":
-		if provider == "deepseek" && len(images) > 0 {
-			return nil, "", errors.New("当前 DeepSeek 接口不支持图片输入，请选择支持图片的模型")
-		}
+	case "openai-compatible":
 		history := []any{map[string]any{"role": "system", "content": instructions}}
 		for i, m := range messages {
 			item := map[string]any{"role": m.Role, "content": m.Text}
@@ -177,9 +177,7 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 			history = append(history, item)
 		}
 		p := map[string]any{"model": model.Model, "messages": history, "stream": stream, "tools": nativeTools}
-		if provider == "deepseek" {
-			p["max_tokens"] = 8192
-		} else if maxTokens > 0 {
+		if maxTokens > 0 {
 			p["max_tokens"] = maxTokens
 		}
 		if disabled {
@@ -189,11 +187,7 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 				p["tool_choice"] = "none"
 			}
 		}
-		endpoint := BuildOpenAICompatibleURL(model.BaseURL)
-		if provider == "deepseek" {
-			endpoint = BuildDeepSeekURL(model.BaseURL)
-		}
-		return p, endpoint, nil
+		return p, BuildOpenAICompatibleURL(model.BaseURL), nil
 	case "gemini":
 		contents := []any{}
 		providerCallIDs := map[string]bool{}
@@ -458,7 +452,7 @@ func decodeAgentMessage(raw []byte, provider string, step int) (agentruntime.Mes
 			out.Text = envelope.OutputText
 		}
 		out.ProviderData = envelope.Output
-	case "deepseek", "openai-compatible":
+	case "openai-compatible":
 		if len(envelope.Choices) == 0 {
 			return out, errors.New("AI returned no choices")
 		}

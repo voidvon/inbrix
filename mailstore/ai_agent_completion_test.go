@@ -77,7 +77,7 @@ func nativeAgentSSE(provider string, final bool) string {
 }
 
 func TestNativeAgentProviderToolRoundTrip(t *testing.T) {
-	for _, provider := range []string{"openai", "deepseek", "openai-compatible", "gemini"} {
+	for _, provider := range []string{"openai", "openai-compatible", "gemini"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%v", provider, stream), func(t *testing.T) {
 				requests, executed := 0, 0
@@ -167,7 +167,7 @@ func TestNativeAgentProviderToolRoundTrip(t *testing.T) {
 func TestNativeAgentRejectsTruncatedResponsesAndStreams(t *testing.T) {
 	for _, tc := range []struct{ provider, raw string }{
 		{"openai", `{"status":"incomplete","output_text":"partial"}`},
-		{"deepseek", `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}`},
+		{"openai-compatible", `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}`},
 		{"openai-compatible", `{"data":{"choices":[{"message":{"content":"partial"},"finish_reason":"content_filter"}]}}`},
 		{"gemini", `{"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"MAX_TOKENS"}]}`},
 	} {
@@ -177,7 +177,7 @@ func TestNativeAgentRejectsTruncatedResponsesAndStreams(t *testing.T) {
 			}
 		})
 	}
-	for _, provider := range []string{"openai", "deepseek", "gemini"} {
+	for _, provider := range []string{"openai", "openai-compatible", "gemini"} {
 		if _, err := readAgentStream(strings.NewReader("data: [DONE]\n\n"), provider, nil); err == nil {
 			t.Fatal("interrupted stream accepted", provider)
 		}

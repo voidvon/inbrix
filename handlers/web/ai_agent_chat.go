@@ -333,12 +333,12 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 	}
 	var images []mailstore.AIInputImage
 	if input.SessionID != "" {
-		images, err = h.resolveAgentContextImages(c.UserContext(), owner, account.ID, contextMessages, model.Provider != "deepseek")
+		images, err = h.resolveAgentContextImages(c.UserContext(), owner, account.ID, contextMessages, model.SupportsImageInput())
 	} else {
 		// Preserve validation for legacy clients supplying their own complete history.
 		images, err = h.resolveAgentImages(c.UserContext(), owner, account.ID, contextMessages)
-		if err == nil && len(images) > 0 && model.Provider == "deepseek" {
-			err = fiber.NewError(400, "当前 DeepSeek 接口不支持图片，请选择支持图片的 AI 模型 / Select a vision model")
+		if err == nil && len(images) > 0 && !model.SupportsImageInput() {
+			err = fiber.NewError(400, "当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
 		}
 	}
 	if err != nil {

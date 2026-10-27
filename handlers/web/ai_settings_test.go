@@ -39,6 +39,53 @@ func TestValidateOpenAIBaseURL(t *testing.T) {
 	}
 }
 
+func TestAIModelImageCapabilitySettings(t *testing.T) {
+	emailHandler, app, _, _ := outboxTestApp(t)
+	emailHandler.config.Encryption.Key = "0123456789abcdef0123456789abcdef"
+	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)
+	app.Post("/models", h.HandleCreateModel)
+	app.Put("/models/:id", h.HandleUpdateModel)
+	app.Get("/models", h.HandleListModels)
+	request := func(method, path, body string, want int) aiModelPublic {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != want {
+			t.Fatalf("%s %s: %d %s", method, path, res.StatusCode, raw)
+		}
+		var model aiModelPublic
+		if method == "GET" {
+			var list struct{ Models []aiModelPublic }
+			if err := json.Unmarshal(raw, &list); err != nil || len(list.Models) != 1 {
+				t.Fatalf("models: %s %v", raw, err)
+			}
+			return list.Models[0]
+		}
+		if err := json.Unmarshal(raw, &model); err != nil {
+			t.Fatal(err)
+		}
+		return model
+	}
+	model := request("POST", "/models", `{"provider":"openai-compatible","baseUrl":"https://api.deepseek.com","model":"custom-vision","apiKey":"test","supportsImages":true}`, 201)
+	if !model.SupportsImages {
+		t.Fatal("create lost image capability")
+	}
+	for _, capability := range []string{`,"supportsImages":false`, `,"supportsImages":true`, ""} {
+		updated := request("PUT", "/models/"+model.ID, `{"baseUrl":"https://api.deepseek.com","model":"custom-vision"`+capability+`}`, 200)
+		listed := request("GET", "/models", "", 200)
+		want := capability != `,"supportsImages":false`
+		if updated.SupportsImages != want || listed.SupportsImages != want {
+			t.Fatalf("capability %q: updated=%v listed=%v", capability, updated.SupportsImages, listed.SupportsImages)
+		}
+	}
+}
+
 func TestWriteEmailDisabledReplySuggestionReturnsPreconditionWithoutErrorLog(t *testing.T) {
 	emailHandler, app, account, _ := outboxTestApp(t)
 	ctx := context.Background()
@@ -235,7 +282,7 @@ func TestCreateGeminiResponseInWebHandler(t *testing.T) {
 	}
 }
 
-func TestValidateDeepSeekBaseURL(t *testing.T) {
+func TestChatCompletionsServiceBaseURL(t *testing.T) {
 	valid := []string{
 		"https://api.deepseek.com",
 		"https://api.deepseek.com/v1",
@@ -244,7 +291,7 @@ func TestValidateDeepSeekBaseURL(t *testing.T) {
 		"http://127.0.0.1:8080",
 	}
 	for _, raw := range valid {
-		if err := validateAIBaseURL("deepseek", raw); err != nil {
+		if err := validateAIBaseURL("openai-compatible", raw); err != nil {
 			t.Errorf("valid DeepSeek URL %q: %v", raw, err)
 		}
 	}
@@ -255,13 +302,13 @@ func TestValidateDeepSeekBaseURL(t *testing.T) {
 		"not-a-url",
 	}
 	for _, raw := range invalid {
-		if err := validateAIBaseURL("deepseek", raw); err == nil {
+		if err := validateAIBaseURL("openai-compatible", raw); err == nil {
 			t.Errorf("invalid DeepSeek URL accepted: %q", raw)
 		}
 	}
 }
 
-func TestCreateDeepSeekResponseInWebHandler(t *testing.T) {
+func TestChatCompletionsServiceResponseInWebHandler(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Errorf("path: got %q, want /chat/completions", r.URL.Path)
@@ -276,7 +323,7 @@ func TestCreateDeepSeekResponseInWebHandler(t *testing.T) {
 
 	h := &AISettingsHandler{client: server.Client()}
 	got, err := h.createAIResponse(context.Background(), mailstore.AIModelRecord{
-		Provider: "deepseek",
+		Provider: "openai-compatible",
 		BaseURL:  server.URL,
 		Model:    "deepseek-chat",
 	}, "test-ds-key", "test prompt")

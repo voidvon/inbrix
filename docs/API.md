@@ -1494,8 +1494,14 @@ from earlier user messages even when old text is summarized. Instructions explic
 forbid claiming to have inspected historical images omitted from this request. OpenAI Responses uses
 `input_image` data URLs, OpenAI-compatible Chat Completions uses `image_url`
 parts, and Gemini uses `inlineData`. Existing text-only calls remain unchanged.
-The configured model must support image input; the DeepSeek text adapter rejects
-images explicitly. Streaming and non-streaming responses share this path.
+Model settings expose a `supportsImages` boolean in
+`GET/POST /api/settings/ai/models` and `PUT /api/settings/ai/models/:id`.
+It is independent of API format: `openai-compatible` selects Chat Completions,
+`openai` selects Responses, and `gemini` selects the native Gemini API.
+DeepSeek and other compatible services use `openai-compatible`.
+Disable image input for text-only models. New image turns are rejected before
+being saved when this capability is disabled; text-only session follow-ups omit
+historical images. Streaming and non-streaming responses share this path.
 OpenAI format reference: [Images and vision](https://developers.openai.com/api/docs/guides/images-vision).
 
 Validation includes provider payload/stream tests, authenticated upload/read/delete

@@ -78,14 +78,12 @@ func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 	if maxOutputTokens < 0 {
 		maxOutputTokens = 0
 	}
+	if len(images) > 0 && !model.SupportsImageInput() {
+		return "", errors.New("当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
+	}
 	switch provider {
 	case "gemini":
 		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
-	case "deepseek":
-		if len(images) > 0 {
-			return "", errors.New("当前 DeepSeek 接口不支持图片输入，请在邮箱 AI 设置中选择支持图片的模型 / Select a vision model")
-		}
-		return createDeepSeekResponse(ctx, client, model, apiKey, instructions, input, maxOutputTokens, effort, onDelta)
 	case "openai":
 		return createOpenAIResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
 	case "openai-compatible":
@@ -625,12 +623,14 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 	}
 
 	content := StripThinkTags(strings.TrimSpace(choices[0].Message.Content))
+	switch choices[0].FinishReason {
+	case "length":
+		return "", errors.New("OpenAI-compatible response was truncated: max tokens limit reached during reasoning or generation")
+	case "content_filter":
+		return "", errors.New("OpenAI-compatible response was filtered by content moderation policy")
+	}
 	if content == "" {
 		switch reason := choices[0].FinishReason; reason {
-		case "length":
-			return "", errors.New("OpenAI-compatible response was truncated: max tokens limit reached during reasoning or generation")
-		case "content_filter":
-			return "", errors.New("OpenAI-compatible response was filtered by content moderation policy")
 		case "error":
 			return "", errors.New("OpenAI-compatible finished with an error and no content")
 		case "":
@@ -639,133 +639,6 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 			return "", fmt.Errorf("OpenAI-compatible returned empty content (finish reason: %s)", reason)
 		}
 	}
-	return content, nil
-}
-
-// BuildDeepSeekURL constructs the endpoint for DeepSeek chat completions API calls.
-func BuildDeepSeekURL(baseURL string) string {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL == "" {
-		baseURL = "https://api.deepseek.com"
-	}
-	if strings.HasSuffix(baseURL, "/chat/completions") {
-		return baseURL
-	}
-	return baseURL + "/chat/completions"
-}
-
-type deepSeekChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type deepSeekRequest struct {
-	Model     string                `json:"model"`
-	Messages  []deepSeekChatMessage `json:"messages"`
-	MaxTokens int                   `json:"max_tokens,omitempty"`
-	Stream    bool                  `json:"stream"`
-}
-
-type deepSeekResponse struct {
-	Choices []struct {
-		Message struct {
-			Role             string `json:"role"`
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
-}
-
-func createDeepSeekResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
-	endpoint := BuildDeepSeekURL(model.BaseURL)
-
-	var msgs []deepSeekChatMessage
-	if strings.TrimSpace(instructions) != "" {
-		msgs = append(msgs, deepSeekChatMessage{Role: "system", Content: instructions})
-	}
-	if strings.TrimSpace(input) != "" {
-		msgs = append(msgs, deepSeekChatMessage{Role: "user", Content: input})
-	}
-
-	// For DeepSeek (including V3, R1 / reasoner models, and proxies like deepseek-flash),
-	// reasoning models consume substantial tokens during thinking. We ensure max_tokens is
-	// always 8192 (DeepSeek's maximum output limit) so reasoning never starves generation.
-	if maxOutputTokens < 8192 {
-		maxOutputTokens = 8192
-	} else if maxOutputTokens > 8192 {
-		maxOutputTokens = 8192
-	}
-
-	reqBody := deepSeekRequest{
-		Model:     model.Model,
-		Messages:  msgs,
-		MaxTokens: maxOutputTokens,
-		Stream:    onDelta != nil,
-	}
-
-	bodyBytes, err := marshalAIRequestBody(reqBody, model.ExtraParams)
-	if err != nil {
-		return "", err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", upstreamTransportError("DeepSeek", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := readAIResponse(resp, "deepseek", onDelta)
-	if err != nil {
-		return "", fmt.Errorf("read DeepSeek response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var apiErr deepSeekResponse
-		_ = json.Unmarshal(raw, &apiErr)
-		if apiErr.Error != nil && apiErr.Error.Message != "" {
-			return "", upstreamHTTPError("DeepSeek", resp, apiErr.Error.Message)
-		}
-		return "", upstreamHTTPError("DeepSeek", resp, "")
-	}
-
-	var result deepSeekResponse
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", errors.New("DeepSeek returned invalid JSON")
-	}
-
-	if result.Error != nil && result.Error.Message != "" {
-		return "", fmt.Errorf("DeepSeek error: %s", result.Error.Message)
-	}
-
-	if len(result.Choices) == 0 {
-		return "", errors.New("DeepSeek returned no choices")
-	}
-
-	switch result.Choices[0].FinishReason {
-	case "length":
-		return "", errors.New("DeepSeek response was truncated: max tokens limit reached during reasoning or generation")
-	case "content_filter":
-		return "", errors.New("DeepSeek response was filtered by content moderation policy")
-	}
-
-	content := strings.TrimSpace(result.Choices[0].Message.Content)
-	content = StripThinkTags(content)
-	if content == "" {
-		return "", errors.New("DeepSeek returned empty content")
-	}
-
 	return content, nil
 }
 

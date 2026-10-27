@@ -98,15 +98,22 @@ func TestAIImagesProviderPayloads(t *testing.T) {
 				if stream {
 					delta = func(s string) error { visible += s; return nil }
 				}
-				text, err := CreateAIResponseWithImages(context.Background(), client, AIModelRecord{Provider: provider, BaseURL: "https://mock.invalid/v1", Model: "vision", ExtraParams: `{"temperature":0.3}`}, "fake", "instructions", "question", []AIInputImage{{Label: "User message 1 image", ContentType: "image/png", Base64: "aW1hZ2U="}}, 4096, "medium", delta)
+				enabled := true
+				text, err := CreateAIResponseWithImages(context.Background(), client, AIModelRecord{Provider: provider, BaseURL: "https://mock.invalid/v1", Model: "vision", SupportsImages: &enabled, ExtraParams: `{"temperature":0.3}`}, "fake", "instructions", "question", []AIInputImage{{Label: "User message 1 image", ContentType: "image/png", Base64: "aW1hZ2U="}}, 4096, "medium", delta)
 				if err != nil || text != "seen" || (stream && visible != "seen") {
 					t.Fatalf("text=%q delta=%q err=%v", text, visible, err)
 				}
 			})
 		}
 	}
-	_, err := CreateAIResponseWithImages(context.Background(), imageTestClient(func(*http.Request) (*http.Response, error) { t.Fatal("unsupported images were sent"); return nil, nil }), AIModelRecord{Provider: "deepseek"}, "", "", "", []AIInputImage{{}}, 100, "", nil)
-	if err == nil {
-		t.Fatal("DeepSeek silently dropped images")
+	for _, provider := range []string{"openai", "openai-compatible", "gemini"} {
+		disabled := false
+		_, err := CreateAIResponseWithImages(context.Background(), imageTestClient(func(*http.Request) (*http.Response, error) {
+			t.Fatal("images sent despite disabled capability")
+			return nil, nil
+		}), AIModelRecord{Provider: provider, SupportsImages: &disabled}, "", "", "", []AIInputImage{{}}, 100, "", nil)
+		if err == nil || !strings.Contains(err.Error(), "Enable image input") {
+			t.Fatalf("%s: expected actionable image capability error: %v", provider, err)
+		}
 	}
 }

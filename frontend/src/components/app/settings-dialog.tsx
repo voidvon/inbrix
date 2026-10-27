@@ -740,7 +740,7 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
 }
 
 // The UI presents the wire protocol ("API format") rather than vendor-specific
-// providers. These helpers map it to the legacy provider keys stored in the DB.
+// providers. These helpers map it to the protocol keys stored in the DB.
 type APIFormat = "chat_completions" | "responses" | "gemini";
 
 function apiFormatForProvider(provider: AIModel["provider"]): APIFormat {
@@ -749,10 +749,10 @@ function apiFormatForProvider(provider: AIModel["provider"]): APIFormat {
   return "chat_completions";
 }
 
-function providerForAPIFormat(format: APIFormat, currentProvider?: AIModel["provider"]): AIModel["provider"] {
+function providerForAPIFormat(format: APIFormat): AIModel["provider"] {
   if (format === "responses") return "openai";
   if (format === "gemini") return "gemini";
-  return currentProvider === "deepseek" ? "deepseek" : "openai-compatible";
+  return "openai-compatible";
 }
 
 function apiFormatLabel(provider: AIModel["provider"]): string {
@@ -773,6 +773,7 @@ export function AISettings({ copy }: { copy: Copy }) {
   const [apiKey, setAPIKey] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
   const [extraParams, setExtraParams] = useState("");
+  const [supportsImages, setSupportsImages] = useState(true);
   const [invalid, setInvalid] = useState<{ baseUrl?: boolean; model?: boolean; apiKey?: boolean; extraParams?: boolean }>({});
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["ai-models"] });
@@ -780,19 +781,19 @@ export function AISettings({ copy }: { copy: Copy }) {
   const handleAPIFormatChange = (nextFormat: APIFormat) => {
     setAPIFormat(nextFormat);
     if (nextFormat === "gemini") {
-      if (baseURL === "https://api.openai.com/v1" || baseURL === "https://api.deepseek.com" || !baseURL) {
+      if (baseURL === "https://api.openai.com/v1" || !baseURL) {
         setBaseURL("https://generativelanguage.googleapis.com");
       }
-      if (model === "gpt-5.6-sol" || model === "deepseek-chat" || !model) {
+      if (model === "gpt-5.6-sol" || !model) {
         setModel("gemini-3.8-flash");
       }
       return;
     }
     if (nextFormat === "responses") {
-      if (baseURL === "https://generativelanguage.googleapis.com" || baseURL === "https://api.deepseek.com" || !baseURL) {
+      if (baseURL === "https://generativelanguage.googleapis.com" || !baseURL) {
         setBaseURL("https://api.openai.com/v1");
       }
-      if (model === "gemini-3.8-flash" || model === "deepseek-chat" || !model) {
+      if (model === "gemini-3.8-flash" || !model) {
         setModel("gpt-5.6-sol");
       }
       return;
@@ -864,7 +865,7 @@ export function AISettings({ copy }: { copy: Copy }) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!validate()) return;
-    const input = { provider: providerForAPIFormat(apiFormat, editingModel?.provider), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" };
+    const input = { provider: providerForAPIFormat(apiFormat), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}", supportsImages };
     if (editingModel) update.mutate({ id: editingModel.id, input });
     else add.mutate(input);
   };
@@ -875,6 +876,7 @@ export function AISettings({ copy }: { copy: Copy }) {
     setModel("gpt-5.6-sol");
     setReasoningEffort("medium");
     setExtraParams("");
+    setSupportsImages(true);
     setAPIKey("");
     setInvalid({});
     setAddOpen(true);
@@ -886,6 +888,7 @@ export function AISettings({ copy }: { copy: Copy }) {
     setModel(item.model);
     setReasoningEffort(item.reasoningEffort);
     setExtraParams(item.extraParams && item.extraParams !== "{}" ? item.extraParams : "");
+    setSupportsImages(item.supportsImages);
     setAPIKey("");
     setInvalid({});
     setAddOpen(true);
@@ -910,9 +913,10 @@ export function AISettings({ copy }: { copy: Copy }) {
             <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required aria-invalid={invalid.baseUrl} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setBaseURL(event.target.value); if (invalid.baseUrl) setInvalid((current) => ({ ...current, baseUrl: false })); }} placeholder={apiFormat === "gemini" ? "https://generativelanguage.googleapis.com" : apiFormat === "responses" ? "https://api.openai.com/v1" : "https://api.example.com/v1"} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required aria-invalid={invalid.model} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setModel(event.target.value); if (invalid.model) setInvalid((current) => ({ ...current, model: false })); }} placeholder={apiFormat === "gemini" ? "gemini-3.8-flash" : apiFormat === "responses" ? "gpt-5.6-sol" : "provider/model-name"} /></div>
             {apiFormat !== "chat_completions" && <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium" | "high")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem><SelectItem value="high">{copy.aiReasoningHigh}</SelectItem></SelectContent></Select></div>}
+            <div className="flex items-center justify-between gap-4"><div className="grid gap-1.5"><Label htmlFor="add-ai-supports-images">{copy.aiSupportsImages}</Label><p id="add-ai-supports-images-hint" className="text-xs text-muted-foreground">{copy.aiSupportsImagesHint}</p></div><Switch id="add-ai-supports-images" aria-describedby="add-ai-supports-images-hint" checked={supportsImages} onCheckedChange={setSupportsImages} disabled={add.isPending || update.isPending || test.isPending} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} aria-invalid={invalid.apiKey} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setAPIKey(event.target.value); if (invalid.apiKey) setInvalid((current) => ({ ...current, apiKey: false })); }} placeholder={editingModel ? copy.aiAPIKeyKeep : (apiFormat === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
             <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-extra-params">{copy.aiExtraParams}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiExtraParamsHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiExtraParamsHint}</TooltipContent></Tooltip></div><Textarea id="add-ai-extra-params" className="min-h-24 resize-y font-mono text-xs" value={extraParams} aria-invalid={invalid.extraParams} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setExtraParams(event.target.value); if (invalid.extraParams) setInvalid((current) => ({ ...current, extraParams: false })); }} placeholder={'{"reasoning_effort":"high"}'} /></div>
-            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { if (!validate()) return; test.mutate({ id: editingModel?.id, input: { provider: providerForAPIFormat(apiFormat, editingModel?.provider), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
+            <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { if (!validate()) return; test.mutate({ id: editingModel?.id, input: { provider: providerForAPIFormat(apiFormat), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

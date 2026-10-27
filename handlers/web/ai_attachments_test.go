@@ -170,3 +170,78 @@ func TestAgentChatImagesRemainAcrossToolTurnsAndHistory(t *testing.T) {
 		t.Fatal("unavailable image reached provider")
 	}
 }
+
+func TestAgentChatImageCapabilityOverride(t *testing.T) {
+	for _, provider := range []string{"openai-compatible"} {
+		for _, sessionChat := range []bool{false, true} {
+			name := provider + "/legacy"
+			if sessionChat {
+				name = provider + "/session"
+			}
+			t.Run(name, func(t *testing.T) {
+				h, app, account, _ := agentContextTestApp(t, func(agentTestRequest) string {
+					t.Fatal("unexpected Responses request")
+					return ""
+				})
+				ctx := context.Background()
+				model, err := h.mailDB.GetDefaultAIModel(ctx, account.OwnerID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				enabled := false
+				model.Provider, model.Model, model.SupportsImages = provider, "custom-vision", &enabled
+				if _, err := h.mailDB.UpdateAIModel(ctx, model); err != nil {
+					t.Fatal(err)
+				}
+				img, err := h.mailDB.CreateAIChatAttachment(ctx, account.OwnerID, account.ID, "test.png", "image/png", chatTestPNG(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+				input := AIAgentChatRequest{AccountEmail: account.Email, ModelID: model.ID, Messages: []AIAgentChatMessage{{Role: "user", Attachments: []mailstore.AIChatAttachment{img}}}}
+				if sessionChat {
+					session, err := h.mailDB.CreateAIChatSession(ctx, account.OwnerID, account.ID, "document", "", "New", "quotation")
+					if err != nil {
+						t.Fatal(err)
+					}
+					version := int64(0)
+					input.SessionID, input.RequestID, input.Version = session.ID, "image-request", &version
+				}
+				calls := 0
+				h.client = &http.Client{Transport: agentStreamTransport(func(req *http.Request) (*http.Response, error) {
+					calls++
+					var payload struct {
+						Messages []struct {
+							Role    string
+							Content json.RawMessage
+						}
+					}
+					if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+						t.Fatal(err)
+					}
+					if !strings.HasSuffix(req.URL.Path, "/chat/completions") || len(payload.Messages) != 2 || payload.Messages[1].Role != "user" || !strings.Contains(string(payload.Messages[1].Content), "data:image/png;base64,") {
+						t.Fatalf("image did not reach Chat Completions: %+v", payload)
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"Image received"},"finish_reason":"stop"}]}`))}, nil
+				})}
+				status, _, raw := postAgentContext(t, app, input)
+				if status != 400 || calls != 0 || !strings.Contains(raw, "Enable image input") {
+					t.Fatalf("disabled capability: %d calls=%d %s", status, calls, raw)
+				}
+				if sessionChat {
+					saved, err := h.mailDB.GetAIChatSession(ctx, account.OwnerID, account.ID, input.SessionID)
+					if err != nil || saved.Version != 0 || len(saved.Messages) != 0 {
+						t.Fatalf("disabled image mutated session: %+v %v", saved, err)
+					}
+				}
+				enabled = true
+				if _, err := h.mailDB.UpdateAIModel(ctx, model); err != nil {
+					t.Fatal(err)
+				}
+				status, response, raw := postAgentContext(t, app, input)
+				if status != 200 || calls != 1 || response.Content != "Image received" {
+					t.Fatalf("enabled capability: %d calls=%d %s", status, calls, raw)
+				}
+			})
+		}
+	}
+}

@@ -172,7 +172,7 @@ func (h *AISettingsHandler) resolveAgentContextImages(ctx context.Context, owner
 	latest := len(messages) - 1
 	if !vision {
 		if len(messages[latest].Attachments) > 0 {
-			return nil, fiber.NewError(400, "当前 DeepSeek 接口不支持图片，请选择支持图片的 AI 模型 / Select a vision model")
+			return nil, fiber.NewError(400, "当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
 		}
 		return nil, nil
 	}

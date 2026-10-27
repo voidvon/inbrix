@@ -57,3 +57,49 @@ func TestAIModelsCRUDDefaultsAndOwnerIsolation(t *testing.T) {
 		t.Fatalf("remaining model was not promoted: %+v, err=%v", got, err)
 	}
 }
+
+func TestAIModelImageSupportMigrationAndOverrides(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	models := []AIModelRecord{
+		{Provider: "openai", Model: "existing-responses"},
+		{Provider: "openai-compatible", Model: "existing-chat"},
+		{Provider: "gemini", Model: "existing-gemini"},
+	}
+	for i, model := range models {
+		model.OwnerID, model.BaseURL, model.EncryptedAPIKey = "alice", "https://example.com/v1", "encrypted"
+		var err error
+		models[i], err = s.CreateAIModel(ctx, model)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reproduce an existing installation and verify the migration is repeatable.
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models DROP COLUMN supports_images`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.ensureAIModelSupportsImagesColumn(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, model := range models {
+		stored, err := s.GetAIModel(ctx, "alice", model.ID)
+		if err != nil || stored.SupportsImages != nil || !stored.SupportsImageInput() {
+			t.Fatalf("legacy model %s: %+v %v", model.Model, stored, err)
+		}
+		// Explicit settings override the protocol default.
+		for _, enabled := range []bool{false, true} {
+			stored.SupportsImages = &enabled
+			if _, err := s.UpdateAIModel(ctx, stored); err != nil {
+				t.Fatal(err)
+			}
+			// Older clients omitting the field must not reset the saved choice.
+			stored.SupportsImages = nil
+			stored, err = s.UpdateAIModel(ctx, stored)
+			if err != nil || stored.SupportsImages == nil || stored.SupportsImageInput() != enabled || stored.EncryptedAPIKey != "encrypted" {
+				t.Fatalf("saved capability for %s: %+v %v", model.Model, stored, err)
+			}
+		}
+	}
+}

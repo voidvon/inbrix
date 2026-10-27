@@ -9,13 +9,51 @@ import (
 	"time"
 )
 
-const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, encrypted_api_key, is_default, created_at`
+const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, encrypted_api_key, is_default, created_at`
+
+// SupportsImageInput honors an explicit capability setting. Image input is
+// enabled by default for each supported protocol.
+func (model AIModelRecord) SupportsImageInput() bool {
+	if model.SupportsImages != nil {
+		return *model.SupportsImages
+	}
+	return true
+}
+
+func (s *Store) ensureAIModelSupportsImagesColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_models)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI models schema: %w", err)
+		}
+		if name == "supports_images" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN supports_images INTEGER`); err != nil {
+		return fmt.Errorf("mailstore: add AI model image support column: %w", err)
+	}
+	return nil
+}
 
 func scanAIModel(scanner interface{ Scan(...any) error }) (AIModelRecord, error) {
 	var model AIModelRecord
 	var isDefault int
 	var createdAt int64
-	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.ExtraParams, &model.EncryptedAPIKey, &isDefault, &createdAt)
+	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.ExtraParams, &model.SupportsImages, &model.EncryptedAPIKey, &isDefault, &createdAt)
 	model.IsDefault = intBool(isDefault)
 	model.CreatedAt = time.Unix(createdAt, 0)
 	return model, err
@@ -58,7 +96,7 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 		model.Provider = "openai"
 	}
 	if !isSupportedAIProvider(model.Provider) {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or deepseek")
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, or gemini")
 	}
 	if model.ReasoningEffort == "" {
 		model.ReasoningEffort = "medium"
@@ -84,8 +122,8 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	}
 	model.IsDefault = count == 0 || model.IsDefault
 	now := time.Now().Unix()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, extra_params, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.SupportsImages, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: create AI model: %w", err)
 	}
 	if model.IsDefault {
@@ -106,10 +144,10 @@ func (s *Store) UpdateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	}
 	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
 	if model.Provider != "" && !isSupportedAIProvider(model.Provider) {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or deepseek")
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, or gemini")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
-		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, supports_images = COALESCE(?, supports_images), encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
+		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.SupportsImages, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
 	if err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: update AI model: %w", err)
 	}
@@ -178,7 +216,7 @@ func (s *Store) GetDefaultAIModel(ctx context.Context, ownerID string) (AIModelR
 
 func isSupportedAIProvider(provider string) bool {
 	switch provider {
-	case "openai", "openai-compatible", "gemini", "deepseek":
+	case "openai", "openai-compatible", "gemini":
 		return true
 	}
 	return false

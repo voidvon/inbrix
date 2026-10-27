@@ -7,7 +7,7 @@
 | 层 | 位置 | 职责 |
 | --- | --- | --- |
 | 通用消息与执行循环 | `internal/agentruntime` | 结构化消息、工具注册列表、调用 ID、预算、取消、活动事件和输出校验重试 |
-| 模型协议适配 | `mailstore/ai_agent_completion.go`、`ai_agent_stream.go` | OpenAI Responses、DeepSeek / Chat Completions、Gemini；转换请求和流式响应，保留供应商要求的续传内容 |
+| 模型协议适配 | `mailstore/ai_agent_completion.go`、`ai_agent_stream.go` | OpenAI Responses、OpenAI Chat Completions、Gemini；转换请求和流式响应，保留供应商要求的续传内容 |
 | 应用工具 | `handlers/web/ai_agent_tools.go`、`mailstore/agent_mail_tools.go` | 声明当前执行可用的工具参数和能力；原有 executor 检查身份、范围、版本及证据 |
 | 工作方法 | 用户管理的 Skill | 按目录选择、按需加载，或显式选择后加载；定义邮件分析、产品核对、报价和合同工作方法 |
 | 任务交付 | 聊天 / 邮件分析入口 | 聊天生成可展示结果及草稿；邮件分析提供输出 schema，最后持久化结果；展示摘要为最多 200 字的自由文本 |
@@ -30,9 +30,11 @@
 ## 模型协议
 
 - OpenAI 使用 Responses 的 `function_call` / `function_call_output` 和 `call_id`，回传完整 output items，包括推理续传项。
-- DeepSeek 与兼容网关使用 Chat Completions 的 `tool_calls` / `role=tool` 和 `tool_call_id`，需要时保留 `reasoning_content`。兼容网关可使用嵌套 `data` 包装。
+- Chat Completions 使用 `tool_calls` / `role=tool` 和 `tool_call_id`，需要时保留 `reasoning_content`。兼容网关可使用嵌套 `data` 包装。
 - Gemini 回传原始 parts 和 thought signatures。批量调用的响应组成同一 user turn；提供了函数 ID 时回传原 ID，没有 ID 时只使用本地关联标识，不向供应商虚构 ID。
 - 流式响应在完成事件之后才交付工具调用；截断、错误或中断的响应不会执行部分调用。只有可见正文增量进入聊天流。
+
+模型按 API 格式配置，不设置 DeepSeek 等厂商专用类型。图片输入由独立的 `supportsImages` 能力控制，可在新增或编辑模型时开启或关闭；所有协议在发送图片前都检查该能力。
 
 不支持原生工具调用的网关会明确失败。这次升级没有把伪装成工具调用的文本作为自动降级协议。JSON/DSML 解析仍用于历史消息清理及旧文本适配器；生产聊天和总结入口均使用原生 `Complete` 接口。
 
