@@ -1,3 +1,5 @@
+import { AIQuestionCard } from "./ai-question-card";
+import { getAIChatQuestion } from "../../lib/ai-chat-parts";
 import { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
 import { useAIDocumentSync } from "../../lib/use-ai-document-sync";
 import { useQueryErrorToast } from "../../lib/use-query-error-toast";
@@ -286,9 +288,10 @@ export function AIDocumentChatPanel({
   const displayedMessages: AIDocumentMessage[] = sessionsQuery.isError || sessionQuery.isError ? [] : [...currentSession.messages,
     ...(mutation.isPending && submitted && !accepted ? [{ id: "pending-user", role: "user" as const, content: submitted.text, attachments: submitted.attachments, createdAt: new Date().toISOString() }] : []),
   ];
+  const pendingQuestion = getAIChatQuestion(displayedMessages);
   const busy = stopping || agentsQuery.isError || bindings.isError || lastRun?.status === "pending" || mutation.isPending || sessionMutation.isPending || sessionsQuery.isPending || sessionsQuery.isError || (!!selectedId && (sessionQuery.isFetching || sessionQuery.isPending || sessionQuery.isError));
-  const handleSend = () => {
-    const text = input.trim();
+  const handleSend = (answer?: string) => {
+    const text = (answer ?? input).trim();
     if ((!text && !imageAttachments.attachments.length) || imageAttachments.blocked || busy) return;
     imageAttachments.retain();
     setStopped(false);
@@ -548,7 +551,9 @@ export function AIDocumentChatPanel({
                               <Wrench className="size-3.5 text-muted-foreground" />
                             )}
                             <span className="font-medium text-foreground">
-                              {tc.name === "search_emails"
+                              {tc.name === "ask_user"
+                                ? (isZh ? "向你提问" : "Ask for clarification")
+                                : tc.name === "search_emails"
                                 ? (isZh ? "检索邮箱邮件" : "Search Emails")
                                 : tc.name === "read_email"
                                 ? (isZh ? "读取邮件正文" : "Read Email")
@@ -766,21 +771,25 @@ export function AIDocumentChatPanel({
 
           {/* Input Box */}
           {stopped && <p role="status" className="mb-2 text-xs text-muted-foreground">{isZh ? "已停止生成。" : "Generation stopped."}</p>}
-          <AIChatInput
-            imageAttachments={imageAttachments}
-            isZh={isZh}
-            textareaRef={textareaRef}
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            onStop={() => void handleStop()}
-            isStopping={stopping}
-            placeholder={copy.aiDocumentPromptPlaceholder}
-            disabled={busy}
-            isPending={mutation.isPending || stopping || lastRun?.status === "pending"}
-            sendLabel={copy.send}
-            hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
-          />
+          {pendingQuestion ? (
+            <AIQuestionCard key={displayedMessages.at(-1)?.id} question={pendingQuestion} isZh={isZh} disabled={busy} onSubmit={answer => handleSend(answer)} />
+          ) : (
+            <AIChatInput
+              imageAttachments={imageAttachments}
+              isZh={isZh}
+              textareaRef={textareaRef}
+              value={input}
+              onChange={setInput}
+              onSend={() => handleSend()}
+              onStop={() => void handleStop()}
+              isStopping={stopping}
+              placeholder={copy.aiDocumentPromptPlaceholder}
+              disabled={busy}
+              isPending={mutation.isPending || stopping || lastRun?.status === "pending"}
+              sendLabel={copy.send}
+              hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
+            />
+          )}
         </div>
       </footer>
 

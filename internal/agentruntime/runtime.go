@@ -26,6 +26,9 @@ type Limits struct {
 }
 
 type Options struct {
+	// PauseTool ends the turn after a successful, standalone clarification call.
+	// Its validated summary becomes the question saved in conversation history.
+	PauseTool    string
 	Input        string
 	Tools        []ToolSpec
 	OutputSchema map[string]any
@@ -181,6 +184,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			var toolErr error
 			if native && !allowed[call.Name] {
 				toolErr = errors.New("tool is not available in this execution")
+			} else if call.Name == opts.PauseTool && len(calls) != 1 {
+				toolErr = errors.New("clarification must be requested alone; other calls were not part of the question")
 			} else if call.ArgumentError != "" {
 				toolErr = errors.New(call.ArgumentError)
 			} else if call.Name == "submit_result" && opts.OutputSchema != nil {
@@ -205,6 +210,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 				return out, err
 			}
 			out.Calls = append(out.Calls, call)
+			if toolErr == nil && opts.PauseTool != "" && call.Name == opts.PauseTool {
+				out.Text = summary
+				return out, nil
+			}
 			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Text: string(encoded)})
 		}
 		if turn == l.Turns-1 || stop {

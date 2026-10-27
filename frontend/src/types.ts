@@ -139,7 +139,10 @@ export type AIChatAttachment = {
   size: number;
 };
 
+export type AIUserQuestion = { question: string; options: string[] };
+
 export type ConversationAIChatMessage = {
+  question?: AIUserQuestion;
   /** Structured reply content, separate from the assistant's explanation. */
   emailDraft?: AIEmailReplyDraft;
   attachments?: AIChatAttachment[];

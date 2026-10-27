@@ -37,3 +37,16 @@ export function finishAIChatParts(parts: ConversationAIChatPart[], response: Pic
   if (updated.at(-1)?.type === "text") updated.pop();
   return [...updated, { type: "text", content: response.content }];
 }
+
+/** Only the latest assistant turn can be waiting; a new user turn answers it. */
+export function isAIChatAwaitingUser(messages: readonly { role: string; toolCalls?: readonly { name: string; status?: string }[] }[]): boolean {
+  const last = messages.at(-1);
+  const tool = last?.toolCalls?.at(-1);
+  return last?.role === "assistant" && tool?.name === "ask_user" && tool.status === "success";
+}
+
+export function getAIChatQuestion(messages: readonly { role: string; content: string; question?: import("../types").AIUserQuestion; toolCalls?: readonly { name: string; status?: string }[] }[]) {
+  if (!isAIChatAwaitingUser(messages)) return undefined;
+  const last = messages.at(-1)!;
+  return last.question ?? { question: last.content, options: [] };
+}

@@ -1,3 +1,4 @@
+import type { AIUserQuestion } from "../types";
 import { createDocumentBusiness } from "./document-business";
 import type { AIChatAttachment } from "../types";
 import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCall, QuotationItem } from "./api";
@@ -31,6 +32,7 @@ export type AIDocumentGeneratedData = {
 };
 
 export type AIDocumentMessage = {
+  question?: AIUserQuestion;
   attachments?: AIChatAttachment[];
   documentAction?: AIAgentDocumentAction;
   id: string;

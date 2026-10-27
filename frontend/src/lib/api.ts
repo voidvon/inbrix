@@ -1,7 +1,7 @@
 import { getCookie } from "./utils";
 import { CLIENT_ID } from "./client-id";
 import { readAIChatStream, type AIChatStreamEvent } from "./ai-chat-stream";
-import type { AIChatAttachment, AIEmailReplyDraft, ConversationAIChatPart } from "../types";
+import type { AIUserQuestion, AIChatAttachment, AIEmailReplyDraft, ConversationAIChatPart } from "../types";
 import type { CalendarEvent, ComposeDraftInput, ComposeDraftListResponse, ComposeDraftResponse, ConnectedAccount, ConversationAIChatMessage, ConversationDetailResponse, ConversationListResponse, MailAttachmentListResponse, MailMessage, MailSearchResponse, Mailbox } from "../types";
 
 export class ApiError extends Error {
@@ -602,6 +602,7 @@ export type AIAgentDocumentAction = {
 };
 
 export type AIAgentChatResponse = {
+  question?: AIUserQuestion;
   emailDraft?: AIEmailReplyDraft;
   sessionId?: string;
   requestId?: string;

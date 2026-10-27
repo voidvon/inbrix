@@ -1,3 +1,5 @@
+import { AIQuestionCard } from "./ai-question-card";
+import { getAIChatQuestion } from "../../lib/ai-chat-parts";
 import { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
 import { useAIDocumentSync } from "../../lib/use-ai-document-sync";
 import { AIChatImages } from "./ai-chat-images";
@@ -63,6 +65,8 @@ import type { AIEmailReplyDraft, ConversationAIChatMessage, ConversationAIChatPa
 /** Localized label for a tool the agent ran, so the chip reads as an action. */
 function toolDisplayName(name: string, isZh: boolean) {
   switch (name) {
+    case "ask_user":
+      return isZh ? "向你提问" : "Asked for clarification";
     case "prepare_email_reply":
       return isZh ? "准备邮件回复" : "Prepared email reply";
     case "search_emails":
@@ -180,6 +184,8 @@ export function ConversationAIChatPanel({
     const accepted = chatQuery.data?.lastRun?.requestId === pendingRequestId.current && messages.some(m => m.id === chatQuery.data?.lastRun?.userMessageId);
     return [...messages, ...(accepted ? [] : [pendingMsg]), ...(pendingAssistant ? [pendingAssistant] : [])];
   }, [messages, pendingUserText, pendingAssistant, pendingImages, chatQuery.data?.lastRun]);
+
+  const pendingQuestion = getAIChatQuestion(displayMessages);
 
   const olderMessages = useMutation({
     mutationFn: async () => ({ id: detail.id, page: await getConversationAIChat(detail.id, chatQuery.data?.nextBefore) }),
@@ -333,6 +339,7 @@ export function ConversationAIChatPanel({
         id: data.res.assistantMessageId || `assistant-${Date.now() + 1}`,
         role: "assistant",
         content: data.res.content || "已处理完成。",
+        question: data.res.question,
         emailDraft: data.res.emailDraft,
         sources: data.res.sources,
         parts: data.parts,
@@ -847,36 +854,40 @@ export function ConversationAIChatPanel({
             )}
           </div>
         )}
-        <AIChatInput
-          imageAttachments={imageAttachments}
-          isZh={isZh}
-          value={input}
-          onChange={setInput}
-          onSend={() => handleSend()}
-          onStop={() => void handleStop()}
-          isStopping={stopping}
-          placeholder={
-            focusedMessages.length > 0
-              ? (isZh
-                  ? `针对选中的 ${focusedMessages.length} 封邮件提问… (Enter 发送)`
-                  : `Ask about ${focusedMessages.length} focused email(s)...`)
-              : copy.aiChatPlaceholder
-          }
-          disabled={mutation.isPending || stopping || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
-          isPending={mutation.isPending || stopping || chatQuery.data?.lastRun?.status === "pending"}
-          sendLabel={copy.aiChatSend}
-          textareaRef={textareaRef}
-          autoFocus={!isMobile}
-          hint={
-            <span className="text-[10px] text-muted-foreground">
-              {focusedMessages.length > 0
+        {pendingQuestion ? (
+          <AIQuestionCard key={displayMessages.at(-1)?.id} question={pendingQuestion} isZh={isZh} disabled={mutation.isPending || stopping || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending} onSubmit={answer => handleSend(answer)} />
+        ) : (
+          <AIChatInput
+            imageAttachments={imageAttachments}
+            isZh={isZh}
+            value={input}
+            onChange={setInput}
+            onSend={() => handleSend()}
+            onStop={() => void handleStop()}
+            isStopping={stopping}
+            placeholder={
+              focusedMessages.length > 0
                 ? (isZh
-                    ? `已锁定 ${focusedMessages.length} 封邮件作为重点上下文`
-                    : `Focusing on ${focusedMessages.length} selected email(s)`)
-                : copy.aiChatSubtitle}
-            </span>
-          }
-        />
+                    ? `针对选中的 ${focusedMessages.length} 封邮件提问… (Enter 发送)`
+                    : `Ask about ${focusedMessages.length} focused email(s)...`)
+                : copy.aiChatPlaceholder
+            }
+            disabled={mutation.isPending || stopping || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
+            isPending={mutation.isPending || stopping || chatQuery.data?.lastRun?.status === "pending"}
+            sendLabel={copy.aiChatSend}
+            textareaRef={textareaRef}
+            autoFocus={!isMobile}
+            hint={
+              <span className="text-[10px] text-muted-foreground">
+                {focusedMessages.length > 0
+                  ? (isZh
+                      ? `已锁定 ${focusedMessages.length} 封邮件作为重点上下文`
+                      : `Focusing on ${focusedMessages.length} selected email(s)`)
+                  : copy.aiChatSubtitle}
+              </span>
+            }
+          />
+        )}
       </footer>
 
       {/* Clear Chat Confirmation Dialog */}
