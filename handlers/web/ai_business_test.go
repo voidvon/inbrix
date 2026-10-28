@@ -226,3 +226,95 @@ func TestBusinessConfiguredTemplateAppliedToFinalDocument(t *testing.T) {
 		t.Fatal("deleted default silently substituted")
 	}
 }
+
+func TestGeneratedContractInheritsTemplatePaymentDetails(t *testing.T) {
+	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
+	ctx := context.Background()
+	defaults := map[string]string{
+		"bank_account_name": "Template Beneficiary", "bank_account_no": "ACCOUNT-123",
+		"bank_swift": "TESTBIC", "bank_name": "Template Bank", "bank_address": "Template Address",
+		"bank_country": "Luxembourg", "bank_account_type": "Business Account",
+		"payment_method": "SWIFT / Wire TT", "payment_memo": "Use the invoice number",
+	}
+	main := []map[string]any{controlElement("buyer_company", "Old buyer"), controlElement("lead_time", "")}
+	for key, value := range defaults {
+		main = append(main, controlElement(key, value))
+	}
+	main = append(main, tableElement([][]map[string]any{{
+		controlElement("item_model_0", "OLD"), controlElement("item_qty_0", "1"),
+		controlElement("item_price_0", "999"), controlElement("item_amount_0", "999"),
+	}}))
+	body := canvasBody(t, "spirax-contract", main)
+	template, err := h.mailDB.SaveDocumentTemplate(ctx, mailstore.DocumentTemplateRecord{OwnerID: account.OwnerID, Type: "contract", Name: "English PI", HTML: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = context.WithValue(ctx, businessRuntimeKey{}, businessRuntime{Profile: mailstore.AIBusinessProfile{ContractTemplateID: template.ID}})
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("override=%t", override), func(t *testing.T) {
+			values := map[string]any{"customer_company": "New buyer", "lead_time": "1 week"}
+			want := map[string]string{}
+			for key, value := range defaults {
+				want[key] = value
+			}
+			if override {
+				values["bank_account_no"], want["bank_account_no"] = "NEW-ACCOUNT", "NEW-ACCOUNT"
+				values["payment_method"], want["payment_method"] = "", ""
+				values["payment_memo"], want["payment_memo"] = "New memo", "New memo"
+			}
+			result, _, err := h.executeTool(ctx, account.OwnerID, account.ID, AIToolCall{Name: "generate_document", Args: map[string]any{
+				"type": "contract", "values": values, "items": []any{map[string]any{"model": "Valve", "qty": "2", "price": "10"}},
+			}}, mailstore.AIModelRecord{}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			card := result.(*AIDocumentCard)
+			check := func(body string) {
+				t.Helper()
+				actual, _, ok := canvasDocumentContent(body)
+				visible, _, rendered := canvasProjectionContent(body)
+				if !ok || !rendered {
+					t.Fatal("unreadable generated document")
+				}
+				for key, value := range want {
+					if actual[key] != value || visible[key] != value || card.Values[key] != value {
+						t.Errorf("%s lost: canonical=%q visible=%q card=%q, want %q", key, actual[key], visible[key], card.Values[key], value)
+					}
+				}
+			}
+			check(card.HTML)
+			// A second AI edit must carry defaults in its input snapshot too.
+			raw, _ := json.Marshal(card)
+			var doc AIAgentChatDocContext
+			_ = json.Unmarshal(raw, &doc)
+			result, _, err = h.continueAgentDocument(ctx, account.OwnerID, &doc, map[string]any{"type": "contract", "commands": []any{map[string]any{"type": "set_fields", "fields": map[string]any{"lead_time": "3 weeks"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			card = result.(*AIDocumentCard)
+			check(card.HTML)
+			normalized, _, err := normalizeCommercialDocument(ctx, h.mailDB, account.OwnerID, card.HTML, "contract", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := h.mailDB.SaveDocument(ctx, mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "contract", Name: "PI", HTML: normalized})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := h.mailDB.GetDocument(ctx, account.OwnerID, record.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(reopened.HTML)
+		})
+	}
+	templates, err := h.mailDB.ListDocumentTemplates(ctx, account.OwnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stored := range templates {
+		if stored.ID == template.ID && stored.HTML != body {
+			t.Fatal("generation modified the source template")
+		}
+	}
+}

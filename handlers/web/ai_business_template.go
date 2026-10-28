@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+func reusableTemplateField(id string) bool {
+	return strings.HasPrefix(id, "seller_") || strings.HasPrefix(id, "bank_") ||
+		strings.HasPrefix(id, "supplier_") || strings.HasPrefix(id, "beneficiary_") ||
+		id == "swift_code" || id == "iban" || id == "payment_method" || id == "payment_memo"
+}
+
 // Materialize fields into a copy of the saved canvas. Unknown layout and style
 // properties survive; source templates are never mutated.
 func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, error) {
@@ -92,18 +98,34 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 					item := card.Items[index]
 					e["extension"] = map[string]any{"productId": item.ProductID, "productVersion": item.ProductVersion, "variantId": item.VariantID, "priceId": item.PriceID, "model": item.Model}
 				}
-				value, exists := values[documentFieldKey(id)]
-				seller := strings.HasPrefix(id, "seller_") || strings.HasPrefix(id, "bank_") || strings.HasPrefix(id, "supplier_") || strings.HasPrefix(id, "beneficiary_") || id == "swift_code" || id == "iban"
-				if exists || !seller {
-					run := map[string]any{"value": value}
-					if runs, ok := c["value"].([]any); ok && len(runs) > 0 {
-						if seed, ok := clone(runs[0]).(map[string]any); ok {
-							run = seed
-							run["value"] = value
+				key := documentFieldKey(id)
+				value, exists := values[key]
+				if !exists && reusableTemplateField(id) {
+					// Template defaults must enter the canonical snapshot, not just
+					// survive in controls: the editor renders from card.Values.
+					var text strings.Builder
+					if runs, ok := c["value"].([]any); ok {
+						for _, rawRun := range runs {
+							run, _ := rawRun.(map[string]any)
+							part, _ := run["value"].(string)
+							text.WriteString(part)
 						}
 					}
-					c["value"] = []any{run}
+					value = strings.TrimSpace(text.String())
+					values[key] = value
+					if card.Values == nil {
+						card.Values = map[string]string{}
+					}
+					card.Values[key] = value
 				}
+				run := map[string]any{"value": value}
+				if runs, ok := c["value"].([]any); ok && len(runs) > 0 {
+					if seed, ok := clone(runs[0]).(map[string]any); ok {
+						run = seed
+						run["value"] = value
+					}
+				}
+				c["value"] = []any{run}
 			}
 			if child, ok := e["valueList"].([]any); ok {
 				rewrite(child, index)

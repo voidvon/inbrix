@@ -1415,7 +1415,9 @@ func mergeDocumentValueArgs(card *AIDocumentCard, args map[string]any) {
 		set("customer_address", address)
 	}
 	for key, value := range parseDocumentValueMap(args["values"]) {
-		set(key, value)
+		// Omitted fields can inherit template defaults; an explicit empty value
+		// must stay empty instead of bringing a default back.
+		card.Values[documentFieldKey(key)] = value
 	}
 }
 

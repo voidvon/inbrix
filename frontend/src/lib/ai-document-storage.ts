@@ -1,5 +1,5 @@
 import type { AIUserQuestion } from "../types";
-import { createDocumentBusiness } from "./document-business";
+import { createBusinessFromTemplate, createDocumentBusiness } from "./document-business";
 import type { AIChatAttachment } from "../types";
 import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCall, QuotationItem } from "./api";
 import type { DocumentTemplate, StoredDocument } from "./document-storage";
@@ -116,7 +116,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : "spirax-contract",
           data: { main },
-          business: createDocumentBusiness(values, generated.items),
+          business: createDocumentBusiness({ ...createBusinessFromTemplate({ main }).values, ...values }, generated.items),
         };
         html = `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify(canvasDoc)}`;
       } catch (e) {
