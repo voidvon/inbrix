@@ -431,7 +431,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     if (exporting) return;
     setExporting(true);
     try {
-      await prepareDelivery();
+      await reviewSnapshot();
     const body = editorRef.current?.getHTML() || "";
     if (!body) return;
     const blob = new Blob([body], { type: "text/html;charset=utf-8" });
@@ -481,14 +481,18 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     setValidation(result.validation);
     return result;
   };
-  const prepareDelivery = async () => {
+  const checkCompleteness = async () => {
     const result = await reviewSnapshot();
-    if (result && result.validation.status !== "ready") throw new Error(result.validation.issues.map(issue => issue.message).join("；"));
+    if (result?.validation.status === "draft") {
+      toast.info(copy === zh ? "部分信息尚未填写，仅作提示，不影响保存、导出或打印。" : "Some information is missing. This is advisory and does not prevent saving, exporting or printing.");
+    } else {
+      toast.success(copy === zh ? "文档信息完整" : "Document information is complete");
+    }
   };
   const printDocument = async () => {
     if (!editorRef.current || exporting) return;
     setExporting(true);
-    try { await prepareDelivery(); await editorRef.current.print(); }
+    try { await reviewSnapshot(); await editorRef.current.print(); }
     catch (error) { toast.error(error instanceof Error ? error.message : copy.loadFailed); }
     finally { setExporting(false); }
   };
@@ -497,7 +501,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     setExporting(true);
     const exportName = resolveExportName();
     try {
-      await prepareDelivery();
+      await reviewSnapshot();
       if (format === "docx") await editorRef.current.exportDocx(exportName);
       else await exportDocumentPages(await editorRef.current.getPageImages(), exportName, format);
       toast.success(copy === zh ? "文档已导出" : "Document exported");
@@ -538,7 +542,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     onBusyChange?.(true);
     const exportName = resolveExportName();
     try {
-      await prepareDelivery();
+      await reviewSnapshot();
       const file = await createDocumentPDF(await editorRef.current.getPageImages(), exportName);
       onAttach(file);
       toast.success(copy === zh ? "PDF 已添加到邮件附件" : "PDF added to email attachments");
@@ -736,7 +740,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {target.kind === "document" && <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting || saving} onClick={() => { setExporting(true); void prepareDelivery().then(() => toast.success(copy === zh ? "文档检查通过" : "Document is ready")).catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)).finally(() => setExporting(false)); }}>
+            {target.kind === "document" && <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" disabled={!editorReady || exporting || saving} onClick={() => { setExporting(true); void checkCompleteness().catch(error => toast.error(error instanceof Error ? error.message : copy.loadFailed)).finally(() => setExporting(false)); }}>
               {copy === zh ? "检查完整性" : "Check completeness"}
             </Button>}
             <Button type="button" size="sm" className="h-8 text-xs shrink-0 font-medium" disabled={!editorReady || exporting || saving} onClick={() => void save()}>
@@ -758,7 +762,7 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
         </div>
 
         {validation && <div className="max-h-28 shrink-0 overflow-y-auto border-b px-4 py-2 text-xs" role="status">
-          <p className="font-medium">{copy === zh ? "上次检查结果：" : "Last review: "}{validation.status === "ready" ? (copy === zh ? "可以交付" : "Ready") : (copy === zh ? "草稿，需补充以下内容" : "Draft, missing information")}</p>
+          <p className="font-medium">{copy === zh ? "上次检查结果：" : "Last review: "}{validation.status === "ready" ? (copy === zh ? "信息完整" : "Complete") : (copy === zh ? "部分信息尚未填写（仅提示）" : "Some information is missing (advisory)")}</p>
           {validation.issues.length > 0 && <ul className="mt-1 list-inside list-disc text-muted-foreground">{validation.issues.map((issue, index) => <li key={`${issue.code}-${issue.field}-${index}`}>{issue.message}</li>)}</ul>}
         </div>}
         <div className="flex min-h-0 flex-1 overflow-hidden relative">
@@ -957,7 +961,6 @@ export function ComposeDocumentAttachment({ copy, accountEmail, action, onClose,
         if (cancelled) return;
         if (editor.getDocument() !== before) throw new Error(copy === zh ? "文档已修改，请重试" : "Document changed; retry");
         editor.setHTML(checked.html);
-        if (checked.validation.status !== "ready") throw new Error(checked.validation.issues.map(issue => issue.message).join("；"));
         const pages = await editor.getPageImages();
         const file = await createDocumentPDF(pages, selected.name);
         if (cancelled) return;

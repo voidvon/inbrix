@@ -4,6 +4,7 @@ import type { AIChatAttachment } from "../types";
 import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCall, QuotationItem } from "./api";
 import type { DocumentTemplate, StoredDocument } from "./document-storage";
 import { documentTemplateHTML } from "./document-storage";
+import { createDocumentNumber } from "./document-number";
 import { type Copy, zh } from "./locale";
 import { createSpiraxQuotationCanvasDocument } from "../components/app/spirax-quotation-canvas";
 import { createSpiraxContractCanvasDocument } from "../components/app/spirax-contract-canvas";
@@ -103,18 +104,19 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
   if (!html || html.includes("data-spirax-")) {
     if (generated.type === "quotation" || generated.type === "contract") {
       const isQuotation = generated.type === "quotation";
+      const values = isQuotation ? generated.values : { trade_term: "EXW (Ex Works)", contract_title: "PROFORMA INVOICE", ...generated.values };
       const date = new Date().toLocaleDateString("zh-CN");
       const docNum = isQuotation
-        ? (generated.values?.quote_number || "SQ-" + Date.now().toString().slice(-6))
+        ? (generated.values?.quote_number || createDocumentNumber("quotation"))
         : (generated.values?.contract_number || "SC-" + Date.now().toString().slice(-6));
       try {
         const main = isQuotation
-          ? createSpiraxQuotationCanvasDocument(date, docNum, generated.values, generated.items)
-          : createSpiraxContractCanvasDocument(date, docNum, generated.values, generated.items);
+          ? createSpiraxQuotationCanvasDocument(date, docNum, values, generated.items)
+          : createSpiraxContractCanvasDocument(date, docNum, values, generated.items);
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : "spirax-contract",
           data: { main },
-          business: createDocumentBusiness(generated.values, generated.items),
+          business: createDocumentBusiness(values, generated.items),
         };
         html = `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify(canvasDoc)}`;
       } catch (e) {

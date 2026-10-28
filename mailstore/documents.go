@@ -287,12 +287,12 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 		for _, kind := range []string{"quotation", "contract"} {
 			name := "标准报价单模板"
 			if kind == "contract" {
-				name = "标准合同模板"
+				name = "英文形式发票模板"
 			}
 			if english {
 				name = "Standard quotation"
 				if kind == "contract" {
-					name = "Standard contract"
+					name = "English proforma invoice"
 				}
 			}
 			legacyID := "default-" + kind
@@ -314,6 +314,25 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 	if count, _ := result.RowsAffected(); count > 0 {
 		now := time.Now().UnixMilli()
 		_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "chinese-sales-contract-"+owner, owner, "contract", "中文购销合同模板", "__INBRIX_CANVAS_DOCUMENT__:"+strings.TrimSpace(chineseSalesContractTemplate), now, now)
+		if err != nil {
+			return err
+		}
+	}
+	// Rename untouched built-ins once. Customized templates and saved documents
+	// remain authoritative, including after later edits or deletions.
+	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "english-proforma-invoice")
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		name := "英文形式发票模板"
+		if english {
+			name = "English proforma invoice"
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE document_templates SET name=?,updated_at=?
+            WHERE owner_id=? AND id IN (?,?) AND type='contract' AND html=? AND name IN (?,?,?,?)`,
+			name, time.Now().UnixMilli(), owner, "default-contract", "default-contract-"+owner,
+			`<div data-spirax-contract="reference-v1"></div>`, "标准合同模板", "Standard contract", "英文合同模板", "English sales contract")
 		if err != nil {
 			return err
 		}

@@ -12,8 +12,8 @@ export function createDocumentNumber(type: DocumentTemplate) {
     const rand = String(Math.floor(1000 + Math.random() * 9000));
     return `CT${yy}${mm}${dd}${rand}`;
   }
-  const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
-  return `SP-${date}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const date = `${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  return `SP${date}${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
 // Called only when creating a document from a template, never when reopening one.
@@ -39,7 +39,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
       if (element.control?.conceptId === "payment_memo") {
         if (element.control.value && element.control.value.length > 0 && typeof element.control.value[0].value === "string") {
           element.control.value[0].value = element.control.value[0].value
-            .replace(/\b(?:SP|CT)-\d{8}-[A-F0-9]{8}\b/g, number)
+            .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
             .replace(/\bCT\d{10}\b/g, number)
             .replace(/\bPI-20260919-01\b/g, number)
             .replace(/\[(?:Contract number|合同编号|Quote number)\]/gi, number);
@@ -55,7 +55,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
       if (typeof element.value === "string") {
         element.value = element.value
           .replace(/\[(?:Contract number|合同编号|Quote number)\]/gi, number)
-          .replace(/\b(?:SP|CT)-\d{8}-[A-F0-9]{8}\b/g, number)
+          .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
           .replace(/\bCT\d{10}\b/g, number);
       }
       Object.values(value).forEach(visit);
@@ -140,8 +140,8 @@ export function extractDocumentNumber(source: unknown): string | undefined {
     return matchAttr[1].trim();
   }
 
-  // 4. Match common pattern CT[YY][MM][DD][4-digit] or CT/SP UUID
-  const patternMatch = text.match(/\b(CT\d{10}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/);
+  // 4. Match current CT/SP numbers and legacy UUID-based numbers.
+  const patternMatch = text.match(/\b(SP\d{4}[A-F0-9]{8}|CT\d{10}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/);
   if (patternMatch?.[1]) {
     return patternMatch[1];
   }

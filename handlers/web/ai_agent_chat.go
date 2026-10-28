@@ -16,6 +16,7 @@ import (
 	"inbrix/mailstore"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
 type AIAgentChatMessage struct {
@@ -62,6 +63,7 @@ type AIAgentChatDocContext struct {
 	ID                           string            `json:"id,omitempty"`
 	TemplateID                   string            `json:"templateId,omitempty"`
 	SourceQuotationID            string            `json:"sourceQuotationId,omitempty"`
+	SourceQuotationRevision      int64             `json:"sourceQuotationRevision,omitempty"`
 	NewDraft                     bool              `json:"newDraft,omitempty"`
 	Contact                      string            `json:"contact,omitempty"`
 	Currency                     string            `json:"currency,omitempty"`
@@ -456,6 +458,7 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 	executedToolCalls := make([]AIToolCall, 0)
 	var generatedDocument *AIDocumentCard
 	var documentAction *AIDocumentAction
+	currentDraft := input.ActiveDocument
 
 	memory := &mailstore.AIChatContext{}
 	if mailContext != nil {
@@ -530,6 +533,7 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		Tools:     agentChatTools(),
 		Complete:  complete,
 		Execute: func(ctx context.Context, call AIToolCall) (any, string, error) {
+			ctx = context.WithValue(ctx, agentDocumentContextKey{}, currentDraft)
 			if call.Name == "ask_user" {
 				result, summary, err := executeAskUser(call.Args)
 				if err == nil {
@@ -550,6 +554,11 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 				if call.Name == "generate_document" {
 					if doc, ok := result.(*AIDocumentCard); ok && doc != nil {
 						generatedDocument = doc
+						// Later tools in this turn must amend the result of earlier
+						// commands rather than starting from the pre-turn snapshot.
+						raw, _ := json.Marshal(doc)
+						currentDraft = &AIAgentChatDocContext{}
+						_ = json.Unmarshal(raw, currentDraft)
 					}
 				}
 				if draft, ok := result.(*AIEmailReplyDraft); ok {
@@ -602,7 +611,13 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		return nil, fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 	cleanedContent, docFromFence := extractDocumentFromResponse(finalReply)
-	if docFromFence != nil && (generatedDocument == nil || generatedDocument.sourceQuotation == nil) {
+	if docFromFence != nil && generatedDocument == nil {
+		if hasCurrentDocument(input.ActiveDocument, docFromFence.Type) {
+			return nil, fiber.NewError(422, "当前文档必须通过增量命令修改，不能用重新生成的内容替换；请重试")
+		}
+		if err := h.finishBusinessDocument(ctx, owner, docFromFence); err != nil {
+			return nil, productError(err)
+		}
 		generatedDocument = docFromFence
 	}
 
@@ -612,11 +627,6 @@ func (h *AISettingsHandler) runAgentChat(ctx context.Context, owner string, acco
 		cleanedContent = generateFallbackResponse(executedToolCalls, generatedDocument)
 	}
 
-	if generatedDocument != nil {
-		if err := h.finishBusinessDocument(ctx, owner, generatedDocument); err != nil {
-			return nil, productError(err)
-		}
-	}
 	if mailContext != nil {
 		if err := h.mailDB.SaveAIChatContext(ctx, account.ID, input.ConversationID, mailContext.memory); err != nil {
 			h.recordError(ctx, owner, "agent_chat_context", input.AccountEmail, model.Model, agentName, err)
@@ -678,6 +688,7 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
 	}
 
 	if activeDoc != nil {
+		sb.WriteString("Preserve every existing document field, product line, contact detail and commercial term unless the user explicitly asks to change or remove it. For a current unsaved draft, generate_document accepts type and atomic commands only; never regenerate a replacement snapshot. For a saved draft, use update_document with its exact revision to preserve its canvas. Omission is never deletion. Do not clear fields or remove lines merely because they were not repeated in this turn. Questions and suggestions do not authorize changes.\n")
 		sb.WriteString("When revision is present, this snapshot reflects the latest human-saved document; it supersedes earlier generated cards and discussion. Empty or removed fields must stay empty. If savedDocumentMissing=true, the linked document was deleted: do not reuse its old content or recreate it without an explicit request. If structuredContentUnavailable=true, explain that the saved format cannot be read structurally and do not guess its fields.\n")
 		sb.WriteString(fmt.Sprintf("ACTIVE DOCUMENT IN WORKSPACE:\n- Type: %s\n- Title: %s\n- Counterparty: %s\n- Line Items: %d items\n\n", activeDoc.Type, activeDoc.Title, activeDoc.Counterparty, len(activeDoc.Items)))
 		snapshot, _ := json.Marshal(activeDoc)
@@ -828,6 +839,19 @@ func parseStringArg(args map[string]any, keys ...string) string {
 }
 
 func (h *AISettingsHandler) executeTool(ctx context.Context, owner, accountID string, call AIToolCall, model mailstore.AIModelRecord, apiKey string) (any, string, error) {
+	if call.Name == "generate_document" {
+		doc, _ := ctx.Value(agentDocumentContextKey{}).(*AIAgentChatDocContext)
+		kind := parseStringArg(call.Args, "type")
+		if kind == "" && doc != nil {
+			kind = doc.Type
+		}
+		if hasCurrentDocument(doc, kind) {
+			return h.continueAgentDocument(ctx, owner, doc, call.Args)
+		}
+		if _, exists := call.Args["commands"]; exists {
+			return nil, "", fmt.Errorf("当前没有可修改的同类型草稿，请先生成新文档")
+		}
+	}
 	if call.Name == "generate_document" && parseStringArg(call.Args, "sourceQuotationId") != "" {
 		card := &AIDocumentCard{Type: parseStringArg(call.Args, "type"), Title: parseStringArg(call.Args, "title"), SourceQuotationID: parseStringArg(call.Args, "sourceQuotationId"), Values: parseStringMapArg(call.Args, "values")}
 		revision, err := productToolInt(call.Args, "sourceQuotationRevision", 0, 1, 1<<53-1)
@@ -1287,7 +1311,7 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 	title, _ := args["title"].(string)
 	if title == "" {
 		if docType == "contract" {
-			title = "标准销售合同"
+			title = "Proforma Invoice"
 		} else {
 			title = "商业报价单"
 		}
@@ -1460,8 +1484,14 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 	}
 
 	if isContract {
+		if _, exists := card.Values["contract_title"]; !exists {
+			card.Values["contract_title"] = "PROFORMA INVOICE"
+		}
+		if _, exists := card.Values["trade_term"]; !exists {
+			card.Values["trade_term"] = "EXW (Ex Works)"
+		}
 		if _, exists := card.Values["contract_date"]; !exists {
-			card.Values["contract_date"] = dateStr
+			card.Values["contract_date"] = time.Now().Format("2006-01-02")
 		}
 		if card.Values["contract_number"] == "" {
 			card.Values["contract_number"] = fmt.Sprintf("SC-%s", time.Now().Format("200601021504"))
@@ -1471,7 +1501,7 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 			card.Values["issue_date"] = dateStr
 		}
 		if card.Values["quote_number"] == "" {
-			card.Values["quote_number"] = fmt.Sprintf("SQ-%s", time.Now().Format("200601021504"))
+			card.Values["quote_number"] = "SP" + time.Now().Format("0102") + strings.ToUpper(uuid.NewString()[:8])
 		}
 	}
 

@@ -16,6 +16,76 @@ type agentSessionExecution struct {
 }
 type agentDocumentContextKey struct{}
 
+func hasCurrentDocument(doc *AIAgentChatDocContext, kind string) bool {
+	return doc != nil && !doc.NewDraft && doc.Type == kind &&
+		(doc.ID != "" || doc.Title != "" || doc.Counterparty != "" || len(doc.Values) > 0 || len(doc.Items) > 0 || len(doc.Terms) > 0 || doc.Notes != "" || doc.SavedDocumentMissing || doc.StructuredContentUnavailable)
+}
+
+// Continuing a draft uses the same atomic commands as the editor. A model's
+// partial re-generation must never become a replacement business snapshot.
+func (h *AISettingsHandler) continueAgentDocument(ctx context.Context, owner string, doc *AIAgentChatDocContext, args map[string]any) (any, string, error) {
+	if doc.SavedDocumentMissing || doc.StructuredContentUnavailable {
+		return nil, "", fmt.Errorf("当前文档已删除或无法读取，不能用生成结果替换；请先检查文档")
+	}
+	if doc.Revision > 0 {
+		return nil, "", fmt.Errorf("当前文档已保存，请使用 update_document，id=%s，baseRevision=%d；不得重新生成覆盖原内容", doc.ID, doc.Revision)
+	}
+	for key := range args {
+		if key != "type" && key != "commands" {
+			return nil, "", fmt.Errorf("继续当前草稿只能提供 type 和 commands；请用增量命令修改，未提及的字段和明细必须保留")
+		}
+	}
+	encoded, err := json.Marshal(map[string]any{"commands": args["commands"]})
+	if err != nil {
+		return nil, "", err
+	}
+	commands, err := decodeDocumentCommands(string(encoded))
+	if err != nil {
+		return nil, "", fmt.Errorf("继续当前草稿需要非空 commands，不能替换整份报价单: %w", err)
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, "", err
+	}
+	var card AIDocumentCard
+	if err := json.Unmarshal(raw, &card); err != nil {
+		return nil, "", err
+	}
+	hydrateDocumentCard(&card)
+	// Terms and notes have now been projected into Values. Do not reapply old
+	// headline text over the user's subsequent set_fields command.
+	card.Terms = nil
+	originalItems := append([]AIDocumentItem{}, card.Items...)
+	payload := map[string]any{"data": map[string]any{"main": []any{map[string]any{"value": ""}}}}
+	if err := setCanvasBusiness(payload, card.Values, card.Items); err != nil {
+		return nil, "", err
+	}
+	body, _ := json.Marshal(payload)
+	updates, items, err := applyDocumentCommands(canvasDocumentPrefix+string(body), commands)
+	if err != nil {
+		return nil, "", err
+	}
+	for key, value := range updates {
+		card.Values[key] = value
+	}
+	if items != nil {
+		card.Items = items
+	}
+	card.Counterparty = card.Values["customer_company"]
+	card.Contact = card.Values["customer_contact"]
+	card.Notes = card.Values["notes"]
+	card.Currency = card.Values["currency"]
+	if _, changed := updates["currency"]; changed {
+		if err := validateDocumentCurrencyChange(doc.Values, card.Values, card.Items); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := h.finishBusinessDocument(ctx, owner, &card, originalItems); err != nil {
+		return nil, "", err
+	}
+	return &card, generatedDocumentSummary(&card), nil
+}
+
 // Only explicit fresh-document requests detach the current draft. Merely asking
 // to draft/generate a contract can mean converting the current quotation.
 var newDocumentIntent = regexp.MustCompile(`^\s*(?:(?:请|帮我|我想|我要|现在|再)\s*)*(?:新建|全新|空白|另做).*(?:报价|合同|协议)|(?i:^\s*(?:please\s+)?(?:(?:create|start|make|draft)\s+)?(?:a\s+)?(?:new|another|fresh|blank)\s+(?:quotation|quote|contract|agreement)\b)`)

@@ -33,7 +33,7 @@ import { cn } from "../../lib/utils";
 const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" | "customer" | "seller" | "terms" | "bank" }> = {
   // Basic
   quote_number: { zh: "报价单号", en: "Quote Number", group: "basic" },
-  contract_number: { zh: "合同编号 (PI Number)", en: "Contract / PI Number", group: "basic" },
+  contract_number: { zh: "PI 编号", en: "PI Number", group: "basic" },
   issue_date: { zh: "报价日期", en: "Issue Date", group: "basic" },
   contract_date: { zh: "合同日期", en: "Contract Date", group: "basic" },
   currency: { zh: "结算币种", en: "Currency", group: "basic" },
@@ -63,7 +63,8 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
   seller_sign_date: { zh: "卖方签署日期", en: "Seller Sign Date", group: "seller" },
 
   // Delivery & Terms
-  trade_term: { zh: "贸易条款 (如 FOB)", en: "Trade Terms (e.g. FOB)", group: "terms" },
+  trade_term: { zh: "交货方式 / 贸易条款 (EXW / FOB / CIF)", en: "Delivery / Trade Terms (EXW / FOB / CIF)", group: "terms" },
+  delivery_method: { zh: "交货方式", en: "Delivery Method", group: "terms" },
   lead_time: { zh: "交货期 / 货期", en: "Lead Time", group: "terms" },
   origin: { zh: "原产地", en: "Country of Origin", group: "terms" },
   port_of_loading: { zh: "装运港口", en: "Port of Loading", group: "terms" },

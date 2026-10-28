@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"inbrix/mailstore"
 	"io"
 	"net/http/httptest"
@@ -168,5 +169,91 @@ func TestSaveAndDeliveryValidationUseSameCurrentSnapshot(t *testing.T) {
 	_ = json.Unmarshal(saved["validation"], &report)
 	if status != 200 || report.Status != "draft" {
 		t.Fatal(status, report)
+	}
+}
+
+func TestBlankDocumentLinesCanBeSavedAndValidated(t *testing.T) {
+	h, app, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
+	controller := NewDocumentsHandler(h.sessions, h.mailDB)
+	app.Post("/api/documents", controller.HandleSaveDocument)
+	app.Post("/api/documents/validate", controller.HandleValidateDocument)
+	for _, kind := range []string{"quotation", "contract"} {
+		for _, lines := range [][]AIDocumentItem{
+			{{LineID: "blank"}},
+			{{LineID: "blank"}, {LineID: "filled", Model: "VALVE", Qty: "1", Price: "100"}},
+			{{LineID: "filled", Model: "VALVE", Qty: "1", Price: "100"}, {LineID: "blank"}},
+		} {
+			for _, numbering := range []int{-1, 0, 1} {
+				if numbering == -1 && len(lines) > 1 {
+					continue
+				}
+				var rows [][]map[string]any
+				for i, line := range lines {
+					var cells []map[string]any
+					for _, field := range []string{"item_model", "item_description", "item_qty", "item_price", "item_amount"} {
+						id := field
+						if numbering >= 0 {
+							id = fmt.Sprintf("%s_%d", field, i+numbering)
+						}
+						cells = append(cells, controlElement(id, canvasItemValues(line)[field]))
+					}
+					rows = append(rows, cells)
+				}
+				payload := map[string]any{
+					"template": "spirax-" + kind,
+					"options":  map[string]any{"watermark": map[string]any{"data": "KEEP WATERMARK"}},
+					"data":     map[string]any{"main": []any{map[string]any{"value": "KEEP HUMAN TEXT"}, tableElement(rows)}},
+				}
+				if err := setCanvasBusiness(payload, map[string]string{}, lines); err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(payload)
+				body := canvasDocumentPrefix + string(raw)
+				for _, path := range []string{"/api/documents/validate", "/api/documents"} {
+					encoded, _ := json.Marshal(saveDocumentInput{Type: kind, Name: "Blank draft", HTML: body})
+					req := httptest.NewRequest("POST", path, strings.NewReader(string(encoded)))
+					req.Header.Set("Content-Type", "application/json")
+					res, err := app.Test(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, _ := io.ReadAll(res.Body)
+					res.Body.Close()
+					if res.StatusCode != 200 {
+						t.Fatalf("%s %s numbering=%d lines=%+v: %d %s", kind, path, numbering, lines, res.StatusCode, result)
+					}
+					var reply struct {
+						HTML       string                   `json:"html"`
+						Document   mailstore.DocumentRecord `json:"document"`
+						Validation DocumentValidation       `json:"validation"`
+					}
+					if err := json.Unmarshal(result, &reply); err != nil {
+						t.Fatal(err)
+					}
+					if reply.Document.ID != "" {
+						reopened, err := h.mailDB.GetDocument(context.Background(), account.OwnerID, reply.Document.ID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						reply.HTML = reopened.HTML
+					}
+					_, stored, ok := canvasDocumentContent(reply.HTML)
+					_, visible, _ := canvasProjectionContent(reply.HTML)
+					if !ok || len(stored) != len(lines) || len(visible) != len(lines) || reply.Validation.Status != "draft" {
+						t.Fatalf("blank draft lost its lines: %+v", reply)
+					}
+					for i, line := range lines {
+						if stored[i].LineID != line.LineID || stored[i].Model != line.Model || stored[i].Qty != line.Qty || stored[i].Price != line.Price || visible[i].Model != line.Model {
+							t.Fatalf("line %d was removed, shifted or changed: %+v %+v", i, stored, visible)
+						}
+					}
+					for _, marker := range []string{"KEEP HUMAN TEXT", "KEEP WATERMARK"} {
+						if !strings.Contains(reply.HTML, marker) {
+							t.Fatal("lost existing document content", marker)
+						}
+					}
+				}
+			}
+		}
 	}
 }

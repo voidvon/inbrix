@@ -155,10 +155,12 @@ var itemFieldConcept = map[string]string{
 // canvasDocumentItems rebuilds the line items from the flat control map, keeping
 // the template's own ordering.
 func canvasDocumentItems(values map[string]string) []AIDocumentItem {
-	type slot struct {
-		index int
-		item  AIDocumentItem
-	}
+	return canvasControlItems(values, false)
+}
+
+// Rendering checks count visible line slots, including entirely blank draft
+// rows. Dropping one would falsely report missing rows and shift later items.
+func canvasControlItems(values map[string]string, includeEmpty bool) []AIDocumentItem {
 	byIndex := map[int]*AIDocumentItem{}
 	single := AIDocumentItem{}
 	hasSingle := false
@@ -166,7 +168,7 @@ func canvasDocumentItems(values map[string]string) []AIDocumentItem {
 
 	for key, value := range values {
 		value = strings.TrimSpace(value)
-		if value == "" {
+		if value == "" && !includeEmpty {
 			continue
 		}
 		if field, ok := itemFieldConcept[key]; ok {
@@ -199,13 +201,13 @@ func canvasDocumentItems(values map[string]string) []AIDocumentItem {
 		}
 		sort.Ints(indexes)
 		for _, index := range indexes {
-			if item := *byIndex[index]; !itemIsEmpty(item) {
+			if item := *byIndex[index]; includeEmpty || !itemIsEmpty(item) {
 				items = append(items, item)
 			}
 		}
 		return items
 	}
-	if hasSingle && !itemIsEmpty(single) {
+	if hasSingle && (includeEmpty || !itemIsEmpty(single)) {
 		items = append(items, single)
 	}
 	return items
@@ -325,5 +327,5 @@ func canvasProjectionContent(body string) (map[string]string, []AIDocumentItem, 
 		collectCanvasControls(elements, values)
 		collectCanvasProductImages(elements, values)
 	}
-	return values, canvasDocumentItems(values), true
+	return values, canvasControlItems(values, true), true
 }

@@ -258,3 +258,63 @@ func TestChineseContractTemplateSeedsForExistingOwnerOnce(t *testing.T) {
 		t.Fatal("deleted template was recreated", templates, err)
 	}
 }
+
+func TestEnglishContractTemplateUpgradePreservesCustomizations(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+	}{
+		{"标准合同模板", `<div data-spirax-contract="reference-v1"></div>`, "英文形式发票模板"},
+		{"Standard contract", `<div data-spirax-contract="reference-v1"></div>`, "英文形式发票模板"},
+		{"英文合同模板", `<div data-spirax-contract="reference-v1"></div>`, "英文形式发票模板"},
+		{"English sales contract", `<div data-spirax-contract="reference-v1"></div>`, "英文形式发票模板"},
+		{"我的合同", `<div data-spirax-contract="reference-v1"></div>`, "我的合同"},
+		{"标准合同模板", "CUSTOM CONTRACT CONTENT", "标准合同模板"},
+	} {
+		t.Run(tt.name+tt.body, func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			owner, err := s.CreateUser(ctx, "english-template-owner", "Owner", "hash")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO document_template_initializations(owner_id) VALUES(?)`, owner.ID); err != nil {
+				t.Fatal(err)
+			}
+			id := "default-contract-" + owner.ID
+			if _, err := s.SaveDocumentTemplate(ctx, DocumentTemplateRecord{ID: id, OwnerID: owner.ID, Type: "contract", Name: tt.name, HTML: tt.body}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, false); err != nil {
+				t.Fatal(err)
+			}
+			read := func() DocumentTemplateRecord {
+				t.Helper()
+				templates, err := s.ListDocumentTemplates(ctx, owner.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, template := range templates {
+					if template.ID == id {
+						return template
+					}
+				}
+				t.Fatal("contract template missing")
+				return DocumentTemplateRecord{}
+			}
+			got := read()
+			if got.Name != tt.want || got.HTML != tt.body {
+				t.Fatalf("upgrade lost template data: %+v", got)
+			}
+			got.Name = "Standard contract"
+			if _, err := s.SaveDocumentTemplate(ctx, got); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, true); err != nil {
+				t.Fatal(err)
+			}
+			if got := read(); got.Name != "Standard contract" || got.HTML != tt.body {
+				t.Fatal("later reads overwrote user's template edit", got)
+			}
+		})
+	}
+}

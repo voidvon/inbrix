@@ -22,7 +22,7 @@ try {
     const data = { main: createSpiraxQuotationCanvasDocument('2026-10-27', 'SNAPSHOT-Q-1', values, business.items) };
     projectDocumentBusiness(data, business);
     const html = '__INBRIX_CANVAS_DOCUMENT__:' + JSON.stringify({ template: 'spirax-quotation', data, business });
-    return (await saveDocument({ type: 'quotation', name: 'Snapshot regression', html })).document;
+    return (await saveDocument({ type: 'quotation', name: `Snapshot regression ${crypto.randomUUID()}`, html })).document;
   });
   await page.goto(`${base}/documents/${saved.id}`);
   const dialog = page.getByTestId('document-editor-dialog');
@@ -160,18 +160,43 @@ try {
   const incomplete = await (await incompleteResponse).json();
   assert.equal(incomplete.validation.status, 'draft');
   assert(incomplete.validation.issues.some(issue => issue.code === 'missing_price'));
-  await dialog.getByText('草稿，需补充以下内容', { exact: false }).waitFor();
-  let downloads = 0;
-  page.on('download', () => downloads++);
-  await dialog.getByRole('button', { name: '导出', exact: true }).click();
-  const blocked = page.waitForResponse(response => response.url().endsWith('/api/documents/validate'));
-  await page.getByRole('menuitem', { name: '下载 PDF', exact: true }).click();
-  await blocked;
-  await page.waitForTimeout(250);
-  assert.equal(downloads, 0, 'Incomplete commercial documents must not export');
+  await dialog.getByText('部分信息尚未填写（仅提示）', { exact: false }).waitFor();
+  for (const [label, extension] of [
+    ['下载 PDF', /\.pdf$/],
+    ['下载 PDF（图片）', /\.pdf$/],
+    ['下载图片', /\.(jpg|zip)$/],
+    ['下载 docx', /\.docx$/],
+    ['下载 HTML', /\.html$/],
+  ]) {
+    const downloading = page.waitForEvent('download');
+    await dialog.getByRole('button', { name: '导出', exact: true }).click();
+    await page.getByRole('menuitem', { name: label, exact: true }).click();
+    const file = await downloading;
+    assert.equal(await file.failure(), null, `Incomplete documents can export: ${label}`);
+    assert.match(file.suggestedFilename(), extension);
+    await dialog.getByRole('button', { name: '导出', exact: true }).waitFor({ state: 'visible' });
+  }
+  // Exercise the real print button without opening a native OS print dialog.
+  await page.evaluate(() => {
+    window.draftPrintCount = 0;
+    const host = document.querySelector('.canvas-document-editor');
+    let fiber = host[Object.keys(host).find(key => key.startsWith('__reactFiber$'))];
+    for (; fiber; fiber = fiber.return) {
+      for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+        const native = hook.memoizedState?.current;
+        if (!native?.command?.executePrint) continue;
+        native.command.executePrint = async () => { window.draftPrintCount++; };
+        return;
+      }
+    }
+    throw new Error('Missing native canvas editor');
+  });
+  await dialog.getByRole('button', { name: '打印', exact: true }).click();
+  await page.waitForFunction(() => window.draftPrintCount === 1);
   const saveDraft = page.waitForResponse(response => response.url().endsWith('/api/documents') && response.request().method() === 'POST');
   await dialog.getByRole('button', { name: '保存', exact: true }).click();
-  assert.equal((await (await saveDraft).json()).validation.status, 'draft');
+  const savedDraft = await (await saveDraft).json();
+  assert.equal(savedDraft.validation.status, 'draft');
   await page.screenshot({ path: '/tmp/inbrix-document-snapshot-desktop.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
@@ -179,6 +204,43 @@ try {
   await page.getByTestId('document-editor-dialog').locator('canvas').first().waitFor();
   await page.waitForTimeout(500);
   await page.screenshot({ path: '/tmp/inbrix-document-snapshot-mobile.png' });
+
+  // Both attachment entry points use real draft validation and PDF rendering.
+  // Capture their File callbacks; no email is sent.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`${base}/documents`);
+  for (const mode of ['editor', 'import']) {
+    await page.evaluate(async ({ mode, record }) => {
+      const source = await (await fetch('/src/components/app/document-editor-dialog.tsx')).text();
+      const main = await (await fetch('/src/main.tsx')).text();
+      const specifier = (text, name) => text.match(new RegExp(`from ["']([^"']*${name}\\.js[^"']*)["']`))[1];
+      const React = (await import(specifier(source, 'react'))).default;
+      const { createRoot } = (await import(specifier(main, 'react-dom_client'))).default;
+      const { QueryClient, QueryClientProvider } = await import(specifier(source, '@tanstack_react-query'));
+      const { DocumentEditorDialog, ComposeDocumentAttachment } = await import('/src/components/app/document-editor-dialog.tsx');
+      const { zh } = await import('/src/lib/locale.ts');
+      window.draftAttachmentRoot?.unmount();
+      document.getElementById('draft-attachment-test')?.remove();
+      const host = document.createElement('div'); host.id = 'draft-attachment-test'; document.body.append(host);
+      window.draftAttachmentFiles = [];
+      const common = { copy: zh, accountEmail: 'test@example.com', onAttach: file => window.draftAttachmentFiles.push({ name: file.name, size: file.size, type: file.type }) };
+      const element = mode === 'editor'
+        ? React.createElement(DocumentEditorDialog, { ...common, target: { kind: 'document', record }, templates: [], initialTab: 'document', onOpenChange: () => {}, onSave: () => {} })
+        : React.createElement(ComposeDocumentAttachment, { ...common, action: 'import', onClose: () => {}, onBusyChange: () => {} });
+      window.draftAttachmentRoot = createRoot(host);
+      window.draftAttachmentRoot.render(React.createElement(QueryClientProvider, { client: new QueryClient() }, element));
+    }, { mode, record: savedDraft.document });
+    if (mode === 'editor') {
+      await page.getByTestId('document-editor-dialog').getByRole('button', { name: /^(作为 PDF 添加到邮件|Attach PDF to email)$/, exact: true }).click();
+    } else {
+      await page.getByTestId('document-attachment-picker').getByRole('button', { name: new RegExp(savedDraft.document.name) }).click();
+    }
+    await page.waitForFunction(() => window.draftAttachmentFiles.length === 1);
+    const [file] = await page.evaluate(() => window.draftAttachmentFiles);
+    assert.equal(file.type, 'application/pdf');
+    assert.match(file.name, /\.pdf$/);
+    assert(file.size > 0, `Incomplete document PDF attachment was empty: ${mode}`);
+  }
   assert.deepEqual(errors, []);
-  console.log('Automatic amounts and totals, stale response protection, decimal rounding, variable form, no tax inputs, delivery blocking, and draft saving passed.');
+  console.log('Automatic amounts and totals, stale response protection, decimal rounding, advisory completeness checks, all draft export formats, printing, draft saving, and both PDF attachment paths passed.');
 } finally { await browser.close(); }

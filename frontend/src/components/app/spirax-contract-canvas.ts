@@ -32,7 +32,7 @@ export function createSpiraxContractCanvasBackground(): string {
     <!-- Bottom footer accent line -->
     <path d="M38 1052h718" fill="none" stroke="${BLUE}" stroke-width="1.5"/>
     <!-- Bottom footer subtle corporate notice -->
-    <text x="38" y="1069" fill="#64748b" font-family="Arial, sans-serif" font-size="9">SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD.  ·  PROFORMA INVOICE / SALES CONTRACT</text>
+    <text x="38" y="1069" fill="#64748b" font-family="Arial, sans-serif" font-size="9">SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD.  ·  PROFORMA INVOICE</text>
     <text x="756" y="1069" text-anchor="end" fill="#94a3b8" font-family="Arial, sans-serif" font-size="8.5">Page 1</text>
     <!-- Bottom-right geometric slashes -->
     <g fill="${BLUE}" transform="translate(685 1076) skewX(-28)">
@@ -142,7 +142,7 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     cell([text("Item", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.CENTER })], BLUE),
     cell([text("Description & Specification", { bold: true, color: "#ffffff", size: 11 })], BLUE),
     cell([text("Qty", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.CENTER })], BLUE),
-    cell([text("Unit Price (", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT }), controlText("currency", values?.currency || "", "Currency", { bold: true, color: "#ffffff", size: 11 }), text(")", { bold: true, color: "#ffffff", size: 11 })], BLUE),
+    cell([text("Unit Price", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT })], BLUE),
     cell([text("Amount", { bold: true, color: "#ffffff", size: 11, rowFlex: RowFlex.RIGHT })], BLUE),
   ];
 
@@ -182,7 +182,6 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     };
   });
 
-  const subtotalVal = values?.subtotal || (activeItems.length === 1 && activeItems[0].amount ? activeItems[0].amount : "");
   const freightVal = values?.inland_freight || "";
   const totalVal = values?.total_amount ?? "";
   const sayTotalVal = values?.say_total || "";
@@ -193,14 +192,7 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
     {
       height: 29,
       cells: [
-        { ...cell([text("Subtotal:", { bold: true, size: 11, color: "#64748b", rowFlex: RowFlex.RIGHT })], undefined, [TdBorder.TOP, TdBorder.BOTTOM]), colspan: 4 },
-        cell([controlText("subtotal", subtotalVal, "Subtotal", { bold: true, size: 11.5, rowFlex: RowFlex.RIGHT })], undefined, [TdBorder.TOP, TdBorder.BOTTOM]),
-      ],
-    },
-    {
-      height: 29,
-      cells: [
-        { ...cell([text("Inland Freight (to forwarder):", { bold: true, size: 11, color: "#64748b", rowFlex: RowFlex.RIGHT })], undefined, [TdBorder.BOTTOM]), colspan: 4 },
+        { ...cell([text("Freight:", { bold: true, size: 11, color: "#64748b", rowFlex: RowFlex.RIGHT })], undefined, [TdBorder.BOTTOM]), colspan: 4 },
         cell([controlText("inland_freight", freightVal, "Freight", { bold: true, size: 11.5, color: "#16a34a", rowFlex: RowFlex.RIGHT })], undefined, [TdBorder.BOTTOM]),
       ],
     },
@@ -222,7 +214,7 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
 
 export function createSpiraxContractCanvasDocument(
   date: string,
-  number = "[Contract number]",
+  number = "[PI number]",
   initialValues?: SpiraxContractValues,
   items?: ContractItem[]
 ): IElement[] {
@@ -265,7 +257,7 @@ export function createSpiraxContractCanvasDocument(
         { ...cell(leftHero, undefined, [TdBorder.RIGHT]), rowspan: 5, verticalAlign: VerticalAlign.TOP },
         {
           ...cell([
-            controlText("contract_title", initialValues?.contract_title || "PROFORMA INVOICE", "Document Title", { bold: true, size: 22, color: BLUE, rowFlex: RowFlex.RIGHT }),
+            controlText("contract_title", initialValues?.contract_title ?? "PROFORMA INVOICE", "Document Title", { bold: true, size: 22, color: BLUE, rowFlex: RowFlex.RIGHT }),
           ]),
           colspan: 3,
         },
@@ -293,7 +285,7 @@ export function createSpiraxContractCanvasDocument(
   ];
 
   const deliveryRows = [
-    ["Trade Term:", initialValues?.trade_term || "", "trade_term"],
+    ["Delivery Terms:", initialValues?.trade_term ?? "EXW (Ex Works)", "trade_term"],
     ["Lead Time:", initialValues?.lead_time || "", "lead_time"],
     ["Origin:", initialValues?.origin || "", "origin"],
     ["Port of Loading:", initialValues?.port_of_loading || "", "port_of_loading"],
@@ -363,7 +355,7 @@ export function createSpiraxContractCanvasDocument(
   const paymentMemo = initialValues?.payment_memo
     ? initialValues.payment_memo
         .replace(/\bPI-20260919-01\b/g, contractNo)
-        .replace(/\[(?:Contract number|合同编号)\]/gi, contractNo)
+        .replace(/\[(?:PI number|Contract number|合同编号)\]/gi, contractNo)
     : defaultMemo;
 
   const bankRows: Array<[string, string, string, boolean]> = [

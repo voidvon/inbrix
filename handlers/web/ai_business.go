@@ -191,7 +191,7 @@ func (h *AISettingsHandler) applyQuotationSnapshot(ctx context.Context, owner st
 	card.Values["total_amount"] = card.Total
 	return nil
 }
-func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner string, card *AIDocumentCard) error {
+func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner string, card *AIDocumentCard, originalItems ...[]AIDocumentItem) error {
 	if card == nil {
 		return nil
 	}
@@ -199,7 +199,7 @@ func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner st
 		return fmt.Errorf("unsupported document type")
 	}
 	card.HTML = "" // Never pass model-generated layout through as a trusted template.
-	if card.SourceQuotationID != "" {
+	if card.SourceQuotationID != "" && len(originalItems) == 0 {
 		card.Terms = nil // Source commercial terms take precedence over generated text.
 		if err := h.applyQuotationSnapshot(ctx, owner, card); err != nil {
 			return err
@@ -208,10 +208,10 @@ func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner st
 		if err := h.checkBusinessItems(ctx, owner, card.Items); err != nil {
 			return err
 		}
-		if err := h.resolveProductPictures(ctx, owner, card.Items); err != nil {
+		if err := h.resolveProductPictures(ctx, owner, card.Items, originalItems...); err != nil {
 			return err
 		}
-		if err := h.finalizeDocumentAmounts(ctx, owner, card); err != nil {
+		if err := h.finalizeDocumentAmounts(ctx, owner, card, originalItems...); err != nil {
 			return err
 		}
 	}
@@ -220,7 +220,12 @@ func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner st
 	if card.Values == nil {
 		card.Values = map[string]string{}
 	}
-	if profile.Company != "" && (card.SourceQuotationID == "" || card.Values["seller_company"] == "") {
+	_, hasSeller := card.Values["seller_company"]
+	fillSeller := card.SourceQuotationID == "" || card.Values["seller_company"] == ""
+	if len(originalItems) > 0 {
+		fillSeller = !hasSeller
+	}
+	if profile.Company != "" && fillSeller {
 		card.Values["seller_company"] = profile.Company
 	}
 	id := profile.QuotationTemplateID

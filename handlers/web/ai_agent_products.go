@@ -109,12 +109,23 @@ func (h *AISettingsHandler) executeProductTool(ctx context.Context, owner string
 // Product image URLs are immutable, owner-scoped references. Existing document
 // snapshots survive product edits/deletion without putting binary images in an
 // LLM context or giving the LLM arbitrary image URLs to insert.
-func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner string, items []AIDocumentItem) error {
+func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner string, items []AIDocumentItem, trusted ...[]AIDocumentItem) error {
 	if err := h.checkBusinessItems(ctx, owner, items); err != nil {
 		return err
 	}
+	previous := map[string]AIDocumentItem{}
+	if len(trusted) > 0 {
+		for _, item := range trusted[0] {
+			previous[item.LineID] = item
+		}
+	}
 	for index := range items {
 		item := &items[index]
+		// Existing snapshots retain their images and authored descriptions.
+		// Quantity/price changes are validated separately by the amount resolver.
+		if old, ok := previous[item.LineID]; ok && old.ProductID == item.ProductID && old.ProductVersion == item.ProductVersion && old.VariantID == item.VariantID && old.PriceID == item.PriceID && old.Model == item.Model && old.Picture == item.Picture {
+			continue
+		}
 		if item.VariantID != "" || item.PriceID != "" {
 			v, price, err := h.mailDB.ResolveProductPrice(ctx, owner, item.ProductID, item.VariantID, item.PriceID, item.ProductVersion, item.Qty)
 			if err != nil {
