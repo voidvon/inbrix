@@ -12,7 +12,6 @@ import {
   MessageCircle,
   Paperclip,
   Pencil,
-  ReplyAll,
   RotateCcw,
   Search,
   Send,
@@ -57,7 +56,6 @@ import {
 } from "../../lib/api";
 import { cn, formatSize, formatTime, splitQuotedText } from "../../lib/utils";
 import {
-  canReplyAll,
   copyToClipboard,
   htmlToPlainText,
   extractEmailAddress,
@@ -434,7 +432,6 @@ export function ChatPanel({
   error,
   onBack,
   onReply,
-  onReplyAll,
   onNewMail,
   onRetrySend,
   onReEdit,
@@ -458,7 +455,6 @@ export function ChatPanel({
   error: Error | null;
   onBack: () => void;
   onReply: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void;
-  onReplyAll: (conversation: ConversationDetail, message: ConversationMessage, suggestedBody?: string) => void;
   onNewMail: (conversation: ConversationDetail, message: ConversationMessage) => void;
   onRetrySend?: (message: ConversationMessage) => void;
   onReEdit?: (message: ConversationMessage) => void;
@@ -496,7 +492,6 @@ export function ChatPanel({
           loadingLatest={loadingLatest}
           onBack={onBack}
           onReply={(message, suggestedBody) => onReply(detail, message, suggestedBody)}
-          onReplyAll={(message, suggestedBody) => onReplyAll(detail, message, suggestedBody)}
           onNewMail={(message) => onNewMail(detail, message)}
           onRetrySend={onRetrySend}
           onReEdit={onReEdit}
@@ -522,7 +517,6 @@ export function ChatView({
   detail,
   onBack,
   onReply,
-  onReplyAll,
   onNewMail,
   onRetrySend,
   onReEdit,
@@ -542,7 +536,6 @@ export function ChatView({
   detail: ConversationDetail;
   onBack: () => void;
   onReply: (message: ConversationMessage, suggestedBody?: string) => void;
-  onReplyAll: (message: ConversationMessage, suggestedBody?: string) => void;
   onNewMail: (message: ConversationMessage) => void;
   onRetrySend?: (message: ConversationMessage) => void;
   onReEdit?: (message: ConversationMessage) => void;
@@ -994,18 +987,6 @@ export function ChatView({
                   <Send className="size-3.5" />
                   <span className="hidden sm:inline">{copy.reply}</span>
                 </Button>
-                {canReplyAll(detail.messages.at(-1)) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => onReplyAll(detail.messages.at(-1)!)}
-                    title={copy.replyAll}
-                  >
-                    <ReplyAll className="size-3.5" />
-                    <span className="hidden sm:inline">{copy.replyAll}</span>
-                  </Button>
-                )}
               </>
             )}
           </div>
@@ -1032,7 +1013,6 @@ export function ChatView({
                     rootRef={scrollRef}
                     eager={index >= detail.messages.length - 3}
                     onReply={() => onReply(message)}
-                    onReplyAll={() => onReplyAll(message)}
                     onNewMail={() => onNewMail(message)}
                     onDelete={() => {
                       setDeleteTarget(message);
@@ -1053,7 +1033,6 @@ export function ChatView({
                       generation={suggestionGeneration}
                       canGenerate={canGenerateSuggestedReply}
                       onReply={(body) => onReply(message, body)}
-                      onReplyAll={(body) => onReplyAll(message, body)}
                     />
                   ) : null}
                 </Fragment>
@@ -1189,7 +1168,6 @@ export function SuggestedReplyBubble({
   generation,
   canGenerate,
   onReply,
-  onReplyAll,
 }: {
   copy: Copy;
   detail: ConversationDetail;
@@ -1197,7 +1175,6 @@ export function SuggestedReplyBubble({
   generation: number;
   canGenerate: boolean;
   onReply: (body: string) => void;
-  onReplyAll: (body: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [body, setBody] = useState(message.suggestedReply?.text.trim() || "");
@@ -1272,12 +1249,6 @@ export function SuggestedReplyBubble({
         </ContextMenuTrigger>
         {body && (
           <ContextMenuContent className="w-40">
-            {canReplyAll(message) ? (
-              <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReplyAll(body)}>
-                <ReplyAll className="size-4" />
-                {copy.replyAll}
-              </ContextMenuItem>
-            ) : null}
             <ContextMenuItem className="gap-2 px-2 py-2" onClick={() => onReply(body)}>
               <Send className="size-4" />
               {copy.reply}
@@ -1355,7 +1326,6 @@ export function MessageBubble({
   rootRef,
   eager,
   onReply,
-  onReplyAll,
   onNewMail,
   onDelete,
   onGenerateReply,
@@ -1372,7 +1342,6 @@ export function MessageBubble({
   rootRef: { current: HTMLDivElement | null };
   eager: boolean;
   onReply: () => void;
-  onReplyAll: () => void;
   onNewMail: () => void;
   onDelete: () => void;
   onGenerateReply?: () => void;
@@ -1546,12 +1515,6 @@ export function MessageBubble({
           </ContextMenuItem>
         ) : (
           <>
-            {canReplyAll(message) ? (
-              <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReplyAll}>
-                <ReplyAll className="size-4" />
-                {copy.replyAll}
-              </ContextMenuItem>
-            ) : null}
             <ContextMenuItem className="gap-2 px-2 py-2" onClick={onReply}>
               <Send className="size-4" />
               {copy.reply}

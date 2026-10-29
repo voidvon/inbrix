@@ -39,6 +39,7 @@ import {
   inlineImageDimensions,
   splitRecipientValues,
   uniqueRecipients,
+  filterRecipientsByDomain,
   isValidRecipient,
   normalizeQuoteHTML,
   restoreInlineImagePreviews,
@@ -528,6 +529,13 @@ export function ComposeDialog({
   const draftQuery = useComposeDraft(accountEmail, conversationId, { enabled: open, alwaysFresh: true });
   const storedDraft = draftQuery.data ?? null;
   const draftLoaded = draftWaitExpired || (draftQuery.isFetched && !draftQuery.isFetching);
+  const replyMessageId = storedDraft?.inReplyTo || defaults.inReplyTo;
+  const replySource = replyMessageId ? defaults.conversation?.find((message) => message.messageId === replyMessageId) : undefined;
+  const originalCc = splitRecipientValues(replySource?.cc || "");
+  const filteredCc = uniqueRecipients(
+    replySource ? uniqueRecipients(originalCc, filterRecipientsByDomain(originalCc, accountEmail)) : defaults.filteredCc || [],
+    [...recipients, ...ccRecipients]
+  );
 
   const editor = useEditor({
     extensions: [
@@ -581,7 +589,7 @@ export function ComposeDialog({
       id: draftIdRef.current || undefined,
       accountEmail,
       conversationId: target.conversationId || undefined,
-      mode: !draftHeadersRef.current.inReplyTo ? "new" : payload.cc ? "reply_all" : "reply",
+      mode: !draftHeadersRef.current.inReplyTo ? "new" : "reply",
       inReplyTo: draftHeadersRef.current.inReplyTo,
       references: draftHeadersRef.current.references?.join(" ") || undefined,
       to: payload.to,
@@ -952,6 +960,12 @@ export function ComposeDialog({
             <span className="whitespace-nowrap">{copy.cc}</span>
             <RecipientTagInput copy={copy} label={copy.cc} recipients={ccRecipients} onChange={setCcRecipients} draftRef={ccDraftRef} />
           </Label>
+          {filteredCc.length > 0 && (
+            <p data-testid="compose-filtered-cc" className="break-words text-xs leading-5 text-muted-foreground">
+              <span>{copy.filteredCc}: </span>
+              {filteredCc.join(", ")}
+            </p>
+          )}
           <Label className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-muted-foreground" htmlFor="compose-subject">
             <span className="whitespace-nowrap">{copy.subject}</span>
             <Input id="compose-subject" className="h-8" value={subject} aria-invalid={invalid.subject} onChange={(event) => { setSubject(event.target.value); if (invalid.subject) setInvalid((current) => ({ ...current, subject: false })); }} placeholder={copy.noSubject} />

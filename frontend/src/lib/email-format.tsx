@@ -19,6 +19,8 @@ export type ComposeDefaults = {
   accountEmail?: string;
   to: string;
   cc?: string;
+  /** Addresses omitted from default Cc, shown as context in the composer. */
+  filteredCc?: string[];
   subject: string;
   html?: string;
   inReplyTo?: string;
@@ -433,14 +435,15 @@ export function uniqueRecipients(values: string[], excluded: string[] = []) {
   });
 }
 
+export function filterRecipientsByDomain(values: string[], accountEmail: string) {
+  const domainOf = (value: string) => recipientAddress(value).match(/^[^@\s]+@([^@\s]+)$/)?.[1];
+  const domain = domainOf(accountEmail);
+  if (!domain) return [];
+  return values.filter((value) => domainOf(value) === domain);
+}
+
 export function isValidRecipient(value: string) {
   const match = value.trim().match(/^(?:[^<>]*<)?([^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+)>?$/);
   return Boolean(match);
-}
-
-export function canReplyAll(message?: { to?: string; cc?: string } | null) {
-  if (!message) return false;
-  if (message.cc?.trim()) return true;
-  return splitRecipientValues(message.to || "").length > 1;
 }
 

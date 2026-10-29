@@ -10,7 +10,7 @@ const base = process.env.COMPOSE_TEST_URL || 'http://localhost:2342';
 const accountEmail = 'me@example.com', now = new Date().toISOString();
 const store = createAIChatTestStore(accountEmail);
 const conversation = { id: 'ai-reply', title: 'Alice', peerEmail: 'alice@example.com', subject: 'Account recovered', count: 2, date: now, accountEmail, status: 'unanswered' };
-const original = { id: '2', folder: 'INBOX', from: 'alice@example.com', to: accountEmail, subject: 'Account recovered', body: 'Original recovery notice', date: now, outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'] };
+const original = { id: '2', folder: 'INBOX', from: 'alice@example.com', to: accountEmail, cc: 'team@example.com, outside@other.com', subject: 'Account recovered', body: 'Original recovery notice', date: now, outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'] };
 // Same UID in another folder must never be mistaken for the requested source.
 const latest = { ...original, folder: 'Sent', from: accountEmail, to: 'other@example.com', subject: 'Different message', body: 'Latest message', outgoing: true, messageId: '<other@example.com>' };
 const firstBody = '您好：\n\n感谢，我已想起密码，不需要重置密码了。';
@@ -83,6 +83,7 @@ try {
   await ask('帮我编辑回复邮件，感谢，我已想起密码，不需要重置密码了');
   await compose.locator('.tiptap').getByText('感谢，我已想起密码，不需要重置密码了。', { exact: true }).waitFor();
   assert.equal(await compose.getByLabel('主题', { exact: true }).inputValue(), 'Re: Account recovered');
+  assert.ok((await compose.getByTestId('compose-filtered-cc').innerText()).includes('outside@other.com'), 'Filtered Cc must also be shown for replies to a paginated source');
   assert.ok(aroundReads > 0, 'The exact reply source outside the loaded transcript is fetched');
   assert.ok(!(await compose.locator('.tiptap').innerText()).includes(explanation), 'Only structured email text is inserted');
   if (mobile) await page.getByRole('textbox', { name: '询问邮件、草稿或产品资料… (Enter 发送)', exact: true }).waitFor({ state: 'hidden' });
@@ -98,6 +99,8 @@ try {
   await saved;
   await compose.waitFor({ state: 'hidden' });
   assert.equal(draft.to, original.from);
+  assert.equal(draft.cc, 'team@example.com', 'AI replies must also default to same-domain Cc');
+  assert.equal(draft.mode, 'reply');
   assert.equal(draft.inReplyTo, original.messageId);
   assert.ok(draft.bodyText.includes(revisedBody));
   assert.ok(!draft.bodyText.includes(explanation));

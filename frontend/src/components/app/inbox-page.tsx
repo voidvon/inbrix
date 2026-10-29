@@ -16,6 +16,7 @@ import { useConversationMessages } from "../../lib/use-conversation-messages";
 import { useMobilePageClose } from "../../lib/use-mobile-page-close";
 import {
   escapeHTML,
+  filterRecipientsByDomain,
   splitRecipientValues,
   structuredQuotedTextToHTML,
   uniqueRecipients,
@@ -261,6 +262,9 @@ export function InboxPage() {
     const subject = source?.subject || conversation.subject;
     const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
     const recipient = source?.outgoing ? source.to : source?.from || conversation.peerEmail || "";
+    const self = conversation.accountEmail || conversations.data?.accountEmail || "";
+    const originalCc = uniqueRecipients(splitRecipientValues(source?.cc || ""), [self, ...splitRecipientValues(recipient)]);
+    const cc = filterRecipientsByDomain(originalCc, self);
     const sender = source?.fromName && source.from ? `${source.fromName} <${source.from}>` : source?.from || conversation.peerEmail || "";
     const quoteLead = `On ${new Date(source?.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
     const originalBody = source?.body || source?.preview || "";
@@ -270,6 +274,8 @@ export function InboxPage() {
     openCompose({
       accountEmail: conversation.accountEmail,
       to: recipient,
+      cc: cc.join(", "),
+      filteredCc: uniqueRecipients(originalCc, cc),
       subject: replySubject,
       // Deliberately the empty template: a body baked into `html` would be
       // indistinguishable from "already saved", and opening a reply with a
@@ -278,38 +284,6 @@ export function InboxPage() {
       html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${quotedHTML}</blockquote>`,
       replaceBody: suggestedBody?.trim() || undefined,
       inReplyTo: source?.messageId,
-      references,
-      conversation: conversation.messages,
-      conversationId: conversation.id,
-    });
-  };
-
-  const openReplyAll = (conversation: ConversationDetail, message?: ConversationMessage, suggestedBody?: string) => {
-    const source = message || conversation.messages.at(-1);
-    if (!source) return;
-    const subject = source.subject || conversation.subject;
-    const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
-    const self = conversation.accountEmail || conversations.data?.accountEmail || "";
-    const originalTo = splitRecipientValues(source.to);
-    const originalCc = splitRecipientValues(source.cc || "");
-    const to = source.outgoing
-      ? uniqueRecipients(originalTo, [self])
-      : uniqueRecipients([source.from, ...originalTo], [self]);
-    const finalTo = to.length > 0 ? to : uniqueRecipients([source.outgoing ? source.to : source.from || conversation.peerEmail || ""]);
-    const cc = uniqueRecipients(originalCc, [self, ...finalTo]);
-    const sender = source.fromName && source.from ? `${source.fromName} <${source.from}>` : source.from || conversation.peerEmail || "";
-    const quoteLead = `On ${new Date(source.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
-    const originalBody = source.body || source.preview || "";
-    const references = [...(source.references || [])];
-    if (source.messageId && !references.includes(source.messageId)) references.push(source.messageId);
-    openCompose({
-      accountEmail: conversation.accountEmail,
-      to: finalTo.join(", "),
-      cc: cc.join(", "),
-      subject: replySubject,
-      html: `<p><br></p><p>${escapeHTML(quoteLead)}</p><blockquote>${structuredQuotedTextToHTML(originalBody)}</blockquote>`,
-      replaceBody: suggestedBody?.trim() || undefined,
-      inReplyTo: source.messageId,
       references,
       conversation: conversation.messages,
       conversationId: conversation.id,
@@ -442,7 +416,6 @@ export function InboxPage() {
           }}
           onBack={closeChat}
           onReply={openReply}
-          onReplyAll={openReplyAll}
           onNewMail={openNewMailForMessage}
           onRetrySend={setRetryTarget}
           onReEdit={handleReEditMessage}

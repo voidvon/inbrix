@@ -13,8 +13,8 @@ const errors = [];
 page.on('pageerror', error => errors.push(error.stack));
 const accountEmail = 'me@example.com';
 const message = {
-  id: '1', folder: 'INBOX', from: 'alice@example.com', to: accountEmail,
-  cc: 'team@example.com', subject: 'Reply interactions', body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body',
+  id: '1', folder: 'INBOX', from: 'alice@example.com', to: `${accountEmail}, other@external.com, coworker@example.com`,
+  cc: 'team@example.com; Outside <outside@other.com>; Upper <UPPER@EXAMPLE.COM>; team@example.com; me@example.com; alice@example.com; sub@sub.example.com; lookalike@notexample.com', subject: 'Reply interactions', body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body',
   date: new Date().toISOString(), outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'],
 };
 let savedDraft;
@@ -24,7 +24,7 @@ await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token'
 await page.route('**/api/**', async route => {
   const { pathname } = new URL(route.request().url());
   let json = { calendar: false, models: [], agents: [], bindings: [], documents: [], attachments: [], signatures: [], total: 0 };
-  if (pathname === '/api/conversations') json = { locale: 'zh-CN', accountEmail, conversations: [summary], folders: [], accounts: [{ id: 'account', email: accountEmail, isActive: true }] };
+  if (pathname === '/api/conversations') json = { locale: 'zh-CN', accountEmail: 'active@other.com', conversations: [summary], folders: [], accounts: [{ id: 'account', email: accountEmail, isActive: false }, { id: 'active', email: 'active@other.com', isActive: true }] };
   if (pathname === '/api/conversations/reply') json = { conversation: { ...summary, messages: [message], hasMore: false, hasNewer: false } };
   if (pathname === '/api/drafts') {
     if (route.request().method() === 'POST') {
@@ -38,10 +38,23 @@ await page.route('**/api/**', async route => {
 const base = process.env.REPLY_TEST_URL || 'http://127.0.0.1:2342';
 const detail = page.getByTestId('conversation-detail');
 const compose = page.getByTestId('compose-inline');
-async function checkEditor(label) {
+async function checkEditor(label, expectedCc) {
   await compose.locator('.tiptap').waitFor();
   await page.waitForFunction(() => document.querySelector('#compose-subject')?.value === 'Re: Reply interactions');
   await page.getByRole('menu').waitFor({ state: 'hidden' });
+  const filteredCc = compose.getByTestId('compose-filtered-cc');
+  if (!message.cc) assert.equal(await filteredCc.count(), 0, 'No filtered notice is needed without Cc');
+  else {
+    const text = await filteredCc.innerText();
+    assert.ok(text.includes('Outside <outside@other.com>'), 'Filtered external addresses must be visible');
+    assert.ok(text.includes('sub@sub.example.com'), 'Filtered subdomains must be visible');
+    assert.ok(!text.includes('team@example.com'), 'Kept addresses must not appear as filtered');
+    assert.ok(!text.includes(accountEmail), 'The mailbox address must not appear as filtered');
+    assert.ok(!text.includes('alice@example.com'), 'The primary recipient must not appear as filtered');
+    const positions = await Promise.all([compose.getByRole('textbox', { name: '抄送', exact: true }).boundingBox(), filteredCc.boundingBox(), compose.getByLabel('主题', { exact: true }).boundingBox()]);
+    assert.ok(positions.every(Boolean));
+    assert.ok(positions[1].y >= positions[0].y + positions[0].height && positions[1].y + positions[1].height <= positions[2].y, 'Filtered addresses must appear below Cc and above Subject');
+  }
   await compose.getByLabel('主题', { exact: true }).fill(`Editable ${label}`);
   assert.equal(await compose.getByLabel('主题', { exact: true }).inputValue(), `Editable ${label}`);
   const quote = compose.locator('.reply-quote').first();
@@ -56,14 +69,26 @@ async function checkEditor(label) {
   assert.ok(savedDraft.bodyHtml.includes('Original email body edited'), 'Quote edits must reach the editor state and draft');
   assert.ok(savedDraft.bodyHtml.includes('Earlier email body'), 'Nested quotes must survive editing');
   assert.equal(savedDraft.inReplyTo, message.messageId, 'Reply headers must survive editing');
-  assert.equal(savedDraft.cc, label === 'reply-all' ? 'team@example.com' : '', 'Reply all must preserve Cc recipients');
+  assert.equal(savedDraft.mode, 'reply', 'Replies with Cc must use the regular reply mode');
+  assert.equal(savedDraft.to, message.outgoing ? message.to : message.from, 'Reply must address the sender without copying the original To list');
+  assert.equal(savedDraft.accountEmail, accountEmail, 'Reply must use the conversation mailbox');
+  assert.equal(savedDraft.cc, expectedCc, 'Default Cc must only include unique recipients from the conversation mailbox domain');
   await compose.waitFor({ state: 'hidden' });
 }
 try {
-  for (const mode of mobile ? ['toolbar', 'context', 'long-press', 'reply-all'] : ['toolbar', 'context', 'reply-all']) {
+  const modes = mobile ? ['toolbar', 'context', 'long-press'] : ['toolbar', 'context'];
+  for (const mode of [...modes, 'outgoing', 'external-only', 'no-cc']) {
+    if (mode === 'outgoing') {
+      message.outgoing = true;
+      message.from = accountEmail;
+      message.to = 'alice@example.com';
+    }
+    if (mode === 'external-only') message.cc = 'Outside <outside@other.com>; sub@sub.example.com';
+    if (mode === 'no-cc') message.cc = '';
     console.log(`Checking ${mobile ? 'mobile' : 'desktop'} ${mode}`);
     await page.goto(`${base}/inbox?conversation=reply`);
     await detail.locator('[data-message-key]').waitFor();
+    assert.equal(await detail.getByRole('button', { name: '回复全部', exact: true }).count(), 0, 'Toolbar must only offer Reply');
     if (mode === 'toolbar') {
       const reply = detail.getByRole('button', { name: '回复', exact: true });
       if (mobile) await reply.tap();
@@ -71,7 +96,7 @@ try {
     }
     else {
       const trigger = detail.locator('[data-message-key]');
-      if (mobile && (mode === 'long-press' || mode === 'reply-all')) {
+      if (mobile && mode === 'long-press') {
         await trigger.scrollIntoViewIfNeeded();
         const box = await trigger.boundingBox();
         const touch = { x: box.x + 20, y: box.y + 20 };
@@ -91,11 +116,12 @@ try {
           await trigger.dispatchEvent('touchend');
         }
       } else await trigger.click({ button: 'right' });
-      const item = page.getByRole('menuitem', { name: mode === 'reply-all' ? '回复全部' : '回复', exact: true });
+      assert.equal(await page.getByRole('menuitem', { name: '回复全部', exact: true }).count(), 0, 'Message menu must only offer Reply');
+      const item = page.getByRole('menuitem', { name: '回复', exact: true });
       if (mobile) await item.tap();
       else await item.press('Enter');
     }
-    await checkEditor(mode);
+    await checkEditor(mode, ['external-only', 'no-cc'].includes(mode) ? '' : 'team@example.com, Upper <UPPER@EXAMPLE.COM>');
   }
   assert.deepEqual(errors, []);
   console.log('Reply opens an editable composer, dismisses menus, preserves quote edits, and closes successfully.');
