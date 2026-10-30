@@ -836,16 +836,29 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 	if input.Mode == "variables" || len(input.Variables) > 0 {
 		instructions, prompt := buildDocumentVariablesPrompt(input)
 		instructions += currentBusiness(c.UserContext()).prompt()
+		catalog, err := h.documentCatalogReferenceContext(c.UserContext(), owner, input)
+		if err != nil {
+			return fiber.NewError(422, err.Error())
+		}
+		prompt += catalog
 
-		body, err := h.createAIResponseWithInstructions(c.UserContext(), model, apiKey, instructions, prompt, 4096)
+		var action *AIDocumentAction
+		reply, err := h.createDocumentEditReply(c.UserContext(), model, apiKey, instructions, prompt, func(reply documentEditReply) error {
+			action = nil
+			if len(reply.Commands) == 0 {
+				return nil
+			}
+			var err error
+			action, err = h.proposeCanvasDocumentCommands(c.UserContext(), owner, input, reply.Commands)
+			return err
+		})
 		if err != nil {
 			h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", err)
+			var formatError *documentEditFormatError
+			if errors.As(err, &formatError) {
+				return fiber.NewError(fiber.StatusUnprocessableEntity, "AI 回复格式无效，请重试")
+			}
 			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-		}
-		reply, err := decodeDocumentEditReply(body)
-		if err != nil {
-			h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, model.Model, "", fmt.Errorf("invalid json output: %s (%w)", body, err))
-			return fiber.NewError(fiber.StatusUnprocessableEntity, "AI 回复格式无效，请重试")
 		}
 		if len(reply.Commands) == 0 {
 			if reply.Message == "" {
@@ -853,7 +866,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 			}
 			return c.JSON(fiber.Map{"mode": "variables", "changed": false, "summary": reply.Message})
 		}
-		return h.respondCanvasDocumentUpdate(c, owner, input, reply.Commands, reply.Message)
+		return respondCanvasDocumentAction(c, input, action, reply.Message)
 	}
 	return fiber.NewError(422, "需要结构化商业文档")
 }

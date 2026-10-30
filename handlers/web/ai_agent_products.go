@@ -129,7 +129,7 @@ func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner st
 		if item.VariantID != "" || item.PriceID != "" {
 			v, price, err := h.mailDB.ResolveProductPrice(ctx, owner, item.ProductID, item.VariantID, item.PriceID, item.ProductVersion, item.Qty)
 			if err != nil {
-				return err
+				return documentProductLookupError(index, *item, err)
 			}
 			if item.Price != "" && !sameCatalogNumber(item.Price, price.Amount) {
 				return fmt.Errorf("catalog price mismatch; use the retrieved price unchanged")
@@ -141,7 +141,7 @@ func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner st
 			}
 			p, err := h.mailDB.GetProduct(ctx, owner, item.ProductID)
 			if err != nil {
-				return err
+				return documentProductLookupError(index, *item, err)
 			}
 			specs := []string{p.Name}
 			for _, d := range p.Catalog.Dimensions {
@@ -153,7 +153,7 @@ func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner st
 		if item.ProductID != "" {
 			p, err := h.mailDB.GetProduct(ctx, owner, item.ProductID)
 			if err != nil {
-				return err
+				return documentProductLookupError(index, *item, err)
 			}
 			if item.ProductVersion == 0 || item.ProductVersion != p.Version {
 				return fmt.Errorf("product %s: %w", p.Model, mailstore.ErrProductConflict)
@@ -169,7 +169,7 @@ func (h *AISettingsHandler) resolveProductPictures(ctx context.Context, owner st
 				continue
 			}
 			if _, _, err := h.mailDB.GetProductImage(ctx, owner, strings.TrimPrefix(item.Picture, prefix)); err != nil {
-				return err
+				return documentProductLookupError(index, *item, err)
 			}
 		}
 	}

@@ -110,12 +110,12 @@ func (h *AISettingsHandler) checkBusinessProduct(ctx context.Context, owner, id 
 	return fmt.Errorf("产品不在当前品牌范围内，请调整邮箱设置或品牌范围")
 }
 func (h *AISettingsHandler) checkBusinessItems(ctx context.Context, owner string, items []AIDocumentItem) error {
-	for _, item := range items {
+	for i, item := range items {
 		if currentBusiness(ctx).Brands != nil && item.ProductID == "" {
 			return fmt.Errorf("限定品牌的文档明细必须关联产品库产品，不能使用未验证的手工型号")
 		}
 		if err := h.checkBusinessProduct(ctx, owner, item.ProductID); err != nil {
-			return err
+			return documentProductLookupError(i, item, err)
 		}
 	}
 	return nil

@@ -43,7 +43,7 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 			}
 			seen[line.LineID] = true
 		}
-		if err := h.resolveProductPictures(ctx, owner, updatedItems); err != nil {
+		if err := h.resolveProductPictures(ctx, owner, updatedItems, originalItems); err != nil {
 			return nil, err
 		}
 		items = updatedItems
@@ -64,7 +64,7 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 		if err := validateDocumentCurrency(card); err != nil {
 			return nil, err
 		}
-		if err := validateDocumentCurrencyChange(values, action.Values, items); err != nil {
+		if err := validateDocumentCurrencyChange(values, action.Values, originalItems); err != nil {
 			return nil, err
 		}
 	}
@@ -120,18 +120,32 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 	return action, nil
 }
 func (h *AISettingsHandler) respondCanvasDocumentUpdate(c *fiber.Ctx, owner string, input aiDocumentInput, commands []DocumentCommand, message string) error {
+	action, err := h.proposeCanvasDocumentCommands(c.UserContext(), owner, input, commands)
+	if err != nil {
+		return fiber.NewError(422, err.Error())
+	}
+	return respondCanvasDocumentAction(c, input, action, message)
+}
+
+func (h *AISettingsHandler) proposeCanvasDocumentCommands(ctx context.Context, owner string, input aiDocumentInput, commands []DocumentCommand) (*AIDocumentAction, error) {
 	values, items, err := applyDocumentCommands(input.Canvas, commands)
 	if err != nil {
-		return fiber.NewError(422, err.Error())
+		return nil, err
 	}
-	action, err := h.proposeCanvasDocumentUpdate(c.UserContext(), owner, input.Canvas, values, items)
+	action, err := h.proposeCanvasDocumentUpdate(ctx, owner, input.Canvas, values, items)
 	if err != nil {
-		return fiber.NewError(422, err.Error())
+		return nil, err
 	}
+	if action != nil {
+		action.Validation = validateCommercialDocument(input.DocumentType, action.HTML, &AIDocumentCard{Values: action.Values, Items: action.Items, PricingValidation: action.PricingValidation})
+	}
+	return action, nil
+}
+
+func respondCanvasDocumentAction(c *fiber.Ctx, input aiDocumentInput, action *AIDocumentAction, message string) error {
 	if action == nil {
 		return c.JSON(fiber.Map{"mode": "variables", "changed": false, "html": input.Canvas, "summary": "没有需要应用的变更"})
 	}
-	action.Validation = validateCommercialDocument(input.DocumentType, action.HTML, &AIDocumentCard{Values: action.Values, Items: action.Items, PricingValidation: action.PricingValidation})
 	if message != "" {
 		action.Summary = message + "\n\n" + action.Summary
 	}

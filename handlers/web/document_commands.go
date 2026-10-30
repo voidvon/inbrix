@@ -23,7 +23,13 @@ type documentEditReply struct {
 // A conversation can answer a question without proposing a document mutation.
 func decodeDocumentEditReply(body string) (documentEditReply, error) {
 	var result documentEditReply
-	decoder := json.NewDecoder(strings.NewReader(cleanJSONResponse(body)))
+	body = strings.TrimSpace(body)
+	// Fences inside a JSON string are document data. Only unwrap a response
+	// when the JSON object itself has a surrounding Markdown/prose wrapper.
+	if !strings.HasPrefix(body, "{") {
+		body = cleanJSONResponse(body)
+	}
+	decoder := json.NewDecoder(strings.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return result, fmt.Errorf("文档助手回复无效: %w", err)
