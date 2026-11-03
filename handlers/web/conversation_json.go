@@ -12,6 +12,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,21 +24,22 @@ import (
 // ConversationSummaryJSON is the compact row model consumed by the React
 // conversation list. Message bodies are deliberately absent from this type.
 type ConversationSummaryJSON struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	PeerEmail        string `json:"peerEmail,omitempty"`
-	PrimaryPeerEmail string `json:"primaryPeerEmail,omitempty"`
-	Subject          string `json:"subject"`
-	Preview          string `json:"preview"`
-	Date             string `json:"date"`
-	Count            int    `json:"count"`
-	UnreadCount      int    `json:"unreadCount"`
-	HasAttachments   bool   `json:"hasAttachments"`
-	AccountEmail     string `json:"accountEmail,omitempty"`
-	AccountLabel     string `json:"accountLabel,omitempty"`
-	AccountColor     string `json:"accountColor,omitempty"`
-	Note             string `json:"note,omitempty"`
-	Status           string `json:"status"`
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	PeerEmail        string   `json:"peerEmail,omitempty"`
+	PrimaryPeerEmail string   `json:"primaryPeerEmail,omitempty"`
+	Subject          string   `json:"subject"`
+	Preview          string   `json:"preview"`
+	Date             string   `json:"date"`
+	Count            int      `json:"count"`
+	UnreadCount      int      `json:"unreadCount"`
+	HasAttachments   bool     `json:"hasAttachments"`
+	AccountEmail     string   `json:"accountEmail,omitempty"`
+	AccountLabel     string   `json:"accountLabel,omitempty"`
+	AccountColor     string   `json:"accountColor,omitempty"`
+	Tags             []string `json:"tags"`
+	Note             string   `json:"note,omitempty"`
+	Status           string   `json:"status"`
 }
 
 // ConversationMessageJSON is the detail model for one chat bubble. HTML is
@@ -109,6 +111,7 @@ type ConversationDetailJSON struct {
 	Title        string                    `json:"title"`
 	PeerEmail    string                    `json:"peerEmail,omitempty"`
 	Subject      string                    `json:"subject"`
+	Tags         []string                  `json:"tags"`
 	Note         string                    `json:"note"`
 	Count        int                       `json:"count"`
 	AccountEmail string                    `json:"accountEmail,omitempty"`
@@ -135,6 +138,7 @@ type ConversationAccountJSON struct {
 }
 
 type ConversationListJSON struct {
+	Tags             []string                       `json:"tags"`
 	Conversations    []ConversationSummaryJSON      `json:"conversations"`
 	Folders          []*api.MailboxInfo             `json:"folders"`
 	Accounts         []ConversationAccountJSON      `json:"accounts"`
@@ -247,6 +251,7 @@ func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON 
 		AccountEmail:     conversation.AccountEmail,
 		AccountLabel:     conversation.AccountLabel,
 		AccountColor:     conversation.AccountColor,
+		Tags:             append([]string{}, conversation.Tags...),
 		Note:             conversation.Note,
 		Status:           conversation.Status,
 	}
@@ -262,6 +267,7 @@ func conversationDetailJSONForLocale(conversation Conversation, locale string) C
 		Title:        conversation.Title,
 		PeerEmail:    conversation.PeerEmail,
 		Subject:      conversation.Subject,
+		Tags:         append([]string{}, conversation.Tags...),
 		Note:         conversation.Note,
 		Count:        conversation.Count,
 		AccountEmail: conversation.AccountEmail,
@@ -516,6 +522,19 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string, filter s
 	for _, conversation := range conversations {
 		unreadCount += conversation.UnreadCount
 	}
+	// Options cover every visible conversation, including later pages and
+	// completed conversations, so changing either filter never hides a tag.
+	tagSet := make(map[string]bool)
+	for _, conversation := range conversations {
+		for _, tag := range conversation.Tags {
+			tagSet[tag] = true
+		}
+	}
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
 	all := filterConversationJSON(conversations, query)
 	if strings.EqualFold(strings.TrimSpace(filter), "open") {
 		open := make([]Conversation, 0, len(all))
@@ -525,6 +544,18 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string, filter s
 			}
 		}
 		all = open
+	}
+	if tag := strings.TrimSpace(c.Query("tag")); tag != "" {
+		filtered := make([]Conversation, 0, len(all))
+		for _, conversation := range all {
+			for _, value := range conversation.Tags {
+				if value == tag {
+					filtered = append(filtered, conversation)
+					break
+				}
+			}
+		}
+		all = filtered
 	}
 	total := len(all)
 
@@ -550,6 +581,7 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string, filter s
 	}
 
 	response := ConversationListJSON{
+		Tags:             tags,
 		Conversations:    make([]ConversationSummaryJSON, 0, len(page)),
 		Folders:          data["Folders"].([]*api.MailboxInfo),
 		Accounts:         make([]ConversationAccountJSON, 0),

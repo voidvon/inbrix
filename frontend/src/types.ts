@@ -57,6 +57,7 @@ export type ConversationSummary = {
   accountLabel?: string;
   accountColor?: string;
   note?: string;
+  tags?: string[];
 	status: "answered" | "unanswered" | "no_action" | "draft";
 };
 
@@ -172,6 +173,7 @@ export type ConversationDetail = {
   peerEmail?: string;
   subject: string;
   note?: string;
+  tags?: string[];
   count: number;
   accountEmail?: string;
   accountLabel?: string;
@@ -187,6 +189,8 @@ export type ConversationDetail = {
 };
 
 export type ConversationListResponse = {
+  /** All tags in this mailbox view, independent of paging and filters. */
+  tags?: string[];
   conversations: ConversationSummary[];
   folders: Mailbox[];
   accounts: MailAccount[];

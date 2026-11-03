@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -22,7 +22,7 @@ import {
 import { toast, toastError } from "../../lib/toast";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
 import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachmentPreviewURL, type AttachmentPreviewTarget } from "./attachment-preview";
-import { MailSearchResults, type MailSearchState } from "./mail-search-results";
+import { ConversationTagNames, ConversationTags } from "./conversation-tags";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type EditableConversationStatus } from "./conversation-status-tag";
 import { ComposeDialog } from "./compose-dialog";
@@ -40,7 +40,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../ui/input";
 import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Separator } from "../ui/separator";
-import { Switch } from "../ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import {
   deleteConversationMessage,
   deleteOutgoing,
@@ -80,8 +80,9 @@ import { captureTranscriptAnchor, preserveTranscriptScroll, registerTranscriptSc
 export function ConversationList({
   copy,
   data,
-  search,
   onSearch,
+  selectedTag,
+  onTagChange,
   onMenu,
   loading,
   error,
@@ -98,12 +99,12 @@ export function ConversationList({
   onShowAllChange,
   desktopWidth,
   className,
-  searchState,
 }: {
   copy: Copy;
   data?: ConversationListResponse;
-  search: string;
-  onSearch: (value: string) => void;
+  onSearch: () => void;
+  selectedTag: string;
+  onTagChange: (value: string) => void;
   onMenu: () => void;
   loading: boolean;
   error: Error | null;
@@ -120,38 +121,36 @@ export function ConversationList({
   onShowAllChange: (value: boolean) => void;
   desktopWidth?: number;
   className?: string;
-  /** When set, a non-empty search box renders message-level results instead of conversations. */
-  searchState?: MailSearchState;
 }) {
-  const filterLabelId = useId();
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const allRows = data?.conversations || [];
-  const rows = showAllConversations
-    ? allRows
-    : allRows.filter((conversation) => conversation.status === "unanswered" || conversation.status === "draft");
+  const rows = allRows.filter((conversation) =>
+    (showAllConversations || conversation.status === "unanswered" || conversation.status === "draft") &&
+    (!selectedTag || conversation.tags?.includes(selectedTag))
+  );
+  const tags = [...new Set([...(data?.tags || []), ...allRows.flatMap((row) => row.tags || []), ...(selectedTag ? [selectedTag] : [])])].sort();
   const hasData = Boolean(data);
-  const searching = Boolean(search.trim()) && Boolean(searchState);
 
   // The sentinel loads the next page before it reaches the bottom. The explicit
   // button below is the accessible fallback when IntersectionObserver is not
   // available.
   useEffect(() => {
     const node = loadMoreRef.current;
-    if (!node || !hasMore || searching || loadMoreError) return;
+    if (!node || !hasMore || loadMoreError) return;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) void onLoadMore();
     }, { rootMargin: "400px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, onLoadMore, rows.length, searching, loadMoreError]);
+  }, [hasMore, onLoadMore, rows.length, loadMoreError]);
 
   // The default filter hides answered threads. A page can therefore contain no
   // visible row even though later pages do; keep pulling until one matches or
   // the server says there is nothing left.
   useEffect(() => {
-    if (!hasData || searching || !hasMore || rows.length > 0 || loadingMore || loadMoreError) return;
+    if (!hasData || !hasMore || rows.length > 0 || loadingMore || loadMoreError) return;
     void onLoadMore();
-  }, [hasData, searching, hasMore, rows.length, loadingMore, loadMoreError, onLoadMore]);
+  }, [hasData, hasMore, rows.length, loadingMore, loadMoreError, onLoadMore]);
 
   return (
     <section data-testid="conversation-list" style={{ "--conversation-list-width": `${desktopWidth || 370}px` } as React.CSSProperties} className={cn("min-w-0 flex-1 flex-col border-r bg-card lg:w-(--conversation-list-width) lg:flex-none", className)}>
@@ -160,63 +159,58 @@ export function ConversationList({
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}>
             <MenuIcon />
           </Button>
-          <div className="relative flex min-w-0 flex-1 items-center">
-            <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" aria-hidden="true" />
-            <Input
-              data-testid="mail-search"
-              type="search"
-              className="h-9 bg-muted/60 pl-9 pr-9"
-              value={search}
-              onChange={(event) => onSearch(event.target.value)}
-              placeholder={copy.searchHint}
-              aria-label={copy.search}
-            />
-            {search && (
-              <Button variant="ghost" size="icon" className="absolute right-1 size-7" onClick={() => onSearch("")} aria-label={copy.cancel} title={copy.cancel}>
-                <X />
-              </Button>
-            )}
-          </div>
-          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground" title={copy.showAllConversationsHint}>
-            <span id={filterLabelId}>{copy.showAllConversations}</span>
-            <Switch checked={showAllConversations} onCheckedChange={onShowAllChange} aria-labelledby={filterLabelId} />
-          </label>
+          <Button data-testid="open-mail-search" variant="ghost" size="icon" className="shrink-0" onClick={onSearch} aria-label={copy.search} title={`${copy.search} (⌘ / Ctrl K)`}>
+            <Search className="size-4" />
+          </Button>
+          <Select value={showAllConversations ? "all" : "open"} onValueChange={(value) => onShowAllChange(value === "all")}>
+            <SelectTrigger size="sm" data-testid="conversation-filter" aria-label={copy.conversationFilter} className="shrink-0 text-xs">
+              <SelectValue>{showAllConversations ? copy.showAllConversations : copy.pendingConversations}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="start" alignItemWithTrigger={false}>
+              <SelectItem value="open">{copy.pendingConversations}</SelectItem>
+              <SelectItem value="all">{copy.showAllConversations}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={selectedTag || null} onValueChange={(value) => onTagChange(value || "")}>
+            <SelectTrigger size="sm" data-testid="conversation-tag-filter" aria-label={copy.conversationTags} className="min-w-0 max-w-40 text-xs">
+              <SelectValue><span className="truncate">{selectedTag || copy.allTags}</span></SelectValue>
+            </SelectTrigger>
+            <SelectContent align="start" alignItemWithTrigger={false} className="max-w-64">
+              <SelectItem value={null}>{copy.allTags}</SelectItem>
+              {tags.map((tag) => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
+              {!tags.length && <p className="px-2 py-2 text-xs text-muted-foreground">{copy.noConversationTags}</p>}
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
-        {searching && searchState ? (
-          <MailSearchResults copy={copy} state={searchState} />
-        ) : (
-          <>
-            {!hasData && (loading || !error) && <ListSkeleton />}
-            {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
-            {hasData && rows.length === 0 && !hasMore && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
-            {hasData &&
-              rows.map((conversation) => (
-                <ConversationRow
-                  key={conversation.id}
-                  copy={copy}
-                  conversation={conversation}
-                  selected={conversation.id === selectedId}
-                  onClick={() => onSelect(conversation.id)}
-                  onMarkUnread={() => onMarkUnread(conversation)}
-                  onDelete={() => onDelete(conversation)}
-                />
-              ))}
-            {hasData && hasMore && (
-              <div ref={loadMoreRef} className="flex items-center justify-center px-3 py-4">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-muted-foreground"
-                  disabled={loadingMore}
-                  onClick={() => void onLoadMore()}
-                >
-                  {loadingMore ? <Loader2 className="size-4 animate-spin" /> : loadMoreError ? copy.retry : copy.loadMore}
-                </Button>
-              </div>
-            )}
-          </>
+        {!hasData && (loading || !error) && <ListSkeleton />}
+        {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
+        {hasData && rows.length === 0 && !hasMore && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}
+        {hasData &&
+          rows.map((conversation) => (
+            <ConversationRow
+              key={conversation.id}
+              copy={copy}
+              conversation={conversation}
+              selected={conversation.id === selectedId}
+              onClick={() => onSelect(conversation.id)}
+              onMarkUnread={() => onMarkUnread(conversation)}
+              onDelete={() => onDelete(conversation)}
+            />
+          ))}
+        {hasData && hasMore && (
+          <div ref={loadMoreRef} className="flex items-center justify-center px-3 py-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              disabled={loadingMore}
+              onClick={() => void onLoadMore()}
+            >
+              {loadingMore ? <Loader2 className="size-4 animate-spin" /> : loadMoreError ? copy.retry : copy.loadMore}
+            </Button>
+          </div>
         )}
       </ScrollArea>
     </section>
@@ -330,34 +324,46 @@ export function ConversationRow({
       <ContextMenuTrigger className="block">
         <article
           data-testid="conversation-row"
+          tabIndex={0}
+          aria-label={[displayEmail || conversation.title || copy.conversations, conversation.subject].filter(Boolean).join(" · ")}
+          aria-current={selected ? "true" : undefined}
           onClick={(event) => {
             const target = event.target;
-            // Fill the gaps between controls and the row's outer padding.
-            // Buttons/inputs handle themselves; portaled menus belong to the
-            // row in React's event tree but must never select a conversation.
+            // The whole item opens the conversation. Its editing controls and
+            // portaled menus handle their own interactions.
             if (event.defaultPrevented || !(target instanceof Element) || !event.currentTarget.contains(target)) return;
             if (target.closest("button, a, input, textarea, select, [contenteditable=true]")) return;
             onClick();
           }}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || event.defaultPrevented || event.nativeEvent.isComposing) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onClick();
+            }
+          }}
           className={cn(
-            "relative w-full max-w-full cursor-pointer overflow-hidden border-b bg-card px-4 py-3 transition-colors hover:bg-muted",
+            "relative w-full max-w-full cursor-pointer overflow-hidden border-b bg-card px-4 py-3 outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
             selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]"
           )}
         >
-          <button className="flex w-full min-w-0 max-w-full items-start gap-3 overflow-hidden text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onClick={onClick} type="button">
-            <span className="min-w-0 max-w-full flex-1 overflow-hidden">
-              <span className="flex min-w-0 max-w-full items-baseline justify-between gap-2 overflow-hidden">
-                <strong className="min-w-0 flex-1 truncate text-sm font-semibold">{displayEmail || conversation.title || copy.conversations}</strong>
-                <time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time>
-              </span>
-              <span className="mt-1 block max-w-full truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>
-            </span>
-            {conversation.unreadCount > 0 && (
-              <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="mt-0.5 min-w-5 justify-center px-1.5 text-[10px] leading-4">
-                {conversation.unreadCount}
-              </Badge>
-            )}
-          </button>
+          <div data-testid="conversation-summary" className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <strong className="min-w-0 flex-1 truncate text-sm font-semibold">{displayEmail || conversation.title || copy.conversations}</strong>
+              <time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time>
+              {conversation.unreadCount > 0 && (
+                <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="h-4 min-w-4 shrink-0 justify-center px-1 py-0 text-[10px] leading-none">
+                  {conversation.unreadCount}
+                </Badge>
+              )}
+            </div>
+            <div className="mt-1 flex min-w-0 items-center gap-2">
+              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground/70">
+                {conversation.preview || copy.noBody}
+              </p>
+              <ConversationTagNames tags={conversation.tags || []} />
+            </div>
+          </div>
           <div className="mt-1.5 flex h-5 w-full items-center gap-1.5 overflow-visible">
             <ConversationStatusTag
               value={conversation.status}
@@ -369,7 +375,7 @@ export function ConversationRow({
             {editing ? (
               <Input
                 ref={inputRef}
-                className="block h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 py-0 text-xs leading-4 shadow-none focus-visible:border-transparent focus-visible:ring-0"
+                className="block h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 py-0 text-xs leading-4 shadow-none focus-visible:border-transparent focus-visible:ring-0 md:text-xs"
                 value={draft}
                 maxLength={200}
                 onChange={(event) => setDraft(event.target.value)}
@@ -382,12 +388,12 @@ export function ConversationRow({
               />
             ) : (
               <div className="group/note relative h-full min-w-0 flex-1">
-                <button type="button" className={cn("block h-full w-full truncate pr-6 text-left text-xs leading-4", conversation.note ? "text-primary" : "text-muted-foreground/60")} onClick={onClick}>
-                  {conversation.note || copy.addNote}
-                </button>
+                <span className={cn("flex h-full w-full min-w-0 items-center pr-6 text-left text-xs leading-4", conversation.note ? "text-primary" : "text-muted-foreground/60")}>
+                  <span className="truncate">{conversation.note || copy.addNote}</span>
+                </span>
                 <button
                   type="button"
-                  className="absolute top-0 right-0 grid size-4 place-items-center text-muted-foreground opacity-0 transition-opacity group-hover/note:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                  className="absolute top-1/2 right-0 grid size-4 -translate-y-1/2 place-items-center text-muted-foreground opacity-0 transition-opacity group-hover/note:opacity-100 hover:text-foreground focus-visible:opacity-100"
                   onClick={beginEditing}
                   aria-label={copy.addNote}
                   title={copy.addNote}
@@ -431,6 +437,7 @@ type TranscriptPaginationProps = {
 export function ChatPanel({
   copy,
   detail,
+  tagOptions,
   loading,
   error,
   onBack,
@@ -454,6 +461,7 @@ export function ChatPanel({
 }: {
   copy: Copy;
   detail?: ConversationDetail;
+  tagOptions?: string[];
   loading: boolean;
   error: Error | null;
   onBack: () => void;
@@ -483,6 +491,7 @@ export function ChatPanel({
         <ChatView
           copy={copy}
           detail={detail}
+          tagOptions={tagOptions}
           className="flex"
           focusTarget={focusTarget}
           onLoadOlder={onLoadOlder}
@@ -518,6 +527,7 @@ export function messageKeyOf(message: { folder?: string; id: string }) {
 export function ChatView({
   copy,
   detail,
+  tagOptions = [],
   onBack,
   onReply,
   onNewMail,
@@ -537,6 +547,7 @@ export function ChatView({
 }: {
   copy: Copy;
   detail: ConversationDetail;
+  tagOptions?: string[];
   onBack: () => void;
   onReply: (message: ConversationMessage, suggestedBody?: string) => void;
   onNewMail: (message: ConversationMessage) => void;
@@ -939,7 +950,7 @@ export function ChatView({
   return (
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 overflow-hidden", className)}>
       <section data-testid="conversation-detail" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface">
-        <header className="grid h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b bg-card px-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] sm:gap-0 sm:px-5">
+        <header className="grid h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b bg-card px-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] sm:gap-0 sm:px-5">
           <div className="flex min-w-0 items-center justify-start">
             <Button
               variant="ghost"
@@ -961,6 +972,7 @@ export function ChatView({
             </p>
           </div>
           <div className="flex min-w-0 items-center justify-end gap-1.5">
+            <ConversationTags key={detail.id} id={detail.id} tags={detail.tags || []} options={tagOptions} copy={copy} />
             <Button
               variant="ghost"
               size="sm"

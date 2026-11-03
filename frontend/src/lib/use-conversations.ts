@@ -7,8 +7,8 @@ export const CONVERSATION_PAGE_SIZE = 30;
 
 export type ConversationFilter = "open" | "all";
 
-export function conversationsQueryKey(filter: ConversationFilter) {
-  return ["conversations", filter] as const;
+export function conversationsQueryKey(filter: ConversationFilter, tag = "") {
+  return tag ? ["conversations", filter, tag] as const : ["conversations", filter] as const;
 }
 
 /**
@@ -20,16 +20,16 @@ export function conversationsQueryKey(filter: ConversationFilter) {
  * revision unchanged, it replies with a tiny { unchanged: true } envelope and
  * we reuse the cached response, including every already-loaded tail page.
  */
-export function useConversationsQuery(filter: ConversationFilter = "open") {
+export function useConversationsQuery(filter: ConversationFilter = "open", tag = "") {
   const queryClient = useQueryClient();
-  const key = useMemo(() => conversationsQueryKey(filter), [filter]);
+  const key = useMemo(() => conversationsQueryKey(filter, tag), [filter, tag]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
   const loadingRef = useRef(false);
 
   useEffect(() => {
     setLoadMoreError(null);
-  }, [filter]);
+  }, [filter, tag]);
 
   const query = useQuery({
     queryKey: key,
@@ -42,6 +42,7 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
       const limit = Math.min(100, windowSize);
       const next = await getConversations({
         filter,
+        tag,
         revision: previous?.revision,
         limit,
         signal,
@@ -49,14 +50,14 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
       if (next.unchanged) {
         // The server only answers "unchanged" when it saw the same revision we
         // sent, so a cached body is the authoritative current state.
-        return previous ?? (await getConversations({ filter, limit, signal }));
+        return previous ?? (await getConversations({ filter, tag, limit, signal }));
       }
       let page = next;
       const rows = new Map(next.conversations.map((conversation) => [conversation.id, conversation]));
       const cursors = new Set<string>();
       while (rows.size < windowSize && page.hasMore && page.nextCursor && !cursors.has(page.nextCursor)) {
         cursors.add(page.nextCursor);
-        page = await getConversations({ filter, cursor: page.nextCursor, limit: Math.min(limit, windowSize - rows.size), signal });
+        page = await getConversations({ filter, tag, cursor: page.nextCursor, limit: Math.min(limit, windowSize - rows.size), signal });
         for (const conversation of page.conversations) rows.set(conversation.id, conversation);
       }
       return {
@@ -82,6 +83,7 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
     try {
       const next = await getConversations({
         filter,
+        tag,
         cursor: current.nextCursor,
         limit: CONVERSATION_PAGE_SIZE,
       });
@@ -109,7 +111,7 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
       loadingRef.current = false;
       setLoadingMore(false);
     }
-  }, [filter, key, queryClient]);
+  }, [filter, tag, key, queryClient]);
 
   return { ...query, loadMore, loadingMore, loadMoreError };
 }

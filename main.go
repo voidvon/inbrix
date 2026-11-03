@@ -523,6 +523,7 @@ func main() {
 		apiRoutes.Delete("/mail/messages/:uid", webEmailHandler.HandleLocalJunkMessageDeleteJSON)
 		apiRoutes.Put("/conversations/:id/note", webEmailHandler.HandleConversationNoteJSON)
 		apiRoutes.Put("/conversations/:id/status", webEmailHandler.HandleConversationStatusJSON)
+		apiRoutes.Put("/conversations/:id/tags", webEmailHandler.HandleConversationTagsJSON)
 		apiRoutes.Get("/conversations/:id/ai-chat", webEmailHandler.HandleGetConversationAIChatJSON)
 		apiRoutes.Put("/conversations/:id/ai-chat", webEmailHandler.HandleSaveConversationAIChatJSON)
 		apiRoutes.Delete("/conversations/:id/ai-chat", webEmailHandler.HandleDeleteConversationAIChatJSON)

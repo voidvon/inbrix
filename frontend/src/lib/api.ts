@@ -117,6 +117,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}) {
 export function getConversations(options: {
   query?: string;
   filter?: "open" | "all";
+  tag?: string;
   revision?: number;
   cursor?: string;
   limit?: number;
@@ -125,6 +126,7 @@ export function getConversations(options: {
   const params = new URLSearchParams();
   if (options.query?.trim()) params.set("q", options.query.trim());
   if (options.filter) params.set("filter", options.filter);
+  if (options.tag) params.set("tag", options.tag);
   if (options.revision !== undefined && options.revision > 0) params.set("rev", String(options.revision));
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined && options.limit > 0) params.set("limit", String(options.limit));
@@ -275,6 +277,13 @@ export function saveConversationNote(id: string, note: string) {
   return apiFetch<{ ok: boolean; note: string }>(`/api/conversations/${encodeURIComponent(id)}/note`, {
     method: "PUT",
     body: JSON.stringify({ note }),
+  });
+}
+
+export function saveConversationTags(id: string, tags: string[]) {
+  return apiFetch<{ ok: boolean; tags: string[] }>(`/api/conversations/${encodeURIComponent(id)}/tags`, {
+    method: "PUT",
+    body: JSON.stringify({ tags }),
   });
 }
 

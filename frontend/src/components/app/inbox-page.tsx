@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { toast, toastError } from "../../lib/toast";
 import {
@@ -8,7 +8,6 @@ import {
   markConversationRead,
   markConversationUnread,
   retryOutgoing,
-  searchMailMessages,
 } from "../../lib/api";
 import { en } from "../../lib/locale";
 import { useConversationsQuery } from "../../lib/use-conversations";
@@ -23,7 +22,6 @@ import {
 } from "../../lib/email-format";
 import { migrateLegacyOutgoing } from "../../lib/legacy-outbox-migration";
 import { flagsMarkedSeen, flagsMarkedUnread } from "../../lib/mailbox";
-import { useDebouncedValue } from "../../lib/utils";
 import type {
   ConversationDetail,
   ConversationDetailResponse,
@@ -38,6 +36,7 @@ import { LoginScreen } from "./auth-screens";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
+import { MailSearchDialog } from "./mail-search-dialog";
 
 export function conversationIdFromURL() {
   if (typeof window === "undefined") return null;
@@ -73,7 +72,8 @@ export function setConversationURL(id: string | null, mode: "push" | "replace" =
 export function InboxPage() {
   const queryClient = useQueryClient();
   const { copy: locale, openMobileMenu, openCompose, showAllConversations, setShowAllConversations } = useShell();
-  const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedTag, setSelectedTag] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(conversationIdFromURL);
   const [messageTarget, setMessageTarget] = useState<MailFocusTarget | null>(messageTargetFromURL);
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
@@ -83,8 +83,6 @@ export function InboxPage() {
   const [listWidth, setListWidth] = usePersistedPaneWidth("inbrix-message-list-width", 370, 260, 560);
   const autoReadRef = useRef(new Set<string>());
   const manuallyUnreadRef = useRef(new Set<string>());
-  const debouncedSearch = useDebouncedValue(search, 250);
-  const searchQuery = debouncedSearch.trim();
 
   useEffect(() => {
     const restoreConversationFromURL = () => {
@@ -97,17 +95,19 @@ export function InboxPage() {
     return () => window.removeEventListener("popstate", restoreConversationFromURL);
   }, []);
 
-  const conversations = useConversationsQuery(showAllConversations ? "all" : "open");
+  const conversations = useConversationsQuery(showAllConversations ? "all" : "open", selectedTag);
 
-  // Full-text search runs against the local mirror and returns matching
-  // messages, so a result can be opened at its exact position in the thread.
-  const mailSearch = useQuery({
-    queryKey: ["mail-search", searchQuery],
-    queryFn: () => searchMailMessages(searchQuery),
-    enabled: searchQuery.length > 0,
-    placeholderData: keepPreviousData,
-    retry: 1,
-  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !event.defaultPrevented) {
+        if (document.querySelector('[role="dialog"]')) return;
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const detail = useConversationMessages(selectedId, messageTarget);
 
@@ -352,27 +352,18 @@ export function InboxPage() {
 
   return (
     <>
+      <MailSearchDialog open={searchOpen} onOpenChange={setSearchOpen} copy={locale} onSelect={openSearchResult} />
       <main inert={chatPage.closing} className="relative flex min-w-0 flex-1 overflow-hidden bg-background">
         <ConversationList
           copy={locale}
           data={conversations.data}
-          search={search}
-          onSearch={setSearch}
+          onSearch={() => setSearchOpen(true)}
+          selectedTag={selectedTag}
+          onTagChange={setSelectedTag}
           onMenu={openMobileMenu}
           loading={conversations.isPending}
           error={conversations.error}
           selectedId={selectedId}
-          searchState={searchQuery ? {
-            query: searchQuery,
-            terms: mailSearch.data?.terms || [],
-            results: mailSearch.data?.results || [],
-            hasMore: mailSearch.data?.hasMore || false,
-            loading: mailSearch.isFetching,
-            error: mailSearch.error,
-            selectedKey: selectedId && messageTarget ? `${selectedId}:${messageTarget.folder}:${messageTarget.id}` : undefined,
-            onSelect: openSearchResult,
-            onRetry: () => void mailSearch.refetch(),
-          } : undefined}
           onSelect={(id) => {
             manuallyUnreadRef.current.delete(id);
             setSelectedId(id);
@@ -398,6 +389,7 @@ export function InboxPage() {
           closing={chatPage.closing}
           copy={locale}
           detail={serverConversation}
+          tagOptions={conversations.data?.tags || []}
           loading={detail.isPending && Boolean(selectedId)}
           error={detail.error}
           focusTarget={messageTarget}

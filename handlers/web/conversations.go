@@ -34,6 +34,7 @@ type Conversation struct {
 	AccountLabel     string
 	AccountColor     string
 	Note             string
+	Tags             []string
 	Status           string
 	StatusMessageKey string
 }
@@ -441,7 +442,14 @@ func (h *EmailHandler) localConversations(c *fiber.Ctx, accounts []mailstore.Acc
 			results = append(results, result)
 			continue
 		}
+		tags, err := h.mailDB.ListConversationTags(c.UserContext(), account.ID)
+		if err != nil {
+			result.Err = err
+			results = append(results, result)
+			continue
+		}
 		for i := range accountConversations {
+			accountConversations[i].Tags = tags[accountConversations[i].ID]
 			accountConversations[i].Note = notes[accountConversations[i].ID]
 			if saved, ok := statuses[accountConversations[i].ID]; ok && saved.MessageKey == accountConversations[i].StatusMessageKey {
 				accountConversations[i].Status = saved.Status

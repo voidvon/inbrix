@@ -608,6 +608,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY(account_id, conversation_id),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS conversation_tags (
+			account_id TEXT NOT NULL,
+			conversation_id TEXT NOT NULL,
+			tag TEXT NOT NULL,
+			PRIMARY KEY(account_id, conversation_id, tag),
+			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS conversation_statuses (
 			account_id TEXT NOT NULL,
 			conversation_id TEXT NOT NULL,
