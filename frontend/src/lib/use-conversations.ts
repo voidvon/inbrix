@@ -12,44 +12,6 @@ export function conversationsQueryKey(filter: ConversationFilter) {
 }
 
 /**
- * Refresh only the head page and keep the tail the user already loaded. A head
- * row that also exists in the tail wins and is removed from the tail, which is
- * how a conversation that just received a reply moves to the top without
- * appearing twice.
- */
-function mergeHead(
-  previous: ConversationListResponse | undefined,
-  head: ConversationListResponse,
-  filter: ConversationFilter,
-): ConversationListResponse {
-  if (!previous) return head;
-  const visible = (conversation: ConversationListResponse["conversations"][number]) =>
-    filter === "all" || conversation.status === "unanswered" || conversation.status === "draft";
-  const headConversations = head.conversations.filter(visible);
-  const headIDs = new Set(headConversations.map((conversation) => conversation.id));
-  const conversations = [
-    ...headConversations,
-    ...previous.conversations.filter((conversation) => visible(conversation) && !headIDs.has(conversation.id)),
-  ];
-  // If the user had already reached the end, the head response plus the cached
-  // tail still covers the whole mailbox. Keep the window closed instead of
-  // making the next scroll walk every page again just because a new message
-  // arrived.
-  const allLoaded = previous.hasMore === false
-    && conversations.length >= (head.total ?? previous.total ?? 0);
-  return {
-    ...head,
-    conversations,
-    // The head page's cursor points at page two. Once the user has scrolled
-    // further, the tail cursor is the only valid continuation.
-    nextCursor: allLoaded ? undefined : previous.hasMore ? previous.nextCursor : head.nextCursor,
-    hasMore: allLoaded ? false : previous.hasMore ? true : Boolean(head.hasMore),
-    total: head.total ?? previous.total,
-    unreadCount: head.unreadCount ?? previous.unreadCount,
-  };
-}
-
-/**
  * The single conversations query used by both the sidebar shell and the inbox
  * list. It keeps a flat cache (rather than an infinite-query pages array) so
  * the existing optimistic note/read/status updates keep working unchanged.
@@ -71,19 +33,38 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
 
   const query = useQuery({
     queryKey: key,
-    queryFn: async (): Promise<ConversationListResponse> => {
+    queryFn: async ({ signal }): Promise<ConversationListResponse> => {
       const previous = queryClient.getQueryData<ConversationListResponse>(key);
+      // Rebuild the loaded window from server rows. Merging cached rows back
+      // into a filtered head resurrects conversations that were answered or
+      // deleted, because their old cached status still matches the filter.
+      const windowSize = Math.max(CONVERSATION_PAGE_SIZE, previous?.conversations.length ?? 0);
+      const limit = Math.min(100, windowSize);
       const next = await getConversations({
         filter,
         revision: previous?.revision,
-        limit: CONVERSATION_PAGE_SIZE,
+        limit,
+        signal,
       });
       if (next.unchanged) {
         // The server only answers "unchanged" when it saw the same revision we
         // sent, so a cached body is the authoritative current state.
-        return previous ?? (await getConversations({ filter, limit: CONVERSATION_PAGE_SIZE }));
+        return previous ?? (await getConversations({ filter, limit, signal }));
       }
-      return mergeHead(previous, next, filter);
+      let page = next;
+      const rows = new Map(next.conversations.map((conversation) => [conversation.id, conversation]));
+      const cursors = new Set<string>();
+      while (rows.size < windowSize && page.hasMore && page.nextCursor && !cursors.has(page.nextCursor)) {
+        cursors.add(page.nextCursor);
+        page = await getConversations({ filter, cursor: page.nextCursor, limit: Math.min(limit, windowSize - rows.size), signal });
+        for (const conversation of page.conversations) rows.set(conversation.id, conversation);
+      }
+      return {
+        ...next,
+        conversations: [...rows.values()],
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      };
     },
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -91,7 +72,7 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
   });
 
   const loadMore = useCallback(async () => {
-    if (loadingRef.current) return;
+    if (loadingRef.current || queryClient.isFetching({ queryKey: key, exact: true })) return;
     const current = queryClient.getQueryData<ConversationListResponse>(key);
     if (!current?.hasMore || !current.nextCursor) return;
 
@@ -108,7 +89,7 @@ export function useConversationsQuery(filter: ConversationFilter = "open") {
         if (!latest) return next;
         // A head refresh can replace the continuation cursor while this page is
         // in flight; appending the stale page would duplicate or skip rows.
-        if (latest.nextCursor !== current.nextCursor) return latest;
+        if (latest.nextCursor !== current.nextCursor || latest.revision !== current.revision) return latest;
         const seen = new Set(latest.conversations.map((conversation) => conversation.id));
         return {
           ...latest,

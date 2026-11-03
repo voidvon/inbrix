@@ -296,6 +296,7 @@ export function ConversationRow({
     setStatusSaving(true);
     try {
       await saveConversationStatus(conversation.id, status);
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
       queryClient.setQueriesData<ConversationListResponse>({ queryKey: ["conversations"] }, (current) =>
         current
           ? {
@@ -304,6 +305,7 @@ export function ConversationRow({
             }
           : current
       );
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
     } catch {
       toast.error(copy.statusSaveFailed);
     } finally {

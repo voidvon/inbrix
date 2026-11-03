@@ -120,6 +120,7 @@ export function getConversations(options: {
   revision?: number;
   cursor?: string;
   limit?: number;
+  signal?: AbortSignal;
 } = {}) {
   const params = new URLSearchParams();
   if (options.query?.trim()) params.set("q", options.query.trim());
@@ -128,7 +129,7 @@ export function getConversations(options: {
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined && options.limit > 0) params.set("limit", String(options.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`);
+  return apiFetch<ConversationListResponse>(`/api/conversations${suffix}`, { signal: options.signal });
 }
 
 /**
