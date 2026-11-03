@@ -141,6 +141,48 @@ func TestConversationIdentitySeparatesParticipantSets(t *testing.T) {
 	}
 }
 
+func TestConversationSummaryShowsSenderWithoutChangingParticipants(t *testing.T) {
+	account := mailstore.Account{ID: "acct-tecnica", Email: "sales@spiraxsteam.com"}
+	when := time.Date(2026, 11, 3, 4, 14, 39, 0, time.UTC)
+	incoming := models.Email{
+		ID: "782", Folder: "INBOX", From: "cnajarro@tecnica.com.gt",
+		To: "sales@spiraxsteam.com, logistics@tecnica.com.gt", Cc: "gerencia@tecnica.com.gt",
+		Subject: "PR-31573", Date: when,
+	}
+	initial := buildConversations(account, []models.Email{incoming})[0]
+	reply := models.Email{
+		ID: "783", Folder: "Sent", From: account.Email,
+		To: "cnajarro@tecnica.com.gt, logistics@tecnica.com.gt", Date: when.Add(time.Hour),
+	}
+	for _, emails := range [][]models.Email{{incoming}, {incoming, reply}} {
+		conversations := buildConversations(account, emails)
+		if len(conversations) != 1 {
+			t.Fatalf("conversation count = %d, want 1", len(conversations))
+		}
+		summary := conversationSummaryJSON(conversations[0])
+		if summary.PrimaryPeerEmail != incoming.From {
+			t.Errorf("primary peer = %q, want original sender %q", summary.PrimaryPeerEmail, incoming.From)
+		}
+		if summary.ID != initial.ID || summary.PeerEmail != "cnajarro@tecnica.com.gt, logistics@tecnica.com.gt" {
+			t.Errorf("conversation identity or participants changed: %+v", summary)
+		}
+	}
+
+	// A different participant's later message becomes the displayed sender.
+	later := incoming
+	later.ID, later.From, later.To = "784", "logistics@tecnica.com.gt", "sales@spiraxsteam.com, cnajarro@tecnica.com.gt"
+	later.Date = when.Add(2 * time.Hour)
+	summary := conversationSummaryJSON(buildConversations(account, []models.Email{incoming, reply, later})[0])
+	if summary.PrimaryPeerEmail != later.From {
+		t.Errorf("latest sender = %q, want %q", summary.PrimaryPeerEmail, later.From)
+	}
+	// An outgoing-only conversation still has a useful recipient to display.
+	summary = conversationSummaryJSON(buildConversations(account, []models.Email{reply})[0])
+	if summary.PrimaryPeerEmail != incoming.From {
+		t.Errorf("outgoing peer = %q, want %q", summary.PrimaryPeerEmail, incoming.From)
+	}
+}
+
 func TestConversationIdentityIgnoresCcRecipients(t *testing.T) {
 	account := mailstore.Account{ID: "acct-cc", Email: "me@example.com"}
 	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)

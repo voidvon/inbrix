@@ -435,11 +435,13 @@ export function uniqueRecipients(values: string[], excluded: string[] = []) {
   });
 }
 
-export function filterRecipientsByDomain(values: string[], accountEmail: string) {
+export function filterRecipientsByDomain(values: string[], recipients: string) {
   const domainOf = (value: string) => recipientAddress(value).match(/^[^@\s]+@([^@\s]+)$/)?.[1];
-  const domain = domainOf(accountEmail);
-  if (!domain) return [];
-  return values.filter((value) => domainOf(value) === domain);
+  const domains = new Set(splitRecipientValues(recipients).map(domainOf).filter(Boolean));
+  return values.filter((value) => {
+    const domain = domainOf(value);
+    return Boolean(domain && domains.has(domain));
+  });
 }
 
 export function isValidRecipient(value: string) {

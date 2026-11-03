@@ -86,6 +86,38 @@ func TestAIModelImageCapabilitySettings(t *testing.T) {
 	}
 }
 
+func TestAIModelManagementRejectsLegacyDeepSeekProvider(t *testing.T) {
+	emailHandler, app, account, _ := outboxTestApp(t)
+	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)
+	app.Post("/models", h.HandleCreateModel)
+	app.Put("/models/:id", h.HandleUpdateModel)
+	app.Post("/models/:id/test", h.HandleTestSavedModel)
+	app.Post("/model-test", h.HandleTestModel)
+	model, err := emailHandler.mailDB.CreateAIModel(context.Background(), mailstore.AIModelRecord{
+		OwnerID: account.OwnerID, Provider: "openai-compatible", BaseURL: "https://api.deepseek.com",
+		Model: "deepseek-chat", EncryptedAPIKey: "unused-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/models"}, {"POST", "/model-test"},
+		{"PUT", "/models/" + model.ID}, {"POST", "/models/" + model.ID + "/test"},
+	} {
+		req := httptest.NewRequest(route.method, route.path, strings.NewReader(`{"provider":"deepseek","baseUrl":"https://api.deepseek.com","model":"deepseek-chat","apiKey":"unused-key"}`))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(raw), "provider must be") {
+			t.Fatalf("%s %s accepted legacy provider: %d %s", route.method, route.path, res.StatusCode, raw)
+		}
+	}
+}
+
 func TestWriteEmailDisabledReplySuggestionReturnsPreconditionWithoutErrorLog(t *testing.T) {
 	emailHandler, app, account, _ := outboxTestApp(t)
 	ctx := context.Background()

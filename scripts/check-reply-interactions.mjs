@@ -11,13 +11,14 @@ const page = await browser.newPage(mobile
 page.setDefaultTimeout(10_000);
 const errors = [];
 page.on('pageerror', error => errors.push(error.stack));
-const accountEmail = 'me@example.com';
+const accountEmail = 'me@our-company.com';
 const message = {
   id: '1', folder: 'INBOX', from: 'alice@example.com', to: `${accountEmail}, other@external.com, coworker@example.com`,
-  cc: 'team@example.com; Outside <outside@other.com>; Upper <UPPER@EXAMPLE.COM>; team@example.com; me@example.com; alice@example.com; sub@sub.example.com; lookalike@notexample.com', subject: 'Reply interactions', body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body',
+  cc: `team@example.com; Outside <outside@other.com>; Upper <UPPER@EXAMPLE.COM>; team@example.com; ${accountEmail}; alice@example.com; sub@sub.example.com; lookalike@notexample.com`, subject: 'Reply interactions', body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body',
   date: new Date().toISOString(), outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'],
 };
 let savedDraft;
+let restoredDraft;
 const summary = { id: 'reply', title: 'Alice', peerEmail: message.from, subject: message.subject, count: 1, accountEmail, status: 'unanswered' };
 await page.addInitScript(() => { window.EventSource = class { close() {} }; });
 await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token' } }));
@@ -30,7 +31,7 @@ await page.route('**/api/**', async route => {
     if (route.request().method() === 'POST') {
       savedDraft = route.request().postDataJSON();
       json = { draft: { ...savedDraft, id: 'draft-reply', updatedAt: new Date().toISOString() } };
-    } else json = { drafts: [] };
+    } else json = { drafts: restoredDraft ? [restoredDraft] : [] };
   }
   assert.notEqual(pathname, '/api/compose', 'Opening a reply must not send it');
   await route.fulfill({ json });
@@ -38,15 +39,15 @@ await page.route('**/api/**', async route => {
 const base = process.env.REPLY_TEST_URL || 'http://127.0.0.1:2342';
 const detail = page.getByTestId('conversation-detail');
 const compose = page.getByTestId('compose-inline');
-async function checkEditor(label, expectedCc) {
+async function checkEditor(label, expectedCc, hasFilteredCc = true) {
   await compose.locator('.tiptap').waitFor();
   await page.waitForFunction(() => document.querySelector('#compose-subject')?.value === 'Re: Reply interactions');
   await page.getByRole('menu').waitFor({ state: 'hidden' });
   const filteredCc = compose.getByTestId('compose-filtered-cc');
-  if (!message.cc) assert.equal(await filteredCc.count(), 0, 'No filtered notice is needed without Cc');
+  if (!hasFilteredCc) assert.equal(await filteredCc.count(), 0, 'Same-domain or absent Cc must not be marked as filtered');
   else {
     const text = await filteredCc.innerText();
-    assert.ok(text.includes('Outside <outside@other.com>'), 'Filtered external addresses must be visible');
+    assert.equal(text.includes('Outside <outside@other.com>'), label !== 'multi-domain', 'Only addresses outside every reply recipient domain should be filtered');
     assert.ok(text.includes('sub@sub.example.com'), 'Filtered subdomains must be visible');
     assert.ok(!text.includes('team@example.com'), 'Kept addresses must not appear as filtered');
     assert.ok(!text.includes(accountEmail), 'The mailbox address must not appear as filtered');
@@ -61,7 +62,14 @@ async function checkEditor(label, expectedCc) {
   await quote.getByRole('button', { name: 'Expand quoted message', exact: true }).first().click();
   const paragraph = quote.locator('[data-node-view-content-react] > p').filter({ hasText: 'Original email body' });
   await paragraph.click();
-  await page.keyboard.press('End');
+  await paragraph.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await page.keyboard.insertText(' edited');
   const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/drafts' && response.request().method() === 'POST');
   await compose.getByRole('button', { name: '关闭', exact: true }).click();
@@ -72,19 +80,51 @@ async function checkEditor(label, expectedCc) {
   assert.equal(savedDraft.mode, 'reply', 'Replies with Cc must use the regular reply mode');
   assert.equal(savedDraft.to, message.outgoing ? message.to : message.from, 'Reply must address the sender without copying the original To list');
   assert.equal(savedDraft.accountEmail, accountEmail, 'Reply must use the conversation mailbox');
-  assert.equal(savedDraft.cc, expectedCc, 'Default Cc must only include unique recipients from the conversation mailbox domain');
+  assert.equal(savedDraft.cc, expectedCc, 'Cc must follow the reply recipient domains and preserve existing draft edits');
   await compose.waitFor({ state: 'hidden' });
 }
 try {
   const modes = mobile ? ['toolbar', 'context', 'long-press'] : ['toolbar', 'context'];
-  for (const mode of [...modes, 'outgoing', 'external-only', 'no-cc']) {
+  for (const mode of [...modes, 'outgoing', 'multi-domain', 'external-only', 'tecnica', 'restored', 'no-cc']) {
+    let expectedCc = 'team@example.com, Upper <UPPER@EXAMPLE.COM>';
+    let hasFilteredCc = true;
     if (mode === 'outgoing') {
       message.outgoing = true;
       message.from = accountEmail;
       message.to = 'alice@example.com';
     }
-    if (mode === 'external-only') message.cc = 'Outside <outside@other.com>; sub@sub.example.com';
-    if (mode === 'no-cc') message.cc = '';
+    if (mode === 'multi-domain') {
+      message.to = 'alice@example.com, partner@other.com';
+      expectedCc += ', Outside <outside@other.com>';
+      message.cc = 'team@example.com; Upper <UPPER@EXAMPLE.COM>; Outside <outside@other.com>; sub@sub.example.com';
+    }
+    if (mode === 'external-only') {
+      message.to = 'alice@example.com';
+      message.cc = 'Outside <outside@other.com>; sub@sub.example.com';
+      expectedCc = '';
+    }
+    if (mode === 'tecnica') {
+      message.outgoing = false;
+      message.from = 'cnajarro@tecnica.com.gt';
+      message.to = `${accountEmail}, logistics@tecnica.com.gt`;
+      message.cc = 'gerencia@tecnica.com.gt';
+      summary.peerEmail = 'cnajarro@tecnica.com.gt, logistics@tecnica.com.gt';
+      summary.primaryPeerEmail = message.from;
+    }
+    if (['tecnica', 'restored'].includes(mode)) {
+      expectedCc = 'gerencia@tecnica.com.gt';
+      hasFilteredCc = false;
+    }
+    if (mode === 'restored') {
+      expectedCc = 'manual@chosen.com';
+      restoredDraft = { ...savedDraft, to: message.from, cc: expectedCc, subject: 'Re: Reply interactions' };
+    }
+    if (mode === 'no-cc') {
+      restoredDraft = undefined;
+      message.cc = '';
+      expectedCc = '';
+      hasFilteredCc = false;
+    }
     console.log(`Checking ${mobile ? 'mobile' : 'desktop'} ${mode}`);
     await page.goto(`${base}/inbox?conversation=reply`);
     await detail.locator('[data-message-key]').waitFor();
@@ -121,7 +161,7 @@ try {
       if (mobile) await item.tap();
       else await item.press('Enter');
     }
-    await checkEditor(mode, ['external-only', 'no-cc'].includes(mode) ? '' : 'team@example.com, Upper <UPPER@EXAMPLE.COM>');
+    await checkEditor(mode, expectedCc, hasFilteredCc);
   }
   assert.deepEqual(errors, []);
   console.log('Reply opens an editable composer, dismisses menus, preserves quote edits, and closes successfully.');

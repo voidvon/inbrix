@@ -11,6 +11,15 @@ import (
 
 const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, encrypted_api_key, is_default, created_at`
 
+// migrateLegacyAIModelProviders rewrites persisted vendor-specific settings at
+// startup. Requests and model calls only accept the current API formats.
+func (s *Store) migrateLegacyAIModelProviders(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = 'openai-compatible' WHERE lower(trim(provider)) = 'deepseek'`); err != nil {
+		return fmt.Errorf("mailstore: migrate legacy AI model providers: %w", err)
+	}
+	return nil
+}
+
 // SupportsImageInput honors an explicit capability setting. Image input is
 // enabled by default for each supported protocol.
 func (model AIModelRecord) SupportsImageInput() bool {

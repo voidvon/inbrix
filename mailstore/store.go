@@ -817,6 +817,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureAITaskBindingEnabledColumn(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateLegacyAIModelProviders(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 

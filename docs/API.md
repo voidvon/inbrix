@@ -1499,6 +1499,9 @@ Model settings expose a `supportsImages` boolean in
 It is independent of API format: `openai-compatible` selects Chat Completions,
 `openai` selects Responses, and `gemini` selects the native Gemini API.
 DeepSeek and other compatible services use `openai-compatible`.
+On upgrade, saved `deepseek` provider values are migrated to `openai-compatible`
+in the database, preserving model IDs, endpoints, API keys, and task bindings.
+Requests must use the current API formats; `deepseek` is not accepted as a provider.
 Disable image input for text-only models. New image turns are rejected before
 being saved when this capability is disabled; text-only session follow-ups omit
 historical images. Streaming and non-streaming responses share this path.

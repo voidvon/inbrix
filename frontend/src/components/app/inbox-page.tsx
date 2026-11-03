@@ -264,7 +264,7 @@ export function InboxPage() {
     const recipient = source?.outgoing ? source.to : source?.from || conversation.peerEmail || "";
     const self = conversation.accountEmail || conversations.data?.accountEmail || "";
     const originalCc = uniqueRecipients(splitRecipientValues(source?.cc || ""), [self, ...splitRecipientValues(recipient)]);
-    const cc = filterRecipientsByDomain(originalCc, self);
+    const cc = filterRecipientsByDomain(originalCc, recipient);
     const sender = source?.fromName && source.from ? `${source.fromName} <${source.from}>` : source?.from || conversation.peerEmail || "";
     const quoteLead = `On ${new Date(source?.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
     const originalBody = source?.body || source?.preview || "";

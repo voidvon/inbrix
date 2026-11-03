@@ -23,20 +23,21 @@ import (
 // ConversationSummaryJSON is the compact row model consumed by the React
 // conversation list. Message bodies are deliberately absent from this type.
 type ConversationSummaryJSON struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	PeerEmail      string `json:"peerEmail,omitempty"`
-	Subject        string `json:"subject"`
-	Preview        string `json:"preview"`
-	Date           string `json:"date"`
-	Count          int    `json:"count"`
-	UnreadCount    int    `json:"unreadCount"`
-	HasAttachments bool   `json:"hasAttachments"`
-	AccountEmail   string `json:"accountEmail,omitempty"`
-	AccountLabel   string `json:"accountLabel,omitempty"`
-	AccountColor   string `json:"accountColor,omitempty"`
-	Note           string `json:"note,omitempty"`
-	Status         string `json:"status"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	PeerEmail        string `json:"peerEmail,omitempty"`
+	PrimaryPeerEmail string `json:"primaryPeerEmail,omitempty"`
+	Subject          string `json:"subject"`
+	Preview          string `json:"preview"`
+	Date             string `json:"date"`
+	Count            int    `json:"count"`
+	UnreadCount      int    `json:"unreadCount"`
+	HasAttachments   bool   `json:"hasAttachments"`
+	AccountEmail     string `json:"accountEmail,omitempty"`
+	AccountLabel     string `json:"accountLabel,omitempty"`
+	AccountColor     string `json:"accountColor,omitempty"`
+	Note             string `json:"note,omitempty"`
+	Status           string `json:"status"`
 }
 
 // ConversationMessageJSON is the detail model for one chat bubble. HTML is
@@ -220,21 +221,34 @@ func conversationListLimit(c *fiber.Ctx) int {
 }
 
 func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON {
+	// Keep the participant set for grouping, but show the latest incoming sender
+	// rather than presenting other To recipients as additional senders.
+	primaryPeer := firstMailboxAddress(conversation.PeerEmail)
+	for i := len(conversation.Messages) - 1; i >= 0; i-- {
+		message := conversation.Messages[i]
+		if !message.Outgoing && !sameMailboxAddress(message.Email.From, conversation.AccountEmail) {
+			if sender := firstMailboxAddress(message.Email.From); sender != "" {
+				primaryPeer = sender
+				break
+			}
+		}
+	}
 	return ConversationSummaryJSON{
-		ID:             conversation.ID,
-		Title:          conversation.Title,
-		PeerEmail:      conversation.PeerEmail,
-		Subject:        conversation.Subject,
-		Preview:        conversation.Preview,
-		Date:           conversation.Latest.Date.UTC().Format("2006-01-02T15:04:05.999Z07:00"),
-		Count:          conversation.Count,
-		UnreadCount:    conversation.UnreadCount,
-		HasAttachments: conversation.HasAttachments,
-		AccountEmail:   conversation.AccountEmail,
-		AccountLabel:   conversation.AccountLabel,
-		AccountColor:   conversation.AccountColor,
-		Note:           conversation.Note,
-		Status:         conversation.Status,
+		ID:               conversation.ID,
+		Title:            conversation.Title,
+		PeerEmail:        conversation.PeerEmail,
+		PrimaryPeerEmail: primaryPeer,
+		Subject:          conversation.Subject,
+		Preview:          conversation.Preview,
+		Date:             conversation.Latest.Date.UTC().Format("2006-01-02T15:04:05.999Z07:00"),
+		Count:            conversation.Count,
+		UnreadCount:      conversation.UnreadCount,
+		HasAttachments:   conversation.HasAttachments,
+		AccountEmail:     conversation.AccountEmail,
+		AccountLabel:     conversation.AccountLabel,
+		AccountColor:     conversation.AccountColor,
+		Note:             conversation.Note,
+		Status:           conversation.Status,
 	}
 }
 

@@ -311,7 +311,8 @@ export function ConversationRow({
     }
   };
 
-  const emailToCopy = extractEmailAddress(conversation.peerEmail) || extractEmailAddress(conversation.title) || extractEmailAddress(conversation.accountEmail);
+  const displayEmail = conversation.primaryPeerEmail || conversation.peerEmail;
+  const emailToCopy = extractEmailAddress(displayEmail) || extractEmailAddress(conversation.title) || extractEmailAddress(conversation.accountEmail);
   const handleCopyEmail = async () => {
     if (!emailToCopy) return;
     const ok = await copyToClipboard(emailToCopy);
@@ -344,7 +345,7 @@ export function ConversationRow({
           <button className="flex w-full min-w-0 max-w-full items-start gap-3 overflow-hidden text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onClick={onClick} type="button">
             <span className="min-w-0 max-w-full flex-1 overflow-hidden">
               <span className="flex min-w-0 max-w-full items-baseline justify-between gap-2 overflow-hidden">
-                <strong className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.peerEmail || conversation.title || copy.conversations}</strong>
+                <strong className="min-w-0 flex-1 truncate text-sm font-semibold">{displayEmail || conversation.title || copy.conversations}</strong>
                 <time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time>
               </span>
               <span className="mt-1 block max-w-full truncate text-xs text-muted-foreground/70">{conversation.preview || copy.noBody}</span>

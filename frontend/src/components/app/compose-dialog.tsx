@@ -532,9 +532,10 @@ export function ComposeDialog({
   const replyMessageId = storedDraft?.inReplyTo || defaults.inReplyTo;
   const replySource = replyMessageId ? defaults.conversation?.find((message) => message.messageId === replyMessageId) : undefined;
   const originalCc = splitRecipientValues(replySource?.cc || "");
+  const replyRecipient = replySource?.outgoing ? replySource.to : replySource?.from || "";
   const filteredCc = uniqueRecipients(
-    replySource ? uniqueRecipients(originalCc, filterRecipientsByDomain(originalCc, accountEmail)) : defaults.filteredCc || [],
-    [...recipients, ...ccRecipients]
+    replySource ? uniqueRecipients(originalCc, filterRecipientsByDomain(originalCc, replyRecipient)) : defaults.filteredCc || [],
+    [accountEmail, ...recipients, ...ccRecipients]
   );
 
   const editor = useEditor({

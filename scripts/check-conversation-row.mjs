@@ -12,6 +12,8 @@ const conversations = ['alice', 'bob', 'carol', 'doris'].map(id => ({
   subject: `Subject ${id}`, preview: `Preview ${id}`, note: `Note ${id}`,
   date, count: 1, unreadCount: 0, status: id === 'carol' ? 'answered' : id === 'doris' ? 'draft' : 'unanswered', hasAttachments: false,
 }));
+conversations[0].peerEmail = 'alice@example.com, logistics@example.com';
+conversations[0].primaryPeerEmail = 'alice@example.com';
 const errors = [];
 const notes = [];
 const statuses = [];
@@ -61,6 +63,7 @@ const selectAlice = async () => {
 try {
   await page.goto(`${base}/inbox?conversation=alice`);
   await row('bob').waitFor();
+  assert.equal(await row('alice').locator('strong').innerText(), 'alice@example.com', 'The row must show the sender without other To recipients');
   const filter = page.getByRole('switch', { name: '全部', exact: true });
   assert.equal(await filter.isChecked(), false);
   assert.equal(await row('carol').count(), 0, 'Answered conversations are hidden by default');

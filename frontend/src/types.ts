@@ -46,6 +46,7 @@ export type ConversationSummary = {
   id: string;
   title: string;
   peerEmail?: string;
+  primaryPeerEmail?: string;
   subject: string;
   preview: string;
   date: string;

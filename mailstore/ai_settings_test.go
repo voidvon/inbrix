@@ -58,6 +58,102 @@ func TestAIModelsCRUDDefaultsAndOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestLegacyDeepSeekModelMigrationOnOpen(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	account := testAccount(t, s, "alice", "sales@example.com", true)
+	agent, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: "alice", Name: "Writer", Prompt: "Write replies"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	images := false
+	model, err := s.CreateAIModel(ctx, AIModelRecord{
+		OwnerID: "alice", Provider: "openai-compatible", BaseURL: "https://api.deepseek.com/v1",
+		Model: "deepseek-reasoner", ReasoningEffort: "high", ExtraParams: `{"temperature":0.5}`,
+		EncryptedAPIKey: "encrypted-legacy-key", SupportsImages: &images,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := s.SaveAITaskBinding(ctx, "alice", AITaskBindingRecord{AccountID: account.ID, TaskType: EmailDraftTask, AgentID: agent.ID, ModelID: model.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce an existing installation rather than using the current API.
+	if _, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = 'deepseek', updated_at = 123 WHERE id = ?`, model.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := s.Path()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	// The regular startup migration is repeatable, including on the next restart.
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var provider string
+	var updatedAt int64
+	if err := s.db.QueryRowContext(ctx, `SELECT provider, updated_at FROM ai_models WHERE id = ?`, model.ID).Scan(&provider, &updatedAt); err != nil || provider != "openai-compatible" || updatedAt != 123 {
+		t.Fatalf("persisted migration: provider=%q, updated_at=%d, err=%v", provider, updatedAt, err)
+	}
+	get, err := s.GetAIModel(ctx, "alice", model.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListAIModels(ctx, "alice")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("legacy list: count=%d, err=%v", len(list), err)
+	}
+	defaultModel, err := s.GetDefaultAIModel(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []AIModelRecord{get, list[0], defaultModel} {
+		if got.Provider != "openai-compatible" || got.ID != model.ID || got.BaseURL != model.BaseURL || got.Model != model.Model || got.EncryptedAPIKey != model.EncryptedAPIKey || got.ReasoningEffort != model.ReasoningEffort || got.ExtraParams != model.ExtraParams || !got.IsDefault || got.SupportsImageInput() {
+			t.Errorf("migration changed configuration: %+v", got)
+		}
+	}
+	migratedBinding, err := s.GetAITaskBinding(ctx, "alice", account.ID, EmailDraftTask)
+	if err != nil || migratedBinding != binding {
+		t.Fatalf("migration changed task binding: %+v, err=%v", migratedBinding, err)
+	}
+}
+
+func TestLegacyDeepSeekModelMigrationConflictIsAtomic(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"legacy-first", "legacy-conflict", "current"} {
+		provider, modelName := "deepseek", "duplicate-model"
+		if id == "legacy-first" {
+			modelName = "other-model"
+		}
+		if id == "current" {
+			provider = "openai-compatible"
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, encrypted_api_key, created_at, updated_at) VALUES(?, 'alice', ?, 'https://api.deepseek.com', ?, 'encrypted', 1, 1)`, id, provider, modelName); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.migrateLegacyAIModelProviders(ctx); err == nil {
+		t.Fatal("expected a migration error for conflicting model configurations")
+	}
+	var oldCount, newCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_models WHERE provider = 'deepseek'`).Scan(&oldCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_models WHERE provider = 'openai-compatible'`).Scan(&newCount); err != nil {
+		t.Fatal(err)
+	}
+	if oldCount != 2 || newCount != 1 {
+		t.Fatalf("conflict partially migrated or removed configurations: old=%d, new=%d", oldCount, newCount)
+	}
+}
+
 func TestAIModelImageSupportMigrationAndOverrides(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
