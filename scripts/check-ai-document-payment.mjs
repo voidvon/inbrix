@@ -14,10 +14,11 @@ try {
     const { createBusinessFromTemplate, projectDocumentBusiness } = await import('/src/lib/document-business.ts');
     const { saveDocument, getDocument } = await import('/src/lib/api.ts');
     const defaults = {
-      bank_account_name: 'SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD',
-      bank_account_no: 'LU024080000056414710', bank_swift: 'BCIRLULL (or BCIRLULLXXX)',
-      bank_name: 'Banking Circle S.A', bank_address: '2 Boulevard de la Foire L-1528 Luxembourg',
-      bank_country: 'Luxembourg', bank_account_type: 'Business Account',
+      bank_account_name: 'SHANGHAI SPIRAX SARCO FLUID EQUIPMENT CO LTD',
+      bank_account_no: '566409106699', bank_swift: 'SCBLHKHHXXX',
+      bank_name: 'STANDARD CHARTERED BANK (HONG KONG) LIMITED', bank_address: '15/F Standard Chartered Tower, 388 Kwun Tong Road, Kwun Tong, Hong Kong',
+      bank_country: 'HongKong', bank_account_type: 'SAVINGS',
+      bank_code: '003', bank_branch_code: '438', bank_currencies: 'HKD AUD CHF SGD JPY EUR GBP CAD USD NZD CNH',
       payment_method: 'For the payment of goods, please make a SWIFT(Wire/TT) Payment',
       payment_memo: 'Test Buyer / PI-PAYMENT-1 / Valve',
     };
@@ -71,7 +72,7 @@ try {
     for (const [key, value] of Object.entries(record.expected)) assert.equal(controls[key], value, key);
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: all nine payment fields survive AI conversion, projection, save, reopen, and actual editor loading; custom values and explicit clearing are respected.');
+  console.log('PASS: all payment fields survive AI conversion, projection, save, reopen, and actual editor loading; custom values and explicit clearing are respected.');
 } finally {
   await browser.close();
 }

@@ -84,12 +84,15 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
 
   // Bank
   bank_account_name: { zh: "收款人户名", en: "Beneficiary Name", group: "bank" },
-  bank_account_no: { zh: "银行账号 (IBAN)", en: "Account Number", group: "bank" },
+  bank_account_no: { zh: "银行账号", en: "Account Number", group: "bank" },
   bank_swift: { zh: "SWIFT / BIC 代码", en: "SWIFT / BIC Code", group: "bank" },
   bank_name: { zh: "开户银行名称", en: "Bank Name", group: "bank" },
   bank_address: { zh: "银行详细地址", en: "Bank Address", group: "bank" },
   bank_country: { zh: "银行所在国家", en: "Bank Country", group: "bank" },
   bank_account_type: { zh: "账户类型", en: "Account Type", group: "bank" },
+  bank_code: { zh: "银行代码", en: "Bank Code", group: "bank" },
+  bank_branch_code: { zh: "分行代码", en: "Branch Code", group: "bank" },
+  bank_currencies: { zh: "支持币种", en: "Supported Currencies", group: "bank" },
   payment_method: { zh: "支持汇款方式", en: "Payment Method", group: "bank" },
 };
 

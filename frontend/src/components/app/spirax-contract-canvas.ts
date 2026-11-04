@@ -359,13 +359,16 @@ export function createSpiraxContractCanvasDocument(
     : defaultMemo;
 
   const bankRows: Array<[string, string, string, boolean]> = [
-    ["Beneficiary Name:", initialValues?.bank_account_name || SPIRAX_CONTRACT_SELLER_COMPANY, "bank_account_name", true],
-    ["Account Number:", initialValues?.bank_account_no || "LU024080000056414710", "bank_account_no", true],
-    ["SWIFT / BIC Code:", initialValues?.bank_swift || "BCIRLULL (or BCIRLULLXXX)", "bank_swift", true],
-    ["Bank Name:", initialValues?.bank_name || "Banking Circle S.A", "bank_name", false],
-    ["Bank Address:", initialValues?.bank_address || "2 Boulevard de la Foire L-1528 Luxembourg", "bank_address", false],
-    ["Country / Region:", initialValues?.bank_country || "Luxembourg", "bank_country", false],
-    ["Account Type:", initialValues?.bank_account_type || "Business Account", "bank_account_type", false],
+    ["Beneficiary Name:", initialValues?.bank_account_name || "SHANGHAI SPIRAX SARCO FLUID EQUIPMENT CO LTD", "bank_account_name", true],
+    ["Account Number:", initialValues?.bank_account_no || "566409106699", "bank_account_no", true],
+    ["SWIFT / BIC Code:", initialValues?.bank_swift || "SCBLHKHHXXX", "bank_swift", true],
+    ["Bank Name:", initialValues?.bank_name || "STANDARD CHARTERED BANK (HONG KONG) LIMITED", "bank_name", false],
+    ["Bank Address:", initialValues?.bank_address || "15/F Standard Chartered Tower, 388 Kwun Tong Road, Kwun Tong, Hong Kong", "bank_address", false],
+    ["Country / Region:", initialValues?.bank_country || "HongKong", "bank_country", false],
+    ["Account Type:", initialValues?.bank_account_type || "SAVINGS", "bank_account_type", false],
+    ["Bank Code:", initialValues?.bank_code || "003", "bank_code", false],
+    ["Branch Code:", initialValues?.bank_branch_code || "438", "bank_branch_code", false],
+    ["Supported Currencies:", initialValues?.bank_currencies || "HKD AUD CHF SGD JPY EUR GBP CAD USD NZD CNH", "bank_currencies", false],
     ["Payment Method:", initialValues?.payment_method || "For the payment of goods, please make a SWIFT(Wire/TT) Payment", "payment_method", false],
     ["Payment Memo / Note:", paymentMemo, "payment_memo", true],
   ];
