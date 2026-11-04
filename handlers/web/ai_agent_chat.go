@@ -297,6 +297,13 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		}
 	}
 	var agentCustomPrompt, agentName string
+	if selection.AgentID == "" {
+		defaultAgent, e := h.mailDB.GetDefaultChatAgent(c.UserContext(), owner)
+		if e != nil {
+			return fiber.ErrInternalServerError
+		}
+		selection.AgentID = defaultAgent.ID
+	}
 	profile := mailstore.AIBusinessProfile{}
 	if selection.AgentID != "" {
 		stored, e := h.mailDB.GetAIAgent(c.UserContext(), owner, selection.AgentID)

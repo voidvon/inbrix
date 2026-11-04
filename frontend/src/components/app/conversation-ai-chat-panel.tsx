@@ -51,7 +51,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { AIChatInput } from "./ai-chat-input";
@@ -201,7 +200,7 @@ export function ConversationAIChatPanel({
   });
   const agents = agentsData?.agents || [];
   const businessContext = chatQuery.data?.businessContext || emptyBusinessContext;
-  const selectedAgentId = businessContext.agentId || undefined;
+  const selectedAgentId = businessContext.agentId || agentsData?.defaultAgentId;
   const selectionMutation = useMutation({
     mutationFn: async (value: AIBusinessContext) => { const id = detail.id; const saved = await saveConversationAIChat(id, undefined, value, chatQuery.data?.version); return { id, value: saved.businessContext || value, version: saved.version }; },
     onSuccess: ({ id, value, version }) => queryClient.setQueryData(["conversation-ai-chat", id], (previous: Awaited<ReturnType<typeof getConversationAIChat>> | undefined) => ({ ...previous, businessContext: value, version, lastRun: previous?.lastRun ? { ...previous.lastRun, retryable: false } : undefined })),
@@ -515,20 +514,12 @@ export function ConversationAIChatPanel({
                     size="sm"
                     className="h-7 max-w-[120px] sm:max-w-[140px] gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
                   >
-                    <span className="truncate">{currentAgent?.name || copy.aiChatDefaultAgent}</span>
+                    <span className="truncate">{currentAgent?.name || copy.loading}</span>
                     <ChevronDown className="size-3 shrink-0 opacity-60" />
                   </Button>
                 }
               />
               <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem
-                  className={cn(!selectedAgentId && "font-semibold text-primary")}
-                  disabled={mutation.isPending || selectionMutation.isPending || chatQuery.isFetching || chatQuery.isPending}
-                  onClick={() => setSelectedAgentId(undefined)}
-                >
-                  {copy.aiChatDefaultAgent}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 {agents.map((agent) => (
                   <DropdownMenuItem
                     key={agent.id}

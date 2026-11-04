@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,31 @@ import (
 const aiAgentColumns = `id, owner_id, name, prompt, purpose, output_labels_json, business_profile_json, created_at`
 
 var defaultAIAgentOutputLabels = []string{"客户", "需求", "要求", "问题"}
+
+// GetDefaultChatAgent makes the built-in chat persona editable through the same
+// registry as custom agents. Repeated calls never overwrite user edits.
+func (s *Store) GetDefaultChatAgent(ctx context.Context, ownerID string) (AIAgentRecord, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return AIAgentRecord{}, errors.New("mailstore: AI agent owner is required")
+	}
+	id := fmt.Sprintf("aichat_%x", sha256.Sum256([]byte(ownerID)))
+	agent, err := s.GetAIAgent(ctx, ownerID, id)
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		return agent, err
+	}
+	now := time.Now().Unix()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO ai_agents
+		(id, owner_id, name, prompt, purpose, output_labels_json, business_profile_json, created_at, updated_at)
+		VALUES (?, ?, CASE WHEN EXISTS (SELECT 1 FROM ai_agents WHERE owner_id = ? AND name = '默认对话助手')
+		THEN ? ELSE '默认对话助手' END, ?, 'chat_default', '[]', '{}', ?, ?)
+		ON CONFLICT(id) DO NOTHING`, id, ownerID, ownerID, "默认对话助手-"+id,
+		"协助用户处理邮件、客户需求、报价和合同。根据当前对话与可用业务数据回答，信息不足时先向用户确认，不编造产品、价格或客户资料。", now, now)
+	if err != nil {
+		return AIAgentRecord{}, fmt.Errorf("mailstore: create default chat agent: %w", err)
+	}
+	return s.GetAIAgent(ctx, ownerID, id)
+}
 
 func NormalizeAIAgentOutputLabels(labels []string) ([]string, error) {
 	if labels == nil {
@@ -182,7 +208,7 @@ func (s *Store) GetWebhookInquiryAgent(ctx context.Context, ownerID string) (AIA
 	if !errors.Is(err, sql.ErrNoRows) {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: get webhook inquiry agent: %w", err)
 	}
-	agent, err = scanAIAgent(s.db.QueryRowContext(ctx, `SELECT `+aiAgentColumns+` FROM ai_agents WHERE owner_id = ? ORDER BY created_at, name LIMIT 1`, ownerID))
+	agent, err = scanAIAgent(s.db.QueryRowContext(ctx, `SELECT `+aiAgentColumns+` FROM ai_agents WHERE owner_id = ? AND purpose != 'chat_default' ORDER BY created_at, name LIMIT 1`, ownerID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return AIAgentRecord{}, ErrNotFound
 	}
@@ -207,7 +233,7 @@ func (s *Store) GetMailSummaryAgent(ctx context.Context, ownerID string) (AIAgen
 	if !errors.Is(err, sql.ErrNoRows) {
 		return AIAgentRecord{}, fmt.Errorf("mailstore: get mail summary agent: %w", err)
 	}
-	agent, err = scanAIAgent(s.db.QueryRowContext(ctx, `SELECT `+aiAgentColumns+` FROM ai_agents WHERE owner_id = ? ORDER BY created_at, name LIMIT 1`, ownerID))
+	agent, err = scanAIAgent(s.db.QueryRowContext(ctx, `SELECT `+aiAgentColumns+` FROM ai_agents WHERE owner_id = ? AND purpose != 'chat_default' ORDER BY created_at, name LIMIT 1`, ownerID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return AIAgentRecord{}, ErrNotFound
 	}

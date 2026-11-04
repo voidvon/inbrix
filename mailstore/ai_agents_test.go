@@ -6,6 +6,45 @@ import (
 	"testing"
 )
 
+func TestDefaultChatAgentIsEditableAndOwnerScoped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	// An existing custom name must not be taken over by the default persona.
+	custom, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: "alice", Name: "默认对话助手", Prompt: "自定义角色"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := s.GetDefaultChatAgent(ctx, "alice")
+	if err != nil || agent.ID == custom.ID || agent.Purpose != "chat_default" {
+		t.Fatalf("default agent: %+v, %v", agent, err)
+	}
+	agent.Name, agent.Prompt = "我的商务助手", "按我的要求处理对话"
+	if _, err := s.UpdateAIAgent(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.GetDefaultChatAgent(ctx, "alice")
+	if err != nil || again.ID != agent.ID || again.Name != agent.Name || again.Prompt != agent.Prompt {
+		t.Fatalf("default overwrote edits: %+v, %v", again, err)
+	}
+	agents, err := s.ListAIAgents(ctx, "alice")
+	if err != nil || len(agents) != 2 {
+		t.Fatalf("shared registry: %+v, %v", agents, err)
+	}
+	other, err := s.GetDefaultChatAgent(ctx, "bob")
+	if err != nil || other.ID == agent.ID {
+		t.Fatalf("owner isolation: %+v, %v", other, err)
+	}
+	if _, err := s.GetAIAgent(ctx, "bob", agent.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner access: %v", err)
+	}
+	if _, err := s.GetMailSummaryAgent(ctx, "bob"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("chat default was assigned to mail summaries: %v", err)
+	}
+	if _, err := s.GetWebhookInquiryAgent(ctx, "bob"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("chat default was assigned to webhook analysis: %v", err)
+	}
+}
+
 func TestAIAgentsCRUDAndOwnerIsolation(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

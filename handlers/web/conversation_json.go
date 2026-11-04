@@ -836,6 +836,13 @@ func (h *EmailHandler) HandleGetConversationAIChatJSON(c *fiber.Ctx) error {
 			business.AgentID = binding.AgentID
 		}
 	}
+	if business.AgentID == "" {
+		agent, e := h.mailDB.GetDefaultChatAgent(c.UserContext(), ownerID)
+		if e != nil {
+			return fiber.ErrInternalServerError
+		}
+		business.AgentID = agent.ID
+	}
 	return c.JSON(fiber.Map{"ok": true, "messages": messages, "businessContext": business, "sessionId": session.ID, "version": session.Version, "lastRun": session.LastRun, "hasMoreMessages": session.HasMoreMessages, "nextBefore": session.NextBefore})
 }
 

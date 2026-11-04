@@ -157,14 +157,14 @@ export function AIDocumentChatPanel({
 
   // Fetch user configured AI Agents from backend
   const agentsQuery = useQuery({
-    queryKey: ["document-ai-agents", accountEmail],
+    queryKey: ["ai-agents"],
     queryFn: getAIAgents,
   });
   const agents = agentsQuery.isError ? [] : agentsQuery.data?.agents || [];
-  const bindings = useQuery({ queryKey: ["document-ai-bindings", accountEmail], queryFn: getAITaskBindings });
+  const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings });
   useQueryErrorToast(agentsQuery.error, copy.loadFailed, "document-agents-error", () => void agentsQuery.refetch(), copy.retry);
   useQueryErrorToast(bindings.error, copy.loadFailed, "document-bindings-error", () => void bindings.refetch(), copy.retry);
-  const defaultAgentId = (bindings.isError ? undefined : bindings.data)?.bindings.find(b => b.accountEmail === accountEmail && b.taskType === "email_draft")?.agentId || "";
+  const defaultAgentId = (bindings.isError ? undefined : bindings.data)?.bindings.find(b => b.accountEmail === accountEmail && b.taskType === "email_draft")?.agentId || agentsQuery.data?.defaultAgentId || "";
   const businessContext = { ...(currentSession.businessContext || { agentId: currentSession.agentId || "", skillId: "", brands: [] }), agentId: currentSession.agentId || defaultAgentId };
   const currentAgent = agents.find((a) => a.id === businessContext.agentId);
 
@@ -405,7 +405,7 @@ export function AIDocumentChatPanel({
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
                   <Bot className="size-3.5 text-indigo-500" />
                   <span className="max-w-28 truncate">
-                    {currentAgent ? currentAgent.name : isZh ? "默认文档助手" : "Default Agent"}
+                    {currentAgent?.name || copy.loading}
                   </span>
                   <ChevronDown className="size-3 text-muted-foreground" />
                 </Button>
@@ -415,19 +415,10 @@ export function AIDocumentChatPanel({
               <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
                 {isZh ? "选择 AI 智能体角色" : "Select AI Agent"}
               </div>
-              <DropdownMenuItem
-                className={cn("cursor-pointer gap-2 text-xs", !currentSession?.agentId && "bg-muted font-medium")}
-                disabled={busy}
-                onClick={() => handleSelectAgent(undefined)}
-              >
-                <Sparkles className="size-3.5 text-indigo-500" />
-                <span>{isZh ? "默认文档助手（全能专家）" : "Default Document Agent"}</span>
-              </DropdownMenuItem>
-              {agents.length > 0 && <DropdownMenuSeparator />}
               {agents.map((ag) => (
                 <DropdownMenuItem
                   key={ag.id}
-                  className={cn("cursor-pointer gap-2 text-xs", currentSession?.agentId === ag.id && "bg-muted font-medium")}
+                  className={cn("cursor-pointer gap-2 text-xs", businessContext.agentId === ag.id && "bg-muted font-medium")}
                   disabled={busy}
                 onClick={() => handleSelectAgent(ag.id)}
                 >

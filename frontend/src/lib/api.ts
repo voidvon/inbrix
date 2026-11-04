@@ -746,7 +746,8 @@ export type AIAgentInput = {
 };
 
 export function getAIAgents() {
-  return apiFetch<{ skills: AIBusinessSkill[]; agents: Array<Omit<AIAgent, "outputLabels" | "businessProfile"> & { outputLabels?: string[]; businessProfile?: AIBusinessProfile }> }>("/api/settings/ai/agents").then((payload) => ({
+  return apiFetch<{ defaultAgentId: string; skills: AIBusinessSkill[]; agents: Array<Omit<AIAgent, "outputLabels" | "businessProfile"> & { outputLabels?: string[]; businessProfile?: AIBusinessProfile }> }>("/api/settings/ai/agents").then((payload) => ({
+    defaultAgentId: payload.defaultAgentId,
     skills: payload.skills || [],
     agents: payload.agents.map((agent) => ({
       ...agent,

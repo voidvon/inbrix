@@ -20,7 +20,7 @@ const queryClient = new QueryClient({
 
 // Query state belongs to the current view only. Always read the server again
 // when returning, and discard inactive document responses immediately.
-for (const key of ["ai-document-sessions", "ai-document-session", "document-templates", "document-ai-agents", "document-ai-bindings"]) {
+for (const key of ["ai-document-sessions", "ai-document-session", "document-templates", "ai-agents", "ai-task-bindings"]) {
   queryClient.setQueryDefaults([key], { staleTime: 0, gcTime: 0, refetchOnMount: "always", retry: false });
 }
 

@@ -13,6 +13,59 @@ import (
 	"inbrix/mailstore"
 )
 
+func TestAgentListIncludesEditableDefaultChatAgent(t *testing.T) {
+	emailHandler, app, _, _ := outboxTestApp(t)
+	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)
+	app.Get("/agents", h.HandleListAgents)
+	app.Put("/agents/:id", h.HandleUpdateAgent)
+	list := func() (string, []aiAgentPublic) {
+		t.Helper()
+		res, err := app.Test(httptest.NewRequest(http.MethodGet, "/agents", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("list agents: %d", res.StatusCode)
+		}
+		var payload struct {
+			DefaultAgentID string          `json:"defaultAgentId"`
+			Agents         []aiAgentPublic `json:"agents"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.DefaultAgentID, payload.Agents
+	}
+	id, before := list()
+	if id == "" {
+		t.Fatal("missing default agent ID")
+	}
+	req := httptest.NewRequest(http.MethodPut, "/agents/"+id, strings.NewReader(`{"name":"我的对话助手","prompt":"自定义对话要求","outputLabels":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("update default: %d", res.StatusCode)
+	}
+	again, after := list()
+	if again != id || len(after) != len(before) {
+		t.Fatalf("unstable default registry: %q, %+v", again, after)
+	}
+	for _, agent := range after {
+		if agent.ID == id {
+			if agent.Name != "我的对话助手" || agent.Prompt != "自定义对话要求" {
+				t.Fatalf("default edits not retained: %+v", agent)
+			}
+			return
+		}
+	}
+	t.Fatal("default agent is absent from shared settings list")
+}
+
 func TestValidateOpenAIBaseURL(t *testing.T) {
 	valid := []string{
 		"https://api.openai.com/v1",

@@ -11,6 +11,8 @@ const accountEmail = 'sales@example.com';
 const conversation = { id: 'business-test', title: 'Buyer', peerEmail: 'buyer@example.com', subject: 'Valve inquiry', preview: 'Need brand B valves', date: now, count: 1, unreadCount: 0, accountEmail, status: 'unanswered' };
 const mail = { id: '1', from: conversation.peerEmail, to: accountEmail, subject: conversation.subject, body: conversation.preview, preview: conversation.preview, date: now, outgoing: false, flags: ['\\Seen'] };
 let agents = [{ id: 'sales-ab', name: 'AB 销售助手', prompt: '请用中文回复，缺少参数时先询问。', outputLabels: ['客户', '需求'], businessProfile: { company: '销售公司', brands: ['C'], brandMode: 'restrict', quotationTemplateId: '', contractTemplateId: '' } }];
+const defaultAgent = { id: 'chat-default', name: '默认对话助手', prompt: '协助处理商务对话', outputLabels: [], businessProfile: { company: '', brands: [], brandMode: 'prefer', quotationTemplateId: '', contractTemplateId: '' } };
+agents.push(defaultAgent);
 
 let businessContext = { agentId: 'sales-ab', skillId: '', brands: [] };
 const chatStore = createAIChatTestStore(accountEmail, businessContext);
@@ -45,9 +47,9 @@ await page.route('**/api/**', async route => {
   } else if (path.startsWith('/api/conversations/')) json = { conversation: { ...conversation, messages: [mail] } };
   else if (path === '/api/product-navigation') json = { total: 3, brands: ['A', 'B', 'C'].map(name => ({ name, productCount: 1, categories: [] })) };
   else if (path === '/api/settings/ai/skills') json = { mailSummarySkillId: 'mail-analysis', skills: [{ id: 'email_analysis', name: '邮件需求分析', kind: 'chat', enabled: true }, { id: 'quotation', name: '产品选型与报价', kind: 'chat', enabled: true }, { id: 'contract', name: '销售合同制作', kind: 'chat', enabled: true }] };
-  else if (path === '/api/settings/ai/agents') json = { agents, skills: [{ id: 'email_analysis', name: '邮件需求分析', dependsOn: [] }, { id: 'quotation', name: '产品选型与报价', dependsOn: ['email_analysis'] }, { id: 'contract', name: '销售合同制作', dependsOn: ['email_analysis'] }] };
+  else if (path === '/api/settings/ai/agents') json = { defaultAgentId: defaultAgent.id, agents, skills: [{ id: 'email_analysis', name: '邮件需求分析', dependsOn: [] }, { id: 'quotation', name: '产品选型与报价', dependsOn: ['email_analysis'] }, { id: 'contract', name: '销售合同制作', dependsOn: ['email_analysis'] }] };
   else if (path === '/api/settings/ai/agents/sales-ab' && req.method() === 'PUT') {
-    savedProfile = req.postDataJSON(); agents = [{ id: 'sales-ab', ...savedProfile }]; json = agents[0];
+    savedProfile = req.postDataJSON(); agents = [{ id: 'sales-ab', ...savedProfile }, defaultAgent]; json = agents[0];
   } else if (path === '/api/settings/ai/task-bindings') json = { bindings: [] };
   else if (path === '/api/document-templates') json = { templates: [{ id: 'quote-custom', type: 'quotation', name: 'A 品牌报价模板', html: '<div data-spirax-quotation="reference-v1"></div>', updatedAt: now }] };
   else if (path === '/api/ai/agent-chat') {
@@ -76,9 +78,9 @@ try {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '品牌: B', exact: true }).waitFor();
   await page.getByRole('button', { name: 'AB 销售助手', exact: true }).click();
-  await page.getByRole('menuitem', { name: '默认智能体', exact: true }).click();
+  await page.getByRole('menuitem', { name: '默认对话助手', exact: true }).click();
   await page.getByRole('button', { name: '品牌: B', exact: true }).waitFor();
-  await page.getByRole('button', { name: '默认智能体', exact: true }).click();
+  await page.getByRole('button', { name: '默认对话助手', exact: true }).click();
   const agentSaved = page.waitForResponse(response => response.url().endsWith('/ai-chat') && response.request().method() === 'PUT' && response.request().postDataJSON().businessContext?.agentId === 'sales-ab');
   await page.getByRole('menuitem', { name: 'AB 销售助手', exact: true }).click();
   await agentSaved;
@@ -95,7 +97,8 @@ try {
 
   await page.goto(`${base}/ai-document`);
   // Use the existing assistant menu; task and brand controls are shared.
-  await page.getByRole('button', { name: '默认文档助手', exact: false }).click();
+  await page.getByRole('button', { name: '默认对话助手', exact: true }).click();
+  assert.equal(await page.getByRole('menuitem', { name: '默认文档助手（全能专家）', exact: true }).count(), 0);
   await page.getByRole('menuitem', { name: 'AB 销售助手', exact: true }).click();
   const contractSaved = page.waitForResponse(response => response.request().method() === 'PATCH' && response.request().postDataJSON().businessContext?.skillId === 'contract');
   await chooseSkill('销售合同制作');
@@ -109,7 +112,9 @@ try {
 
   await page.goto(`${base}/inbox?setup=1`);
   await page.getByRole('button', { name: '智能体', exact: true }).click();
-  await page.getByRole('button', { name: '编辑智能体', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: '默认对话助手' }).waitFor();
+  await page.getByRole('row').filter({ hasText: 'AB 销售助手' }).getByRole('button', { name: '编辑智能体', exact: true }).click();
+  await page.getByLabel('名称', { exact: true }).fill('更新后的销售助手');
   await page.getByLabel('卖方公司', { exact: true }).fill('新的销售公司');
   await page.getByRole('combobox', { name: 'quotationTemplateId' }).click();
   await page.getByRole('option', { name: 'A 品牌报价模板', exact: true }).click();
@@ -132,6 +137,10 @@ try {
   assert.deepEqual(savedMailboxBrands, { brands: ['B'], brandMode: 'restrict' });
   await page.screenshot({ path: `/private/tmp/inbrix-mailbox-brands-${process.env.AI_TEST_MOBILE ? 'mobile' : 'desktop'}.png` });
   await page.goto(`${base}/ai-document`);
+  await page.getByRole('button', { name: '更新后的销售助手', exact: true }).click();
+  await page.getByRole('menuitem', { name: '默认对话助手', exact: true }).waitFor();
+  assert.equal(await page.getByRole('menuitem', { name: 'AB 销售助手', exact: true }).count(), 0);
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '品牌: 限定 B', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(errors, []);

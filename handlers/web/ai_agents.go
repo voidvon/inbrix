@@ -50,6 +50,10 @@ func (h *AISettingsHandler) HandleListAgents(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	defaultAgent, err := h.mailDB.GetDefaultChatAgent(c.UserContext(), owner)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
 	agents, err := h.mailDB.ListAIAgents(c.UserContext(), owner)
 	if err != nil {
 		return fiber.ErrInternalServerError
@@ -68,7 +72,7 @@ func (h *AISettingsHandler) HandleListAgents(c *fiber.Ctx) error {
 			available = append(available, skill)
 		}
 	}
-	return c.JSON(fiber.Map{"agents": out, "skills": available})
+	return c.JSON(fiber.Map{"agents": out, "skills": available, "defaultAgentId": defaultAgent.ID})
 }
 
 func (h *AISettingsHandler) HandleCreateAgent(c *fiber.Ctx) error {
