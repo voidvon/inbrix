@@ -1,5 +1,7 @@
 import type { QuotationItem } from "./api";
 import { calculateLineAmount } from "./document-amounts";
+import type { IElement } from "@hufe921/canvas-editor";
+import { documentControlText, projectDocumentControlText } from "./document-control-values";
 
 export const calculatedDocumentFields = new Set(["subtotal", "tax_amount", "total_amount", "contract_amount"]);
 // Old saved documents may still contain these fields; discard them on read.
@@ -32,7 +34,7 @@ function itemConcept(id: string): { field: ItemField; index: number } | null {
   return match ? { field: match[1] === "desc" ? "description" : match[1] as ItemField, index: Number(match[2]) } : null;
 }
 function controlText(control: Node) {
-  return ((control.value || []) as Array<{ value?: string }>).map(run => run.value || "").join("").trim();
+  return documentControlText(control.value as IElement[] | null | undefined);
 }
 
 // Remove dedicated legacy tax rows/cells while preserving the table width.
@@ -138,8 +140,7 @@ export function projectDocumentBusiness(data: unknown, business: DocumentBusines
       value = line[item.field] || "";
     } else value = business.calculated[c.conceptId] ?? business.values[documentFieldKey(c.conceptId)] ?? "";
     if (item?.field === "amount" || calculatedDocumentFields.has(c.conceptId)) c.disabled = true;
-    const runs = (c.value || []) as Node[];
-    c.value = [{ ...(runs[0] || {}), value }];
+    c.value = projectDocumentControlText(c.value as IElement[] | null | undefined, value);
   });
 }
 

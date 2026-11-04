@@ -131,9 +131,21 @@ func canvasControlText(control *canvasControl) string {
 	}
 	var builder strings.Builder
 	for _, run := range control.Value {
-		builder.WriteString(run.Value)
+		if canvasTextRun(run.Type) {
+			builder.WriteString(run.Value)
+		}
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+// Images and formulas store their source in value, not visible field text.
+func canvasTextRun(kind string) bool {
+	switch kind {
+	case "", "text", "hyperlink", "superscript", "subscript", "date":
+		return true
+	default:
+		return false
+	}
 }
 
 // itemField describes the concept ids a template uses for one line item. Single

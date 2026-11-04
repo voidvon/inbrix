@@ -102,18 +102,35 @@ func patchStoredCanvasDocument(body string, values map[string]string, items []AI
 					var text strings.Builder
 					for _, r := range runs {
 						run, _ := r.(map[string]any)
-						s, _ := run["value"].(string)
-						text.WriteString(s)
+						kind, _ := run["type"].(string)
+						if canvasTextRun(kind) {
+							s, _ := run["value"].(string)
+							text.WriteString(s)
+						}
 					}
-					if text.String() != value {
-						run := map[string]any{}
-						if len(runs) > 0 {
-							if first, ok := clone(runs[0]).(map[string]any); ok {
-								run = first
+					if strings.TrimSpace(text.String()) != value {
+						projected := []any{}
+						replaced := false
+						for _, raw := range runs {
+							run, _ := raw.(map[string]any)
+							if run == nil {
+								projected = append(projected, raw)
+								continue
+							}
+							kind, _ := run["type"].(string)
+							if !canvasTextRun(kind) {
+								projected = append(projected, raw)
+							} else if !replaced {
+								updated := clone(run).(map[string]any)
+								updated["value"] = value
+								projected = append(projected, updated)
+								replaced = true
 							}
 						}
-						run["value"] = value
-						c["value"] = []any{run}
+						if !replaced && value != "" {
+							projected = append([]any{map[string]any{"value": value}}, projected...)
+						}
+						c["value"] = projected
 					}
 				}
 			}

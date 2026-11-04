@@ -1,7 +1,8 @@
 import { captureDocumentBusiness, documentControlUpdates, createBusinessFromTemplate, projectDocumentBusiness, readDocumentBusiness, type DocumentBusiness } from "../../lib/document-business";
+import { documentControlText, projectDocumentControlText } from "../../lib/document-control-values";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { validateDocument } from "../../lib/api";
-import CanvasEditor, { BackgroundRepeat, BackgroundSize, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
+import CanvasEditor, { BackgroundRepeat, BackgroundSize, ControlType, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type QuotationItem } from "./spirax-quotation-canvas";
 import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument } from "./spirax-contract-canvas";
@@ -146,6 +147,20 @@ function resolveDocumentTemplateKind(html: string, stored?: StoredCanvasDocument
   if (html.includes("data-spirax-contract")) return "spirax-contract";
   if (html.includes("data-spirax-quotation")) return "spirax-quotation";
   return "document";
+}
+
+function setDocumentControlValues(editor: CanvasEditor, values: Array<{ conceptId: string; value: string; isSubmitHistory?: boolean }>) {
+  // Update each occurrence separately: repeated fields can carry different
+  // stamps, and replacing one field's text must preserve its own image runs.
+  const controls = editor.command.getControlList();
+  editor.command.executeSetControlValueList(values.flatMap(item => controls
+    .filter(element => element.control?.conceptId === item.conceptId)
+    .map(element => ({
+      id: element.controlId,
+      value: element.control?.type === ControlType.TEXT
+        ? projectDocumentControlText(element.control.value, item.value) : item.value,
+      isSubmitHistory: item.isSubmitHistory,
+    }))));
 }
 
 function getCanvasEditorOptions(templateKind: DocumentTemplateKind) {
@@ -395,7 +410,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           businessRef.current = latest;
           const updates = documentControlUpdates(latestData, latest);
           synchronizing = true;
-          try { if (updates.length) editor.command.executeSetControlValueList(updates); }
+          try { if (updates.length) setDocumentControlValues(editor, updates); }
           finally { synchronizing = false; }
           const issues = result.validation.issues.filter(issue => ["qty", "price", "items"].includes(issue.field));
           const messages = [...new Set(issues.map(issue => issue.message))].join("；");
@@ -418,7 +433,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         businessRef.current = next;
         if (updates.length) {
           synchronizing = true;
-          try { editor.command.executeSetControlValueList(updates); }
+          try { setDocumentControlValues(editor, updates); }
           finally { synchronizing = false; }
         }
         scheduleCalculation();
@@ -592,7 +607,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           try {
             const val = editor.command.getControlValue({ conceptId });
             if (val && val.length > 0) {
-              textVal = (val[0]?.value ?? val[0]?.innerText ?? "").trim();
+              textVal = val[0]?.elementList ? documentControlText(val[0].elementList) : (val[0]?.value ?? val[0]?.innerText ?? "").trim();
             }
           } catch {
             // ignore
@@ -617,7 +632,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
               if (!map.has(id)) {
                 let textVal = "";
                 if (el.control.value && Array.isArray(el.control.value)) {
-                  textVal = el.control.value.map((v) => v.value || "").join("").trim();
+                  textVal = documentControlText(el.control.value);
                 }
                 map.set(id, {
                   conceptId: id,
@@ -668,7 +683,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
       if (nativeUpdates.length > 0) {
         try {
-          editor.command.executeSetControlValueList(
+          setDocumentControlValues(editor,
             nativeUpdates.map((item) => ({
               conceptId: item.conceptId,
               value: item.value,
@@ -732,7 +747,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
               const id = el.control.conceptId;
               let textVal = "";
               if (el.control.value && Array.isArray(el.control.value)) {
-                textVal = el.control.value.map((v) => v.value || "").join("").trim();
+                textVal = documentControlText(el.control.value);
               }
               if (!map.has(id)) {
                 map.set(id, {

@@ -2,9 +2,69 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestCanvasControlStampSurvivesProjection(t *testing.T) {
+	for _, imageFirst := range []bool{false, true} {
+		for _, fieldValue := range []string{"Seller", "Updated Seller", ""} {
+			t.Run(fmt.Sprintf("imageFirst=%t/value=%s", imageFirst, fieldValue), func(t *testing.T) {
+				stamp := map[string]any{
+					"type": "image", "value": "data:image/png;base64,STAMP", "width": 100, "height": 100,
+					"imgDisplay": "float-top", "imgFloatPosition": map[string]any{"x": 12, "y": 34},
+					"extension": map[string]any{"stampId": "seller-stamp", "stampName": "Seller Seal"},
+				}
+				text := map[string]any{"value": "Seller", "bold": true, "color": "#1e293b"}
+				runs := []map[string]any{text, stamp}
+				if imageFirst {
+					runs = []map[string]any{stamp, text}
+				}
+				control := controlElement("seller_sign_company", "")
+				control["control"].(map[string]any)["value"] = runs
+				body := canvasBody(t, "spirax-contract", []map[string]any{tableElement([][]map[string]any{{control}})})
+				payload, ok := parseStoredCanvasDocument(body)
+				if !ok || payload.Business.Values["seller_sign_company"] != "Seller" {
+					t.Fatal("image source leaked into business text", payload.Business)
+				}
+				for i := 0; i < 3; i++ {
+					patched, err := patchStoredCanvasDocument(body, map[string]string{"seller_sign_company": fieldValue}, nil, false)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var doc map[string]any
+					if err := json.Unmarshal([]byte(strings.TrimPrefix(patched, canvasDocumentPrefix)), &doc); err != nil {
+						t.Fatal(err)
+					}
+					main := doc["data"].(map[string]any)["main"].([]any)
+					cell := main[0].(map[string]any)["trList"].([]any)[0].(map[string]any)["tdList"].([]any)[0].(map[string]any)
+					projected := cell["value"].([]any)[0].(map[string]any)["control"].(map[string]any)["value"].([]any)
+					stampCount := 0
+					for _, raw := range projected {
+						run := raw.(map[string]any)
+						if run["type"] == "image" {
+							stampCount++
+							// Normalize numeric JSON representations before comparison.
+							expected, _ := json.Marshal(stamp)
+							actual, _ := json.Marshal(run)
+							if string(expected) != string(actual) {
+								t.Fatal("stamp source, dimensions, position or metadata changed", run)
+							}
+						} else if run["value"] != fieldValue || run["bold"] != true {
+							t.Fatal("field text or formatting changed", run)
+						}
+					}
+					values, _, ok := canvasProjectionContent(patched)
+					if !ok || values["seller_sign_company"] != fieldValue || stampCount != 1 {
+						t.Fatal("stamp was lost, duplicated or read as text", values, stampCount)
+					}
+					body = patched
+				}
+			})
+		}
+	}
+}
 
 // canvasBody builds a stored document body the way the client serializes it.
 func canvasBody(t *testing.T, template string, main []map[string]any) string {
