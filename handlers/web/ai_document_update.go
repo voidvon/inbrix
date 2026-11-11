@@ -83,6 +83,9 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 			previousTotal = values["contract_amount"]
 		}
 		refreshDocumentAmountWords(action.Values, previousTotal)
+		if action.Values["trade_term"] != values["trade_term"] && action.Values["trade_term"] == "Freight included" {
+			action.Summary += "；交货条款已调整为 Freight included（含运费）"
+		}
 	}
 	patched, err := patchStoredCanvasDocument(body, action.Values, action.Items, recalculate)
 	if err != nil {

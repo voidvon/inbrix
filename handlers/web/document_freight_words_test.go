@@ -68,7 +68,7 @@ func TestFreightNormalizationDoesNotGuessOrDoubleCharge(t *testing.T) {
 func TestFreightCommandAndWordsSurviveCanvasSave(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()
-	body := businessCanvas(map[string]string{"item_model": "VALVE", "item_qty": "2", "item_price": "50", "item_amount": "100.00", "total_amount": "100.00", "currency": "USD", "inland_freight": "10", "say_total": ""})
+	body := businessCanvas(map[string]string{"item_model": "VALVE", "item_qty": "2", "item_price": "50", "item_amount": "100.00", "total_amount": "100.00", "currency": "USD", "inland_freight": "0", "say_total": "", "trade_term": "EXW (Ex Works)"})
 	_, initial, _ := canvasDocumentContent(body)
 	commands := []DocumentCommand{{Type: "add_line", Fields: map[string]json.RawMessage{"description": json.RawMessage(`"运费"`), "price": json.RawMessage(`"20.25"`)}}}
 	action, err := h.proposeCanvasDocumentCommands(ctx, account.OwnerID, aiDocumentInput{Canvas: body, DocumentType: "contract"}, commands)
@@ -85,13 +85,52 @@ func TestFreightCommandAndWordsSurviveCanvasSave(t *testing.T) {
 	}
 	values, items, _ := canvasDocumentContent(normalized)
 	visible, _, _ := canvasProjectionContent(normalized)
-	if len(items) != 1 || items[0].LineID != initial[0].LineID || values["say_total"] != action.Values["say_total"] || visible["say_total"] != values["say_total"] || visible["inland_freight"] != "20.25" {
+	if len(items) != 1 || items[0].LineID != initial[0].LineID || values["say_total"] != action.Values["say_total"] || visible["say_total"] != values["say_total"] || visible["inland_freight"] != "20.25" || visible["trade_term"] != "Freight included" || values["trade_term"] != visible["trade_term"] {
 		t.Fatal("save lost freight, words or stable identity", values, items, visible)
 	}
 	// Clearing freight uses the same field and removes it from both total forms.
 	cleared, err := h.proposeCanvasDocumentCommands(ctx, account.OwnerID, aiDocumentInput{Canvas: normalized, DocumentType: "contract"}, []DocumentCommand{{Type: "set_fields", Fields: map[string]json.RawMessage{"inland_freight": json.RawMessage(`""`)}}})
 	if err != nil || cleared.Values["total_amount"] != "100.00" || cleared.Values["say_total"] != "SAY TOTAL USD ONE HUNDRED ONLY" {
 		t.Fatal("clearing freight did not update amount words", cleared, err)
+	}
+}
+
+func TestFreightDeliveryTermsAcrossGenerationAndSave(t *testing.T) {
+	for _, tt := range []struct{ name, freight, term, want string }{
+		{"default with freight", "20", "", "Freight included"},
+		{"stale EXW", "20", "EXW (Ex Works)", "Freight included"},
+		{"EXW destination", "20", "EXW Shanghai", "Freight included"},
+		{"Ex Works", "20", "Ex Works", "Freight included"},
+		{"Chinese factory delivery", "20", "工厂交货", "Freight included"},
+		{"confirmed term", "20", "CIF Singapore", "CIF Singapore"},
+		{"agreed shipping description", "20", "Delivered to buyer's warehouse", "Delivered to buyer's warehouse"},
+		{"no freight", "", "EXW (Ex Works)", "EXW (Ex Works)"},
+		{"zero freight", "0", "EXW (Ex Works)", "EXW (Ex Works)"},
+		{"freight embedded in product price", "0", "Freight included", "Freight included"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := map[string]any{"type": "contract", "items": []any{map[string]any{"model": "VALVE", "qty": "1", "price": "100"}}, "values": map[string]any{"inland_freight": tt.freight, "trade_term": tt.term}}
+			result, _, err := executeGenerateDocument(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			card := result.(*AIDocumentCard)
+			hydrateDocumentCard(card)
+			if card.Values["trade_term"] != tt.want {
+				t.Fatalf("delivery terms: got %q, want %q", card.Values["trade_term"], tt.want)
+			}
+		})
+	}
+	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
+	body := businessCanvas(map[string]string{"item_model": "VALVE", "item_qty": "1", "item_price": "100", "item_amount": "100.00", "inland_freight": "20", "trade_term": "EXW (Ex Works)"})
+	normalized, _, err := normalizeCommercialDocument(context.Background(), h.mailDB, account.OwnerID, body, "contract", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible, _, _ := canvasProjectionContent(normalized)
+	values, _, _ := canvasDocumentContent(normalized)
+	if visible["trade_term"] != "Freight included" || values["trade_term"] != visible["trade_term"] {
+		t.Fatal("save retained stale EXW", visible, values)
 	}
 }
 

@@ -115,5 +115,6 @@ func calculateDocumentAmounts(card *AIDocumentCard) error {
 		card.Values[key] = value
 	}
 	refreshDocumentAmountWords(card.Values, previousTotal)
+	normalizeDocumentDeliveryTerms(card.Values)
 	return nil
 }

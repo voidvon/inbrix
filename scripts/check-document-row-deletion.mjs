@@ -9,6 +9,13 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 const snapshot = () => page.evaluate(() => JSON.parse(window.rowEditor.current.getDocument().split('__INBRIX_CANVAS_DOCUMENT__:')[1]));
+const assertRemittanceOnRight = doc => {
+  const bank = doc.data.main.find(element => element.trList && JSON.stringify(element).includes('Official Bank Payment Details'));
+  const notes = bank.trList[0].tdList.at(-1);
+  assert(JSON.stringify(notes).includes('DO NOT CONVERT'), 'Remittance instructions must be in the right notes panel');
+  assert.equal(notes.rowspan, bank.trList.length, 'Moving instructions must preserve the notes panel span');
+  assert(!JSON.stringify(bank.trList.slice(1)).includes('DO NOT CONVERT'), 'Instructions must not add a row below the bank details');
+};
 const mount = async (kind, html) => {
   await page.evaluate(async ({ kind, html }) => {
     const source = await (await fetch('/src/components/app/document-editor-dialog.tsx')).text();
@@ -60,6 +67,7 @@ try {
       await page.waitForFunction(() => window.rowEditor.current.getDocumentData().values.total_amount === '60.00');
       const original = await snapshot();
       if (kind === 'contract') {
+        assertRemittanceOnRight(original);
         assert(JSON.stringify(original.data).includes('Please designate Standard Chartered Bank, USA as the intermediary bank. Include \\"DO NOT CONVERT\\" in the payment remarks.'), 'Invoice must include fixed English remittance instructions');
       }
       await remove(index);
@@ -102,6 +110,44 @@ try {
     await mount(kind, empty);
     assert.deepEqual((await snapshot()).business.items, []);
   }
+
+  const deliveryCases = await page.evaluate(async () => {
+    const { convertGeneratedToStoredDocument } = await import('/src/lib/ai-document-storage.ts');
+    return [
+      { inland_freight: '20' },
+      { inland_freight: '20', trade_term: 'EXW (Ex Works)' },
+      { inland_freight: '20', trade_term: 'CIF Singapore' },
+      { inland_freight: '0', trade_term: 'Freight included' },
+    ].map(values => JSON.parse(convertGeneratedToStoredDocument({ type: 'contract', values, items: [] }).html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]));
+  });
+  for (const [i, doc] of deliveryCases.entries()) {
+    assert.equal(doc.business.values.trade_term, i === 2 ? 'CIF Singapore' : 'Freight included', 'Client must not reintroduce EXW for freight-inclusive invoices');
+  }
+
+  // Recreate v1.19.15's static left-side row and reopen it in the real editor.
+  const legacy = await page.evaluate(async () => {
+    const { convertGeneratedToStoredDocument } = await import('/src/lib/ai-document-storage.ts');
+    const doc = JSON.parse(convertGeneratedToStoredDocument({ type: 'contract', values: { currency: 'USD', inland_freight: '0', order_note_1: 'Keep my production schedule' }, items: [{ model: 'VALVE', description: 'Valve', qty: '1', price: '100', amount: '100.00' }] }).html.split('__INBRIX_CANVAS_DOCUMENT__:')[1]);
+    const bank = doc.data.main.find(element => element.trList && JSON.stringify(element).includes('Official Bank Payment Details'));
+    const notes = bank.trList[0].tdList.at(-1);
+    const note = notes.value.splice(-4);
+    const instructions = note.at(-1);
+    notes.rowspan++;
+    bank.trList.push({ height: 44, minHeight: 44, tdList: [
+      { colspan: 1, rowspan: 1, value: [{ value: 'Remittance Instructions:' }] },
+      { colspan: 1, rowspan: 1, value: [instructions] },
+      { colspan: 1, rowspan: 1, value: [{ value: ' ' }] },
+    ] });
+    return doc;
+  });
+  await mount('contract', prefix + JSON.stringify(legacy));
+  const migrated = await snapshot();
+  assertRemittanceOnRight(migrated);
+  assert.equal(migrated.business.values.order_note_1, 'Keep my production schedule', 'Moving instructions must preserve authored notes');
+  assert.deepEqual(migrated.business.items, legacy.business.items, 'Moving instructions must preserve line identities and product data');
+  await mount('contract', prefix + JSON.stringify(migrated));
+  assertRemittanceOnRight(await snapshot());
+  await page.locator('#row-test').screenshot({ path: '/tmp/inbrix-remittance-right.png' });
   assert.deepEqual(errors, []);
   console.log('PASS: invoice/quotation row deletion, first/middle/last/all rows, automatic totals, stable line identities, template persistence and document save/reopen.');
 } finally { await browser.close(); }

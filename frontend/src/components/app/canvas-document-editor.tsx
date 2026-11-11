@@ -5,7 +5,7 @@ import { validateDocument } from "../../lib/api";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, ControlType, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type QuotationItem } from "./spirax-quotation-canvas";
-import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument } from "./spirax-contract-canvas";
+import { createSpiraxContractCanvasBackground, createSpiraxContractCanvasDocument, moveSpiraxRemittanceInstructions } from "./spirax-contract-canvas";
 
 
 
@@ -26,7 +26,9 @@ function parseStoredCanvasDocument(value: string): StoredCanvasDocument | null {
   try {
     const parsed: unknown = JSON.parse(value.slice(CANVAS_DOCUMENT_PREFIX.length));
     if (!parsed || typeof parsed !== "object" || !("data" in parsed)) return null;
-    return parsed as StoredCanvasDocument;
+    const stored = parsed as StoredCanvasDocument;
+    if (stored.template === "spirax-contract") moveSpiraxRemittanceInstructions(stored.data);
+    return stored;
   } catch {
     return null;
   }

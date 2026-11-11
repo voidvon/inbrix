@@ -1402,6 +1402,10 @@ line. Standalone freight lines in new drafts and `add_line` commands are routed
 to `inland_freight`; catalog lines and ambiguous product descriptions stay intact.
 Matching scalar and line freight is counted once; conflicting amounts are rejected.
 Freight changes trigger recalculation and survive canvas saves and quotation snapshots.
+Positive freight replaces an empty or EXW delivery term with `Freight included`;
+confirmed non-EXW delivery terms are preserved. When freight is included in product
+prices, the assistant records that in `trade_term` without inventing a separate
+charge, a specific Incoterm, or unconfirmed delivery responsibilities.
 Canvas payloads persist commercial inputs and provenance in `business.values`,
 derived amounts in `business.calculated`, and stable-ID lines in `business.items`
 with `business.version=2`. Controls project this authoritative snapshot.

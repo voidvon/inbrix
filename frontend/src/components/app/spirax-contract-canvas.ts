@@ -4,6 +4,7 @@ import circleDollarSignIcon from "../../assets/lucide/circle-dollar-sign.svg?raw
 import clock3Icon from "../../assets/lucide/clock-3.svg?raw";
 import tagIcon from "../../assets/lucide/tag.svg?raw";
 import spiraxQuotationReference from "../../assets/spirax-sarco-quotation-reference.html?raw";
+import { documentDeliveryTerm } from "../../lib/document-delivery";
 
 
 
@@ -16,6 +17,7 @@ const HIGHLIGHT_BG = "#fef08a";
 const HIGHLIGHT_TEXT = "#854d0e";
 const FONT = "Arial";
 export const SPIRAX_CONTRACT_SELLER_COMPANY = "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD";
+const REMITTANCE_INSTRUCTIONS = 'Please designate Standard Chartered Bank, USA as the intermediary bank. Include "DO NOT CONVERT" in the payment remarks.';
 
 export function createSpiraxContractCanvasBackground(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="794" height="1123" viewBox="0 0 794 1123">
@@ -69,6 +71,33 @@ export function controlText(conceptId: string, defaultValue: string, placeholder
 
 function lineBreak(style: TextStyle = {}): IElement {
   return text("\n", style);
+}
+
+function remittancePanelContent(): IElement[] {
+  return [
+    lineBreak({ size: 1, rowMargin: 0.6 }),
+    text("Remittance Instructions:", { bold: true, size: 10, color: BLUE }),
+    lineBreak({ size: 1, rowMargin: 0.1 }),
+    text(REMITTANCE_INSTRUCTIONS, { size: 9.5, bold: true, color: HIGHLIGHT_TEXT }),
+  ];
+}
+
+// Move only the exact static row added by v1.19.15. Preserve all authored
+// fields, notes, stamps and layout in saved/customized invoice canvases.
+export function moveSpiraxRemittanceInstructions(data: { main?: IElement[] }) {
+  const cellText = (value?: IElement[]) => (value || []).map(run => run.value || "").join("");
+  for (const element of data.main || []) {
+    const rows = element.trList;
+    if (!rows) continue;
+    const notes = rows[0]?.tdList.find(td => cellText(td.value).includes("Order Notes & Terms"));
+    if (!notes) continue;
+    const index = rows.findIndex(row => cellText(row.tdList[0]?.value).trim() === "Remittance Instructions:"
+      && cellText(row.tdList[1]?.value).trim() === REMITTANCE_INSTRUCTIONS);
+    if (index < 0) continue;
+    if (!cellText(notes.value).includes(REMITTANCE_INSTRUCTIONS)) notes.value.push(...remittancePanelContent());
+    rows.splice(index, 1);
+    notes.rowspan = Math.max(1, (notes.rowspan || 1) - 1);
+  }
 }
 
 function cell(value: IElement[], backgroundColor?: string, borderTypes?: TdBorder[], verticalAlign = VerticalAlign.MIDDLE) {
@@ -285,7 +314,7 @@ export function createSpiraxContractCanvasDocument(
   ];
 
   const deliveryRows = [
-    ["Delivery Terms:", initialValues?.trade_term ?? "EXW (Ex Works)", "trade_term"],
+    ["Delivery Terms:", documentDeliveryTerm(initialValues), "trade_term"],
     ["Lead Time:", initialValues?.lead_time || "", "lead_time"],
     ["Origin:", initialValues?.origin || "", "origin"],
     ["Port of Loading:", initialValues?.port_of_loading || "", "port_of_loading"],
@@ -390,15 +419,6 @@ export function createSpiraxContractCanvasDocument(
       ),
     ],
   }));
-  bankTableRows.push({
-    height: 44,
-    cells: [
-      cell([text("Remittance Instructions:", { size: 9.5, color: "#64748b", bold: true })], PALE, [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]),
-      cell([
-        text('Please designate Standard Chartered Bank, USA as the intermediary bank. Include "DO NOT CONVERT" in the payment remarks.', { size: 9.5, bold: true, color: HIGHLIGHT_TEXT }),
-      ], HIGHLIGHT_BG, [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]),
-    ],
-  });
 
   const notesPanelContent: IElement[] = [
     ...notesBadge,
@@ -421,6 +441,7 @@ export function createSpiraxContractCanvasDocument(
     text("4. Quality & Warranty Commitment:", { bold: true, size: 10, color: "#1e293b" }),
     lineBreak({ size: 1, rowMargin: 0.1 }),
     controlText("order_note_4", initialValues?.order_note_4 || "", "Note 4", { size: 9.5, color: "#475569" }),
+    ...remittancePanelContent(),
   ];
 
   const bottomSection = table([136, 290, 10, 282], [

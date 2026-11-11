@@ -681,6 +681,7 @@ func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIA
 	var sb strings.Builder
 	sb.WriteString("You are the Inbrix assistant.\n")
 	sb.WriteString(documentFreightInstructions + "\n")
+	sb.WriteString(documentDeliveryInstructions + "\n")
 	if mode == agentModeConversation {
 		sb.WriteString("You are assisting the user inside an email conversation (邮件会话). Current conversation metadata, notes and a few previews are supplied separately from the discussion. Mail bodies are available on demand through tools.\n")
 		sb.WriteString("Use the available tools to investigate the user's request and work with their data.\n\n")
@@ -1506,6 +1507,7 @@ func hydrateDocumentCard(card *AIDocumentCard) {
 		if _, exists := card.Values["trade_term"]; !exists {
 			card.Values["trade_term"] = "EXW (Ex Works)"
 		}
+		normalizeDocumentDeliveryTerms(card.Values)
 		if _, exists := card.Values["contract_date"]; !exists {
 			card.Values["contract_date"] = time.Now().Format("2006-01-02")
 		}

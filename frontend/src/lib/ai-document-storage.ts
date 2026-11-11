@@ -5,6 +5,7 @@ import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCal
 import type { DocumentTemplate, StoredDocument } from "./document-storage";
 import { documentTemplateHTML } from "./document-storage";
 import { createDocumentNumber } from "./document-number";
+import { documentDeliveryTerm } from "./document-delivery";
 import { type Copy, zh } from "./locale";
 import { createSpiraxQuotationCanvasDocument } from "../components/app/spirax-quotation-canvas";
 import { createSpiraxContractCanvasDocument } from "../components/app/spirax-contract-canvas";
@@ -104,7 +105,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
   if (!html || html.includes("data-spirax-")) {
     if (generated.type === "quotation" || generated.type === "contract") {
       const isQuotation = generated.type === "quotation";
-      const values = isQuotation ? generated.values : { trade_term: "EXW (Ex Works)", contract_title: "PROFORMA INVOICE", ...generated.values };
+      const values = isQuotation ? generated.values : { contract_title: "PROFORMA INVOICE", ...generated.values, trade_term: documentDeliveryTerm(generated.values) };
       const date = new Date().toLocaleDateString("zh-CN");
       const docNum = isQuotation
         ? (generated.values?.quote_number || createDocumentNumber("quotation"))
