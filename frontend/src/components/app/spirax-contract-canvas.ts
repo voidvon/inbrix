@@ -390,6 +390,15 @@ export function createSpiraxContractCanvasDocument(
       ),
     ],
   }));
+  bankTableRows.push({
+    height: 44,
+    cells: [
+      cell([text("Remittance Instructions:", { size: 9.5, color: "#64748b", bold: true })], PALE, [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]),
+      cell([
+        text('Please designate Standard Chartered Bank, USA as the intermediary bank. Include "DO NOT CONVERT" in the payment remarks.', { size: 9.5, bold: true, color: HIGHLIGHT_TEXT }),
+      ], HIGHLIGHT_BG, [TdBorder.TOP, TdBorder.BOTTOM, TdBorder.LEFT, TdBorder.RIGHT]),
+    ],
+  });
 
   const notesPanelContent: IElement[] = [
     ...notesBadge,
@@ -437,7 +446,7 @@ export function createSpiraxContractCanvasDocument(
       ],
     },
     ...bankTableRows.map((bankRow) => ({
-      height: 24,
+      height: bankRow.height,
       cells: [
         bankRow.cells[0],
         bankRow.cells[1],

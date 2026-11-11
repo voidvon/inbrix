@@ -232,6 +232,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
   const initialTemplateKind = resolveDocumentTemplateKind(initialHTML, storedDocument);
   const templateRef = useRef<DocumentTemplateKind>(initialTemplateKind);
   const businessRef = useRef<DocumentBusiness | null>(storedDocument ? readDocumentBusiness(storedDocument.business) : null);
+  const lineHistoryRef = useRef(new Map<string, QuotationItem>());
   const calculateRef = useRef<((force?: boolean) => void) | null>(null);
   const [amountStatus, setAmountStatus] = useState("");
 
@@ -349,6 +350,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     editorRef.current = editor;
     templateRef.current = initialTemplateKind;
     businessRef.current = storedDocument ? readDocumentBusiness(storedDocument.business) : null;
+    lineHistoryRef.current.clear();
     if (storedDocument) {
       if (storedDocument.options) editor.command.executeUpdateOptions(storedDocument.options);
       const data = structuredClone(storedDocument.data);
@@ -379,7 +381,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
     });
     const scheduleCalculation = (force = false) => {
       if (disposed || !businessRef.current) return;
-      const business = captureDocumentBusiness(editor.command.getValue().data, businessRef.current);
+      const business = captureDocumentBusiness(editor.command.getValue().data, businessRef.current, lineHistoryRef.current);
       const inputs = calculationInputs(business);
       if (!force && inputs === scheduledInputs) return;
       scheduledInputs = inputs;
@@ -392,13 +394,13 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       setAmountStatus(locale.startsWith("zh") ? "正在自动计算金额…" : "Calculating amounts…");
       calculationTimer = setTimeout(() => {
         const { data } = editor.command.getValue();
-        const current = captureDocumentBusiness(data, businessRef.current!);
+        const current = captureDocumentBusiness(data, businessRef.current!, lineHistoryRef.current);
         const template = templateRef.current;
         const html = `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template, data, business: current })}`;
         void validateDocument({ html, type: template === "spirax-contract" ? "contract" : "quotation" }).then(result => {
           if (disposed || version !== calculationVersion || editor.command.getOptions().mode === EditorMode.READONLY) return;
           const latestData = editor.command.getValue().data;
-          const latest = captureDocumentBusiness(latestData, businessRef.current!);
+          const latest = captureDocumentBusiness(latestData, businessRef.current!, lineHistoryRef.current);
           if (calculationInputs(latest) !== inputs) return;
           const stored = parseStoredCanvasDocument(result.html);
           const calculated = readDocumentBusiness(stored?.business);
@@ -428,7 +430,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       if (synchronizing || !businessRef.current) return;
       try {
         const { data } = editor.command.getValue();
-        const next = captureDocumentBusiness(data, businessRef.current);
+        const next = captureDocumentBusiness(data, businessRef.current, lineHistoryRef.current);
         const updates = documentControlUpdates(data, next);
         businessRef.current = next;
         if (updates.length) {
@@ -469,7 +471,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const options = { ...editorOptions };
       delete options.mode;
       const currentTemplate = templateRef.current !== "document" ? templateRef.current : "document";
-      const business = captureDocumentBusiness(data, businessRef.current!);
+      const business = captureDocumentBusiness(data, businessRef.current!, lineHistoryRef.current);
       return `${CANVAS_DOCUMENT_PREFIX}${JSON.stringify({ template: currentTemplate, data, options, business })}`;
     },
     importDocx: async (file) => {
@@ -482,6 +484,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       editor.command.executeSetValue(snapshot.data);
       templateRef.current = "document";
       businessRef.current = createBusinessFromTemplate(snapshot.data);
+      lineHistoryRef.current.clear();
     },
     exportDocx: async (name) => {
       const editor = editorRef.current;
@@ -561,6 +564,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
 
       templateRef.current = nextTemplate;
       businessRef.current = stored ? readDocumentBusiness(stored.business) : null;
+      lineHistoryRef.current.clear();
       editor.command.executeUpdateOptions(getCanvasEditorOptions(nextTemplate));
 
       if (stored) {
@@ -791,7 +795,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       controls.push(...Array.from(map.values()));
 
       const snapshot = editor?.command.getValue();
-      const business = captureDocumentBusiness(snapshot?.data, businessRef.current!);
+      const business = captureDocumentBusiness(snapshot?.data, businessRef.current!, lineHistoryRef.current);
       const values = { ...business.values, ...business.calculated };
       const items = business.items;
 

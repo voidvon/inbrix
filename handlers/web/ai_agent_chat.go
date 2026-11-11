@@ -680,6 +680,7 @@ const (
 func buildAgentSystemPrompt(mode, agentName, customPrompt string, activeDoc *AIAgentChatDocContext) string {
 	var sb strings.Builder
 	sb.WriteString("You are the Inbrix assistant.\n")
+	sb.WriteString(documentFreightInstructions + "\n")
 	if mode == agentModeConversation {
 		sb.WriteString("You are assisting the user inside an email conversation (邮件会话). Current conversation metadata, notes and a few previews are supplied separately from the discussion. Mail bodies are available on demand through tools.\n")
 		sb.WriteString("Use the available tools to investigate the user's request and work with their data.\n\n")
@@ -1291,6 +1292,9 @@ func executeCalculatePricing(args map[string]any) (any, string, error) {
 			card.Values[key] = text
 		}
 	}
+	if err := normalizeDocumentFreightLines(card); err != nil {
+		return nil, "", err
+	}
 	if err := calculateDocumentAmounts(card); err != nil {
 		return nil, "", err
 	}
@@ -1366,6 +1370,9 @@ func executeGenerateDocument(args map[string]any) (any, string, error) {
 		if text := parseStringArg(args, key); text != "" {
 			card.Values[key] = text
 		}
+	}
+	if err := normalizeDocumentFreightLines(card); err != nil {
+		return nil, "", err
 	}
 	if err := calculateDocumentAmounts(card); err != nil {
 		return nil, "", err

@@ -146,7 +146,7 @@ func TestDocumentUpdateRejectsMissingScalarAndWritesNestedControls(t *testing.T)
 	}
 }
 
-func TestDocumentAmountWordsInvalidated(t *testing.T) {
+func TestDocumentAmountWordsRefreshed(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	ctx := context.Background()
 	fields := map[string]string{"customer_company": "Buyer", "item_model": "MANUAL", "item_qty": "1", "item_price": "100.00", "item_amount": "100.00", "subtotal": "100.00", "total_amount": "100.00", "tax_rate": "0%", "say_total": "人民币壹佰元整", "currency": "CNY"}
@@ -155,15 +155,15 @@ func TestDocumentAmountWordsInvalidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {
-		name string
-		args map[string]any
-		keep bool
+		name  string
+		args  map[string]any
+		words string
 	}{
-		{"contact", map[string]any{"values": map[string]any{"customer_company": "New buyer"}}, true},
-		{"same total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "50"}}}, true},
-		{"changed total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, false},
-		{"unknown total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "1", "price": ""}}}, false},
-		{"guessed totals cannot validate words", map[string]any{"values": map[string]any{"total_amount": "200.00"}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, false},
+		{"contact", map[string]any{"values": map[string]any{"customer_company": "New buyer"}}, "人民币壹佰元整"},
+		{"same total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "50"}}}, "人民币壹佰元整"},
+		{"changed total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, "SAY TOTAL CNY TWO HUNDRED ONLY"},
+		{"unknown total", map[string]any{"items": []any{map[string]any{"model": "MANUAL", "qty": "1", "price": ""}}}, ""},
+		{"guessed totals cannot validate words", map[string]any{"values": map[string]any{"total_amount": "200.00"}, "items": []any{map[string]any{"model": "MANUAL", "qty": "2", "price": "100"}}}, "SAY TOTAL CNY TWO HUNDRED ONLY"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args["id"] = record.ID
@@ -173,7 +173,7 @@ func TestDocumentAmountWordsInvalidated(t *testing.T) {
 			}
 			action := result.(*AIDocumentAction)
 			values, _, _ := canvasDocumentContent(action.HTML)
-			if (values["say_total"] != "") != tt.keep || (!tt.keep && !strings.Contains(action.Summary, "请核对后补填")) {
+			if values["say_total"] != tt.words || (tt.words == "" && !strings.Contains(action.Summary, "请核对后补填")) {
 				t.Fatalf("stale words or missing warning: %+v", action)
 			}
 		})

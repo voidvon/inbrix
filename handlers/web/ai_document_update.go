@@ -82,7 +82,7 @@ func (h *AISettingsHandler) proposeCanvasDocumentUpdate(ctx context.Context, own
 		if previousTotal == "" {
 			previousTotal = values["contract_amount"]
 		}
-		clearStaleDocumentAmountWords(action.Values, previousTotal)
+		refreshDocumentAmountWords(action.Values, previousTotal)
 	}
 	patched, err := patchStoredCanvasDocument(body, action.Values, action.Items, recalculate)
 	if err != nil {

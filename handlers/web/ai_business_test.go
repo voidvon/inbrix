@@ -169,7 +169,7 @@ func TestContractQuotationSnapshotDoesNotReprice(t *testing.T) {
 	if card.Items[0].Price != "44.00" || card.Total != "88.00" || card.Counterparty != "采购公司" || card.Values["contract_amount"] != "88.00" || card.Values["source_quotation_id"] != source.ID {
 		t.Fatalf("snapshot lost: %+v", card)
 	}
-	if card.Values["tax_rate"] != "" || card.Values["discount"] != "" || card.Values["say_total"] != "" {
+	if card.Values["tax_rate"] != "" || card.Values["discount"] != "" || card.Values["say_total"] != "SAY TOTAL CNY EIGHTY EIGHT ONLY" {
 		t.Fatal("guesses filled missing source conditions", card.Values)
 	}
 	if _, _, e = h.executeTool(context.Background(), other.OwnerID, other.ID, AIToolCall{Name: "generate_document", Args: map[string]any{"type": "contract", "sourceQuotationId": source.ID}}, mailstore.AIModelRecord{}, ""); e == nil {

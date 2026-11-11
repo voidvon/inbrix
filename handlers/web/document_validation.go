@@ -57,10 +57,10 @@ func normalizeCommercialDocument(ctx context.Context, db *mailstore.Store, owner
 		return "", nil, err
 	}
 	if trustedValues != nil {
-		clearStaleDocumentAmountWords(card.Values, trustedValues["total_amount"])
 		if documentCurrency(trustedValues["currency"]) != documentCurrency(card.Values["currency"]) {
 			card.Values["say_total"] = ""
 		}
+		refreshDocumentAmountWords(card.Values, trustedValues["total_amount"])
 	}
 	normalized, err := patchStoredCanvasDocument(body, card.Values, card.Items, true)
 	if err != nil {

@@ -114,19 +114,6 @@ func calculateDocumentAmounts(card *AIDocumentCard) error {
 	for key, value := range map[string]string{"subtotal": card.Subtotal, "total_amount": card.Total, "contract_amount": card.Total} {
 		card.Values[key] = value
 	}
-	clearStaleDocumentAmountWords(card.Values, previousTotal)
+	refreshDocumentAmountWords(card.Values, previousTotal)
 	return nil
-}
-
-// Words are user-authored and may use any language/currency. Invalidate them
-// when their numerical basis changes rather than inventing a translation.
-func clearStaleDocumentAmountWords(values map[string]string, previousTotal string) {
-	if values["say_total"] == "" {
-		return
-	}
-	previous, oldErr := documentNumber(previousTotal)
-	current, newErr := documentNumber(values["total_amount"])
-	if oldErr != nil || newErr != nil || previous.Cmp(current) != 0 {
-		values["say_total"] = ""
-	}
 }

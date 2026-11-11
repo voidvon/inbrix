@@ -1395,23 +1395,20 @@ and modifications. Catalog prices use CNY; CNY/RMB/人民币/¥ aliases are norm
 Changing the currency of existing amounts to a different currency is rejected:
 there is no exchange-rate conversion workflow in this version.
 `inland_freight` is a separate charge, outside the goods subtotal and discount.
-A positive freight requires explicit `freight_tax_rate` and `freight_tax_mode`
-(`included` or `excluded`). Its tax is rounded separately to cents; gross freight
-plus any excluded freight tax contributes to the final amount. Missing freight
-tax conditions leave final/tax totals blank, clear stale amount words and prompt
-for confirmation. Absent or zero freight adds nothing. Freight changes trigger
-recalculation and these fields survive canvas saves and quotation snapshots.
-Canvas payloads persist commercial inputs, calculated amounts, currency and
-quotation provenance in `business: {version: 1, values: {...}}`, using a fixed
-commercial-field allowlist. Default and custom templates and editor saves retain
-this metadata even when there is no visible tax/discount control. Visible
-controls, including explicitly cleared controls, override metadata. Legacy
-canvases remain readable without inferring missing conditions; unsupported
-business-data versions cannot be modified. Quotation-to-contract snapshots copy
-these terms without retaining generated guesses for missing source conditions.
-When recalculation changes or invalidates the total, or the currency changes,
-`say_total` is cleared and the update summary asks the user to verify and refill
-it. Contact-only edits and recalculations with an unchanged total retain it.
+Total is the rounded goods subtotal minus discount plus freight; tax fields are
+retired. AI assistants use the existing Freight field instead of adding a product
+line. Standalone freight lines in new drafts and `add_line` commands are routed
+to `inland_freight`; catalog lines and ambiguous product descriptions stay intact.
+Matching scalar and line freight is counted once; conflicting amounts are rejected.
+Freight changes trigger recalculation and survive canvas saves and quotation snapshots.
+Canvas payloads persist commercial inputs and provenance in `business.values`,
+derived amounts in `business.calculated`, and stable-ID lines in `business.items`
+with `business.version=2`. Controls project this authoritative snapshot.
+Quotation-to-contract snapshots retain the source's commercial terms and prices.
+Blank `say_total` is filled with English amount words from the final total and
+currency, using a fractional hundredths suffix when needed. A changed total
+regenerates the wording; an unknown total clears it. Contact-only edits and
+recalculations with an unchanged total retain existing authored wording.
 Generated layouts are built from trusted templates; model-supplied HTML is not
 used. Saved-document update/delete tools remain proposals requiring user action.
 Update proposals include `html`: the original saved canvas patched at

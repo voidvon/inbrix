@@ -189,6 +189,7 @@ func (h *AISettingsHandler) applyQuotationSnapshot(ctx context.Context, owner st
 	// No generated total is allowed to survive a missing source total.
 	card.Values["contract_amount"] = card.Total
 	card.Values["total_amount"] = card.Total
+	refreshDocumentAmountWords(card.Values, card.Total)
 	return nil
 }
 func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner string, card *AIDocumentCard, originalItems ...[]AIDocumentItem) error {
@@ -205,6 +206,11 @@ func (h *AISettingsHandler) finishBusinessDocument(ctx context.Context, owner st
 			return err
 		}
 	} else {
+		if len(originalItems) == 0 {
+			if err := normalizeDocumentFreightLines(card); err != nil {
+				return err
+			}
+		}
 		if err := h.checkBusinessItems(ctx, owner, card.Items); err != nil {
 			return err
 		}

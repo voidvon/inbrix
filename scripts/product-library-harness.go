@@ -68,6 +68,7 @@ func main() {
 	app.Post("/api/documents/validate", documents.HandleValidateDocument)
 	app.Get("/api/documents/:id", documents.HandleGetDocument)
 	app.Get("/api/document-templates", documents.HandleListTemplates)
+	app.Post("/api/document-templates", documents.HandleSaveTemplate)
 	app.Get("/api/document-stamps", documents.HandleListStamps)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

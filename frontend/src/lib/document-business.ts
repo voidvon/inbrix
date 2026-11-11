@@ -134,7 +134,10 @@ export function projectDocumentBusiness(data: unknown, business: DocumentBusines
     const item = itemConcept(c.conceptId);
     let value: string;
     if (item) {
-      const line = business.items[item.index];
+      const lineId = (c.extension as Node | undefined)?.lineId;
+      const line = typeof lineId === "string"
+        ? business.items.find(row => row.lineId === lineId)
+        : business.items[item.index];
       if (!line) return;
       c.extension = { ...(c.extension && typeof c.extension === "object" ? c.extension : {}), lineId: line.lineId };
       value = line[item.field] || "";
@@ -144,10 +147,12 @@ export function projectDocumentBusiness(data: unknown, business: DocumentBusines
   });
 }
 
-// Treat typing in a business control as a field edit. It cannot change IDs,
-// price provenance, remove lines or write calculated amounts.
-export function captureDocumentBusiness(data: unknown, previous: DocumentBusiness): DocumentBusiness {
+// Capture edits and deleted rows by stable identity. Keep removed lines in the
+// editor's history so undo can restore their catalog metadata and pictures.
+export function captureDocumentBusiness(data: unknown, previous: DocumentBusiness, lineHistory = new Map<string, QuotationItem>()): DocumentBusiness {
   const next = readDocumentBusiness(previous);
+  for (const line of previous.items) lineHistory.set(line.lineId!, { ...line });
+  const visibleLines = new Map<string, QuotationItem>();
   let pricingChanged = false;
   const changed = new Map<string, string>();
   const remember = (key: string, value: string) => {
@@ -160,13 +165,14 @@ export function captureDocumentBusiness(data: unknown, previous: DocumentBusines
     const id = documentFieldKey(c.conceptId), value = controlText(c), item = itemConcept(id);
     if (retiredDocumentFields.has(id)) return;
     if (item) {
-      if (["amount", "picture"].includes(item.field)) return;
       const lineId = (c.extension as Node | undefined)?.lineId;
       if (typeof lineId !== "string") throw new Error("明细控件未绑定产品行 / Unbound line control");
-      const line = next.items.find(row => row.lineId === lineId);
-      if (!line) throw new Error("明细控件未绑定产品行，请使用产品表单调整 / Unbound line control");
+      const base = lineHistory.get(lineId);
+      if (!base) throw new Error("明细控件未绑定产品行，请使用产品表单调整 / Unbound line control");
+      const line = visibleLines.get(lineId) || { ...base };
+      visibleLines.set(lineId, line);
+      if (["amount", "picture"].includes(item.field)) return;
       const key = item.field as "model" | "description" | "qty" | "price";
-      const base = previous.items.find(row => row.lineId === lineId)!;
       if (base[key] !== value) { remember(`${lineId}:${key}`, value); line[key] = value; pricingChanged = true; }
     } else if (!calculatedDocumentFields.has(id) && !id.startsWith("source_quotation_") && !id.startsWith("item_")) {
       if (previous.values[id] !== value) {
@@ -176,6 +182,8 @@ export function captureDocumentBusiness(data: unknown, previous: DocumentBusines
       }
     }
   });
+  next.items = [...visibleLines.values()];
+  if (next.items.length !== previous.items.length || next.items.some((line, i) => line.lineId !== previous.items[i]?.lineId)) pricingChanged = true;
   if (pricingChanged) {
     next.calculated = {};
     next.values.say_total = "";

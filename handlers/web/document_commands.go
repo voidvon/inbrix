@@ -64,6 +64,7 @@ func applyDocumentCommands(body string, commands []DocumentCommand) (map[string]
 		return nil, nil, fmt.Errorf("修改命令数量必须在 1 到 1000 之间")
 	}
 	updates := map[string]string{}
+	var freightLines []AIDocumentItem
 	lineChanged := false
 	for _, command := range commands {
 		index := -1
@@ -100,7 +101,6 @@ func applyDocumentCommands(body string, commands []DocumentCommand) (map[string]
 				return nil, nil, err
 			}
 		case "add_line":
-			lineChanged = true
 			if command.LineID != "" || len(command.Fields) == 0 {
 				return nil, nil, fmt.Errorf("add_line 由服务端生成 lineId，且需要非空 fields")
 			}
@@ -108,6 +108,11 @@ func applyDocumentCommands(body string, commands []DocumentCommand) (map[string]
 			if err := patchDocumentLine(&item, command.Fields); err != nil {
 				return nil, nil, err
 			}
+			if isDocumentFreightLine(item) {
+				freightLines = append(freightLines, item)
+				continue
+			}
+			lineChanged = true
 			next := []AIDocumentItem{item}
 			ensureDocumentLineIDs(next)
 			items = append(items, next[0])
@@ -119,6 +124,11 @@ func applyDocumentCommands(body string, commands []DocumentCommand) (map[string]
 			items = append(items[:index], items[index+1:]...)
 		default:
 			return nil, nil, fmt.Errorf("未知文档修改命令 %s", command.Type)
+		}
+	}
+	if len(freightLines) > 0 {
+		if err := normalizeDocumentFreightLines(&AIDocumentCard{Values: updates, Items: freightLines}); err != nil {
+			return nil, nil, err
 		}
 	}
 	if !lineChanged {

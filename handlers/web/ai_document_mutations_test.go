@@ -63,7 +63,7 @@ func TestEditorAndAgentShareValidatedDocumentMutation(t *testing.T) {
 	}
 	html := result["html"].(string)
 	values, items, ok := canvasDocumentContent(html)
-	if !ok || items[0].Amount != "200.00" || values["total_amount"] != "200.00" || values["say_total"] != "" {
+	if !ok || items[0].Amount != "200.00" || values["total_amount"] != "200.00" || values["say_total"] != "SAY TOTAL TWO HUNDRED ONLY" {
 		t.Fatal("unvalidated amounts", result)
 	}
 	for _, marker := range []string{"HUMAN TERM", "CUSTOM HEADER", "CUSTOM STAMP", "WATERMARK"} {
@@ -71,8 +71,8 @@ func TestEditorAndAgentShareValidatedDocumentMutation(t *testing.T) {
 			t.Fatal("lost", marker)
 		}
 	}
-	if !strings.Contains(result["summary"].(string), "请核对后补填") {
-		t.Fatal("missing amount words notice")
+	if strings.Contains(result["summary"].(string), "请核对后补填") {
+		t.Fatal("amount words were filled automatically")
 	}
 	record, err := h.mailDB.SaveDocument(context.Background(), mailstore.DocumentRecord{OwnerID: account.OwnerID, Type: "contract", Name: "Shared", HTML: body}, 0)
 	if err != nil {
@@ -151,8 +151,8 @@ func TestFreightAmountsAcrossToolsAndUpdates(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := "120.00"
-		if action.Values["total_amount"] != want || action.Values["say_total"] != "" {
-			t.Fatal("freight failed to invalidate totals", action)
+		if action.Values["total_amount"] != want || action.Values["say_total"] != "SAY TOTAL ONE HUNDRED TWENTY ONLY" {
+			t.Fatal("freight failed to refresh totals and words", action)
 		}
 		reopened, _, ok := canvasDocumentContent(action.HTML)
 		if !ok || reopened["inland_freight"] != "20" || reopened["freight_tax_mode"] != "" {
