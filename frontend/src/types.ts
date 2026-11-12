@@ -53,6 +53,7 @@ export type ConversationSummary = {
   count: number;
   unreadCount: number;
   hasAttachments: boolean;
+  latestHasAttachments: boolean;
   accountEmail?: string;
   accountLabel?: string;
   accountColor?: string;
@@ -219,8 +220,11 @@ export type ConversationDetailResponse = {
   conversation: ConversationDetail;
 };
 
-/** One matching message from the full-text mail search. */
+/** A conversation lookup or a matching message from global search. */
 export type MailSearchResult = {
+  kind?: "conversation" | "message";
+  conversation?: ConversationSummary;
+  matchedNote?: boolean;
   conversationId: string;
   messageId: string;
   folder: string;

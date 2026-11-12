@@ -23,8 +23,8 @@ import (
 const CommandCodeBaseURL = "https://api.commandcode.ai"
 
 func commandCodeRequest(model AIModelRecord, instructions string, messages []agentruntime.Message, tools []agentruntime.ToolSpec, images []AIInputImage, maxTokens int, effort string) ([]byte, error) {
-	if len(images) > 0 && !model.SupportsImageInput() {
-		return nil, errors.New("当前模型未启用图片输入 / Enable image input in model settings")
+	if err := validateAIInputAttachments(model, images); err != nil {
+		return nil, err
 	}
 	history := []any{}
 	callNames := map[string]string{}

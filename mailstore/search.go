@@ -29,10 +29,11 @@ const searchTextArgCount = 7
 // callers can verify and highlight matches without re-implementing the query
 // grammar.
 type parsedSearch struct {
-	clauses []string
-	args    []any
-	folder  string
-	terms   []string
+	clauses  []string
+	args     []any
+	folder   string
+	terms    []string
+	filtered bool
 }
 
 func negatedClause(clause string, negated bool) string {
@@ -70,9 +71,11 @@ func parseSearchQuery(query string) parsedSearch {
 		}
 		negated := strings.HasPrefix(term, "-")
 		if negated {
+			parsed.filtered = true
 			term = strings.TrimPrefix(term, "-")
 		}
 		if match := searchOperator.FindStringSubmatch(term); match != nil {
+			parsed.filtered = true
 			key, value := strings.ToLower(match[1]), strings.TrimSpace(match[2])
 			if key == "in" && value != "" {
 				parsed.folder = value
@@ -130,6 +133,17 @@ func parseSearchQuery(query string) parsedSearch {
 // highlight the matches SearchMessages reports.
 func SearchTextTerms(query string) []string {
 	return parseSearchQuery(query).terms
+}
+
+// ConversationSearchTerms returns plain text terms for conversation lookup.
+// Operator and negated queries remain message searches so their constraints
+// are never bypassed by a conversation-level match.
+func ConversationSearchTerms(query string) []string {
+	parsed := parseSearchQuery(query)
+	if parsed.filtered {
+		return nil
+	}
+	return parsed.terms
 }
 
 // SearchMessages performs a local search over the synchronized mirror. It

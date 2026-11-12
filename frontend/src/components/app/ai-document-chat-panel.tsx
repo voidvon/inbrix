@@ -226,6 +226,7 @@ export function AIDocumentChatPanel({
   };
 
   const aiState = useAIStateMachine({
+    autoProgress: false,
     taskType: "document",
     locale: isZh ? "zh" : "en",
   });
@@ -258,7 +259,14 @@ export function AIDocumentChatPanel({
       };
       retryRef.current = { key, payload };
       return await aiState.run(async () => {
-        const res = await chatWithAIAgent(payload, { signal: controller.signal });
+        const res = await chatWithAIAgent(payload, { signal: controller.signal, onEvent: (event) => {
+          if (activeAccount.current !== scope || requestRef.current !== controller || controller.signal.aborted) return;
+          if (event.type === "started") aiState.transition("thinking");
+          else if (event.type === "attachment_progress") {
+            const { filename, page, pages } = event.attachment;
+            aiState.transition("thinking", { detailText: isZh ? `正在准备 ${filename}，第 ${page}/${pages} 页` : `Preparing ${filename}, page ${page}/${pages}` });
+          } else if (event.type === "text_delta") aiState.transition("generating");
+        } });
         controller.signal.throwIfAborted();
         if (res.toolCalls && res.toolCalls.length > 0) {
           const first = res.toolCalls[0];

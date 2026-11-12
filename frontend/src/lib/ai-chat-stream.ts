@@ -3,6 +3,7 @@ import type { AIAgentChatResponse, AIToolCall } from "./api";
 export type AIChatStreamEvent =
   | { type: "started" | "text_reset" }
   | { type: "text_delta"; delta: string }
+  | { type: "attachment_progress"; attachment: { filename: string; page: number; pages: number } }
   | { type: "tool_start" | "tool_end"; tool: AIToolCall }
   | { type: "done"; response: AIAgentChatResponse }
   | { type: "error"; error: string };

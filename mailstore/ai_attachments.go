@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// AIChatAttachment stores image bytes separately from lightweight chat history.
+// AIChatAttachment stores original attachment bytes separately from lightweight chat history.
 // Every read is scoped to both the authenticated owner and the selected mailbox.
 type AIChatAttachment struct {
 	ID          string `json:"id"`
@@ -18,12 +18,15 @@ type AIChatAttachment struct {
 	Data        []byte `json:"-"`
 }
 
-const MaxAIImageBytes = 10 << 20
+const MaxAIChatAttachmentBytes = 10 << 20
+
+// MaxAIImageBytes is retained for existing image upload callers.
+const MaxAIImageBytes = MaxAIChatAttachmentBytes
 
 func (s *Store) CreateAIChatAttachment(ctx context.Context, owner, accountID, filename, contentType string, data []byte) (AIChatAttachment, error) {
 	out := AIChatAttachment{Filename: filename, ContentType: contentType, Size: len(data)}
-	if len(data) == 0 || len(data) > MaxAIImageBytes {
-		return out, errors.New("图片大小必须在 1 字节到 10 MB 之间")
+	if len(data) == 0 || len(data) > MaxAIChatAttachmentBytes {
+		return out, errors.New("附件大小必须在 1 字节到 10 MB 之间")
 	}
 	if err := s.GCAIChatAttachments(ctx); err != nil {
 		return out, err
@@ -51,7 +54,7 @@ func (s *Store) CreateAIChatAttachment(ctx context.Context, owner, accountID, fi
 		return out, err
 	}
 	if n == 0 {
-		return out, errors.New("邮箱不存在或 AI 图片附件已达到 256 MB 存储上限，请移除不需要的图片")
+		return out, errors.New("邮箱不存在或 AI 附件已达到 256 MB 存储上限，请移除不需要的附件")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO ai_chat_attachment_lifecycle(attachment_id,created_at,expires_at) VALUES(?,?,?)`, id, time.Now().Unix(), time.Now().Add(24*time.Hour).Unix()); err != nil {
 		return out, err

@@ -47,14 +47,6 @@ func CreateAIResponseStream(ctx context.Context, client HTTPClient, model AIMode
 	return CreateAIResponseWithImages(ctx, client, model, apiKey, instructions, input, nil, maxOutputTokens, effort, onDelta)
 }
 
-// AIInputImage contains trusted image bytes resolved from owned attachments.
-// Label associates each image with its original turn even after text compaction.
-type AIInputImage struct {
-	Label       string
-	ContentType string
-	Base64      string
-}
-
 func CreateAIResponseWithImages(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, images []AIInputImage, maxOutputTokens int, effort string, onDelta func(string) error) (string, error) {
 	if onDelta == nil {
 		return createAIResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, nil)
@@ -81,8 +73,8 @@ func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 	if maxOutputTokens < 0 {
 		maxOutputTokens = 0
 	}
-	if len(images) > 0 && !model.SupportsImageInput() {
-		return "", errors.New("当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
+	if err := validateAIInputAttachments(model, images); err != nil {
+		return "", err
 	}
 	switch provider {
 	case "commandcode-go":
@@ -387,7 +379,7 @@ func createOpenAIResponse(ctx context.Context, client HTTPClient, model AIModelR
 	if len(images) > 0 {
 		content := []map[string]any{{"type": "input_text", "text": input}}
 		for _, img := range images {
-			content = append(content, map[string]any{"type": "input_text", "text": img.Label}, map[string]any{"type": "input_image", "image_url": "data:" + img.ContentType + ";base64," + img.Base64})
+			content = append(content, map[string]any{"type": "input_text", "text": img.Label}, img.responsesPart())
 		}
 		payload["input"] = []map[string]any{{"role": "user", "content": content}}
 	}
@@ -567,7 +559,7 @@ func createOpenAICompatibleResponse(ctx context.Context, client HTTPClient, mode
 	if len(images) > 0 {
 		content := []map[string]any{{"type": "text", "text": input}}
 		for _, img := range images {
-			content = append(content, map[string]any{"type": "text", "text": img.Label}, map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:" + img.ContentType + ";base64," + img.Base64}})
+			content = append(content, map[string]any{"type": "text", "text": img.Label}, img.chatCompletionsPart())
 		}
 		msgs = append(msgs, openAICompatibleMessage{Role: "user", Content: content})
 	} else if strings.TrimSpace(input) != "" {

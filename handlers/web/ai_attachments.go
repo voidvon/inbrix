@@ -72,28 +72,32 @@ func (h *AISettingsHandler) HandleUploadAIChatAttachment(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(400, "multipart file field is required")
 	}
-	if file.Size <= 0 || file.Size > mailstore.MaxAIImageBytes {
-		return fiber.NewError(413, "每张图片最大 10 MB / Image exceeds 10 MB")
+	if file.Size <= 0 || file.Size > mailstore.MaxAIChatAttachmentBytes {
+		return fiber.NewError(413, "每个附件最大 10 MB / Attachment exceeds 10 MB")
 	}
 	src, err := file.Open()
 	if err != nil {
-		return fiber.NewError(400, "could not read image")
+		return fiber.NewError(400, "could not read attachment")
 	}
 	defer src.Close()
-	data, err := io.ReadAll(io.LimitReader(src, mailstore.MaxAIImageBytes+1))
+	data, err := io.ReadAll(io.LimitReader(src, mailstore.MaxAIChatAttachmentBytes+1))
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	if len(data) > mailstore.MaxAIImageBytes {
-		return fiber.NewError(413, "每张图片最大 10 MB")
+	if len(data) > mailstore.MaxAIChatAttachmentBytes {
+		return fiber.NewError(413, "每个附件最大 10 MB")
 	}
-	contentType, err := validateAIImage(data)
+	contentType, err := validateAIAttachment(file.Filename, data)
 	if err != nil {
 		return err
 	}
 	filename := filepath.Base(strings.ReplaceAll(file.Filename, "\\", "/"))
 	if filename == "" || len(filename) > 240 {
-		filename = "image"
+		extension := strings.ToLower(filepath.Ext(filename))
+		if len(extension) > 10 {
+			extension = ""
+		}
+		filename = "attachment" + extension
 	}
 	attachment, err := h.mailDB.CreateAIChatAttachment(c.UserContext(), owner, account.ID, filename, contentType, data)
 	if err != nil {
@@ -119,6 +123,7 @@ func (h *AISettingsHandler) HandleAIChatAttachment(c *fiber.Ctx) error {
 		if err != nil {
 			return chatStoreError(err)
 		}
+		h.pdfCache.forget(owner, account.ID, c.Params("id"))
 		return c.SendStatus(204)
 	}
 	attachment, err := h.mailDB.GetAIChatAttachment(c.UserContext(), owner, account.ID, c.Params("id"))
@@ -129,92 +134,50 @@ func (h *AISettingsHandler) HandleAIChatAttachment(c *fiber.Ctx) error {
 		return fiber.ErrInternalServerError
 	}
 	c.Set("Content-Type", attachment.ContentType)
-	c.Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": attachment.Filename}))
+	disposition := "attachment"
+	if strings.HasPrefix(attachment.ContentType, "image/") {
+		disposition = "inline"
+	}
+	c.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": attachment.Filename}))
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Cache-Control", "private, no-store")
 	return c.Send(attachment.Data)
 }
 
-func (h *AISettingsHandler) resolveAgentImages(ctx context.Context, owner, account string, messages []AIAgentChatMessage) ([]mailstore.AIInputImage, error) {
-	var images []mailstore.AIInputImage
+func (h *AISettingsHandler) resolveAgentAttachments(ctx context.Context, owner, account string, messages []AIAgentChatMessage) ([]mailstore.AIInputAttachment, error) {
+	var images []mailstore.AIInputAttachment
 	total := 0
 	for index, message := range messages {
 		if len(message.Attachments) > 6 || (message.Role != "user" && len(message.Attachments) > 0) {
-			return nil, fiber.NewError(400, "仅用户消息可附图片，每条消息最多 6 张 / Up to 6 images per user message")
+			return nil, fiber.NewError(400, "仅用户消息可附附件，每条消息最多 6 个 / Up to 6 attachments per user message")
 		}
 		for _, ref := range message.Attachments {
 			if len(images) >= 24 {
-				return nil, fiber.NewError(413, "对话图片过多，请新建对话 / Start a new chat for more images")
+				return nil, fiber.NewError(413, "对话附件过多，请新建对话 / Start a new chat for more attachments")
 			}
 			attachment, err := h.mailDB.GetAIChatAttachment(ctx, owner, account, ref.ID)
 			if errors.Is(err, mailstore.ErrNotFound) {
-				return nil, fiber.NewError(400, "图片不存在或不属于当前邮箱，请重新上传 / Image unavailable for this mailbox")
+				return nil, fiber.NewError(400, "附件不存在或不属于当前邮箱，请重新上传 / Attachment unavailable for this mailbox")
 			}
 			if err != nil {
 				return nil, fiber.ErrInternalServerError
 			}
 			total += attachment.Size
 			if total > 32<<20 {
-				return nil, fiber.NewError(413, "对话图片总量超过 32 MB，请新建对话 / Chat images exceed 32 MB")
+				return nil, fiber.NewError(413, "对话附件总量超过 32 MB，请新建对话 / Chat attachments exceed 32 MB")
 			}
-			images = append(images, mailstore.AIInputImage{Label: fmt.Sprintf("User message %d, image %s: %s", index+1, attachment.ID, attachment.Filename), ContentType: attachment.ContentType, Base64: base64.StdEncoding.EncodeToString(attachment.Data)})
+			images = append(images, mailstore.AIInputAttachment{Label: fmt.Sprintf("User message %d, attachment %s: %s", index+1, attachment.ID, attachment.Filename), Filename: attachment.Filename, ContentType: attachment.ContentType, Base64: base64.StdEncoding.EncodeToString(attachment.Data)})
 		}
 	}
 	return images, nil
 }
 
-// Keep the complete newest turn, then admit recent historical images within
-// the provider budget. History storage itself has no 24-image lifetime cap.
-func (h *AISettingsHandler) resolveAgentContextImages(ctx context.Context, owner, account string, messages []AIAgentChatMessage, vision bool) ([]mailstore.AIInputImage, error) {
-	if len(messages) == 0 {
-		return nil, nil
-	}
-	latest := len(messages) - 1
-	if !vision {
-		if len(messages[latest].Attachments) > 0 {
-			return nil, fiber.NewError(400, "当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
-		}
-		return nil, nil
-	}
-	current, err := h.resolveAgentImages(ctx, owner, account, messages[latest:])
+// Compatibility helper for callers that need the complete prepared projection.
+// The chat handler separates planning from rendering to support streamed progress.
+func (h *AISettingsHandler) resolveAgentContextAttachments(ctx context.Context, owner, account string, messages []AIAgentChatMessage, model mailstore.AIModelRecord) ([]mailstore.AIInputAttachment, error) {
+	plan, err := h.planAgentAttachments(ctx, owner, account, messages, model, true)
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	for i, ref := range messages[latest].Attachments {
-		// Use authoritative sizes, never client-supplied metadata.
-		total += len(current[i].Base64)/4*3 - strings.Count(current[i].Base64[len(current[i].Base64)-2:], "=")
-		current[i].Label = fmt.Sprintf("User message %d, image %s: %s", latest+1, ref.ID, ref.Filename)
-	}
-	groups := [][]mailstore.AIInputImage{current}
-	count := len(current)
-	inspected := count
-	for index := latest - 1; index >= 0 && count < 24 && inspected < 24 && total < 32<<20; index-- {
-		var group []mailstore.AIInputImage
-		for _, ref := range messages[index].Attachments {
-			if count >= 24 || inspected >= 24 {
-				break
-			}
-			inspected++
-			attachment, e := h.mailDB.GetAIChatAttachment(ctx, owner, account, ref.ID)
-			if errors.Is(e, mailstore.ErrNotFound) {
-				continue
-			}
-			if e != nil {
-				return nil, fiber.ErrInternalServerError
-			}
-			if total+attachment.Size > 32<<20 {
-				continue
-			}
-			total += attachment.Size
-			count++
-			group = append(group, mailstore.AIInputImage{Label: fmt.Sprintf("User message %d, image %s: %s", index+1, attachment.ID, attachment.Filename), ContentType: attachment.ContentType, Base64: base64.StdEncoding.EncodeToString(attachment.Data)})
-		}
-		groups = append(groups, group)
-	}
-	var images []mailstore.AIInputImage
-	for i := len(groups) - 1; i >= 0; i-- {
-		images = append(images, groups[i]...)
-	}
-	return images, nil
+	return h.prepareAgentAttachments(ctx, plan, nil)
 }

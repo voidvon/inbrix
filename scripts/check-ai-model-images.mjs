@@ -8,7 +8,7 @@ try {
     const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 } });
     const errors = [];
     const writes = [];
-    const models = [{ id: 'chat-model', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'custom-vision', reasoningEffort: 'medium', extraParams: '{}', isDefault: true, supportsImages: false }];
+    const models = [{ id: 'chat-model', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'custom-vision', reasoningEffort: 'medium', extraParams: '{}', isDefault: true, supportsImages: false, supportsFiles: false }];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => { window.EventSource = class { close() {} }; });
     await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token' } }));
@@ -47,6 +47,7 @@ try {
     await dialog.getByRole('button', { name: '编辑模型', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
     assert.equal(writes.at(-1).supportsImages, true);
+    assert.equal(writes.at(-1).supportsFiles, false, 'Image capability does not enable files');
     assert.equal(writes.at(-1).provider, 'openai-compatible', 'Capability changes preserve the selected API format');
     assert.equal(writes.at(-1).apiKey, '', 'Editing keeps the saved API key');
 
@@ -72,9 +73,27 @@ try {
     await dialog.getByRole('button', { name: '新增模型', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
     assert.equal(writes.at(-1).supportsImages, false, 'New text models can disable images');
+    // File capability is persisted independently, with protocol-specific defaults.
+    await page.getByTestId('settings-dialog').getByRole('button', { name: '新增模型', exact: true }).click();
+    dialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: '新增模型', exact: true }) });
+    const files = dialog.getByRole('switch', { name: '支持原文件', exact: true });
+    await dialog.getByRole('combobox', { name: 'PDF 处理方式', exact: true }).click();
+    await page.getByRole('option', { name: '页面图片', exact: true }).click();
+    assert.equal(await files.isChecked(), false, 'Compatible gateways require explicit file opt-in');
+    for (const format of ['Google Gemini', 'OpenAI Responses']) {
+      await dialog.getByRole('combobox', { name: 'API 格式', exact: true }).click();
+      await page.getByRole('option', { name: format, exact: true }).click();
+      assert.equal(await files.isChecked(), true);
+    }
+    await files.click();
+    await dialog.getByLabel('API Key', { exact: true }).fill('fake-file-test-key');
+    await dialog.getByRole('button', { name: '新增模型', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(writes.at(-1).supportsFiles, false, 'Native file support can be disabled');
+    assert.equal(writes.at(-1).pdfInputMode, 'images', 'PDF rendering policy is independent of native file support');
     assert.deepEqual(errors, []);
     await page.close();
-    console.log(`Passed (${mobile ? 'mobile' : 'desktop'}): create/edit image capability, reload, API format/key preservation, and all API formats.`);
+    console.log(`Passed (${mobile ? 'mobile' : 'desktop'}): independent image/file capability, protocol defaults, reload, API format/key preservation, and all API formats.`);
   }
 } finally {
   await browser.close();

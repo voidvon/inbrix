@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -22,13 +24,16 @@ type mailSearchResponse struct {
 	Terms   []string `json:"terms"`
 	HasMore bool     `json:"hasMore"`
 	Results []struct {
-		ConversationID string `json:"conversationId"`
-		MessageID      string `json:"messageId"`
-		Folder         string `json:"folder"`
-		Subject        string `json:"subject"`
-		Snippet        string `json:"snippet"`
-		MatchedSubject bool   `json:"matchedSubject"`
-		MatchedBody    bool   `json:"matchedBody"`
+		Kind           string                       `json:"kind"`
+		Conversation   *web.ConversationSummaryJSON `json:"conversation"`
+		MatchedNote    bool                         `json:"matchedNote"`
+		ConversationID string                       `json:"conversationId"`
+		MessageID      string                       `json:"messageId"`
+		Folder         string                       `json:"folder"`
+		Subject        string                       `json:"subject"`
+		Snippet        string                       `json:"snippet"`
+		MatchedSubject bool                         `json:"matchedSubject"`
+		MatchedBody    bool                         `json:"matchedBody"`
 	} `json:"results"`
 }
 
@@ -67,7 +72,7 @@ func TestHandleMailSearchJSON(t *testing.T) {
 	when := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	if err := db.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
 		{
-			ID: "100", Folder: "INBOX", From: "alice@example.com", FromName: "Alice", To: "user@example.com",
+			ID: "100", Folder: "INBOX", From: "alice@example.com", FromName: "Alice", To: "user@example.com", Cc: "logistics@example.com",
 			Subject: "Quarterly report", Body: "The invoice total is 4200 EUR.", MessageID: "<m100@example.com>",
 			Date: when, BodyCached: true,
 		},
@@ -89,6 +94,19 @@ func TestHandleMailSearchJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.UpdateFolderStats(ctx, account.ID, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertMessages(ctx, account.ID, "Sent", []models.Email{{
+		ID: "200", From: account.Email, To: "alice@example.com", Subject: "Latest reply",
+		Preview: "Latest reply preview", Body: "Latest reply body", Date: when.Add(3 * time.Hour),
+		Attachments: []models.Attachment{{ID: "report", Filename: "report.pdf", ContentType: "application/pdf"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SaveDraft(ctx, user.ID, mailstore.DraftInput{
+		AccountEmail: account.Email, ConversationID: "draft-search", Mode: mailstore.DraftModeNew,
+		To: "draft@example.com", Subject: "Unsent subject", BodyText: "Unsent preview",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,14 +131,67 @@ func TestHandleMailSearchJSON(t *testing.T) {
 	})
 	app.Get("/api/mail/search", emailHandler.HandleMailSearchJSON)
 	app.Get("/api/conversations", emailHandler.HandleConversationListJSON)
+	listConversations := func(t *testing.T) []web.ConversationSummaryJSON {
+		t.Helper()
+		response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/conversations", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var list struct {
+			Conversations []web.ConversationSummaryJSON `json:"conversations"`
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("list status = %d", response.StatusCode)
+		}
+		if err := json.NewDecoder(response.Body).Decode(&list); err != nil {
+			t.Fatal(err)
+		}
+		return list.Conversations
+	}
+	var alice web.ConversationSummaryJSON
+	for _, conversation := range listConversations(t) {
+		if conversation.PeerEmail == "alice@example.com" {
+			alice = conversation
+		}
+	}
+	if alice.ID == "" {
+		t.Fatal("Alice conversation missing")
+	}
+	if err := db.SetConversationNote(ctx, account.ID, alice.ID, "重点客户 华南项目"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetConversationTags(ctx, account.ID, alice.ID, []string{"客户"}); err != nil {
+		t.Fatal(err)
+	}
+	// An orphaned note and another mailbox's note must never create search hits.
+	if err := db.SetConversationNote(ctx, account.ID, "deleted", "已删除对话"); err != nil {
+		t.Fatal(err)
+	}
+	other, err := db.UpsertAccount(ctx, mailstore.Account{
+		OwnerID: user.ID, Email: "other@example.com", Username: "other@example.com", EncryptedPassword: "enc",
+		IMAPServer: "imap.example.com", IMAPPort: 993, SMTPServer: "smtp.example.com", SMTPPort: 587,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetConversationNote(ctx, other.ID, alice.ID, "仅其他邮箱"); err != nil {
+		t.Fatal(err)
+	}
+	for _, conversation := range listConversations(t) {
+		if conversation.ID == alice.ID {
+			alice = conversation
+		}
+	}
 
 	search := func(t *testing.T, query string) (int, mailSearchResponse) {
 		t.Helper()
-		response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/mail/search?q="+query, nil))
+		response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/mail/search?q="+url.QueryEscape(query), nil))
 		if err != nil {
 			t.Fatal(err)
 		}
 		body := mailSearchResponse{}
+		defer response.Body.Close()
 		if response.StatusCode == http.StatusOK {
 			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 				t.Fatal(err)
@@ -128,6 +199,70 @@ func TestHandleMailSearchJSON(t *testing.T) {
 		}
 		return response.StatusCode, body
 	}
+
+	for _, query := range []string{"ALICE@example.com", "alice@", "logistics@example.com", "重点客户", "华南", "alice 华南"} {
+		t.Run("conversation lookup "+query, func(t *testing.T) {
+			status, body := search(t, query)
+			if status != http.StatusOK || len(body.Results) != 1 {
+				t.Fatalf("status=%d results=%+v", status, body.Results)
+			}
+			result := body.Results[0]
+			if result.Kind != "conversation" || result.MessageID != "" || !reflect.DeepEqual(result.Conversation, &alice) {
+				t.Fatalf("search result differs from inbox summary: %+v, want %+v", result, alice)
+			}
+			if alice.Count != 2 || alice.Preview != "Latest reply preview" || !alice.LatestHasAttachments {
+				t.Fatalf("unexpected inbox fixture: %+v", alice)
+			}
+			if query == "华南" && !result.MatchedNote {
+				t.Fatal("note match not identified")
+			}
+		})
+	}
+	for _, query := range []string{"华南 missing", "from:nobody@example.com 华南", "仅其他邮箱", "已删除对话"} {
+		t.Run("no conversation leak "+query, func(t *testing.T) {
+			status, body := search(t, query)
+			if status != http.StatusOK || len(body.Results) != 0 {
+				t.Fatalf("status=%d results=%+v", status, body.Results)
+			}
+		})
+	}
+	t.Run("draft only conversation", func(t *testing.T) {
+		_, body := search(t, "draft@example.com")
+		if len(body.Results) != 1 || body.Results[0].Conversation == nil || body.Results[0].Conversation.Status != "draft" || body.Results[0].Conversation.Count != 0 {
+			t.Fatalf("draft lookup = %+v", body.Results)
+		}
+	})
+	t.Run("combined limit", func(t *testing.T) {
+		response, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/mail/search?q=example.com&limit=1", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body mailSearchResponse
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || len(body.Results) != 1 || !body.HasMore || body.Results[0].Kind != "conversation" {
+			t.Fatalf("limited results = %+v", body)
+		}
+	})
+	t.Run("note changes take effect", func(t *testing.T) {
+		if err := db.SetConversationNote(ctx, account.ID, alice.ID, "欧洲客户"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := db.SetConversationNote(ctx, account.ID, alice.ID, alice.Note); err != nil {
+				t.Error(err)
+			}
+		})
+		if _, body := search(t, "华南"); len(body.Results) != 0 {
+			t.Fatalf("old note still searchable: %+v", body.Results)
+		}
+		_, body := search(t, "欧洲客户")
+		if len(body.Results) != 1 || body.Results[0].Conversation == nil || body.Results[0].Conversation.Note != "欧洲客户" || !body.Results[0].MatchedNote {
+			t.Fatalf("updated note not searchable: %+v", body.Results)
+		}
+	})
 
 	t.Run("body match", func(t *testing.T) {
 		status, body := search(t, "invoice")

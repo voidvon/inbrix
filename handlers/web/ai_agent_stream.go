@@ -12,12 +12,19 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+type aiAttachmentProgress struct {
+	Filename string `json:"filename"`
+	Page     int    `json:"page"`
+	Pages    int    `json:"pages"`
+}
+
 type agentChatEvent struct {
-	Type     string               `json:"type"`
-	Delta    string               `json:"delta,omitempty"`
-	Tool     *AIToolCall          `json:"tool,omitempty"`
-	Response *AIAgentChatResponse `json:"response,omitempty"`
-	Error    string               `json:"error,omitempty"`
+	Attachment *aiAttachmentProgress `json:"attachment,omitempty"`
+	Type       string                `json:"type"`
+	Delta      string                `json:"delta,omitempty"`
+	Tool       *AIToolCall           `json:"tool,omitempty"`
+	Response   *AIAgentChatResponse  `json:"response,omitempty"`
+	Error      string                `json:"error,omitempty"`
 }
 
 func sendToolEvent(emit func(agentChatEvent) error, kind string, call AIToolCall) error {

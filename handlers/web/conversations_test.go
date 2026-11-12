@@ -255,6 +255,42 @@ func TestConversationAttachmentMetadataDrivesJSON(t *testing.T) {
 	}
 }
 
+func TestConversationSummaryLatestAttachments(t *testing.T) {
+	account := mailstore.Account{ID: "acct-latest-attachments", Email: "me@example.com"}
+	when := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	file := models.Attachment{ID: "pdf", Filename: "report.pdf", ContentType: "application/pdf"}
+	for _, test := range []struct {
+		name        string
+		from        string
+		attachments []models.Attachment
+		html        string
+		want        bool
+	}{
+		{name: "older attachment only"},
+		{name: "latest incoming attachment", attachments: []models.Attachment{file}, want: true},
+		{name: "latest outgoing attachment", from: account.Email, attachments: []models.Attachment{file}, want: true},
+		{name: "inline image only", attachments: []models.Attachment{{ID: "logo", Filename: "logo.png", IsInline: true}}},
+		{name: "legacy CID image only", attachments: []models.Attachment{{ID: "logo", Filename: "logo.png", ContentID: "logo"}}, html: `<img src="cid:logo">`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			latest := models.Email{ID: "2", Folder: "INBOX", From: "alice@example.com", To: account.Email,
+				Date: when.Add(time.Hour), Attachments: test.attachments, HTML: test.html}
+			if test.from != "" {
+				latest.From, latest.To, latest.Folder = test.from, "alice@example.com", "Sent"
+			}
+			// Deliberately supply the newest message first to exercise chronological selection.
+			conversation := buildConversations(account, []models.Email{latest, {
+				ID: "1", Folder: "INBOX", From: "alice@example.com", To: account.Email,
+				Date: when, Attachments: []models.Attachment{file},
+			}})[0]
+			summary := conversationSummaryJSON(conversation)
+			if !summary.HasAttachments || summary.LatestHasAttachments != test.want {
+				t.Fatalf("attachment flags: any=%v, latest=%v; want true, %v", summary.HasAttachments, summary.LatestHasAttachments, test.want)
+			}
+		})
+	}
+}
+
 func TestConversationJSONRendersInlineCIDOnlyInHTML(t *testing.T) {
 	account := mailstore.Account{ID: "acct-inline", Email: "me@example.com"}
 	conversations := buildConversations(account, []models.Email{{

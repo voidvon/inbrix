@@ -9,8 +9,9 @@ const accountEmail = 'me@example.com';
 const date = new Date().toISOString();
 const conversations = ['alice', 'bob', 'carol', 'doris'].map(id => ({
   id, title: id, peerEmail: `${id}@example.com`, accountEmail,
-  subject: `Subject ${id}`, preview: `Preview ${id}`, note: `Note ${id}`,
-  date, count: 1, unreadCount: 0, status: id === 'carol' ? 'answered' : id === 'doris' ? 'draft' : 'unanswered', hasAttachments: false,
+  subject: `Subject ${id}`, preview: `Preview ${id}`, note: id === 'alice' ? '重点客户 · Note alice' : `Note ${id}`,
+  date, count: 1, unreadCount: 0, status: id === 'carol' ? 'answered' : id === 'doris' ? 'draft' : 'unanswered',
+  hasAttachments: id === 'alice' || id === 'bob', latestHasAttachments: id === 'alice',
 }));
 conversations[0].peerEmail = 'alice@example.com, logistics@example.com';
 conversations[0].primaryPeerEmail = 'alice@example.com';
@@ -26,9 +27,16 @@ await page.route('**/api/**', async route => {
   if (path === '/api/conversations') {
     json = { locale: 'zh-CN', accountEmail, conversations, folders: [], accounts: [] };
   } else if (path === '/api/mail/search') {
+    const query = new URL(request.url()).searchParams.get('q');
+    const conversationLookup = ['alice@example.com', '重点客户', '北方客户'].includes(query);
     json = {
-      query: 'Subject', terms: ['Subject'], hasMore: false,
-      results: conversations.map(item => ({
+      query, terms: [query], hasMore: false,
+      results: conversationLookup ? (query === 'alice@example.com' || conversations[0].note.includes(query) ? [{
+        kind: 'conversation', conversationId: 'alice', conversation: conversations[0],
+        messageId: '', folder: '', matchedNote: query !== 'alice@example.com',
+        conversationTitle: conversations[0].title,
+      }] : []) : conversations.map(item => ({
+        kind: 'message',
         conversationId: item.id, messageId: '1', folder: 'INBOX',
         subject: item.subject, from: item.peerEmail, to: accountEmail,
         date, snippet: item.preview, conversationTitle: item.title,
@@ -63,6 +71,9 @@ const selectAlice = async () => {
 try {
   await page.goto(`${base}/inbox?conversation=alice`);
   await row('bob').waitFor();
+  await row('alice').getByRole('img', { name: '最新邮件含有附件' }).waitFor();
+  assert.equal(await row('bob').getByRole('img', { name: '最新邮件含有附件' }).count(), 0, 'Older attachments do not mark the latest email');
+  assert.equal(await row('alice').getByRole('img', { name: '最新邮件含有附件' }).evaluate(element => element.parentElement.querySelector('p')?.textContent.trim()), 'Preview alice', 'Attachment indicator shares the second line with the preview');
   assert.equal(await row('alice').locator('strong').innerText(), 'alice@example.com', 'The row must show the sender without other To recipients');
   assert.equal(await row('alice').locator('strong').evaluate(element => element.closest('button') === null), true, 'The title is plain content inside the clickable item');
   assert.equal(await row('alice').locator('p').first().evaluate(element => element.closest('button') === null), true, 'The preview is plain content inside the clickable item');
@@ -155,7 +166,7 @@ try {
   await setFilter(true);
   await noteInput.fill('Saved when leaving Bob');
   await selectAlice();
-  await noteValue('Note alice');
+  await noteValue('重点客户 · Note alice');
   await bob.getByText('Saved when leaving Bob', { exact: true }).waitFor();
   await bob.locator('p').first().click();
   await selected('bob');
@@ -210,6 +221,51 @@ try {
   await setFilter(true);
   await row('bob').waitFor();
   assert.deepEqual(await rowIds(), ['alice', 'bob', 'carol', 'doris']);
+  const checkConversationLookup = async mobile => {
+    for (const query of ['alice@example.com', '重点客户']) {
+      await page.getByTestId('open-mail-search').click();
+      await search.fill(query);
+      const result = page.locator('[data-testid="mail-search-result"][data-result-kind="conversation"]');
+      await result.waitFor();
+      assert.equal(await page.getByTestId('mail-search-result').count(), 1, 'Conversation lookup has one result per conversation');
+      assert.equal(await result.locator('strong').innerText(), await row('alice').locator('strong').innerText(), 'Search uses the inbox display name');
+      assert.equal(await result.locator('p').first().innerText(), await row('alice').locator('p').first().innerText(), 'Search uses the latest inbox preview');
+      assert.equal(await result.locator('mark').first().innerText(), query, 'Address and note matches are highlighted');
+      await result.getByRole('img', { name: '最新邮件含有附件' }).waitFor();
+      assert.ok((await result.innerText()).includes('重点客户'), 'Conversation notes appear with the summary');
+      await page.screenshot({ path: `/tmp/inbrix-search-conversation-${mobile ? 'mobile' : 'desktop'}.png` });
+      if (!mobile) {
+        await search.press('Enter');
+        await selected('alice');
+        await searchDialog.waitFor({ state: 'hidden' });
+        assert.equal(new URL(page.url()).searchParams.has('message'), false, 'Conversation lookup opens the thread without an unrelated message target');
+        assert.equal(new URL(page.url()).searchParams.has('folder'), false, 'Conversation lookup clears the previous message folder');
+      } else {
+        const box = await result.boundingBox();
+        assert.ok(box && box.x >= 0 && box.x + box.width <= 390, 'Conversation result fits on mobile');
+        await search.press('Escape');
+      }
+    }
+  };
+  await checkConversationLookup(false);
+  const editAliceNote = async note => {
+    await row('alice').hover();
+    await row('alice').getByRole('button', { name: '添加备注', exact: true }).click();
+    const input = row('alice').getByRole('textbox', { name: '添加备注', exact: true });
+    await input.fill(note);
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/conversations/alice/note') && response.request().postDataJSON()?.note === note);
+    await input.press('Enter');
+    await saved;
+  };
+  await editAliceNote('北方客户');
+  await page.getByTestId('open-mail-search').click();
+  await search.fill('重点客户');
+  await searchDialog.getByText('没有找到匹配的对话或邮件', { exact: true }).waitFor();
+  await search.fill('北方客户');
+  await page.locator('[data-result-kind="conversation"]').waitFor();
+  assert.equal(await searchDialog.locator('mark').innerText(), '北方客户', 'Saving a note refreshes cached search membership and highlighting');
+  await search.press('Escape');
+  await editAliceNote('重点客户 · Note alice');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/inbox`);
   await row('doris').waitFor();
@@ -221,6 +277,8 @@ try {
   assert.equal(await filter.getAttribute('aria-current'), 'page');
   await setFilter(true);
   assert.deepEqual(await rowIds(), ['alice', 'bob', 'carol', 'doris']);
+  const attachmentBox = await row('alice').getByRole('img', { name: '最新邮件含有附件' }).boundingBox();
+  assert.ok(attachmentBox && attachmentBox.width > 0 && attachmentBox.x >= 0 && attachmentBox.x + attachmentBox.width <= 390, 'Attachment indicator fits on mobile');
   await page.getByTestId('open-mail-search').click();
   await search.fill('Subject');
   await page.getByTestId('mail-search-result').first().waitFor();
@@ -228,8 +286,9 @@ try {
   assert.ok(dialogBox.x >= 0 && dialogBox.x + dialogBox.width <= 390 && dialogBox.y + dialogBox.height <= 844, 'Spotlight fits the mobile viewport');
   await page.screenshot({ path: '/tmp/inbrix-spotlight-mobile.png' });
   await search.press('Escape');
+  await checkConversationLookup(true);
   assert.deepEqual(errors, []);
-  console.log('Passed: row hit areas, note autosave, sync, menus, pending filter, retained drafts, live status updates, Spotlight search across all statuses, exact message navigation, restored list filter, keyboard and mobile.');
+  console.log('Passed: row interactions, note autosave, filters, message navigation, conversation lookup by address/note, shared inbox summary, note search invalidation, keyboard and mobile.');
 } finally {
   await browser.close();
 }

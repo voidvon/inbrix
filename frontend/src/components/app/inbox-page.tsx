@@ -339,7 +339,7 @@ export function InboxPage() {
 
   const openSearchResult = (result: MailSearchResult) => {
     manuallyUnreadRef.current.delete(result.conversationId);
-    const target = { folder: result.folder || "INBOX", id: result.messageId };
+    const target = result.kind === "conversation" ? null : { folder: result.folder || "INBOX", id: result.messageId };
     setSelectedId(result.conversationId);
     setMessageTarget(target);
     setChatOpen(true);

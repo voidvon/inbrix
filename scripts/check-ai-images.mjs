@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createAIChatTestStore } from './ai-chat-test-store.mjs';
 
-// Isolated UI test: all uploads, images and model requests are mocked.
+// Isolated UI test: all uploads, file downloads, images and model requests are mocked.
 const browser = await chromium.launch({ headless: true });
 const mobile = Boolean(process.env.AI_TEST_MOBILE);
 const page = await browser.newPage({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 } });
@@ -37,7 +37,9 @@ await page.route('**/api/**', async route => {
     assert.ok(req.postDataBuffer().includes(Buffer.from(accountEmail)), 'Upload has mailbox identity');
     if (failUpload) { failUpload = false; await route.fulfill({ status: 400, json: { error: '测试上传失败' } }); return; }
     if (releaseUpload) await releaseUpload;
-    await route.fulfill({ status: 201, json: { id: `image-${++counter}`, filename: '需求.png', contentType: 'image/png', size: png.length } }); return;
+    const filename = req.postDataBuffer().toString().match(/filename="([^"]+)"/)?.[1] || '需求.png';
+    const contentType = filename.endsWith('.pdf') ? 'application/pdf' : filename.endsWith('.docx') ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : filename.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'image/png';
+    await route.fulfill({ status: 201, json: { id: `image-${++counter}`, filename, contentType, size: png.length } }); return;
   } else if (path.startsWith('/api/ai/attachments/')) {
     assert.equal(url.searchParams.get('accountEmail'), accountEmail);
     if (req.method() === 'DELETE') { deleted.push(path.split('/').at(-1)); await route.fulfill({ status: 204 }); }
@@ -56,13 +58,15 @@ await page.route('**/api/**', async route => {
     if (failChat) { chatStore.fail(payload); failChat = false; await route.fulfill({ status: 422, json: { error: '模型暂时不可用' } }); return; }
     json = chatStore.complete(payload, { content: `图片已识别 ${requests.length}`, toolCalls: [] });
     if (req.headers().accept?.includes('text/event-stream')) {
-      await route.fulfill({ contentType: 'text/event-stream', body: `data: ${JSON.stringify({ type: 'done', response: json })}\n\n` }); return;
+      const progress = payload.messages?.flatMap(message => message.attachments || []).find(file => file.contentType === 'application/pdf');
+      const prefix = progress ? `data: ${JSON.stringify({ type: 'attachment_progress', attachment: { filename: progress.filename, page: 1, pages: 2 } })}\n\n` : '';
+      await route.fulfill({ contentType: 'text/event-stream', body: `${prefix}data: ${JSON.stringify({ type: 'done', response: json })}\n\n` }); return;
     }
   } else if (path === '/api/drafts') json = { drafts: [] };
   else json = { calendar: false, notifications: false, models: [], agents: [], skills: [], bindings: [], documents: [], signatures: [], attachments: [], total: 0, stamps: [], templates: [], brands: [] };
   await route.fulfill({ json });
 });
-const file = () => page.locator('div:visible > input[type=file][aria-label="选择聊天图片"]');
+const file = () => page.locator('div:visible > input[type=file][aria-label="选择聊天附件"]');
 const upload = async () => {
   await file().setInputFiles({ name: '需求.png', mimeType: 'image/png', buffer: png });
   await page.getByTestId('ai-image-uploads').filter({ visible: true }).getByRole('img').waitFor();
@@ -74,7 +78,7 @@ try {
   await page.goto(`${base}/inbox?conversation=${conversation.id}`);
   await page.getByRole('button', { name: 'AI对话', exact: true }).click();
   await file().setInputFiles(Array.from({ length: 7 }, (_, i) => ({ name: `${i}.png`, mimeType: 'image/png', buffer: png })));
-  await page.getByRole('alert').getByText('每条消息最多添加 6 张图片', { exact: true }).waitFor();
+  await page.getByRole('alert').getByText('每条消息最多添加 6 个附件', { exact: true }).waitFor();
   assert.equal(counter, 0, 'Over-limit batches are not uploaded');
   let release;
   releaseUpload = new Promise(resolve => { release = resolve; });
@@ -116,7 +120,7 @@ try {
   await upload();
   await page.getByRole('alert').getByText('测试上传失败', { exact: true }).waitFor();
   assert.equal(await send().isEnabled(), false);
-  await page.getByRole('button', { name: '移除图片: 需求.png', exact: true }).click();
+  await page.getByRole('button', { name: '移除附件: 需求.png', exact: true }).click();
   // Clipboard image paste and removal clean up the unsent uploaded file.
   await input.evaluate((node, base64) => {
     const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
@@ -124,7 +128,7 @@ try {
     node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, clipboardData: transfer }));
   }, png.toString('base64'));
   await page.getByTestId('ai-image-uploads').filter({ visible: true }).locator('.animate-spin').waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: '移除图片: 粘贴.png', exact: true }).click();
+  await page.getByRole('button', { name: '移除附件: 粘贴.png', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('[data-testid="ai-image-uploads"]'));
   await assertNoOverflow();
   await page.screenshot({ style: '[data-sonner-toaster] { display: none; }', path: `/private/tmp/inbrix-ai-images-mail-${mobile ? 'mobile' : 'desktop'}.png` });
@@ -170,7 +174,7 @@ try {
   assert.equal(await docInput.inputValue(), '尚未发送的草稿');
   assert.equal(await page.getByTestId('ai-image-uploads').filter({ visible: true }).getByRole('img').count(), 1);
   assert.equal(deleted.includes(unsentImage), false, 'Business selection keeps draft attachments');
-  await page.getByRole('button', { name: '移除图片: 需求.png', exact: true }).click();
+  await page.getByRole('button', { name: '移除附件: 需求.png', exact: true }).click();
   await assertNoOverflow();
   await page.screenshot({ style: '[data-sonner-toaster] { display: none; }', path: `/private/tmp/inbrix-ai-images-document-${mobile ? 'mobile' : 'desktop'}.png` });
   const docImage = requests[4].messages.at(-1).attachments[0].id;
@@ -196,6 +200,39 @@ try {
   await page.getByText('图片已识别 10', { exact: true }).filter({ visible: true }).first().waitFor();
   assert.equal(requests.at(-1).retryRequestId, failedMailId);
   assert.equal(messages.filter(message => message.content === '刷新后继续邮件分析').length, 1);
+  // Original documents share upload/persistence behavior with images in both panels.
+  const documents = [
+    { name: 'scan.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\n%%EOF') },
+    { name: 'contract.docx', mimeType: '', buffer: Buffer.from('PK mocked original Word bytes') },
+    { name: 'prices.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('PK mocked original Excel bytes') },
+  ];
+  for (const panel of ['mail', 'document']) {
+    if (panel === 'document') await page.goto(`${base}/ai-document`);
+    const before = requests.length;
+    await file().setInputFiles([...documents, { name: '需求.png', mimeType: 'image/png', buffer: png }]);
+    const uploads = page.getByTestId('ai-image-uploads').filter({ visible: true });
+    await uploads.getByText('prices.xlsx', { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-testid=ai-image-uploads] .animate-spin'));
+    assert.equal(await uploads.getByRole('img').count(), 1, 'Documents use file cards; images keep thumbnails');
+    for (const document of documents) await uploads.getByText(document.name, { exact: true }).waitFor();
+    await send().click();
+    await page.getByText(`图片已识别 ${before + 1}`, { exact: true }).filter({ visible: true }).first().waitFor();
+    assert.equal(requests.at(-1).messages[0].attachments.length, 4, 'Mixed original files are sent as owned references');
+    assert.equal(requests.at(-1).messages[0].content, '', 'Document-only messages do not require text');
+    assert.equal(JSON.stringify(requests.at(-1)).includes('base64'), false);
+    for (const document of documents) {
+      const download = page.getByTestId('ai-message-images').filter({ visible: true }).getByRole('link').filter({ hasText: document.name });
+      await download.waitFor();
+      assert.equal(await download.getAttribute('download'), document.name);
+      assert.match(await download.getAttribute('href'), /accountEmail=/);
+    }
+    await page.reload();
+    if (panel === 'mail') await page.getByRole('button', { name: 'AI对话', exact: true }).click();
+    await page.getByTestId('ai-message-images').filter({ visible: true }).getByRole('link').filter({ hasText: 'prices.xlsx' }).waitFor();
+    await assertNoOverflow();
+    await page.waitForTimeout(400); // Let mobile page entry transitions finish before visual QA.
+    await page.screenshot({ style: '[data-sonner-toaster] { display: none; }', path: `/private/tmp/inbrix-ai-files-${panel}-${mobile ? 'mobile' : 'desktop'}.png` });
+  }
   assert.deepEqual(errors, []);
-  console.log(`Passed (${mobile ? 'mobile' : 'desktop'}): upload/paste/drop, pending and failed uploads, image-only chat, full preview, retry, persistence, follow-up and both chat panels.`);
+  console.log(`Passed (${mobile ? 'mobile' : 'desktop'}): mixed image/PDF/Word/Excel uploads, file-only chat, downloads, paste/drop, preview, retry, persistence, follow-up and both chat panels.`);
 } finally { await browser.close(); }

@@ -431,6 +431,8 @@ export function saveReplyTemplates(templates: ReplyTemplate[]) {
   });
 }
 
+export type PDFInputMode = "auto" | "native" | "images" | "disabled";
+
 export type AIModel = {
   id: string;
   provider: "openai" | "openai-compatible" | "gemini" | "commandcode-go";
@@ -439,6 +441,8 @@ export type AIModel = {
   reasoningEffort: "low" | "medium" | "high";
   extraParams: string;
   supportsImages: boolean;
+  supportsFiles: boolean;
+  pdfInputMode: PDFInputMode;
   isDefault: boolean;
 };
 
@@ -450,6 +454,8 @@ export type AddAIModelInput = {
   reasoningEffort: "low" | "medium" | "high";
   extraParams?: string;
   supportsImages?: boolean;
+  supportsFiles?: boolean;
+  pdfInputMode?: PDFInputMode;
 };
 
 export function getAIModels() {

@@ -288,6 +288,9 @@ export function ConversationAIChatPanel({
                   newTextBlock = true;
                   currentText = "";
                 }
+              } else if (event.type === "attachment_progress") {
+                const { filename, page, pages } = event.attachment;
+                aiState.transition("thinking", { detailText: isZh ? `正在准备 ${filename}，第 ${page}/${pages} 页` : `Preparing ${filename}, page ${page}/${pages}` });
               } else if (event.type === "text_delta") {
                 aiState.transition("generating");
                 parts = appendAIChatText(parts, event.delta, newTextBlock);

@@ -84,8 +84,8 @@ func CreateAgentResponse(ctx context.Context, client HTTPClient, model AIModelRe
 }
 
 func agentRequest(model AIModelRecord, provider, instructions string, messages []agentruntime.Message, tools []agentruntime.ToolSpec, disabled bool, images []AIInputImage, maxTokens int, effort string, stream bool) (map[string]any, string, error) {
-	if len(images) > 0 && !model.SupportsImageInput() {
-		return nil, "", errors.New("当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
+	if err := validateAIInputAttachments(model, images); err != nil {
+		return nil, "", err
 	}
 	nativeTools := []any{}
 	for _, tool := range tools {
@@ -122,7 +122,7 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 				content := []any{map[string]any{"type": kind, "text": m.Text}}
 				if i == 0 {
 					for _, img := range images {
-						content = append(content, map[string]any{"type": "input_text", "text": img.Label}, map[string]any{"type": "input_image", "image_url": "data:" + img.ContentType + ";base64," + img.Base64})
+						content = append(content, map[string]any{"type": "input_text", "text": img.Label}, img.responsesPart())
 					}
 				}
 				history = append(history, map[string]any{"role": m.Role, "content": content})
@@ -174,7 +174,7 @@ func agentRequest(model AIModelRecord, provider, instructions string, messages [
 			if i == 0 && len(images) > 0 {
 				content := []any{map[string]any{"type": "text", "text": m.Text}}
 				for _, img := range images {
-					content = append(content, map[string]any{"type": "text", "text": img.Label}, map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:" + img.ContentType + ";base64," + img.Base64}})
+					content = append(content, map[string]any{"type": "text", "text": img.Label}, img.chatCompletionsPart())
 				}
 				item["content"] = content
 			}

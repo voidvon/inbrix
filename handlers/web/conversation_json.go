@@ -24,22 +24,23 @@ import (
 // ConversationSummaryJSON is the compact row model consumed by the React
 // conversation list. Message bodies are deliberately absent from this type.
 type ConversationSummaryJSON struct {
-	ID               string   `json:"id"`
-	Title            string   `json:"title"`
-	PeerEmail        string   `json:"peerEmail,omitempty"`
-	PrimaryPeerEmail string   `json:"primaryPeerEmail,omitempty"`
-	Subject          string   `json:"subject"`
-	Preview          string   `json:"preview"`
-	Date             string   `json:"date"`
-	Count            int      `json:"count"`
-	UnreadCount      int      `json:"unreadCount"`
-	HasAttachments   bool     `json:"hasAttachments"`
-	AccountEmail     string   `json:"accountEmail,omitempty"`
-	AccountLabel     string   `json:"accountLabel,omitempty"`
-	AccountColor     string   `json:"accountColor,omitempty"`
-	Tags             []string `json:"tags"`
-	Note             string   `json:"note,omitempty"`
-	Status           string   `json:"status"`
+	ID                   string   `json:"id"`
+	Title                string   `json:"title"`
+	PeerEmail            string   `json:"peerEmail,omitempty"`
+	PrimaryPeerEmail     string   `json:"primaryPeerEmail,omitempty"`
+	Subject              string   `json:"subject"`
+	Preview              string   `json:"preview"`
+	Date                 string   `json:"date"`
+	Count                int      `json:"count"`
+	UnreadCount          int      `json:"unreadCount"`
+	HasAttachments       bool     `json:"hasAttachments"`
+	LatestHasAttachments bool     `json:"latestHasAttachments"`
+	AccountEmail         string   `json:"accountEmail,omitempty"`
+	AccountLabel         string   `json:"accountLabel,omitempty"`
+	AccountColor         string   `json:"accountColor,omitempty"`
+	Tags                 []string `json:"tags"`
+	Note                 string   `json:"note,omitempty"`
+	Status               string   `json:"status"`
 }
 
 // ConversationMessageJSON is the detail model for one chat bubble. HTML is
@@ -225,6 +226,10 @@ func conversationListLimit(c *fiber.Ctx) int {
 }
 
 func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON {
+	latest := conversation.Latest
+	if strings.TrimSpace(latest.HTML) != "" {
+		latest.Attachments = api.MarkInlineAttachmentsFromHTML(latest.HTML, latest.Attachments)
+	}
 	// Keep the participant set for grouping, but show the latest incoming sender
 	// rather than presenting other To recipients as additional senders.
 	primaryPeer := firstMailboxAddress(conversation.PeerEmail)
@@ -238,22 +243,23 @@ func conversationSummaryJSON(conversation Conversation) ConversationSummaryJSON 
 		}
 	}
 	return ConversationSummaryJSON{
-		ID:               conversation.ID,
-		Title:            conversation.Title,
-		PeerEmail:        conversation.PeerEmail,
-		PrimaryPeerEmail: primaryPeer,
-		Subject:          conversation.Subject,
-		Preview:          conversation.Preview,
-		Date:             conversation.Latest.Date.UTC().Format("2006-01-02T15:04:05.999Z07:00"),
-		Count:            conversation.Count,
-		UnreadCount:      conversation.UnreadCount,
-		HasAttachments:   conversation.HasAttachments,
-		AccountEmail:     conversation.AccountEmail,
-		AccountLabel:     conversation.AccountLabel,
-		AccountColor:     conversation.AccountColor,
-		Tags:             append([]string{}, conversation.Tags...),
-		Note:             conversation.Note,
-		Status:           conversation.Status,
+		ID:                   conversation.ID,
+		Title:                conversation.Title,
+		PeerEmail:            conversation.PeerEmail,
+		PrimaryPeerEmail:     primaryPeer,
+		Subject:              conversation.Subject,
+		Preview:              conversation.Preview,
+		Date:                 conversation.Latest.Date.UTC().Format("2006-01-02T15:04:05.999Z07:00"),
+		Count:                conversation.Count,
+		UnreadCount:          conversation.UnreadCount,
+		HasAttachments:       conversation.HasAttachments,
+		LatestHasAttachments: messageHasAttachments(latest),
+		AccountEmail:         conversation.AccountEmail,
+		AccountLabel:         conversation.AccountLabel,
+		AccountColor:         conversation.AccountColor,
+		Tags:                 append([]string{}, conversation.Tags...),
+		Note:                 conversation.Note,
+		Status:               conversation.Status,
 	}
 }
 

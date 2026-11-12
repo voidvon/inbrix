@@ -14,6 +14,29 @@ No unreleased changes.
 
 ---
 
+## [1.19.19] - 2026-11-13
+
+### Added
+
+- Added PDF, Word, and Excel uploads to AI conversations, preserving original
+  attachments for downloads and conversation history.
+- Added PDF page rendering for vision models, with configurable native-file,
+  page-image, automatic, and disabled modes. Rendering supports cancellation,
+  progress updates, caching, and up to 20 pages per PDF.
+- Added an attachment icon beside the conversation preview when the latest
+  email contains a regular attachment.
+- Added conversation lookup by email address and saved note to global search,
+  using the same display name and latest preview as the conversation list.
+
+### Changed
+
+- Conversation search results are deduplicated and open the conversation;
+  subject and body searches continue to navigate to matching messages.
+- Raised the minimum Go version to 1.26 for the PDF rendering dependencies.
+  Release binaries continue to build with CGO disabled.
+
+---
+
 ## [1.17.0] - 2026-09-08
 
 ### Added

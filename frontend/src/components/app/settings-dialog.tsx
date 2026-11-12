@@ -778,12 +778,15 @@ export function AISettings({ copy }: { copy: Copy }) {
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
   const [extraParams, setExtraParams] = useState("");
   const [supportsImages, setSupportsImages] = useState(true);
+  const [supportsFiles, setSupportsFiles] = useState(false);
+  const [pdfInputMode, setPDFInputMode] = useState<AIModel["pdfInputMode"]>("auto");
   const [invalid, setInvalid] = useState<{ baseUrl?: boolean; model?: boolean; apiKey?: boolean; extraParams?: boolean }>({});
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["ai-models"] });
   };
   const handleAPIFormatChange = (nextFormat: APIFormat) => {
     setAPIFormat(nextFormat);
+    setSupportsFiles(nextFormat === "responses" || nextFormat === "gemini");
     if (nextFormat === "commandcode-go") {
       if (["https://api.openai.com/v1", "https://generativelanguage.googleapis.com", "https://api.commandcode.ai/provider/v1", ""].includes(baseURL)) {
         setBaseURL("https://api.commandcode.ai");
@@ -878,7 +881,7 @@ export function AISettings({ copy }: { copy: Copy }) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!validate()) return;
-    const input = { provider: providerForAPIFormat(apiFormat), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}", supportsImages };
+    const input = { provider: providerForAPIFormat(apiFormat), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}", supportsImages, supportsFiles, pdfInputMode };
     if (editingModel) update.mutate({ id: editingModel.id, input });
     else add.mutate(input);
   };
@@ -890,6 +893,8 @@ export function AISettings({ copy }: { copy: Copy }) {
     setReasoningEffort("medium");
     setExtraParams("");
     setSupportsImages(true);
+    setSupportsFiles(false);
+    setPDFInputMode("auto");
     setAPIKey("");
     setInvalid({});
     setAddOpen(true);
@@ -902,6 +907,8 @@ export function AISettings({ copy }: { copy: Copy }) {
     setReasoningEffort(item.reasoningEffort);
     setExtraParams(item.extraParams && item.extraParams !== "{}" ? item.extraParams : "");
     setSupportsImages(item.supportsImages);
+    setSupportsFiles(item.supportsFiles ?? (item.provider === "openai" || item.provider === "gemini"));
+    setPDFInputMode(item.pdfInputMode ?? "auto");
     setAPIKey("");
     setInvalid({});
     setAddOpen(true);
@@ -927,6 +934,8 @@ export function AISettings({ copy }: { copy: Copy }) {
             <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required aria-invalid={invalid.model} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setModel(event.target.value); if (invalid.model) setInvalid((current) => ({ ...current, model: false })); }} placeholder={apiFormat === "commandcode-go" ? "deepseek/deepseek-v4.1-flash" : apiFormat === "gemini" ? "gemini-3.8-flash" : apiFormat === "responses" ? "gpt-5.6-sol" : "provider/model-name"} /></div>
             {apiFormat !== "chat_completions" && <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium" | "high")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem><SelectItem value="high">{copy.aiReasoningHigh}</SelectItem></SelectContent></Select></div>}
             <div className="flex items-center justify-between gap-4"><div className="grid gap-1.5"><Label htmlFor="add-ai-supports-images">{copy.aiSupportsImages}</Label><p id="add-ai-supports-images-hint" className="text-xs text-muted-foreground">{copy.aiSupportsImagesHint}</p></div><Switch id="add-ai-supports-images" aria-describedby="add-ai-supports-images-hint" checked={supportsImages} onCheckedChange={setSupportsImages} disabled={add.isPending || update.isPending || test.isPending} /></div>
+            <div className="flex items-center justify-between gap-4"><div className="grid gap-1.5"><Label htmlFor="add-ai-supports-files">{copy.aiSupportsFiles}</Label><p id="add-ai-supports-files-hint" className="text-xs text-muted-foreground">{copy.aiSupportsFilesHint}</p></div><Switch id="add-ai-supports-files" aria-describedby="add-ai-supports-files-hint" checked={supportsFiles && apiFormat !== "commandcode-go"} onCheckedChange={setSupportsFiles} disabled={apiFormat === "commandcode-go" || add.isPending || update.isPending || test.isPending} /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-pdf-mode">{copy.aiPDFInputMode}</Label><Select value={pdfInputMode} onValueChange={(value) => setPDFInputMode(value as AIModel["pdfInputMode"])} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-pdf-mode" className="w-full" aria-describedby="add-ai-pdf-mode-hint"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">{copy.aiPDFAuto}</SelectItem><SelectItem value="native">{copy.aiPDFNative}</SelectItem><SelectItem value="images">{copy.aiPDFImages}</SelectItem><SelectItem value="disabled">{copy.aiPDFDisabled}</SelectItem></SelectContent></Select><p id="add-ai-pdf-mode-hint" className="text-xs text-muted-foreground">{copy.aiPDFInputHint}</p></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} aria-invalid={invalid.apiKey} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setAPIKey(event.target.value); if (invalid.apiKey) setInvalid((current) => ({ ...current, apiKey: false })); }} placeholder={editingModel ? copy.aiAPIKeyKeep : (apiFormat === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
             <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-extra-params">{copy.aiExtraParams}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiExtraParamsHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiExtraParamsHint}</TooltipContent></Tooltip></div><Textarea id="add-ai-extra-params" className="min-h-24 resize-y font-mono text-xs" value={extraParams} aria-invalid={invalid.extraParams} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setExtraParams(event.target.value); if (invalid.extraParams) setInvalid((current) => ({ ...current, extraParams: false })); }} placeholder={'{"reasoning_effort":"high"}'} /></div>
             <DialogFooter className="pt-2"><Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>{copy.cancel}</Button><Button type="button" variant="outline" disabled={test.isPending || add.isPending || update.isPending || !baseURL.trim() || !model.trim() || (!editingModel && !apiKey.trim())} onClick={() => { if (!validate()) return; test.mutate({ id: editingModel?.id, input: { provider: providerForAPIFormat(apiFormat), baseUrl: baseURL.trim(), model: model.trim(), apiKey: apiKey.trim(), reasoningEffort, extraParams: extraParams.trim() || "{}" } }); }}>{test.isPending ? copy.aiModelTesting : copy.aiModelTest}</Button><Button type="submit" disabled={add.isPending || update.isPending || test.isPending}>{editingModel ? (update.isPending ? copy.updatingAIModel : copy.editAIModel) : (add.isPending ? copy.addingAIModel : copy.addAIModel)}</Button></DialogFooter>

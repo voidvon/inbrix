@@ -32,6 +32,7 @@ const (
 
 type AISettingsHandler struct {
 	aiRequests aiRequestRegistry
+	pdfCache   aiPDFCache
 	sessions   *session.Store
 	config     *config.Config
 	mailDB     *mailstore.Store
@@ -40,6 +41,8 @@ type AISettingsHandler struct {
 
 type aiModelInput struct {
 	SupportsImages  *bool  `json:"supportsImages"`
+	SupportsFiles   *bool  `json:"supportsFiles"`
+	PDFInputMode    string `json:"pdfInputMode"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"baseUrl"`
 	Model           string `json:"model"`
@@ -77,6 +80,8 @@ type documentChatMessage struct {
 
 type aiModelPublic struct {
 	SupportsImages  bool   `json:"supportsImages"`
+	SupportsFiles   bool   `json:"supportsFiles"`
+	PDFInputMode    string `json:"pdfInputMode"`
 	ID              string `json:"id"`
 	Provider        string `json:"provider"`
 	BaseURL         string `json:"baseUrl"`
@@ -121,6 +126,8 @@ func (h *AISettingsHandler) ready(c *fiber.Ctx) (string, error) {
 func publicAIModel(model mailstore.AIModelRecord) aiModelPublic {
 	return aiModelPublic{
 		SupportsImages:  model.SupportsImageInput(),
+		SupportsFiles:   model.SupportsFileInput(),
+		PDFInputMode:    model.EffectivePDFInputMode(),
 		ID:              model.ID,
 		Provider:        model.Provider,
 		BaseURL:         model.BaseURL,
@@ -194,6 +201,9 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = defaultReasoningEffort
 	}
+	if err := mailstore.ValidatePDFInputMode(input.PDFInputMode); err != nil {
+		return fiber.NewError(400, err.Error())
+	}
 	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
 	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -214,6 +224,8 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	}
 	created, err := h.mailDB.CreateAIModel(c.UserContext(), mailstore.AIModelRecord{
 		SupportsImages:  input.SupportsImages,
+		SupportsFiles:   input.SupportsFiles,
+		PDFInputMode:    input.PDFInputMode,
 		OwnerID:         owner,
 		Provider:        input.Provider,
 		BaseURL:         strings.TrimRight(input.BaseURL, "/"),
@@ -258,6 +270,9 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
+	if err := mailstore.ValidatePDFInputMode(input.PDFInputMode); err != nil {
+		return fiber.NewError(400, err.Error())
+	}
 	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
 	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -283,6 +298,8 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 	}
 	updated, err := h.mailDB.UpdateAIModel(c.UserContext(), mailstore.AIModelRecord{
 		SupportsImages: input.SupportsImages,
+		SupportsFiles:  input.SupportsFiles,
+		PDFInputMode:   input.PDFInputMode,
 		ID:             c.Params("id"), OwnerID: owner, Provider: provider, BaseURL: strings.TrimRight(input.BaseURL, "/"), Model: input.Model, ReasoningEffort: input.ReasoningEffort, ExtraParams: input.ExtraParams, EncryptedAPIKey: encryptedKey,
 	})
 	if errors.Is(err, mailstore.ErrNotFound) {
@@ -343,6 +360,9 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 	if input.APIKey == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "API key is required")
 	}
+	if err := mailstore.ValidatePDFInputMode(input.PDFInputMode); err != nil {
+		return fiber.NewError(400, err.Error())
+	}
 	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
 	if err := mailstore.ValidateAIExtraParams(input.ExtraParams); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -391,6 +411,9 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
+	if err := mailstore.ValidatePDFInputMode(input.PDFInputMode); err != nil {
+		return fiber.NewError(400, err.Error())
+	}
 	input.ExtraParams = strings.TrimSpace(input.ExtraParams)
 	if input.ExtraParams == "" {
 		input.ExtraParams = stored.ExtraParams

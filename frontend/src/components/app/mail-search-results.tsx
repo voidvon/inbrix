@@ -5,6 +5,7 @@ import type { Copy } from "../../lib/locale";
 import { isSentMailbox, cn, formatTime } from "../../lib/utils";
 import { EmptyState, ErrorState, ListSkeleton } from "./common-states";
 import { Badge } from "../ui/badge";
+import { ConversationSummaryLines } from "./conversation-summary-lines";
 
 /** Everything the conversation-list pane needs to render search results. */
 export type MailSearchState = {
@@ -22,6 +23,7 @@ export type MailSearchState = {
 
 /** Stable identity for one search result row. */
 export function mailSearchResultKey(result: MailSearchResult) {
+  if (result.kind === "conversation") return `conversation:${result.conversationId}`;
   return `${result.conversationId}:${result.folder}:${result.messageId}`;
 }
 
@@ -81,10 +83,26 @@ export function MailSearchResultRow({
   onSelect: () => void;
 }) {
   const sender = result.outgoing ? copy.me : result.fromName || result.from || result.conversationTitle;
+  if (result.kind === "conversation" && result.conversation) {
+    return <button type="button" data-testid="mail-search-result" data-result-kind="conversation" onClick={onSelect}
+      className={cn(
+        "block w-full min-w-0 border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+        selected && "border-l-2 border-l-foreground bg-muted pl-[0.875rem]"
+      )}>
+      <ConversationSummaryLines copy={copy} conversation={result.conversation} renderText={text => <HighlightedText text={text} terms={terms} />} />
+      {result.conversation.note && <p className="mt-1.5 truncate text-xs text-muted-foreground"><HighlightedText text={result.conversation.note} terms={terms} /></p>}
+      <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+        <MessageCircle className="size-3 shrink-0" aria-hidden="true" /><span>{copy.conversations}</span>
+        {result.accountLabel && <span className="min-w-0 truncate">· {result.accountLabel}</span>}
+        {result.matchedNote && <span className="ml-auto shrink-0">{copy.searchMatchedNote}</span>}
+      </span>
+    </button>;
+  }
   return (
     <button
       type="button"
       data-testid="mail-search-result"
+      data-result-kind="message"
       onClick={onSelect}
       className={cn(
         "block w-full border-b bg-card px-4 py-3 text-left transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",

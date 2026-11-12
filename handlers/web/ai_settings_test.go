@@ -125,16 +125,24 @@ func TestAIModelImageCapabilitySettings(t *testing.T) {
 		}
 		return model
 	}
-	model := request("POST", "/models", `{"provider":"openai-compatible","baseUrl":"https://api.deepseek.com","model":"custom-vision","apiKey":"test","supportsImages":true}`, 201)
-	if !model.SupportsImages {
-		t.Fatal("create lost image capability")
+	model := request("POST", "/models", `{"provider":"openai-compatible","baseUrl":"https://api.deepseek.com","model":"custom-vision","apiKey":"test","supportsImages":true,"supportsFiles":true,"pdfInputMode":"images"}`, 201)
+	if !model.SupportsImages || !model.SupportsFiles || model.PDFInputMode != "images" {
+		t.Fatal("create lost attachment capabilities")
 	}
 	for _, capability := range []string{`,"supportsImages":false`, `,"supportsImages":true`, ""} {
 		updated := request("PUT", "/models/"+model.ID, `{"baseUrl":"https://api.deepseek.com","model":"custom-vision"`+capability+`}`, 200)
 		listed := request("GET", "/models", "", 200)
 		want := capability != `,"supportsImages":false`
-		if updated.SupportsImages != want || listed.SupportsImages != want {
+		if updated.SupportsImages != want || listed.SupportsImages != want || !updated.SupportsFiles || !listed.SupportsFiles || updated.PDFInputMode != "images" || listed.PDFInputMode != "images" {
 			t.Fatalf("capability %q: updated=%v listed=%v", capability, updated.SupportsImages, listed.SupportsImages)
+		}
+	}
+	for _, capability := range []string{`,"supportsFiles":false`, `,"supportsFiles":true`, ""} {
+		updated := request("PUT", "/models/"+model.ID, `{"baseUrl":"https://api.deepseek.com","model":"custom-vision"`+capability+`}`, 200)
+		listed := request("GET", "/models", "", 200)
+		want := capability != `,"supportsFiles":false`
+		if updated.SupportsFiles != want || listed.SupportsFiles != want || !updated.SupportsImages || !listed.SupportsImages {
+			t.Fatalf("file capability %q: updated=%+v listed=%+v", capability, updated, listed)
 		}
 	}
 }

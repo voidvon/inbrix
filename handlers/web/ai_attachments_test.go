@@ -107,7 +107,7 @@ func TestChatImageUploadOwnershipAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	request("GET", second.Email, false, 404)
-	_, err = ai.resolveAgentImages(context.Background(), account.OwnerID, second.ID, []AIAgentChatMessage{{Role: "user", Attachments: []mailstore.AIChatAttachment{attachment}}})
+	_, err = ai.resolveAgentAttachments(context.Background(), account.OwnerID, second.ID, []AIAgentChatMessage{{Role: "user", Attachments: []mailstore.AIChatAttachment{attachment}}})
 	if err == nil {
 		t.Fatal("cross-mailbox reference accepted")
 	}

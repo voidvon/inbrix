@@ -1,28 +1,30 @@
 import { useEffect, useRef, useState } from "react";
+import { isAIImage, isAllowedAIAttachment } from "./ai-attachment-types";
 import type { AIChatAttachment } from "../types";
 import { deleteAIChatAttachment, uploadAIChatAttachment } from "./api";
 
-export type PendingAIImage = {
+export type PendingAIAttachment = {
   key: string;
   filename: string;
   preview: string;
+  size: number;
   attachment?: AIChatAttachment;
   error?: string;
 };
 
 // Unsent uploads belong to a mailbox + chat draft. Scope changes cancel uploads
-// and remove abandoned files; sent images are retained by lightweight references.
+// and remove abandoned files; sent attachments are retained by lightweight references.
 export function useAIChatAttachments(accountEmail: string, scope: string, isZh: boolean) {
-  const [items, setItems] = useState<PendingAIImage[]>([]);
+  const [items, setItems] = useState<PendingAIAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const draft = useRef<PendingAIImage[]>([]);
+  const draft = useRef<PendingAIAttachment[]>([]);
   const current = useRef(`${accountEmail}:${scope}`);
   const scopeKey = `${accountEmail}:${scope}`;
   current.current = scopeKey;
   const generation = useRef(0);
   const submitted = useRef(new Set<string>());
   const controllers = useRef(new Map<string, AbortController>());
-  const update = (value: PendingAIImage[]) => { draft.current = value; setItems(value); };
+  const update = (value: PendingAIAttachment[]) => { draft.current = value; setItems(value); };
   useEffect(() => {
     setItems([]);
     setError(null);
@@ -41,17 +43,17 @@ export function useAIChatAttachments(accountEmail: string, scope: string, isZh: 
   const addFiles = (files: File[]) => {
     if (!accountEmail) { setError(isZh ? "请先选择邮箱" : "Select a mailbox first"); return; }
     setError(null);
-    if (draft.current.length + files.length > 6) { setError(isZh ? "每条消息最多添加 6 张图片" : "Up to 6 images per message"); return; }
+    if (draft.current.length + files.length > 6) { setError(isZh ? "每条消息最多添加 6 个附件" : "Up to 6 attachments per message"); return; }
     const batch = generation.current;
     for (const file of files) {
-      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || !file.size || file.size > 10 * 1024 * 1024) {
-        setError(isZh ? "支持 PNG、JPEG、WebP，每张最大 10 MB" : "PNG, JPEG or WebP, up to 10 MB each");
+      if (!isAllowedAIAttachment(file) || !file.size || file.size > 10 * 1024 * 1024) {
+        setError(isZh ? "支持图片、PDF、Word、Excel，每个附件最大 10 MB" : "Images, PDF, Word or Excel, up to 10 MB each");
         continue;
       }
       const key = crypto.randomUUID();
       const controller = new AbortController();
       controllers.current.set(key, controller);
-      update([...draft.current, { key, filename: file.name, preview: URL.createObjectURL(file) }]);
+      update([...draft.current, { key, filename: file.name, size: file.size, preview: isAIImage(file.type) || /\.(png|jpe?g|webp)$/i.test(file.name) ? URL.createObjectURL(file) : "" }]);
       void uploadAIChatAttachment(accountEmail, file, controller.signal).then(attachment => {
         if (current.current !== scopeKey || batch !== generation.current || !draft.current.some(item => item.key === key)) {
           void deleteAIChatAttachment(accountEmail, attachment.id).catch(() => {});

@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"inbrix/internal/agentruntime"
+	"inbrix/internal/agenttest"
+	"inbrix/internal/pdfinput"
 )
 
 func commandCodeFixture(events ...any) string {
@@ -217,5 +220,31 @@ func TestCommandCodeGoLive(t *testing.T) {
 	last, err := CreateAgentResponse(ctx, http.DefaultClient, model, key, "Follow the tool protocol test exactly.", request, nil, 1024, "low", nil)
 	if err != nil || !strings.Contains(last.Message.Text, "TOOL_OK") {
 		t.Fatalf("live tool continuation failed: %v", err)
+	}
+}
+
+// Set the optional key and model to validate the exact intermediary vision route.
+// The expected code appears only inside the rendered image, never in the prompt.
+func TestCommandCodePDFVisionLive(t *testing.T) {
+	key := os.Getenv("INBRIX_TEST_COMMANDCODE_GO_KEY")
+	if key == "" {
+		t.Skip("set INBRIX_TEST_COMMANDCODE_GO_KEY for the live PDF vision test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pages, err := pdfinput.Default.Render(ctx, agenttest.PDF(1), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelName := os.Getenv("INBRIX_TEST_COMMANDCODE_MODEL")
+	if modelName == "" {
+		modelName = "deepseek/deepseek-v4.1-flash"
+	}
+	model := AIModelRecord{Provider: "commandcode-go", Model: modelName, ReasoningEffort: "low"}
+	answer, err := CreateAIResponseWithImages(ctx, http.DefaultClient, model, key,
+		"Read only the attached image. Reply with the six digits following VISION_ and nothing else.", "Read the code on this PDF page.",
+		[]AIInputAttachment{{Label: "Synthetic PDF, page 1/1", Filename: "vision.pdf.page-1.jpg", ContentType: "image/jpeg", Base64: base64.StdEncoding.EncodeToString(pages[0])}}, 256, "low", nil)
+	if err != nil || !strings.Contains(answer, "739281") {
+		t.Fatalf("PDF vision recognition failed: %v, answer=%q", err, answer)
 	}
 }

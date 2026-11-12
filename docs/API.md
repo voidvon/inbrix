@@ -157,6 +157,19 @@ aggregate the SQLite application's mailbox list.
 | `PATCH` | `/api/mail/messages/:uid/read` | `folder` (required) | — | `{ ok, updated, sync }`; queues a read-status update for the selected mailbox |
 | `GET` | `/api/mail/search` | `q` (required), `limit?` | — | `{ query, terms, hasMore, results }`; searches the selected mailbox's cached conversation mail (inbox/sent and pending/draft sends) |
 
+Global search also matches plain-text queries against conversation participant
+addresses, names, and saved notes, including conversations containing only a
+draft. These hits have `kind: "conversation"` and a `conversation` object with
+the same fields as an inbox list summary (including the latest preview, note,
+tags, and `latestHasAttachments`). They appear once per conversation before
+message hits; matching messages from those conversations are omitted. Open
+them by `conversationId`, without a message target (`messageId` and `folder`
+are empty). Other hits have `kind: "message"` and retain their exact folder/UID
+and highlighted body snippet. The shared `limit` and `hasMore` apply to the
+combined results. Queries using mail operators or negations retain message
+search semantics; they do not add conversation lookup hits. Notes and all
+results are scoped to the selected mailbox.
+
 Example startup and mailbox-specific read:
 
 ```sh
@@ -1476,35 +1489,39 @@ AI chat streaming regression. Provider integration tests use a local mock model;
 no paid model call is needed for these checks.
 
 
-## AI chat image attachments
+## AI chat attachments
 
-Both mail conversation chat and document drafting chat accept PNG, JPEG and
-static WebP images from a file picker, paste or drag-and-drop. A user message can
-contain images without text. Uploads must finish successfully before sending;
-failed chat requests retain their images for retry. Sent images are shown as
-thumbnails with a full-size dialog and remain available for follow-up questions.
+Mail conversation chat and document drafting chat accept PNG, JPEG, static WebP,
+PDF, Word (`.doc`, `.docx`) and Excel (`.xls`, `.xlsx`) through the file picker,
+paste or drag-and-drop. Messages may contain attachments without text. Uploads
+must finish before sending; failed requests retain their attachments for retry.
+Images have thumbnail/full-size previews; documents have filename, size and
+original-file download cards.
 
 These session-authenticated routes use the normal CSRF protection:
 
 | Method | Route | Input / result |
 | --- | --- | --- |
 | POST | `/api/ai/attachments` | Multipart `file` and `accountEmail`; returns `201 {id, filename, contentType, size}`. |
-| GET | `/api/ai/attachments/:id?accountEmail=...` | Original image bytes, private/no-store, with MIME and inline filename headers. |
-| DELETE | `/api/ai/attachments/:id?accountEmail=...` | Removes an image belonging to this owner and mailbox; returns `204`. |
+| GET | `/api/ai/attachments/:id?accountEmail=...` | Original bytes, private/no-store, with authoritative MIME and `nosniff`; images are inline, documents are downloads. |
+| DELETE | `/api/ai/attachments/:id?accountEmail=...` | Removes an unreferenced attachment belonging to this owner and mailbox; returns `204`. |
 
-Uploads are capped at 10 MiB each and 40 million pixels. The server validates
-actual content type, dimensions and decoding; SVG, animated WebP, unsupported
-formats and corrupt images are rejected. Each mailbox has a 256 MiB storage
-quota. Bytes live in SQLite separately from chat JSON and cascade on mailbox
-deletion. New uploads are staged for 24 hours. Accepting a turn transactionally
-creates its message and attachment references. Referenced images cannot be
-removed through the attachment DELETE route (409). Clearing/deleting a chat
-releases references and starts a fresh 24-hour grace period; shared images remain
-protected by other message references. The server collects expired, unreferenced
-uploads at startup, before uploads, and every 15 minutes. Browser draft cleanup
-is optional; images submitted in a request are left to the server lifecycle.
-Pre-upgrade images with unknown browser ownership remain protected until adopted
-by a server message; they are not indiscriminately expired.
+Uploads are capped at 10 MiB each, six attachments per user message and 256 MiB
+stored per mailbox. The server inspects signatures, validates image decoding and
+dimensions (40 million pixels maximum), and checks Office containers. Office ZIP
+validation bounds decompression to 100 MiB and 10,000 entries. SVG, animated WebP,
+unsupported formats, mismatched Office containers and corrupt ZIPs are rejected.
+This validation does not extract document text or change the stored bytes.
+
+Bytes live in SQLite separately from chat JSON and cascade on mailbox deletion.
+Uploads are staged for 24 hours. Accepting a turn transactionally creates its
+message and attachment references. Referenced attachments cannot be deleted
+through the attachment route (409). Clearing/deleting a chat releases references
+and starts a new 24-hour grace period; references from other messages remain
+protected. Expired, unreferenced uploads are collected at startup, before uploads,
+and every 15 minutes. Browser cleanup is optional; submitted attachments are left
+to the server lifecycle. Pre-upgrade images with unknown ownership remain
+protected until adopted by a server message.
 
 A message passed to `/api/ai/agent-chat` may include references:
 
@@ -1516,45 +1533,104 @@ A message passed to `/api/ai/agent-chat` may include references:
   "version": 0,
   "messages": [{
     "role": "user",
-    "content": "Identify the product and requirements in this image",
-    "attachments": [{"id": "aimg_...", "filename": "requirements.png", "contentType": "image/png", "size": 12345}]
+    "content": "Analyze the attached requirements",
+    "attachments": [{"id": "aimg_...", "filename": "requirements.pdf", "contentType": "application/pdf", "size": 12345}]
   }]
 }
 ```
 
-Only uploaded IDs are resolved; arbitrary external URLs or base64 from the
-caller are not accepted as image sources. The server rechecks owner/mailbox
-access on every turn and reads authoritative bytes/metadata from storage. Only
-user messages may carry images, at most six per message. For server-managed
-sessions, the newest turn must fit 32 MiB and is validated before committing any
-message. The model receives at most 24 images / 32 MiB: newest-turn images first,
-then recent historical images that fit. Older references remain in stored history;
-missing old images are omitted. Text-only requests remain usable after many image
-turns, including when switching to a text-only adapter. Legacy stateless requests
-retain the original full-history validation limits. References are stored with the existing mail chat history or
-document session history; base64 is never stored in those histories.
+Only uploaded IDs are resolved; arbitrary URLs or client base64 are not accepted.
+The server rechecks owner/mailbox access and reads authoritative bytes, filenames,
+MIME types and sizes from storage. Native file inputs use base64 of the original
+file. PDF page-image inputs render the original into JPEG pages without OCR or
+text extraction. Chat histories store original attachment references only.
 
-Every model tool-loop turn retains the selected images, including recent images
-from earlier user messages even when old text is summarized. Instructions explicitly
-forbid claiming to have inspected historical images omitted from this request. OpenAI Responses uses
-`input_image` data URLs, OpenAI-compatible Chat Completions uses `image_url`
-parts, and Gemini uses `inlineData`. Existing text-only calls remain unchanged.
-Model settings expose a `supportsImages` boolean in
-`GET/POST /api/settings/ai/models` and `PUT /api/settings/ai/models/:id`.
-It is independent of API format: `openai-compatible` selects Chat Completions,
-`openai` selects Responses, and `gemini` selects the native Gemini API.
-DeepSeek and other compatible services use `openai-compatible`.
-On upgrade, saved `deepseek` provider values are migrated to `openai-compatible`
-in the database, preserving model IDs, endpoints, API keys, and task bindings.
-Requests must use the current API formats; `deepseek` is not accepted as a provider.
-Disable image input for text-only models. New image turns are rejected before
-being saved when this capability is disabled; text-only session follow-ups omit
-historical images. Streaming and non-streaming responses share this path.
-OpenAI format reference: [Images and vision](https://developers.openai.com/api/docs/guides/images-vision).
+The newest turn must pass model capability, PDF metadata/page count, and known
+input-budget checks before any message is committed. The model projection contains
+at most 24 prepared images/files and 32 MiB of base64 content, prioritizing the
+complete newest turn and then recent
+compatible history. Missing, incompatible or over-budget historical files are
+omitted; original references remain stored. Every tool-loop turn retains this
+projection, including files from earlier user turns after text summarization.
+Instructions forbid claiming to have read omitted attachments or assuming full
+spreadsheet/document coverage. Legacy stateless clients retain full-history
+validation limits.
 
-Validation includes provider payload/stream tests, authenticated upload/read/delete
-and invalid-image tests, tool-loop and historical-image tests, and
-`scripts/check-ai-images.mjs` on desktop/mobile with all APIs mocked.
+Model settings expose independent `supportsImages` and `supportsFiles` booleans
+in `GET/POST /api/settings/ai/models` and `PUT /api/settings/ai/models/:id`.
+They also expose `pdfInputMode`: `auto` (default), `native`, `images`, or
+`disabled`. In auto mode native PDF input is preferred when `supportsFiles` is
+enabled; otherwise a model with `supportsImages` enabled receives rendered pages.
+Turning native file input off does not disable PDF rendering; use PDF mode
+`disabled` to reject PDFs entirely. Explicit `images` also supports visual PDF
+input on native-file providers. Explicit `native` requires native file support.
+Omitted update fields preserve saved choices. New file turns are rejected before
+saving when the capability or file format is unsupported. Text-only session
+follow-ups omit incompatible historical attachments. Streaming and non-streaming
+requests use the same validation and provider mapping.
+
+| API format | Images | Original documents | File default |
+| --- | --- | --- | --- |
+| `openai` (Responses) | `input_image` | PDF, DOC/DOCX, XLS/XLSX as `input_file` with filename and data URL | Enabled |
+| `gemini` | `inlineData` | PDF, DOC/DOCX, XLS/XLSX as `inlineData` with authoritative MIME | Enabled |
+| `openai-compatible` (Chat Completions) | `image_url` | PDF as `file`; requires gateway and model support | Disabled; opt in |
+| `commandcode-go` | Existing image protocol | Not supported | Disabled |
+
+PDF page rendering uses embedded PDFium through `go-pdfium`'s WASM backend;
+Go 1.26+ is required, CGO stays disabled, and no system PDF executable is needed.
+Only PDFs routed to page images are subject to the rendering limits: 20 pages
+per document, a maximum 1800-pixel width/height preserving aspect ratio, JPEG
+quality 90, and 24 MiB of rendered bytes per document. Pages count individually
+against the model's 24-input limit; the original PDF still counts as one of the
+six uploaded files. Oversized current PDFs are rejected, never silently truncated;
+split larger files before uploading. Native PDFs retain provider-specific limits.
+
+Planning inspects page counts before committing a turn. Rendering runs inside the
+cancelable chat execution, before any model request, with one active renderer
+process-wide, a two-minute deadline per inspection/render operation (including
+queue wait), and a 256 MiB WASM heap limit. The heap limit does not bound total
+process RSS, which also includes runtime code, Go buffers and cache. Invalid,
+password-protected or unrenderable PDFs receive an actionable error. Actual render
+or encoded-budget failures can fail an already accepted turn; the stored original
+and normal retry lifecycle are retained. A document is included completely or
+omitted completely. Whole historical documents may be omitted to fit the budget.
+
+Derived JPEGs use an in-memory cache scoped by owner, mailbox, source ID and
+content hash. Cache entries expire after 15 minutes idle on cache access, use LRU
+eviction, and are bounded to 32 entries / 64 MiB per handler. Original access is
+rechecked before every lookup; no derivative URLs or session-embedded image bytes
+are created. Successful explicit source deletion invalidates its cached pages.
+Rendering parameters and version are fixed for the process; restarts clear cache.
+Cached renders save conversion work, not repeated model image-input costs.
+
+SSE emits `attachment_progress` events with
+`attachment: {filename, page, pages}` during preparation. Both chat panels show
+PDF progress. Model input labels contain the trusted source filename and original
+one-based page number/total, and each tool-loop request retains the prepared pages.
+An exact model route must actually support vision; a configured image capability
+alone does not prove recognition. The opt-in live recognition check is:
+`INBRIX_TEST_COMMANDCODE_GO_KEY=... go test ./mailstore -run '^TestCommandCodePDFVisionLive$' -v`.
+`INBRIX_TEST_COMMANDCODE_MODEL` can select a different Command Code model.
+
+Service-side processing still applies: Responses PDF inputs include page images
+and text, Word inputs primarily supply extracted text, and spreadsheet inputs
+cover up to the first 1,000 rows per sheet. Gemini Office handling differs by
+format; XLS/XLSX currently reads the first sheet as cell values, without formulas
+or formatting. Original-file upload does not promise complete chart, layout,
+formula, sheet or row coverage. See the official
+[OpenAI file input guide](https://developers.openai.com/api/docs/guides/file-inputs)
+and [Gemini document guide](https://aistudio.google.com/docs/document-processing#office-documents).
+
+DeepSeek and other compatible services use `openai-compatible`. Saved legacy
+`deepseek` providers migrate to it without changing model IDs, endpoints, keys
+or task bindings. Requests must use current provider values.
+
+Validation covers original bytes, provider request formats (streaming and JSON),
+file-only turns, tool-loop retention, historical follow-ups, invalid uploads,
+mailbox ownership, preflight rejection and capability migration/persistence.
+`scripts/check-ai-images.mjs` exercises mixed files, image preview, downloads,
+retry, reload and both chat panels on desktop/mobile; model capability controls
+are covered by `scripts/check-ai-model-images.mjs`. Provider calls are mocked.
 
 ## Mailbox AI configuration
 

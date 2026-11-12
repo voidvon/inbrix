@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, ImagePlus, Loader2, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Paperclip, Loader2, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import type { useAIChatAttachments } from "../../lib/use-ai-chat-attachments";
+import { AI_ATTACHMENT_ACCEPT, attachmentSize } from "../../lib/ai-attachment-types";
 import { cn } from "../../lib/utils";
 
 export interface AIChatInputProps {
@@ -203,12 +204,12 @@ export function AIChatInput({
       )}
     >
       {imageAttachments && <>
-        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" aria-label={isZh ? "选择聊天图片" : "Choose chat images"} disabled={disabled || isPending} onChange={event => { imageAttachments.addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept={AI_ATTACHMENT_ACCEPT} multiple className="hidden" aria-label={isZh ? "选择聊天附件" : "Choose chat attachments"} disabled={disabled || isPending} onChange={event => { imageAttachments.addFiles(Array.from(event.target.files || [])); event.target.value = ""; }} />
         {imageAttachments.items.length > 0 && <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto py-1" data-testid="ai-image-uploads">
           {imageAttachments.items.map(item => <div key={item.key} className="relative w-20 rounded-lg border bg-muted p-1">
-            <img src={item.preview} alt={item.filename} className="h-16 w-full rounded object-cover" />
+            {item.preview ? <img src={item.preview} alt={item.filename} className="h-16 w-full rounded object-cover" /> : <div className="flex h-16 flex-col items-center justify-center gap-1 rounded bg-background text-muted-foreground"><FileText className="size-7" /><span className="text-[10px]">{attachmentSize(item.size)}</span></div>}
             {!item.attachment && !item.error && <span className="absolute inset-0 flex items-center justify-center rounded bg-background/60"><Loader2 className="size-5 animate-spin" /></span>}
-            <Button type="button" size="icon" variant="secondary" className="absolute -right-1 -top-1 size-5 rounded-full" disabled={disabled || isPending} aria-label={`${isZh ? "移除图片" : "Remove image"}: ${item.filename}`} onClick={() => imageAttachments.remove(item.key)}><X className="size-3" /></Button>
+            <Button type="button" size="icon" variant="secondary" className="absolute -right-1 -top-1 size-5 rounded-full" disabled={disabled || isPending} aria-label={`${isZh ? "移除附件" : "Remove attachment"}: ${item.filename}`} onClick={() => imageAttachments.remove(item.key)}><X className="size-3" /></Button>
             <p className="truncate pt-1 text-[10px]" title={item.filename}>{item.filename}</p>
             {item.error && <p role="alert" className="max-h-16 overflow-auto break-words text-[10px] text-destructive">{item.error}</p>}
           </div>)}
@@ -216,7 +217,7 @@ export function AIChatInput({
         {imageAttachments.error && <p role="alert" className="text-xs text-destructive">{imageAttachments.error}</p>}
       </>}
       <div className={cn("flex gap-2", isMultiLine ? "flex-col" : "items-center")}>
-      {imageAttachments && !isMultiLine && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加图片" : "Add images"} title={isZh ? "添加图片，也可粘贴或拖入（最多 6 张，每张 10 MB）" : "Add, paste or drop images (6 max, 10 MB each)"}><ImagePlus className="size-4" /></Button>}
+      {imageAttachments && !isMultiLine && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加附件" : "Add attachments"} title={isZh ? "添加图片、PDF、Word、Excel，也可粘贴或拖入（最多 6 个，每个 10 MB）" : "Add, paste or drop images, PDF, Word or Excel (6 max, 10 MB each)"}><Paperclip className="size-4" /></Button>}
       <textarea
         ref={textareaRef}
         value={value}
@@ -239,7 +240,7 @@ export function AIChatInput({
 
       {isMultiLine ? (
         <div className="flex items-center justify-between gap-2 pt-0.5 shrink-0 border-t border-border/30">
-          {imageAttachments && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加图片" : "Add images"}><ImagePlus className="size-4" /></Button>}
+          {imageAttachments && <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" disabled={disabled || isPending || imageAttachments.items.length >= 6} onClick={() => fileRef.current?.click()} aria-label={isZh ? "添加附件" : "Add attachments"}><Paperclip className="size-4" /></Button>}
           <div className="min-w-0 flex-1 pr-2">
             {hint && (
               <span className="block truncate text-[10px] sm:text-[11px] text-muted-foreground select-none">

@@ -22,7 +22,8 @@ import {
 import { toast, toastError } from "../../lib/toast";
 import { ConversationAIChatPanel } from "./conversation-ai-chat-panel";
 import { AttachmentPreviewDialog, mirroredAttachmentDownloadURL, mirroredAttachmentPreviewURL, type AttachmentPreviewTarget } from "./attachment-preview";
-import { ConversationTagNames, ConversationTags } from "./conversation-tags";
+import { ConversationTags } from "./conversation-tags";
+import { ConversationSummaryLines } from "./conversation-summary-lines";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 import { ConversationStatusTag, type EditableConversationStatus } from "./conversation-status-tag";
 import { ComposeDialog } from "./compose-dialog";
@@ -33,7 +34,6 @@ import { useComposeDraft } from "../../lib/compose-draft";
 import { useMobilePageClose } from "../../lib/use-mobile-page-close";
 import { useShell } from "./shell-context";
 import { ListSkeleton, ErrorState, EmptyState } from "./common-states";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -326,21 +326,7 @@ export function ConversationRow({
           )}
         >
           <div data-testid="conversation-summary" className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <strong className="min-w-0 flex-1 truncate text-sm font-semibold">{displayEmail || conversation.title || copy.conversations}</strong>
-              <time className="shrink-0 text-[10px] text-muted-foreground">{formatTime(conversation.date)}</time>
-              {conversation.unreadCount > 0 && (
-                <Badge title={`${conversation.unreadCount} ${copy.unread}`} className="h-4 min-w-4 shrink-0 justify-center px-1 py-0 text-[10px] leading-none">
-                  {conversation.unreadCount}
-                </Badge>
-              )}
-            </div>
-            <div className="mt-1 flex min-w-0 items-center gap-2">
-              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground/70">
-                {conversation.preview || copy.noBody}
-              </p>
-              <ConversationTagNames tags={conversation.tags || []} />
-            </div>
+            <ConversationSummaryLines copy={copy} conversation={conversation} />
           </div>
           <div className="mt-1.5 flex h-5 w-full items-center gap-1.5 overflow-visible">
             <ConversationStatusTag

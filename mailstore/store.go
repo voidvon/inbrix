@@ -124,6 +124,8 @@ type AIModelRecord struct {
 	ReasoningEffort string
 	ExtraParams     string
 	SupportsImages  *bool
+	SupportsFiles   *bool
+	PDFInputMode    string
 	EncryptedAPIKey string
 	IsDefault       bool
 	CreatedAt       time.Time
@@ -818,6 +820,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAIModelSupportsImagesColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAIModelSupportsFilesColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAIModelPDFInputModeColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureUserRoleColumn(ctx); err != nil {

@@ -12,8 +12,8 @@ import (
 )
 
 var ErrAIChatConflict = errors.New("会话已更新或仍在生成，请刷新后重试 / Chat changed or is busy; refresh and retry")
-var ErrAIChatAttachmentUnavailable = errors.New("图片不存在、已过期或不属于当前邮箱")
-var ErrAIChatAttachmentInUse = errors.New("图片已被聊天记录引用 / Image is used by a chat message")
+var ErrAIChatAttachmentUnavailable = errors.New("附件不存在、已过期或不属于当前邮箱")
+var ErrAIChatAttachmentInUse = errors.New("附件已被聊天记录引用 / Attachment is used by a chat message")
 var ErrAIChatCursor = errors.New("invalid session cursor")
 
 type AIChatRunState struct {

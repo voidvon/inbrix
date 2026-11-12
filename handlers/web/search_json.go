@@ -24,30 +24,33 @@ const (
 	mailSearchSnippetTail = 160
 )
 
-// MailSearchResultJSON is one matching message. It carries the conversation
-// identity and the message's folder/UID so the client can open the
-// conversation and scroll straight to the matching bubble.
+// MailSearchResultJSON is a conversation lookup or a matching message.
+// Conversation hits reuse the inbox summary; message hits carry a folder/UID
+// so the client can scroll straight to the matching bubble.
 type MailSearchResultJSON struct {
-	ConversationID    string `json:"conversationId"`
-	MessageID         string `json:"messageId"`
-	Folder            string `json:"folder"`
-	Subject           string `json:"subject"`
-	From              string `json:"from"`
-	FromName          string `json:"fromName,omitempty"`
-	To                string `json:"to"`
-	Date              string `json:"date"`
-	Snippet           string `json:"snippet"`
-	ConversationTitle string `json:"conversationTitle"`
-	PeerEmail         string `json:"peerEmail,omitempty"`
-	AccountEmail      string `json:"accountEmail,omitempty"`
-	AccountLabel      string `json:"accountLabel,omitempty"`
-	AccountColor      string `json:"accountColor,omitempty"`
-	Outgoing          bool   `json:"outgoing"`
-	MatchedSubject    bool   `json:"matchedSubject"`
-	MatchedBody       bool   `json:"matchedBody"`
+	Kind              string                   `json:"kind"`
+	Conversation      *ConversationSummaryJSON `json:"conversation,omitempty"`
+	MatchedNote       bool                     `json:"matchedNote"`
+	ConversationID    string                   `json:"conversationId"`
+	MessageID         string                   `json:"messageId"`
+	Folder            string                   `json:"folder"`
+	Subject           string                   `json:"subject"`
+	From              string                   `json:"from"`
+	FromName          string                   `json:"fromName,omitempty"`
+	To                string                   `json:"to"`
+	Date              string                   `json:"date"`
+	Snippet           string                   `json:"snippet"`
+	ConversationTitle string                   `json:"conversationTitle"`
+	PeerEmail         string                   `json:"peerEmail,omitempty"`
+	AccountEmail      string                   `json:"accountEmail,omitempty"`
+	AccountLabel      string                   `json:"accountLabel,omitempty"`
+	AccountColor      string                   `json:"accountColor,omitempty"`
+	Outgoing          bool                     `json:"outgoing"`
+	MatchedSubject    bool                     `json:"matchedSubject"`
+	MatchedBody       bool                     `json:"matchedBody"`
 }
 
-// MailSearchJSON is the message-level search response. Terms is the normalized
+// MailSearchJSON is the global search response. Terms is the normalized
 // term list the server actually matched, so the client highlights exactly what
 // the query meant instead of re-parsing the search grammar.
 type MailSearchJSON struct {
@@ -174,6 +177,7 @@ func mailSearchResultJSON(conversation Conversation, message ConversationMessage
 	// head of the mail so the row has context.
 	snippet, matchedBody := searchSnippet(plain, terms)
 	return MailSearchResultJSON{
+		Kind:              "message",
 		ConversationID:    conversation.ID,
 		MessageID:         email.ID,
 		Folder:            email.Folder,
@@ -194,9 +198,37 @@ func mailSearchResultJSON(conversation Conversation, message ConversationMessage
 	}
 }
 
-// HandleMailSearchJSON searches the local mail mirror for messages matching a
-// query and reports message-level hits across the folders the conversation
-// view is built from, so every result can be opened at its exact position.
+func conversationMatchesSearch(conversation Conversation, terms []string) bool {
+	if len(terms) == 0 {
+		return false
+	}
+	fields := []string{conversation.Title, conversation.PeerEmail, conversation.AccountEmail, conversation.Note}
+	for _, message := range conversation.Messages {
+		fields = append(fields, message.Email.From, message.Email.To, message.Email.Cc)
+	}
+	haystack := strings.ToLower(strings.Join(fields, "\n"))
+	for _, term := range terms {
+		if !strings.Contains(haystack, strings.ToLower(term)) {
+			return false
+		}
+	}
+	return true
+}
+
+func conversationSearchResultJSON(conversation Conversation, terms []string) MailSearchResultJSON {
+	summary := conversationSummaryJSON(conversation)
+	return MailSearchResultJSON{
+		Kind: "conversation", Conversation: &summary,
+		ConversationID: conversation.ID, ConversationTitle: summary.Title,
+		Subject: summary.Subject, Snippet: summary.Preview, Date: summary.Date,
+		PeerEmail: summary.PeerEmail, AccountEmail: summary.AccountEmail,
+		AccountLabel: summary.AccountLabel, AccountColor: summary.AccountColor,
+		MatchedNote: searchContainsTerm(summary.Note, terms),
+	}
+}
+
+// HandleMailSearchJSON looks up conversations by participant/name/note and
+// searches messages across the folders the conversation view is built from.
 // Route: GET /api/mail/search?q=<query>&limit=<n>
 func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 	if h.mailDB == nil {
@@ -218,6 +250,32 @@ func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 	terms := mailstore.SearchTextTerms(query)
 	if terms == nil {
 		terms = []string{}
+	}
+	// Use the same complete header projection and saved notes as the inbox.
+	// Building a conversation from matching messages alone can show an old
+	// name or preview and cannot find notes or conversations containing only drafts.
+	conversations, accountResults, err := h.localConversations(c, []mailstore.Account{account}, false)
+	if err != nil || (len(accountResults) > 0 && accountResults[0].Err != nil) {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read local conversations"})
+	}
+	type messageContext struct {
+		conversation *Conversation
+		message      *ConversationMessage
+	}
+	conversationByMessage := make(map[string]messageContext)
+	conversationHits := make(map[string]bool)
+	results := make([]MailSearchResultJSON, 0)
+	conversationTerms := mailstore.ConversationSearchTerms(query)
+	for i := range conversations {
+		conversation := &conversations[i]
+		for j := range conversation.Messages {
+			message := &conversation.Messages[j]
+			conversationByMessage[message.Email.Folder+"\x00"+message.Email.ID] = messageContext{conversation, message}
+		}
+		if conversationMatchesSearch(*conversation, conversationTerms) {
+			conversationHits[conversation.ID] = true
+			results = append(results, conversationSearchResultJSON(*conversation, terms))
+		}
 	}
 
 	folders, err := h.mailDB.ListFolders(c.UserContext(), account.ID)
@@ -262,45 +320,30 @@ func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 		}
 	}
 
-	matches := make([]models.Email, 0, len(candidates))
 	for _, email := range candidates {
-		if mailMessageMatchesTerms(email, terms) {
-			matches = append(matches, email)
+		matched, ok := conversationByMessage[email.Folder+"\x00"+email.ID]
+		if !ok || conversationHits[matched.conversation.ID] || !mailMessageMatchesTerms(email, terms) {
+			continue
 		}
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].Date.Equal(matches[j].Date) {
-			return matches[i].ID > matches[j].ID
-		}
-		return matches[i].Date.After(matches[j].Date)
-	})
-	hasMore := len(matches) > limit
-	if hasMore {
-		matches = matches[:limit]
-	}
-
-	// Resolve each hit to the same conversation the inbox renders: saved
-	// outbox thread metadata wins over the participant-derived identity.
-	if metadata, metaErr := h.mailDB.OutgoingThreadMetadata(c.UserContext(), account.ID); metaErr == nil {
-		for i := range matches {
-			if saved, exists := metadata[mailstore.OutgoingMirrorMessageID(account.SMTPServer, matches[i].MessageID)]; exists {
-				matches[i].ConversationID = saved.ConversationID
-				if saved.SendStatus == "sent" {
-					matches[i].Date = saved.Date
-				}
-			}
-		}
-	}
-
-	results := make([]MailSearchResultJSON, 0, len(matches))
-	for _, conversation := range buildConversations(account, matches) {
-		for _, message := range conversation.Messages {
-			results = append(results, mailSearchResultJSON(conversation, message, terms))
-		}
+		// localConversations applies saved send timestamps and thread identity.
+		email.Date = matched.message.Email.Date
+		results = append(results, mailSearchResultJSON(*matched.conversation, ConversationMessage{
+			Email: email, Outgoing: matched.message.Outgoing,
+		}, terms))
 	}
 	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Kind != results[j].Kind {
+			return results[i].Kind == "conversation"
+		}
+		if results[i].Date == results[j].Date {
+			return results[i].ConversationID+"\x00"+results[i].Folder+"\x00"+results[i].MessageID < results[j].ConversationID+"\x00"+results[j].Folder+"\x00"+results[j].MessageID
+		}
 		return results[i].Date > results[j].Date
 	})
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
 
 	return c.JSON(MailSearchJSON{
 		Query:   query,

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, encrypted_api_key, is_default, created_at`
+const aiModelColumns = `id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, supports_files, pdf_input_mode, encrypted_api_key, is_default, created_at`
 
 // migrateLegacyAIModelProviders rewrites persisted vendor-specific settings at
 // startup. Requests and model calls only accept the current API formats.
@@ -58,11 +58,40 @@ func (s *Store) ensureAIModelSupportsImagesColumn(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) ensureAIModelSupportsFilesColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_models)`)
+	if err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("mailstore: scan AI models schema: %w", err)
+		}
+		if name == "supports_files" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("mailstore: inspect AI models schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN supports_files INTEGER`); err != nil {
+		return fmt.Errorf("mailstore: add AI model file support column: %w", err)
+	}
+	return nil
+}
+
 func scanAIModel(scanner interface{ Scan(...any) error }) (AIModelRecord, error) {
 	var model AIModelRecord
 	var isDefault int
 	var createdAt int64
-	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.ExtraParams, &model.SupportsImages, &model.EncryptedAPIKey, &isDefault, &createdAt)
+	err := scanner.Scan(&model.ID, &model.OwnerID, &model.Provider, &model.BaseURL, &model.Model, &model.ReasoningEffort, &model.ExtraParams, &model.SupportsImages, &model.SupportsFiles, &model.PDFInputMode, &model.EncryptedAPIKey, &isDefault, &createdAt)
 	model.IsDefault = intBool(isDefault)
 	model.CreatedAt = time.Unix(createdAt, 0)
 	return model, err
@@ -100,6 +129,9 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	if strings.TrimSpace(model.OwnerID) == "" || strings.TrimSpace(model.BaseURL) == "" || strings.TrimSpace(model.Model) == "" || model.EncryptedAPIKey == "" {
 		return AIModelRecord{}, errors.New("mailstore: AI model owner, Base URL, model, and API key are required")
 	}
+	if err := ValidatePDFInputMode(model.PDFInputMode); err != nil {
+		return AIModelRecord{}, err
+	}
 	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
 	if model.Provider == "" {
 		model.Provider = "openai"
@@ -131,8 +163,8 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	}
 	model.IsDefault = count == 0 || model.IsDefault
 	now := time.Now().Unix()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.SupportsImages, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_models(id, owner_id, provider, base_url, model, reasoning_effort, extra_params, supports_images, supports_files, pdf_input_mode, encrypted_api_key, is_default, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		model.ID, model.OwnerID, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.SupportsImages, model.SupportsFiles, model.PDFInputMode, model.EncryptedAPIKey, boolInt(model.IsDefault), now, now); err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: create AI model: %w", err)
 	}
 	if model.IsDefault {
@@ -151,12 +183,15 @@ func (s *Store) UpdateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	if strings.TrimSpace(model.ID) == "" || strings.TrimSpace(model.OwnerID) == "" || strings.TrimSpace(model.BaseURL) == "" || strings.TrimSpace(model.Model) == "" || strings.TrimSpace(model.ReasoningEffort) == "" {
 		return AIModelRecord{}, errors.New("mailstore: AI model id, owner, Base URL, model, and reasoning effort are required")
 	}
+	if err := ValidatePDFInputMode(model.PDFInputMode); err != nil {
+		return AIModelRecord{}, err
+	}
 	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
 	if model.Provider != "" && !isSupportedAIProvider(model.Provider) {
 		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, supports_images = COALESCE(?, supports_images), encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
-		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.SupportsImages, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, supports_images = COALESCE(?, supports_images), supports_files = COALESCE(?, supports_files), pdf_input_mode = CASE WHEN ? = '' THEN pdf_input_mode ELSE ? END, encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
+		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.SupportsImages, model.SupportsFiles, model.PDFInputMode, model.PDFInputMode, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
 	if err != nil {
 		return AIModelRecord{}, fmt.Errorf("mailstore: update AI model: %w", err)
 	}
@@ -229,4 +264,31 @@ func isSupportedAIProvider(provider string) bool {
 		return true
 	}
 	return false
+}
+
+// Existing model rows default to automatic PDF routing; omitted updates preserve the setting.
+func (s *Store) ensureAIModelPDFInputModeColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(ai_models)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "pdf_input_mode" {
+			return rows.Close()
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE ai_models ADD COLUMN pdf_input_mode TEXT NOT NULL DEFAULT ''`)
+	return err
 }
