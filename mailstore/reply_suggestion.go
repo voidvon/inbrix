@@ -41,7 +41,7 @@ func resolveReplySuggestionConfig(ctx context.Context, store *Store, encryptionK
 		}
 		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
 		if err == nil {
-			model, err = store.GetAIModel(ctx, account.OwnerID, binding.ModelID)
+			model, err = store.GetDefaultAIModel(ctx, account.OwnerID)
 		}
 	} else if errors.Is(err, ErrNotFound) {
 		model, err = store.GetDefaultAIModel(ctx, account.OwnerID)

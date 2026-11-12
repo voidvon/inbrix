@@ -105,7 +105,7 @@ func (s *Store) CreateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 		model.Provider = "openai"
 	}
 	if !isSupportedAIProvider(model.Provider) {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, or gemini")
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	if model.ReasoningEffort == "" {
 		model.ReasoningEffort = "medium"
@@ -153,7 +153,7 @@ func (s *Store) UpdateAIModel(ctx context.Context, model AIModelRecord) (AIModel
 	}
 	model.Provider = strings.ToLower(strings.TrimSpace(model.Provider))
 	if model.Provider != "" && !isSupportedAIProvider(model.Provider) {
-		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, or gemini")
+		return AIModelRecord{}, errors.New("mailstore: provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE ai_models SET provider = CASE WHEN ? = '' THEN provider ELSE ? END, base_url = ?, model = ?, reasoning_effort = ?, extra_params = CASE WHEN ? = '' THEN extra_params ELSE ? END, supports_images = COALESCE(?, supports_images), encrypted_api_key = CASE WHEN ? = '' THEN encrypted_api_key ELSE ? END, updated_at = ? WHERE owner_id = ? AND id = ?`,
 		model.Provider, model.Provider, model.BaseURL, model.Model, model.ReasoningEffort, model.ExtraParams, model.ExtraParams, model.SupportsImages, model.EncryptedAPIKey, model.EncryptedAPIKey, time.Now().Unix(), model.OwnerID, model.ID)
@@ -225,7 +225,7 @@ func (s *Store) GetDefaultAIModel(ctx context.Context, ownerID string) (AIModelR
 
 func isSupportedAIProvider(provider string) bool {
 	switch provider {
-	case "openai", "openai-compatible", "gemini":
+	case "openai", "openai-compatible", "gemini", "commandcode-go":
 		return true
 	}
 	return false

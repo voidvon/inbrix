@@ -254,12 +254,6 @@ func (h *AISettingsHandler) HandleAgentChat(c *fiber.Ctx) error {
 		model, _ = h.mailDB.GetAIModel(c.UserContext(), owner, input.ModelID)
 	}
 	if model.ID == "" {
-		binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
-		if bindingErr == nil && binding.ModelID != "" {
-			model, _ = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
-		}
-	}
-	if model.ID == "" {
 		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
 	}
 	if errors.Is(err, mailstore.ErrNotFound) || model.ID == "" {

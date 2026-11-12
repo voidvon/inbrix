@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"inbrix/internal/agentruntime"
 )
 
 const (
@@ -27,13 +29,14 @@ var reservedAIExtraParamKeys = map[string]struct{}{
 	"instructions":      {},
 	"contents":          {},
 	"systeminstruction": {},
+	"system":            {},
 	"stream":            {},
 	"tools":             {},
 	"tool_choice":       {},
 	"toolconfig":        {},
 }
 
-// CreateAIResponse calls the configured model backend (OpenAI or Gemini) and returns the output text.
+// CreateAIResponse calls the configured model backend and returns the output text.
 func CreateAIResponse(ctx context.Context, client HTTPClient, model AIModelRecord, apiKey, instructions, input string, maxOutputTokens int, effort string) (string, error) {
 	return CreateAIResponseWithImages(ctx, client, model, apiKey, instructions, input, nil, maxOutputTokens, effort, nil)
 }
@@ -82,6 +85,12 @@ func createAIResponse(ctx context.Context, client HTTPClient, model AIModelRecor
 		return "", errors.New("当前模型未启用图片输入，请在编辑模型中开启“支持图片”或选择其他模型 / Enable image input in model settings or select a vision model")
 	}
 	switch provider {
+	case "commandcode-go":
+		message, err := createCommandCodeResponse(ctx, client, model, apiKey, instructions, []agentruntime.Message{{Role: "user", Text: input}}, nil, images, maxOutputTokens, effort, onDelta)
+		if err == nil && len(message.ToolCalls) > 0 {
+			err = errors.New("Command Code requested tools in a text-only response")
+		}
+		return message.Text, err
 	case "gemini":
 		return createGeminiResponse(ctx, client, model, apiKey, instructions, input, images, maxOutputTokens, effort, onDelta)
 	case "openai":

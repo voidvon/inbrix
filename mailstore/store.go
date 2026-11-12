@@ -144,7 +144,6 @@ type AITaskBindingRecord struct {
 	AccountID  string
 	TaskType   string
 	AgentID    string
-	ModelID    string
 	Enabled    bool
 	EnabledSet bool
 	UpdatedAt  time.Time
@@ -419,15 +418,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			account_id TEXT NOT NULL,
 			task_type TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
-			model_id TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY(account_id, task_type),
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE,
-			FOREIGN KEY(agent_id) REFERENCES ai_agents(id) ON DELETE CASCADE,
-			FOREIGN KEY(model_id) REFERENCES ai_models(id) ON DELETE CASCADE
+			FOREIGN KEY(agent_id) REFERENCES ai_agents(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_task_bindings_agent ON ai_task_bindings(agent_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_ai_task_bindings_model ON ai_task_bindings(model_id)`,
 		`INSERT OR IGNORE INTO ai_models(id, owner_id, provider, base_url, model, encrypted_api_key, is_default, created_at, updated_at)
 			SELECT 'legacy_' || owner_id, owner_id, 'openai', base_url, model, encrypted_api_key, 1, updated_at, updated_at
 			FROM ai_model_settings WHERE model <> '' AND encrypted_api_key <> ''`,
@@ -827,6 +824,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAITaskBindingEnabledColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateAITaskBindingsToAgents(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureMailTaskSkipReasonColumn(ctx); err != nil {

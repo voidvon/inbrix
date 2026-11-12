@@ -433,7 +433,7 @@ export function saveReplyTemplates(templates: ReplyTemplate[]) {
 
 export type AIModel = {
   id: string;
-  provider: "openai" | "openai-compatible" | "gemini";
+  provider: "openai" | "openai-compatible" | "gemini" | "commandcode-go";
   baseUrl: string;
   model: string;
   reasoningEffort: "low" | "medium" | "high";
@@ -443,7 +443,7 @@ export type AIModel = {
 };
 
 export type AddAIModelInput = {
-  provider?: "openai" | "openai-compatible" | "gemini";
+  provider?: "openai" | "openai-compatible" | "gemini" | "commandcode-go";
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -798,12 +798,11 @@ export type AITaskBinding = {
   accountEmail: string;
   taskType: "mail_summary" | "email_draft" | "reply_suggestion";
   agentId: string;
-  modelId: string;
   explicit: boolean;
   enabled: boolean;
 };
 
-export type AITaskBindingInput = Pick<AITaskBinding, "accountEmail" | "taskType" | "agentId" | "modelId"> & { enabled?: boolean };
+export type AITaskBindingInput = Pick<AITaskBinding, "accountEmail" | "taskType" | "agentId"> & { enabled?: boolean };
 
 export function getAITaskBindings() {
   return apiFetch<{ bindings: AITaskBinding[] }>("/api/settings/ai/task-bindings");

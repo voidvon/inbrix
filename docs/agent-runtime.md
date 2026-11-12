@@ -7,7 +7,7 @@
 | 层 | 位置 | 职责 |
 | --- | --- | --- |
 | 通用消息与执行循环 | `internal/agentruntime` | 结构化消息、工具注册列表、调用 ID、预算、取消、活动事件和输出校验重试 |
-| 模型协议适配 | `mailstore/ai_agent_completion.go`、`ai_agent_stream.go` | OpenAI Responses、OpenAI Chat Completions、Gemini；转换请求和流式响应，保留供应商要求的续传内容 |
+| 模型协议适配 | `mailstore/ai_agent_completion.go`、`ai_agent_stream.go`、`ai_commandcode.go` | OpenAI Responses、OpenAI Chat Completions、Gemini、Command Code Go；转换请求和流式响应，保留供应商要求的续传内容 |
 | 应用工具 | `handlers/web/ai_agent_tools.go`、`mailstore/agent_mail_tools.go` | 声明当前执行可用的工具参数和能力；原有 executor 检查身份、范围、版本及证据 |
 | 工作方法 | 用户管理的 Skill | 按目录选择、按需加载，或显式选择后加载；定义邮件分析、产品核对、报价和合同工作方法 |
 | 任务交付 | 聊天 / 邮件分析入口 | 聊天生成可展示结果及草稿；邮件分析提供输出 schema，最后持久化结果；展示摘要为最多 200 字的自由文本 |
@@ -32,11 +32,20 @@
 - OpenAI 使用 Responses 的 `function_call` / `function_call_output` 和 `call_id`，回传完整 output items，包括推理续传项。
 - Chat Completions 使用 `tool_calls` / `role=tool` 和 `tool_call_id`，需要时保留 `reasoning_content`。兼容网关可使用嵌套 `data` 包装。
 - Gemini 回传原始 parts 和 thought signatures。批量调用的响应组成同一 user turn；提供了函数 ID 时回传原 ID，没有 ID 时只使用本地关联标识，不向供应商虚构 ID。
+- Command Code Go 使用 CLI 的 `/alpha/generate` 协议，支持 JSON 行和 SSE、原生工具调用及推理续传，由 Go 后端直接请求，不启动代理或额外端口。
 - 流式响应在完成事件之后才交付工具调用；截断、错误或中断的响应不会执行部分调用。只有可见正文增量进入聊天流。
 
 模型按 API 格式配置，不设置 DeepSeek 等厂商专用类型。图片输入由独立的 `supportsImages` 能力控制，可在新增或编辑模型时开启或关闭；所有协议在发送图片前都检查该能力。
 
 不支持原生工具调用的网关会明确失败。这次升级没有把伪装成工具调用的文本作为自动降级协议。JSON/DSML 解析仍用于历史消息清理及旧文本适配器；生产聊天和总结入口均使用原生 `Complete` 接口。
+
+### Command Code Go 配置
+
+在设置的 AI 模型中新增或编辑模型，API 格式选择 **Command Code Go**，Base URL 填 `https://api.commandcode.ai`，模型可填 `deepseek/deepseek-v4.1-flash`，API key 使用已验证可用的 Command Code key，然后测试并保存。模型是否可用取决于账户套餐；图片输入还需要模型本身支持图片。
+
+Base URL 是服务根地址，不填写 `/alpha/generate` 或 `/provider/v1`；程序自动拼接生成路径。Go 套餐使用普通 Chat Completions 的 Provider API 可能返回 `403 upgrade_required`，选择专用格式即可走 CLI 协议。聊天和后台邮件任务使用同一个适配器；如需默认使用该模型，请在模型管理中将其设为默认模型。邮箱 AI 配置只需选择智能体及启用状态。额外参数填写 JSON 对象，作为生成参数发送，不能覆盖消息、系统提示或工具定义。
+
+这是项目源码内的适配，随项目正常构建发布，无需另外启动桥接脚本。上游 CLI 协议若发生不兼容变更，需要更新适配器。可用 `INBRIX_TEST_COMMANDCODE_GO_KEY` 环境变量运行 `go test ./mailstore -run '^TestCommandCodeGoLive$' -count=1 -v` 做实际流式文本与工具调用测试；默认测试不访问真实接口、不读取本机凭据。
 
 ## 报价单与合同的数据边界
 

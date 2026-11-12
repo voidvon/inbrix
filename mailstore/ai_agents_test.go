@@ -118,11 +118,7 @@ func TestMailSummaryAgentAllowsClearingLegacyOutputLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, err := s.GetDefaultAIModel(ctx, account.OwnerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, AITaskBindingRecord{AccountID: account.ID, TaskType: MailSummaryTask, AgentID: agent.ID, ModelID: model.ID}); err != nil {
+	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, AITaskBindingRecord{AccountID: account.ID, TaskType: MailSummaryTask, AgentID: agent.ID}); err != nil {
 		t.Fatal(err)
 	}
 	agent.OutputLabels = []string{}

@@ -2,7 +2,7 @@ import { SkillSettings } from "./skill-settings";
 import { MailIgnoreRulesSettings } from "./mail-ignore-rules";
 import { AccountBrandSettings, AIBusinessProfileFields } from "./ai-business-controls";
 import { emptyBusinessProfile, type AIBusinessProfile } from "../../lib/api";
-import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -244,7 +244,7 @@ export function SystemSettings({ copy }: { copy: Copy }) {
         <div className="mt-6">
           <h3 className="text-sm font-semibold">{copy.userManagement}</h3>
           <div className="mt-3 overflow-hidden rounded-lg border">
-            <Table className="min-w-[38rem] table-fixed">
+            <Table className="w-full table-fixed">
               <TableHeader className="bg-muted/60 text-xs text-muted-foreground"><TableRow className="hover:bg-transparent"><TableHead className="w-[44%] px-4">{copy.account}</TableHead><TableHead className="w-[28%] px-4">{copy.role}</TableHead><TableHead className="w-[28%] px-4">{copy.actions}</TableHead></TableRow></TableHeader>
               <TableBody>
                 {settings.data.users.map((user) => {
@@ -742,23 +742,26 @@ export function AIErrorLogsSettings({ copy }: { copy: Copy }) {
 
 // The UI presents the wire protocol ("API format") rather than vendor-specific
 // providers. These helpers map it to the protocol keys stored in the DB.
-type APIFormat = "chat_completions" | "responses" | "gemini";
+type APIFormat = "chat_completions" | "responses" | "gemini" | "commandcode-go";
 
 function apiFormatForProvider(provider: AIModel["provider"]): APIFormat {
   if (provider === "openai") return "responses";
   if (provider === "gemini") return "gemini";
+  if (provider === "commandcode-go") return "commandcode-go";
   return "chat_completions";
 }
 
 function providerForAPIFormat(format: APIFormat): AIModel["provider"] {
   if (format === "responses") return "openai";
   if (format === "gemini") return "gemini";
+  if (format === "commandcode-go") return "commandcode-go";
   return "openai-compatible";
 }
 
 function apiFormatLabel(provider: AIModel["provider"]): string {
   if (provider === "openai") return "Responses";
   if (provider === "gemini") return "Gemini";
+  if (provider === "commandcode-go") return "Command Code Go";
   return "Chat Completions";
 }
 
@@ -781,30 +784,39 @@ export function AISettings({ copy }: { copy: Copy }) {
   };
   const handleAPIFormatChange = (nextFormat: APIFormat) => {
     setAPIFormat(nextFormat);
+    if (nextFormat === "commandcode-go") {
+      if (["https://api.openai.com/v1", "https://generativelanguage.googleapis.com", "https://api.commandcode.ai/provider/v1", ""].includes(baseURL)) {
+        setBaseURL("https://api.commandcode.ai");
+      }
+      if (["gpt-5.6-sol", "gemini-3.8-flash", ""].includes(model)) {
+        setModel("deepseek/deepseek-v4.1-flash");
+      }
+      return;
+    }
     if (nextFormat === "gemini") {
-      if (baseURL === "https://api.openai.com/v1" || !baseURL) {
+      if (baseURL === "https://api.openai.com/v1" || baseURL === "https://api.commandcode.ai" || !baseURL) {
         setBaseURL("https://generativelanguage.googleapis.com");
       }
-      if (model === "gpt-5.6-sol" || !model) {
+      if (model === "gpt-5.6-sol" || model === "deepseek/deepseek-v4.1-flash" || !model) {
         setModel("gemini-3.8-flash");
       }
       return;
     }
     if (nextFormat === "responses") {
-      if (baseURL === "https://generativelanguage.googleapis.com" || !baseURL) {
+      if (baseURL === "https://generativelanguage.googleapis.com" || baseURL === "https://api.commandcode.ai" || !baseURL) {
         setBaseURL("https://api.openai.com/v1");
       }
-      if (model === "gemini-3.8-flash" || !model) {
+      if (model === "gemini-3.8-flash" || model === "deepseek/deepseek-v4.1-flash" || !model) {
         setModel("gpt-5.6-sol");
       }
       return;
     }
     // Chat Completions is the generic OpenAI-compatible mode. Keep custom
-    // gateway values as-is; only replace Google's native presets.
-    if (baseURL === "https://generativelanguage.googleapis.com") {
+    // gateway values as-is; only replace known native protocol presets.
+    if (baseURL === "https://generativelanguage.googleapis.com" || baseURL === "https://api.commandcode.ai") {
       setBaseURL("https://api.openai.com/v1");
     }
-    if (model === "gemini-3.8-flash") {
+    if (model === "gemini-3.8-flash" || model === "deepseek/deepseek-v4.1-flash") {
       setModel("gpt-5.6-sol");
     }
   };
@@ -910,9 +922,9 @@ export function AISettings({ copy }: { copy: Copy }) {
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-md flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-5 py-4 pr-12"><DialogTitle>{editingModel ? copy.editAIModel : copy.addAIModel}</DialogTitle></DialogHeader>
           <form className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 grid gap-4 touch-pan-y" noValidate onSubmit={submit}>
-            <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-format">{copy.aiAPIFormat}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiAPIFormatHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiAPIFormatHint}</TooltipContent></Tooltip></div><Select value={apiFormat} onValueChange={(val) => handleAPIFormatChange(val as APIFormat)} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-format" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chat_completions">OpenAI Chat Completions</SelectItem><SelectItem value="responses">OpenAI Responses</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem></SelectContent></Select></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required aria-invalid={invalid.baseUrl} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setBaseURL(event.target.value); if (invalid.baseUrl) setInvalid((current) => ({ ...current, baseUrl: false })); }} placeholder={apiFormat === "gemini" ? "https://generativelanguage.googleapis.com" : apiFormat === "responses" ? "https://api.openai.com/v1" : "https://api.example.com/v1"} /></div>
-            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required aria-invalid={invalid.model} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setModel(event.target.value); if (invalid.model) setInvalid((current) => ({ ...current, model: false })); }} placeholder={apiFormat === "gemini" ? "gemini-3.8-flash" : apiFormat === "responses" ? "gpt-5.6-sol" : "provider/model-name"} /></div>
+            <div className="grid gap-2"><div className="flex items-center gap-1.5"><Label htmlFor="add-ai-format">{copy.aiAPIFormat}</Label><Tooltip><TooltipTrigger type="button" closeOnClick={false} className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={copy.aiAPIFormatHint}><CircleAlert className="size-3.5" /></TooltipTrigger><TooltipContent side="right" align="start" className="max-w-sm whitespace-pre-line text-pretty text-left">{copy.aiAPIFormatHint}</TooltipContent></Tooltip></div><Select value={apiFormat} onValueChange={(val) => handleAPIFormatChange(val as APIFormat)} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-format" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chat_completions">OpenAI Chat Completions</SelectItem><SelectItem value="responses">OpenAI Responses</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem><SelectItem value="commandcode-go">Command Code Go</SelectItem></SelectContent></Select></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-base-url">{copy.aiBaseURL}</Label><Input id="add-ai-base-url" type="url" value={baseURL} required aria-invalid={invalid.baseUrl} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setBaseURL(event.target.value); if (invalid.baseUrl) setInvalid((current) => ({ ...current, baseUrl: false })); }} placeholder={apiFormat === "commandcode-go" ? "https://api.commandcode.ai" : apiFormat === "gemini" ? "https://generativelanguage.googleapis.com" : apiFormat === "responses" ? "https://api.openai.com/v1" : "https://api.example.com/v1"} /></div>
+            <div className="grid gap-2"><Label htmlFor="add-ai-model">{copy.aiModel}</Label><Input id="add-ai-model" value={model} required aria-invalid={invalid.model} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setModel(event.target.value); if (invalid.model) setInvalid((current) => ({ ...current, model: false })); }} placeholder={apiFormat === "commandcode-go" ? "deepseek/deepseek-v4.1-flash" : apiFormat === "gemini" ? "gemini-3.8-flash" : apiFormat === "responses" ? "gpt-5.6-sol" : "provider/model-name"} /></div>
             {apiFormat !== "chat_completions" && <div className="grid gap-2"><Label htmlFor="add-ai-reasoning">{copy.aiReasoningEffort}</Label><Select value={reasoningEffort} onValueChange={(value) => setReasoningEffort(value as "low" | "medium" | "high")} disabled={add.isPending || update.isPending || test.isPending}><SelectTrigger id="add-ai-reasoning" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="low">{copy.aiReasoningLow}</SelectItem><SelectItem value="medium">{copy.aiReasoningMedium}</SelectItem><SelectItem value="high">{copy.aiReasoningHigh}</SelectItem></SelectContent></Select></div>}
             <div className="flex items-center justify-between gap-4"><div className="grid gap-1.5"><Label htmlFor="add-ai-supports-images">{copy.aiSupportsImages}</Label><p id="add-ai-supports-images-hint" className="text-xs text-muted-foreground">{copy.aiSupportsImagesHint}</p></div><Switch id="add-ai-supports-images" aria-describedby="add-ai-supports-images-hint" checked={supportsImages} onCheckedChange={setSupportsImages} disabled={add.isPending || update.isPending || test.isPending} /></div>
             <div className="grid gap-2"><Label htmlFor="add-ai-api-key">{copy.aiAPIKey}</Label><Input id="add-ai-api-key" type="password" value={apiKey} required={!editingModel} aria-invalid={invalid.apiKey} disabled={add.isPending || update.isPending || test.isPending} onChange={(event) => { setAPIKey(event.target.value); if (invalid.apiKey) setInvalid((current) => ({ ...current, apiKey: false })); }} placeholder={editingModel ? copy.aiAPIKeyKeep : (apiFormat === "gemini" ? "AIzaSy..." : "sk-...")} autoComplete="off" /></div>
@@ -1063,14 +1075,13 @@ export function MailboxSettings({ copy, onManageAccount }: { copy: Copy; onManag
   );
 }
 
-function AIBindingRow({
+function AIBindingField({
   copy,
   accountEmail,
   taskType,
   label,
   binding,
   agents,
-  models,
   pending,
   onSave,
 }: {
@@ -1080,82 +1091,59 @@ function AIBindingRow({
   label: string;
   binding?: AITaskBinding;
   agents: AIAgent[];
-  models: AIModel[];
   pending: boolean;
   onSave: (input: AITaskBindingInput) => void;
 }) {
-  // The binding only exists on the server once BOTH an agent and a model are
-  // set, so a first selection that would leave the pair incomplete is kept
-  // here until the user picks the other half.
+  const controlId = useId();
   const [agentId, setAgentId] = useState(binding?.agentId || "");
-  const [modelId, setModelId] = useState(binding?.modelId || "");
   const [enabled, setEnabled] = useState(binding?.enabled !== false);
   const [invalid, setInvalid] = useState(false);
 
   useEffect(() => {
     setAgentId(binding?.agentId || "");
-    setModelId(binding?.modelId || "");
     setEnabled(binding?.enabled !== false);
     setInvalid(false);
-  }, [binding?.agentId, binding?.modelId, binding?.enabled]);
+  }, [binding?.agentId, binding?.enabled]);
 
-  const persist = (next: { agentId: string; modelId: string; enabled: boolean }) => {
-    if (!next.agentId || !next.modelId) {
+  const persist = (next: { agentId: string; enabled: boolean }) => {
+    if (!next.agentId) {
       setInvalid(true);
       toast.error(copy.bindingRequired);
       return;
     }
     setInvalid(false);
-    onSave({ accountEmail, taskType, agentId: next.agentId, modelId: next.modelId, enabled: next.enabled });
+    onSave({ accountEmail, taskType, agentId: next.agentId, enabled: next.enabled });
   };
 
   return (
-    <TableRow>
-      <TableCell className="px-3 py-3 font-medium">{label}</TableCell>
-      <TableCell className="px-3 py-3">
+    <div className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-3">
+      <Label htmlFor={controlId}>{label}</Label>
+      <div className="min-w-0">
         <Select
           value={agentId}
           disabled={!enabled || !agents.length || pending}
           onValueChange={(value) => {
             const nextAgentId = value || "";
             setAgentId(nextAgentId);
-            persist({ agentId: nextAgentId, modelId, enabled });
+            persist({ agentId: nextAgentId, enabled });
           }}
         >
-          <SelectTrigger className="w-full" aria-invalid={invalid && !agentId}>
+          <SelectTrigger id={controlId} className="w-full min-w-0" aria-invalid={invalid && !agentId}>
             <SelectValue>{agents.find((item) => item.id === agentId)?.name || copy.noAgents}</SelectValue>
           </SelectTrigger>
           <SelectContent>{agents.map((item) => <SelectItem value={item.id} key={item.id}>{item.name}</SelectItem>)}</SelectContent>
         </Select>
-      </TableCell>
-      <TableCell className="px-3 py-3">
-        <Select
-          value={modelId}
-          disabled={!enabled || !models.length || pending}
-          onValueChange={(value) => {
-            const nextModelId = value || "";
-            setModelId(nextModelId);
-            persist({ agentId, modelId: nextModelId, enabled });
-          }}
-        >
-          <SelectTrigger className="w-full" aria-invalid={invalid && !modelId}>
-            <SelectValue>{models.find((item) => item.id === modelId)?.model || copy.noAIModels}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>{models.map((item) => <SelectItem value={item.id} key={item.id}>{item.model}</SelectItem>)}</SelectContent>
-        </Select>
-      </TableCell>
-      <TableCell className="px-3 py-3 text-center">
-        <Switch
-          aria-label={label}
-          checked={enabled}
-          disabled={!agentId || !modelId || pending}
-          onCheckedChange={(checked) => {
-            setEnabled(checked);
-            persist({ agentId, modelId, enabled: checked });
-          }}
-        />
-      </TableCell>
-    </TableRow>
+      </div>
+      <Switch
+        aria-label={label}
+        checked={enabled}
+        disabled={!agentId || pending}
+        onCheckedChange={(checked) => {
+          setEnabled(checked);
+          persist({ agentId, enabled: checked });
+        }}
+      />
+    </div>
   );
 }
 
@@ -1165,7 +1153,6 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
   const [invalid, setInvalid] = useState<Record<string, boolean>>({});
   const bindings = useQuery({ queryKey: ["ai-task-bindings"], queryFn: getAITaskBindings, enabled: open && Boolean(account), retry: false });
   const agents = useQuery({ queryKey: ["ai-agents"], queryFn: getAIAgents, enabled: open && Boolean(account), retry: false });
-  const models = useQuery({ queryKey: ["ai-models"], queryFn: getAIModels, enabled: open && Boolean(account), retry: false });
   const accountIdentifier = account?.id;
   const webhook = useQuery({ queryKey: ["account-feishu-webhook", accountIdentifier], queryFn: () => getAccountFeishuWebhookSettings(accountIdentifier!), enabled: open && Boolean(accountIdentifier), retry: false });
   const saveBinding = useMutation({ mutationFn: saveAITaskBinding, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["ai-task-bindings"] }); }, onError: (value) => toastError(value, copy.loadFailed) });
@@ -1290,42 +1277,29 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
             {account && <div className="grid gap-4 border-t pt-5">
               <AccountBrandSettings key={account.id} copy={copy} accountId={account.id} />
               <div><h3 className="text-sm font-semibold">{copy.mailboxAIConfiguration}</h3><p className="mt-1 text-xs text-muted-foreground">{copy.mailboxAIConfigurationDescription}</p></div>
-              <div className="overflow-x-auto rounded-lg border">
-                <Table className="min-w-[38rem] table-fixed">
-                  <TableHeader className="bg-muted/60 text-xs text-muted-foreground">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-[17%] px-3">{copy.aiTask}</TableHead>
-                      <TableHead className="w-[35%] px-3">{copy.agentSettings}</TableHead>
-                      <TableHead className="w-[35%] px-3">{copy.aiModel}</TableHead>
-                      <TableHead className="w-[13%] px-3 text-center">{copy.enabled}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(["mail_summary", "email_draft", "reply_suggestion"] as const).map((taskType) => {
-                      const binding = bindings.data?.bindings.find((item) => item.accountEmail === account.email && item.taskType === taskType);
-                      const label = taskType === "mail_summary" ? copy.mailSummaryAgent : taskType === "email_draft" ? copy.emailDraftAgent : copy.replySuggestionAgent;
-                      const availableAgents = agents.data?.agents || [];
-                      return <AIBindingRow
-                        key={taskType}
-                        copy={copy}
-                        accountEmail={account.email}
-                        taskType={taskType}
-                        label={label}
-                        binding={binding}
-                        agents={availableAgents}
-                        models={models.data?.models || []}
-                        pending={saveBinding.isPending}
-                        onSave={saveBinding.mutate}
-                      />;
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+              <fieldset className="grid min-w-0 gap-x-6 gap-y-2 sm:grid-cols-2" aria-label={copy.mailboxAIConfiguration}>
+                {(["mail_summary", "email_draft", "reply_suggestion"] as const).map((taskType) => {
+                  const binding = bindings.data?.bindings.find((item) => item.accountEmail === account.email && item.taskType === taskType);
+                  const label = taskType === "mail_summary" ? copy.mailSummaryAgent : taskType === "email_draft" ? copy.emailDraftAgent : copy.replySuggestionAgent;
+                  const availableAgents = agents.data?.agents || [];
+                  return <AIBindingField
+                    key={taskType}
+                    copy={copy}
+                    accountEmail={account.email}
+                    taskType={taskType}
+                    label={label}
+                    binding={binding}
+                    agents={availableAgents}
+                    pending={saveBinding.isPending}
+                    onSave={saveBinding.mutate}
+                  />;
+                })}
+              </fieldset>
               <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={setWebhookEnabled} /></div><Input type="url" aria-invalid={webhookInvalid} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhookURL} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value }); clearInvalid("webhook"); }} onBlur={saveWebhookField} /></div>
               <MailIgnoreRulesSettings key={account.id} accountId={account.id} copy={copy} />
             </div>}
           </div>
-          <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>
+          <DialogFooter className="mx-0 mb-0 shrink-0 flex-row justify-end gap-3 border-t px-4 py-4 sm:px-5"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

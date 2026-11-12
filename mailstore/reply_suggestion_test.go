@@ -44,15 +44,11 @@ func (c *blockingReplySuggestionClient) callCount() int {
 func TestReplySuggestionPersistsAndRegenerates(t *testing.T) {
 	s, account, message, encryptionKey := setupMailSummaryTest(t)
 	ctx := context.Background()
-	model, err := s.GetDefaultAIModel(ctx, account.OwnerID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	agent, err := s.CreateAIAgent(ctx, AIAgentRecord{OwnerID: account.OwnerID, Name: "Reply writer", Prompt: "Keep replies concise and professional."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, AITaskBindingRecord{AccountID: account.ID, TaskType: ReplySuggestionTask, AgentID: agent.ID, ModelID: model.ID}); err != nil {
+	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, AITaskBindingRecord{AccountID: account.ID, TaskType: ReplySuggestionTask, AgentID: agent.ID}); err != nil {
 		t.Fatal(err)
 	}
 	client := &recordingWebhookClient{status: http.StatusOK, body: `{"output_text":"Thanks for the details. I will review the request and get back to you shortly."}`}
@@ -111,15 +107,11 @@ func TestNewMessageProcessingPersistsSuggestionWithoutWebhook(t *testing.T) {
 func TestDisabledReplySuggestionDoesNotGenerateOrLogErrors(t *testing.T) {
 	s, account, message, key := setupMailSummaryTest(t)
 	ctx := context.Background()
-	model, err := s.GetDefaultAIModel(ctx, account.OwnerID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	agent, err := s.GetMailSummaryAgent(ctx, account.OwnerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := AITaskBindingRecord{AccountID: account.ID, TaskType: ReplySuggestionTask, AgentID: agent.ID, ModelID: model.ID, EnabledSet: true}
+	binding := AITaskBindingRecord{AccountID: account.ID, TaskType: ReplySuggestionTask, AgentID: agent.ID, EnabledSet: true}
 	if _, err := s.SaveAITaskBinding(ctx, account.OwnerID, binding); err != nil {
 		t.Fatal(err)
 	}

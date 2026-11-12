@@ -29,6 +29,10 @@ func CreateAgentResponse(ctx context.Context, client HTTPClient, model AIModelRe
 			}
 		}
 	}
+	if provider == "commandcode-go" {
+		message, err := createCommandCodeResponse(ctx, client, model, apiKey, instructions, input.Messages, tools, images, maxTokens, effort, onDelta)
+		return agentruntime.ModelResponse{Message: message}, err
+	}
 	payload, endpoint, err := agentRequest(model, provider, instructions, input.Messages, tools, input.DisableTools, images, maxTokens, effort, onDelta != nil)
 	if err != nil {
 		return agentruntime.ModelResponse{}, err

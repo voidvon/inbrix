@@ -17,11 +17,7 @@ func TestMailboxBrandsMigrationIsOneTimeAndIndependentOfAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, err := s.CreateAIModel(ctx, AIModelRecord{OwnerID: user.ID, Provider: "openai", BaseURL: "https://api.example.com/v1", Model: "test", EncryptedAPIKey: "unused"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.SaveAITaskBinding(ctx, user.ID, AITaskBindingRecord{AccountID: account.ID, TaskType: EmailDraftTask, AgentID: agent.ID, ModelID: model.ID, Enabled: true}); err != nil {
+	if _, err = s.SaveAITaskBinding(ctx, user.ID, AITaskBindingRecord{AccountID: account.ID, TaskType: EmailDraftTask, AgentID: agent.ID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.db.ExecContext(ctx, `DROP TABLE account_brand_settings`); err != nil {

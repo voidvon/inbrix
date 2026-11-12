@@ -148,7 +148,7 @@ func (h *AISettingsHandler) HandleListModels(c *fiber.Ctx) error {
 }
 
 func validProvider(p string) bool {
-	return p == "openai" || p == "openai-compatible" || p == "gemini"
+	return p == "openai" || p == "openai-compatible" || p == "gemini" || p == "commandcode-go"
 }
 
 func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
@@ -165,7 +165,7 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -173,6 +173,8 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
 	if input.BaseURL == "" {
 		switch input.Provider {
+		case "commandcode-go":
+			input.BaseURL = mailstore.CommandCodeBaseURL
 		case "gemini":
 			input.BaseURL = defaultGeminiBaseURL
 		default:
@@ -181,6 +183,8 @@ func (h *AISettingsHandler) HandleCreateModel(c *fiber.Ctx) error {
 	}
 	if input.Model == "" {
 		switch input.Provider {
+		case "commandcode-go":
+			input.Model = "deepseek/deepseek-v4.1-flash"
 		case "gemini":
 			input.Model = defaultGeminiModel
 		default:
@@ -248,7 +252,7 @@ func (h *AISettingsHandler) HandleUpdateModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -304,7 +308,7 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 		input.Provider = "openai"
 	}
 	if !validProvider(input.Provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -312,6 +316,8 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 	input.ReasoningEffort = strings.TrimSpace(input.ReasoningEffort)
 	if input.BaseURL == "" {
 		switch input.Provider {
+		case "commandcode-go":
+			input.BaseURL = mailstore.CommandCodeBaseURL
 		case "gemini":
 			input.BaseURL = defaultGeminiBaseURL
 		default:
@@ -320,6 +326,8 @@ func (h *AISettingsHandler) HandleTestModel(c *fiber.Ctx) error {
 	}
 	if input.Model == "" {
 		switch input.Provider {
+		case "commandcode-go":
+			input.Model = "deepseek/deepseek-v4.1-flash"
 		case "gemini":
 			input.Model = defaultGeminiModel
 		default:
@@ -377,7 +385,7 @@ func (h *AISettingsHandler) HandleTestSavedModel(c *fiber.Ctx) error {
 		provider = "openai"
 	}
 	if !validProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, or gemini")
+		return fiber.NewError(fiber.StatusBadRequest, "provider must be openai, openai-compatible, gemini, or commandcode-go")
 	}
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
 	input.Model = strings.TrimSpace(input.Model)
@@ -679,7 +687,7 @@ func (h *AISettingsHandler) HandleWriteEmail(c *fiber.Ctx) error {
 			h.recordError(c.UserContext(), owner, taskType, input.AccountEmail, "", "", errors.New("this AI function is disabled for the mailbox"))
 			return fiber.NewError(fiber.StatusPreconditionRequired, "this AI function is disabled for the mailbox")
 		}
-		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
+		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
 		if err == nil {
 			var agent mailstore.AIAgentRecord
 			agent, err = h.mailDB.GetAIAgent(c.UserContext(), owner, binding.AgentID)
@@ -812,14 +820,7 @@ func (h *AISettingsHandler) HandleWriteDocument(c *fiber.Ctx) error {
 		}
 		input.Mode = "variables"
 	}
-	var model mailstore.AIModelRecord
-	binding, bindingErr := h.mailDB.GetAITaskBinding(c.UserContext(), owner, account.ID, mailstore.EmailDraftTask)
-	if bindingErr == nil && binding.ModelID != "" {
-		model, err = h.mailDB.GetAIModel(c.UserContext(), owner, binding.ModelID)
-	}
-	if model.ID == "" || err != nil {
-		model, err = h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
-	}
+	model, err := h.mailDB.GetDefaultAIModel(c.UserContext(), owner)
 	if errors.Is(err, mailstore.ErrNotFound) || model.ID == "" {
 		h.recordError(c.UserContext(), owner, "document_generation", input.AccountEmail, "", "", errors.New("no AI model is configured"))
 		return fiber.NewError(fiber.StatusPreconditionRequired, "no AI model is configured")
@@ -1023,6 +1024,13 @@ func validateAIBaseURL(provider, raw string) error {
 	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
+	case "commandcode-go":
+		path := strings.TrimRight(u.Path, "/")
+		for _, suffix := range []string{"/alpha/generate", "/provider/v1", "/chat/completions", "/responses"} {
+			if strings.HasSuffix(path, suffix) {
+				return errors.New("Command Code Go Base URL must be the service root (e.g. https://api.commandcode.ai)")
+			}
+		}
 	case "gemini":
 		trimmedPath := strings.TrimRight(u.Path, "/")
 		if strings.HasSuffix(trimmedPath, ":generateContent") || strings.HasSuffix(trimmedPath, "/models") {

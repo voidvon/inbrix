@@ -1557,6 +1557,21 @@ Validation includes provider payload/stream tests, authenticated upload/read/del
 and invalid-image tests, tool-loop and historical-image tests, and
 `scripts/check-ai-images.mjs` on desktop/mobile with all APIs mocked.
 
+## Mailbox AI configuration
+
+`GET /api/settings/ai/task-bindings` lists each mailbox's mail summary,
+email draft, and reply suggestion agent selection and enabled state.
+`PUT /api/settings/ai/task-bindings` accepts
+`{accountEmail, taskType, agentId, enabled?}`; `enabled` defaults to `true`.
+A model is not required to save an agent selection.
+
+Mailbox AI tasks resolve the current default model from model management at
+execution time. Changing that default applies to subsequent mail summaries,
+translations, suggested replies, email drafts, document generation, and chat
+requests without an explicit model override. Existing mailbox bindings are
+migrated to preserve their agent, enabled state, and update time while removing
+the old model association. Deleting a model does not delete mailbox AI bindings.
+
 ## Server-managed AI chat sessions
 
 Mail and document chats share SQLite sessions, ordered messages, execution records

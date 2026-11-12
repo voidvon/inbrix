@@ -143,7 +143,7 @@ func resolveMailSummaryMetadata(ctx context.Context, store *Store, account Accou
 		}
 		agent, err = store.GetAIAgent(ctx, account.OwnerID, binding.AgentID)
 		if err == nil {
-			model, err = store.GetAIModel(ctx, account.OwnerID, binding.ModelID)
+			model, err = store.GetDefaultAIModel(ctx, account.OwnerID)
 		}
 	} else if errors.Is(err, ErrNotFound) {
 		agent, err = store.GetMailSummaryAgent(ctx, account.OwnerID)

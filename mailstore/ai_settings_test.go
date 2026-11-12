@@ -75,7 +75,7 @@ func TestLegacyDeepSeekModelMigrationOnOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := s.SaveAITaskBinding(ctx, "alice", AITaskBindingRecord{AccountID: account.ID, TaskType: EmailDraftTask, AgentID: agent.ID, ModelID: model.ID})
+	binding, err := s.SaveAITaskBinding(ctx, "alice", AITaskBindingRecord{AccountID: account.ID, TaskType: EmailDraftTask, AgentID: agent.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

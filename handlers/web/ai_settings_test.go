@@ -171,18 +171,82 @@ func TestAIModelManagementRejectsLegacyDeepSeekProvider(t *testing.T) {
 	}
 }
 
+type commandCodeSettingsTransport func(*http.Request) (*http.Response, error)
+
+func (f commandCodeSettingsTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestCommandCodeGoModelSettings(t *testing.T) {
+	emailHandler, app, _, _ := outboxTestApp(t)
+	emailHandler.config.Encryption.Key = "0123456789abcdef0123456789abcdef"
+	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)
+	calls := 0
+	h.client = &http.Client{Transport: commandCodeSettingsTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.String() != mailstore.CommandCodeBaseURL+"/alpha/generate" || r.Header.Get("Authorization") != "Bearer test-commandcode-key" {
+			t.Error("model test lost CLI endpoint or saved API key")
+		}
+		var payload struct {
+			Params struct{ Model string } `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Params.Model != "deepseek/deepseek-v4.1-flash" {
+			t.Errorf("unexpected test model: %q, %v", payload.Params.Model, err)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{\"type\":\"text-delta\",\"text\":\"OK\"}\n{\"type\":\"finish\",\"finishReason\":\"stop\"}\n"))}, nil
+	})}
+	app.Post("/models", h.HandleCreateModel)
+	app.Put("/models/:id", h.HandleUpdateModel)
+	app.Get("/models", h.HandleListModels)
+	app.Post("/models/:id/test", h.HandleTestSavedModel)
+	app.Post("/model-test", h.HandleTestModel)
+	request := func(method, path, body string, status int) []byte {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != status || strings.Contains(string(raw), "test-commandcode-key") {
+			t.Fatalf("%s %s: unexpected status %d or credential exposure", method, path, res.StatusCode)
+		}
+		return raw
+	}
+	var created aiModelPublic
+	if err := json.Unmarshal(request("POST", "/models", `{"provider":"commandcode-go","apiKey":"test-commandcode-key"}`, 201), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Provider != "commandcode-go" || created.BaseURL != mailstore.CommandCodeBaseURL || created.Model != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("incorrect defaults: %+v", created)
+	}
+	request("PUT", "/models/"+created.ID, `{"baseUrl":"https://api.commandcode.ai/","model":"deepseek/deepseek-v4.1-flash","reasoningEffort":"low"}`, 200)
+	var listed struct{ Models []aiModelPublic }
+	if err := json.Unmarshal(request("GET", "/models", "", 200), &listed); err != nil || len(listed.Models) != 1 || listed.Models[0].Provider != "commandcode-go" || listed.Models[0].ReasoningEffort != "low" {
+		t.Fatalf("saved provider/settings lost: %+v, %v", listed, err)
+	}
+	request("POST", "/models/"+created.ID+"/test", `{}`, 200)
+	request("POST", "/model-test", `{"provider":"commandcode-go","apiKey":"test-commandcode-key"}`, 200)
+	if calls != 2 {
+		t.Fatalf("model test requests=%d", calls)
+	}
+	for _, suffix := range []string{"/alpha/generate", "/provider/v1", "/provider/v1/chat/completions", "/v1/responses"} {
+		if err := validateAIBaseURL("commandcode-go", mailstore.CommandCodeBaseURL+suffix); err == nil {
+			t.Errorf("accepted endpoint instead of service root: %s", suffix)
+		}
+	}
+}
+
 func TestWriteEmailDisabledReplySuggestionReturnsPreconditionWithoutErrorLog(t *testing.T) {
 	emailHandler, app, account, _ := outboxTestApp(t)
 	ctx := context.Background()
-	model, err := emailHandler.mailDB.CreateAIModel(ctx, mailstore.AIModelRecord{OwnerID: account.OwnerID, BaseURL: "https://api.openai.com/v1", Model: "test-model", EncryptedAPIKey: "unused-while-disabled"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	agent, err := emailHandler.mailDB.CreateAIAgent(ctx, mailstore.AIAgentRecord{OwnerID: account.OwnerID, Name: "Reply writer", Prompt: "Write a reply."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emailHandler.mailDB.SaveAITaskBinding(ctx, account.OwnerID, mailstore.AITaskBindingRecord{AccountID: account.ID, TaskType: mailstore.ReplySuggestionTask, AgentID: agent.ID, ModelID: model.ID, EnabledSet: true}); err != nil {
+	if _, err := emailHandler.mailDB.SaveAITaskBinding(ctx, account.OwnerID, mailstore.AITaskBindingRecord{AccountID: account.ID, TaskType: mailstore.ReplySuggestionTask, AgentID: agent.ID, EnabledSet: true}); err != nil {
 		t.Fatal(err)
 	}
 	h := NewAISettingsHandler(emailHandler.store, emailHandler.config, emailHandler.mailDB)

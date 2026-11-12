@@ -12,8 +12,8 @@ import { Label } from "../ui/label";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { ProductSelect } from "./product-select";
 
-function BrandPicker({ brands, available, onChange, disabled, label, resetLabel, emptyLabel }: { brands: string[]; available: string[]; onChange: (brands: string[]) => void; disabled?: boolean; label: string; resetLabel: string; emptyLabel: string }) {
-  return <DropdownMenu><DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={disabled} className="max-w-full gap-1 text-xs" aria-label={label}><span className="truncate">{label}</span><ChevronDown className="size-3 shrink-0" /></Button>} />
+function BrandPicker({ brands, available, onChange, disabled, label, resetLabel, emptyLabel, className = "" }: { brands: string[]; available: string[]; onChange: (brands: string[]) => void; disabled?: boolean; label: string; resetLabel: string; emptyLabel: string; className?: string }) {
+  return <DropdownMenu><DropdownMenuTrigger render={<Button type="button" variant="outline" size="sm" disabled={disabled} className={`max-w-full gap-1 text-xs ${className}`} aria-label={label}><span className="truncate">{label}</span><ChevronDown className="size-3 shrink-0" /></Button>} />
     <DropdownMenuContent className="max-h-72 max-w-80 overflow-y-auto">
       <DropdownMenuItem onClick={() => onChange([])}>{resetLabel}</DropdownMenuItem>
       {!available.length && !brands.length && <DropdownMenuItem disabled>{emptyLabel}</DropdownMenuItem>}
@@ -81,11 +81,13 @@ export function AccountBrandSettings({ copy, accountId }: { copy: Copy; accountI
     setDraft(null);
     toast.success(isZh ? "邮箱品牌已保存" : "Mailbox brands saved");
   }, onError: (error: Error) => toast.error(error.message) });
-  return <div className="grid gap-3 rounded-lg border p-3">
+  return <div className="grid min-w-0 gap-3">
     <div><h3 className="text-sm font-semibold">{isZh ? "邮箱品牌绑定" : "Mailbox brands"}</h3><p className="mt-1 text-xs text-muted-foreground">{isZh ? "此邮箱的邮件分析、报价与合同共用以下品牌，切换智能体不改变品牌范围。保存后立即生效。" : "Email analysis, quotations and contracts use this mailbox’s brands across assistants. Saving takes effect immediately."}</p></div>
-    <div className="grid gap-2"><Label>{isZh ? "负责品牌" : "Responsible brands"}</Label><BrandPicker brands={value.brands} available={(navigation.data?.brands || []).map(b => b.name).filter(Boolean)} onChange={brands => patch({ brands })} disabled={disabled || save.isPending} resetLabel={isZh ? "清空已选品牌" : "Clear brands"} emptyLabel={isZh ? "产品库中暂无品牌" : "No catalog brands"} label={value.brands.join("、") || (isZh ? "选择产品库品牌" : "Select catalog brands")} />
-      {navigation.isError && <p className="text-xs text-destructive">{isZh ? "品牌加载失败，请重试" : "Failed to load brands"}</p>}
-      <ProductSelect label={isZh ? "品牌范围模式" : "Brand mode"} value={value.brandMode} disabled={disabled || save.isPending} onValueChange={brandMode => patch({ brandMode: brandMode as AccountBrands["brandMode"] })} options={[{ value: "prefer", label: isZh ? "优先这些品牌，允许按客户需求查询其他品牌" : "Prefer these brands; allow other requested brands" }, { value: "restrict", label: isZh ? "仅允许这些品牌（产品查询与文档均受限）" : "Restrict catalog and documents to these brands" }]} />
+    <div className="grid min-w-0 grid-cols-2 gap-3">
+      <div className="flex min-w-0 flex-col gap-1.5"><Label>{isZh ? "负责品牌" : "Responsible brands"}</Label><BrandPicker className="h-8 w-full justify-between text-sm" brands={value.brands} available={(navigation.data?.brands || []).map(b => b.name).filter(Boolean)} onChange={brands => patch({ brands })} disabled={disabled || save.isPending} resetLabel={isZh ? "清空已选品牌" : "Clear brands"} emptyLabel={isZh ? "产品库中暂无品牌" : "No catalog brands"} label={value.brands.join("、") || (isZh ? "选择产品库品牌" : "Select catalog brands")} />
+        {navigation.isError && <p className="text-xs text-destructive">{isZh ? "品牌加载失败，请重试" : "Failed to load brands"}</p>}
+      </div>
+      <div className="flex min-w-0 flex-col gap-1.5"><Label>{isZh ? "品牌范围模式" : "Brand mode"}</Label><ProductSelect label={isZh ? "品牌范围模式" : "Brand mode"} value={value.brandMode} disabled={disabled || save.isPending} onValueChange={brandMode => patch({ brandMode: brandMode as AccountBrands["brandMode"] })} options={[{ value: "prefer", label: isZh ? "优先这些品牌，允许按客户需求查询其他品牌" : "Prefer these brands; allow other requested brands" }, { value: "restrict", label: isZh ? "仅允许这些品牌（产品查询与文档均受限）" : "Restrict catalog and documents to these brands" }]} /></div>
     </div>
 
     {binding.isError && <p role="alert" className="text-xs text-destructive">{isZh ? "邮箱品牌加载失败" : "Failed to load mailbox brands"}<Button type="button" variant="link" onClick={() => void binding.refetch()}>{isZh ? "重试" : "Retry"}</Button></p>}
