@@ -614,6 +614,7 @@ func main() {
 	protected.Get("/api/settings/ai/error-logs", userAIHandler.HandleListAIErrorLogs)
 	protected.Delete("/api/settings/ai/error-logs", userAIHandler.HandleClearAIErrorLogs)
 	protected.Get("/api/settings/ai/mail-tasks", userAIHandler.HandleListMailTasks)
+	userAIHandler.RegisterMailIgnoreRuleRoutes(apiRoutes)
 	protected.Get("/api/settings/ai/mail-tasks/runs", userAIHandler.HandleListMailTaskRuns)
 	protected.Post("/api/settings/ai/mail-tasks/retry", userAIHandler.HandleRetryMailTask)
 	apiRoutes.Post("/ai/mail-summary", userAIHandler.HandleSummarizeMail)

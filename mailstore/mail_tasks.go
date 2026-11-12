@@ -30,16 +30,17 @@ type MailTask struct {
 	NextAttempt  time.Time
 	Payload      string
 	ErrorMessage string
+	SkipReason   string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
-const mailTaskColumns = `account_id, folder_name, uid, task_type, status, attempts, generation_token, lease_until, next_attempt, payload, error_message, created_at, updated_at`
+const mailTaskColumns = `account_id, folder_name, uid, task_type, status, attempts, generation_token, lease_until, next_attempt, payload, error_message, created_at, updated_at, skip_reason`
 
 func scanMailTask(scanner interface{ Scan(...any) error }) (MailTask, error) {
 	var task MailTask
 	var uid, lease, next, created, updated int64
-	err := scanner.Scan(&task.AccountID, &task.FolderName, &uid, &task.Type, &task.Status, &task.Attempts, &task.Token, &lease, &next, &task.Payload, &task.ErrorMessage, &created, &updated)
+	err := scanner.Scan(&task.AccountID, &task.FolderName, &uid, &task.Type, &task.Status, &task.Attempts, &task.Token, &lease, &next, &task.Payload, &task.ErrorMessage, &created, &updated, &task.SkipReason)
 	task.UID = fmt.Sprint(uid)
 	task.LeaseUntil = timeFromUnix(lease)
 	task.NextAttempt = timeFromUnix(next)
@@ -57,11 +58,29 @@ func enqueueMailTasksTx(ctx context.Context, tx *sql.Tx, accountID, folder strin
 	if existing > 0 {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO mail_tasks(account_id,folder_name,uid,task_type,status,attempts,generation_token,lease_until,next_attempt,payload,error_message,created_at,updated_at)
+	rules, err := loadMailIgnoreRules(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	message, err := loadMailIgnoreHeaders(ctx, tx, accountID, folder, uid)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO mail_tasks(account_id,folder_name,uid,task_type,status,attempts,generation_token,lease_until,next_attempt,payload,error_message,created_at,updated_at)
 		SELECT ?,?,?,task_type,'pending',0,'',0,?,'','',?,? FROM
 		(SELECT 'analysis' AS task_type UNION ALL SELECT 'notification' UNION ALL SELECT 'reply')
 		WHERE task_type <> 'notification' OR EXISTS(SELECT 1 FROM account_webhook_settings WHERE account_id=? AND enabled=1 AND url<>'')`, accountID, folder, uid, now, now, now, accountID)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, action := range []string{mailTaskAnalysis, mailTaskReply, mailTaskNotification} {
+		if match := MatchMailIgnoreRule(rules, message, action); match != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE mail_tasks SET status='skipped',next_attempt=0,skip_reason=? WHERE account_id=? AND folder_name=? AND uid=? AND task_type=?`, mailIgnoreReason(*match), accountID, folder, uid, action); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) enqueueMailTasks(ctx context.Context, accountID, folder string, uids []string) error {
@@ -165,7 +184,7 @@ func (s *Store) completeMailTask(ctx context.Context, task MailTask, skipped boo
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE mail_tasks SET status=?,generation_token='',lease_until=0,next_attempt=0,error_message='',updated_at=? WHERE account_id=? AND folder_name=? AND uid=? AND task_type=? AND generation_token=? AND status='running'`, status, time.Now().Unix(), task.AccountID, task.FolderName, task.UID, task.Type, task.Token)
+	result, err := tx.ExecContext(ctx, `UPDATE mail_tasks SET status=?,generation_token='',lease_until=0,next_attempt=0,error_message='',skip_reason=CASE WHEN ?='skipped' THEN skip_reason ELSE '' END,updated_at=? WHERE account_id=? AND folder_name=? AND uid=? AND task_type=? AND generation_token=? AND status='running'`, status, status, time.Now().Unix(), task.AccountID, task.FolderName, task.UID, task.Type, task.Token)
 	if err := checkMailTaskUpdate(result, err); err != nil {
 		return err
 	}

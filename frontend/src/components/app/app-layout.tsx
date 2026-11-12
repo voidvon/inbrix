@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
   FilePenLine,
   Folder,
   MessageCircle,
@@ -15,6 +16,7 @@ import {
   Pencil,
   Settings,
   Sun,
+  Tag,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -44,6 +46,7 @@ import {
 } from "../ui/dropdown-menu";
 import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Skeleton } from "../ui/skeleton";
+import { Separator } from "../ui/separator";
 import { ResizeHandle, usePersistedPaneWidth } from "./resize-handle";
 
 export function FolderLink({ copy, folder, selected = false, onClose }: { copy: Copy; folder: Mailbox; selected?: boolean; onClose: () => void }) {
@@ -119,6 +122,10 @@ export function Sidebar({
   onToggleDarkMode,
   desktopWidth,
   realtimeStatus,
+  showAllConversations,
+  selectedTag,
+  tags,
+  onConversationFilterChange,
 }: {
   copy: Copy;
   folders: Mailbox[];
@@ -136,35 +143,57 @@ export function Sidebar({
   onToggleDarkMode: () => void;
   desktopWidth: number;
   realtimeStatus: MailEventStatus;
+  showAllConversations: boolean;
+  selectedTag: string;
+  tags: string[];
+  onConversationFilterChange: (showAll: boolean, tag: string) => void;
 }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
   const realtimeLabel = realtimeStatus === "open" ? copy.realtimeConnected : realtimeStatus === "connecting" ? copy.realtimeConnecting : copy.realtimeDisconnected;
-  const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground";
+  const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground aria-current:bg-sidebar-accent aria-current:text-sidebar-accent-foreground";
+  const inboxActive = !currentFolder && currentView === "mail";
+  const selectFilter = (event: MouseEvent<HTMLAnchorElement>, showAll: boolean, tag = "") => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (inboxActive) event.preventDefault();
+    onConversationFilterChange(showAll, tag);
+    onClose();
+  };
   return (
     <aside style={{ "--sidebar-width": `${desktopWidth}px` } as React.CSSProperties} className={cn("fixed inset-y-0 left-0 z-40 flex w-60 -translate-x-full flex-col border-r bg-sidebar px-3 py-4 transition-transform lg:static lg:z-auto lg:w-(--sidebar-width) lg:shrink-0 lg:translate-x-0", open && "translate-x-0 ring-1 ring-foreground/10")}>
       <Button data-testid="compose-button" className="mb-4 w-full" onClick={onCompose}><Pencil />{copy.compose}</Button>
       <nav className="flex min-h-0 flex-1 flex-col gap-1">
-        <Button nativeButton={false} render={<a href="/inbox" onClick={onClose} />} variant={!currentFolder && currentView === "mail" ? "secondary" : "ghost"} size="sm" className={cn(navClass, !currentFolder && currentView === "mail" && "bg-sidebar-accent text-sidebar-accent-foreground")}><MessageCircle /><span>{copy.conversations}</span></Button>
-        <Button nativeButton={false} render={<a href="/documents" onClick={onClose} />} variant={currentView === "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><FilePenLine /><span>{copy.documents}</span></Button>
-        <Button nativeButton={false} render={<a href="/products" onClick={onClose} />} variant={currentView === "products" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "products" && "bg-sidebar-accent text-sidebar-accent-foreground")}><BookOpen /><span>{copy.products}</span></Button>
-        <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
-        {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
-        <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
-        {foldersOpen && (
-          <ScrollArea className="min-h-0 flex-1" contentClassName="flex flex-col gap-1">
-            {visibleFolders.map((folder) => <FolderLink key={folder.name} copy={copy} folder={folder} selected={folder.name === currentFolder} onClose={onClose} />)}
-            {loading && !visibleFolders.length ? (
-              <div className="grid gap-2 px-9 py-2">
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 w-16" />
-                <Skeleton className="h-4 w-24" />
-              </div>
-            ) : !visibleFolders.length ? (
-              <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>
-            ) : null}
-          </ScrollArea>
-        )}
+        <ScrollArea className="min-h-0 flex-1" contentClassName="flex flex-col gap-1">
+          <div className="flex flex-col gap-1" aria-label={copy.conversationFilter} data-testid="sidebar-conversation-filters">
+            <Button nativeButton={false} render={<a href="/inbox" aria-current={inboxActive && showAllConversations && !selectedTag ? "page" : undefined} onClick={(event) => selectFilter(event, true)} />} variant={inboxActive && showAllConversations && !selectedTag ? "secondary" : "ghost"} size="sm" className={navClass} data-testid="conversation-filter-all"><MessageCircle /><span>{copy.showAllConversations}</span></Button>
+            <Button nativeButton={false} render={<a href="/inbox" aria-current={inboxActive && !showAllConversations && !selectedTag ? "page" : undefined} onClick={(event) => selectFilter(event, false)} />} variant={inboxActive && !showAllConversations && !selectedTag ? "secondary" : "ghost"} size="sm" className={navClass} data-testid="conversation-filter-open"><Clock3 /><span>{copy.unanswered}</span></Button>
+          </div>
+          <Separator className="my-2" />
+          <div className="flex min-w-0 flex-col gap-1" aria-label={copy.conversationTags} data-testid="sidebar-conversation-tags">
+            {tags.map((tag) => <Button key={tag} nativeButton={false} render={<a href="/inbox" aria-current={inboxActive && selectedTag === tag ? "page" : undefined} onClick={(event) => selectFilter(event, true, tag)} />} variant={inboxActive && selectedTag === tag ? "secondary" : "ghost"} size="sm" className={navClass} title={tag}><Tag className="shrink-0" /><span className="min-w-0 truncate">{tag}</span></Button>)}
+            {!tags.length && (loading ? <Skeleton className="mx-3 h-4 w-24" /> : <p className="px-3 py-2 text-xs text-muted-foreground">{copy.noConversationTags}</p>)}
+          </div>
+          <Separator className="my-2" />
+          <Button nativeButton={false} render={<a href="/documents" onClick={onClose} />} variant={currentView === "documents" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "documents" && "bg-sidebar-accent text-sidebar-accent-foreground")}><FilePenLine /><span>{copy.documents}</span></Button>
+          <Button nativeButton={false} render={<a href="/products" onClick={onClose} />} variant={currentView === "products" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "products" && "bg-sidebar-accent text-sidebar-accent-foreground")}><BookOpen /><span>{copy.products}</span></Button>
+          <Button nativeButton={false} render={<a href="/attachments" onClick={onClose} />} variant={currentView === "attachments" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "attachments" && "bg-sidebar-accent text-sidebar-accent-foreground")}><Paperclip /><span>{copy.attachmentManager}</span></Button>
+          {calendarEnabled && <Button nativeButton={false} render={<a href="/calendar" onClick={onClose} />} variant={currentView === "calendar" ? "secondary" : "ghost"} size="sm" className={cn(navClass, currentView === "calendar" && "bg-sidebar-accent text-sidebar-accent-foreground")}><CalendarDays /><span>{copy.calendar}</span></Button>}
+          <Button variant="ghost" size="sm" className={cn(navClass, "mt-2 text-xs uppercase tracking-wide text-muted-foreground")} onClick={() => setFoldersOpen((value) => !value)}><ChevronRight className={cn("transition-transform", foldersOpen && "rotate-90")} /><span>{copy.folders}</span></Button>
+          {foldersOpen && (
+            <div className="flex flex-col gap-1">
+              {visibleFolders.map((folder) => <FolderLink key={folder.name} copy={copy} folder={folder} selected={folder.name === currentFolder} onClose={onClose} />)}
+              {loading && !visibleFolders.length ? (
+                <div className="grid gap-2 px-9 py-2">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-24" />
+                </div>
+              ) : !visibleFolders.length ? (
+                <span className="px-9 py-2 text-xs text-muted-foreground">{copy.noConversations}</span>
+              ) : null}
+            </div>
+          )}
+        </ScrollArea>
         <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
           <span
             className={cn("size-2 shrink-0 rounded-full", realtimeStatus === "open" ? "bg-emerald-500" : realtimeStatus === "connecting" ? "bg-amber-400" : "bg-red-500")}
@@ -192,9 +221,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get("setup") === "1");
   const [darkMode, setDarkMode] = useState(prefersDarkMode);
   const [sidebarWidth, setSidebarWidth] = usePersistedPaneWidth("inbrix-sidebar-width", 230, 180, 360);
-  // Shared by the sidebar shell and the inbox list so both observe the same
-  // server-filtered query. The default matches the old "open" toggle.
-  const [showAllConversations, setShowAllConversations] = useState(false);
+  // Status entries and tags are exclusive views. Share the query with the inbox.
+  const [conversationFilter, setConversationFilter] = useState({ showAll: false, tag: "" });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -205,7 +233,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     }
   }, [darkMode]);
 
-  const shell = useConversationsQuery(showAllConversations ? "all" : "open");
+  const shell = useConversationsQuery(conversationFilter.showAll ? "all" : "open", conversationFilter.tag);
 
   const capabilities = useQuery({
     queryKey: ["capabilities"],
@@ -313,8 +341,8 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
     compose: { open: composeOpen, defaults: composeDefaults },
     closeCompose: () => setComposeOpen(false),
     openSettings,
-    showAllConversations,
-    setShowAllConversations,
+    showAllConversations: conversationFilter.showAll,
+    selectedTag: conversationFilter.tag,
   };
 
   return (
@@ -344,6 +372,10 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
           onToggleDarkMode={() => setDarkMode((value) => !value)}
           desktopWidth={sidebarWidth}
           realtimeStatus={realtimeStatus}
+          showAllConversations={conversationFilter.showAll}
+          selectedTag={conversationFilter.tag}
+          tags={[...new Set([...(shell.data?.tags || []), ...(shell.data?.conversations || []).flatMap((row) => row.tags || []), ...(conversationFilter.tag ? [conversationFilter.tag] : [])])].sort()}
+          onConversationFilterChange={(showAll, tag) => setConversationFilter({ showAll, tag })}
         />
         <ResizeHandle label="Resize navigation" width={sidebarWidth} minWidth={180} maxWidth={360} onResize={setSidebarWidth} />
         {children}

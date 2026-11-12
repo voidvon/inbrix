@@ -40,7 +40,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../ui/input";
 import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Separator } from "../ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import {
   deleteConversationMessage,
   deleteOutgoing,
@@ -82,7 +81,6 @@ export function ConversationList({
   data,
   onSearch,
   selectedTag,
-  onTagChange,
   onMenu,
   loading,
   error,
@@ -96,7 +94,6 @@ export function ConversationList({
   loadingMore = false,
   loadMoreError,
   showAllConversations,
-  onShowAllChange,
   desktopWidth,
   className,
 }: {
@@ -104,7 +101,6 @@ export function ConversationList({
   data?: ConversationListResponse;
   onSearch: () => void;
   selectedTag: string;
-  onTagChange: (value: string) => void;
   onMenu: () => void;
   loading: boolean;
   error: Error | null;
@@ -118,7 +114,6 @@ export function ConversationList({
   loadingMore?: boolean;
   loadMoreError?: Error | null;
   showAllConversations: boolean;
-  onShowAllChange: (value: boolean) => void;
   desktopWidth?: number;
   className?: string;
 }) {
@@ -128,7 +123,6 @@ export function ConversationList({
     (showAllConversations || conversation.status === "unanswered" || conversation.status === "draft") &&
     (!selectedTag || conversation.tags?.includes(selectedTag))
   );
-  const tags = [...new Set([...(data?.tags || []), ...allRows.flatMap((row) => row.tags || []), ...(selectedTag ? [selectedTag] : [])])].sort();
   const hasData = Boolean(data);
 
   // The sentinel loads the next page before it reaches the bottom. The explicit
@@ -159,31 +153,15 @@ export function ConversationList({
           <Button variant="ghost" size="icon" className="shrink-0 lg:hidden" onClick={onMenu} aria-label={copy.folders} title={copy.folders}>
             <MenuIcon />
           </Button>
-          <Button data-testid="open-mail-search" variant="ghost" size="icon" className="shrink-0" onClick={onSearch} aria-label={copy.search} title={`${copy.search} (⌘ / Ctrl K)`}>
+          <Button data-testid="open-mail-search" type="button" variant="outline" className="min-w-0 flex-1 justify-start gap-2 border-input bg-muted/30 text-muted-foreground" onClick={onSearch} aria-label={copy.search} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title={`${copy.search} (⌘ / Ctrl K)`}>
             <Search className="size-4" />
+            <span className="min-w-0 flex-1 truncate text-left font-normal">{copy.search}</span>
+            <kbd aria-hidden="true" className="hidden shrink-0 rounded border bg-background px-1.5 text-[10px] font-normal sm:inline-flex">⌘ / Ctrl K</kbd>
           </Button>
-          <Select value={showAllConversations ? "all" : "open"} onValueChange={(value) => onShowAllChange(value === "all")}>
-            <SelectTrigger size="sm" data-testid="conversation-filter" aria-label={copy.conversationFilter} className="shrink-0 text-xs">
-              <SelectValue>{showAllConversations ? copy.showAllConversations : copy.pendingConversations}</SelectValue>
-            </SelectTrigger>
-            <SelectContent align="start" alignItemWithTrigger={false}>
-              <SelectItem value="open">{copy.pendingConversations}</SelectItem>
-              <SelectItem value="all">{copy.showAllConversations}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={selectedTag || null} onValueChange={(value) => onTagChange(value || "")}>
-            <SelectTrigger size="sm" data-testid="conversation-tag-filter" aria-label={copy.conversationTags} className="min-w-0 max-w-40 text-xs">
-              <SelectValue><span className="truncate">{selectedTag || copy.allTags}</span></SelectValue>
-            </SelectTrigger>
-            <SelectContent align="start" alignItemWithTrigger={false} className="max-w-64">
-              <SelectItem value={null}>{copy.allTags}</SelectItem>
-              {tags.map((tag) => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
-              {!tags.length && <p className="px-2 py-2 text-xs text-muted-foreground">{copy.noConversationTags}</p>}
-            </SelectContent>
-          </Select>
+          <h1 className="sr-only">{selectedTag || (showAllConversations ? copy.showAllConversations : copy.unanswered)}</h1>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
+      <ScrollArea key={`${showAllConversations}:${selectedTag}`} className="min-h-0 flex-1" contentClassName="pb-[max(2rem,env(safe-area-inset-bottom))]">
         {!hasData && (loading || !error) && <ListSkeleton />}
         {!hasData && error && <ErrorState copy={copy} onRetry={onRefresh} />}
         {hasData && rows.length === 0 && !hasMore && <EmptyState icon={<MessageCircle />} text={copy.noConversations} />}

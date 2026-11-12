@@ -342,6 +342,29 @@ export function resyncAttachments() {
 
 export type FeishuWebhookSettings = { enabled: boolean; url: string };
 
+export type MailIgnoreAction = "analysis" | "reply" | "notification";
+export type MailIgnoreCondition = {
+  field: "sender" | "sender_domain" | "subject" | "message_id_domain";
+  operator: "equals" | "contains";
+  value: string;
+};
+export type MailIgnoreRule = { id: string; name: string; enabled: boolean; conditions: MailIgnoreCondition[]; actions: MailIgnoreAction[] };
+export type MailIgnoreMatch = { ruleId: string; ruleName: string; action: MailIgnoreAction };
+export type MailIgnorePreview = {
+  total: number;
+  scanned: number;
+  messages: { folder: string; messageId: string; from: string; subject: string; date: string; matches: MailIgnoreMatch[] }[];
+};
+export function getMailIgnoreRules(accountId: string) {
+  return apiFetch<{ rules: MailIgnoreRule[] }>(`/api/accounts/${encodeURIComponent(accountId)}/automation-ignore-rules`);
+}
+export function saveMailIgnoreRules(accountId: string, rules: MailIgnoreRule[]) {
+  return apiFetch<{ rules: MailIgnoreRule[] }>(`/api/accounts/${encodeURIComponent(accountId)}/automation-ignore-rules`, { method: "PUT", body: JSON.stringify({ rules }) });
+}
+export function previewMailIgnoreRules(accountId: string, rules: MailIgnoreRule[]) {
+  return apiFetch<MailIgnorePreview>(`/api/accounts/${encodeURIComponent(accountId)}/automation-ignore-rules/preview`, { method: "POST", body: JSON.stringify({ rules }) });
+}
+
 export function getFeishuWebhookSettings() {
   return apiFetch<FeishuWebhookSettings>("/api/settings/feishu-webhook");
 }

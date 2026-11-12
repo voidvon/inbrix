@@ -1,4 +1,5 @@
 import { SkillSettings } from "./skill-settings";
+import { MailIgnoreRulesSettings } from "./mail-ignore-rules";
 import { AccountBrandSettings, AIBusinessProfileFields } from "./ai-business-controls";
 import { emptyBusinessProfile, type AIBusinessProfile } from "../../lib/api";
 import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from "react";
@@ -1321,6 +1322,7 @@ export function AccountDialog({ copy, open, account, onOpenChange }: { copy: Cop
                 </Table>
               </div>
               <div className="grid gap-3 border-t pt-4"><div className="flex items-center justify-between gap-3"><div><Label>{copy.feishuWebhookEnabled}</Label><p className="mt-1 text-xs text-muted-foreground">{copy.feishuWebhookDescription}</p></div><Switch checked={webhook.data?.enabled || false} disabled={webhook.isPending || saveWebhook.isPending} onCheckedChange={setWebhookEnabled} /></div><Input type="url" aria-invalid={webhookInvalid} placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." value={webhookURL} disabled={webhook.isPending || saveWebhook.isPending} onChange={(event) => { queryClient.setQueryData(["account-feishu-webhook", accountIdentifier], { enabled: webhook.data?.enabled || false, url: event.target.value }); clearInvalid("webhook"); }} onBlur={saveWebhookField} /></div>
+              <MailIgnoreRulesSettings key={account.id} accountId={account.id} copy={copy} />
             </div>}
           </div>
           <DialogFooter className="shrink-0 border-t px-5 py-3"><Button type="button" variant="ghost" disabled={persist.isPending} onClick={() => changeOpen(false)}>{copy.cancel}</Button><Button type="submit" disabled={persist.isPending}>{account ? <Pencil /> : <Plus />}{persist.isPending ? (account ? copy.savingAccount : copy.adding) : account ? copy.editAccount : copy.addAccount}</Button></DialogFooter>

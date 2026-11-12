@@ -40,7 +40,7 @@ func (h *AISettingsHandler) HandleListMailTasks(c *fiber.Ctx) error {
 	}
 	items := make([]fiber.Map, 0, len(tasks))
 	for _, task := range tasks {
-		items = append(items, fiber.Map{"folder": task.FolderName, "messageId": task.UID, "taskType": task.Type, "status": task.Status, "attempts": task.Attempts, "nextAttempt": task.NextAttempt, "leaseUntil": task.LeaseUntil, "error": task.ErrorMessage, "createdAt": task.CreatedAt, "updatedAt": task.UpdatedAt})
+		items = append(items, fiber.Map{"folder": task.FolderName, "messageId": task.UID, "taskType": task.Type, "status": task.Status, "attempts": task.Attempts, "nextAttempt": task.NextAttempt, "leaseUntil": task.LeaseUntil, "error": task.ErrorMessage, "skipReason": task.SkipReason, "createdAt": task.CreatedAt, "updatedAt": task.UpdatedAt})
 	}
 	return c.JSON(fiber.Map{"tasks": items})
 }

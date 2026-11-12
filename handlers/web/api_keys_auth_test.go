@@ -88,6 +88,7 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	g := f.app.Group("/api", auth.APIKeyMiddleware(), api.SessionMiddleware(store), csrfGuard)
 	web.NewAPIKeysHandler(f.db).Register(g)
 	web.NewAISettingsHandler(store, cfg, f.db).RegisterSkillRoutes(g.Group("/settings/ai"))
+	web.NewAISettingsHandler(store, cfg, f.db).RegisterMailIgnoreRuleRoutes(g)
 	g.Get("/settings/ai/mail-tasks/runs", web.NewAISettingsHandler(store, cfg, f.db).HandleListMailTaskRuns)
 	web.NewProductsHandler(store, f.db).Register(g)
 	reference, err := os.ReadFile("../../docs/API.md")

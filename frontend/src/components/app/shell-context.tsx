@@ -20,7 +20,7 @@ export type ShellContextType = {
   openSettings: () => void;
   /** False is the default "unanswered + draft" server filter. */
   showAllConversations: boolean;
-  setShowAllConversations: (value: boolean) => void;
+  selectedTag: string;
 };
 
 export const ShellContext = createContext<ShellContextType | null>(null);

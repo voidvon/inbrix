@@ -131,12 +131,9 @@ try {
   assert.equal(listRequests.length, before + 1);
   assert.equal(await rows.count(), 131);
 
-  const filter = page.getByTestId('conversation-filter');
-  await filter.click();
-  await page.getByRole('option', { name: '全部', exact: true }).click();
+  await page.getByTestId('conversation-filter-all').click();
   await row(0).getByRole('button', { name: '已发送', exact: true }).waitFor();
-  await filter.click();
-  await page.getByRole('option', { name: '待处理', exact: true }).click();
+  await page.getByTestId('conversation-filter-open').click();
   await row(134).waitFor();
   assert.equal(await row(0).count(), 0);
   assert.equal(await row(110).count(), 0);

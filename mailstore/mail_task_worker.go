@@ -70,6 +70,9 @@ func (m *SyncManager) processMailTasks(ctx context.Context, account Account, lim
 }
 
 func (m *SyncManager) executeMailTask(ctx context.Context, account Account, task MailTask) (bool, error) {
+	if skipped, err := m.skipIgnoredMailTask(ctx, account, task); skipped || err != nil {
+		return skipped, err
+	}
 	aiClient := m.aiClient
 	if aiClient == nil {
 		aiClient = &http.Client{Timeout: 60 * time.Second}
@@ -95,6 +98,10 @@ func (m *SyncManager) executeMailTask(ctx context.Context, account Account, task
 		message, err := m.loadMailTaskBody(ctx, account, task)
 		if err != nil {
 			return false, err
+		}
+		// Recheck after the network fetch: rules may have changed meanwhile.
+		if skipped, err := m.skipIgnoredMailTask(ctx, account, task); skipped || err != nil {
+			return skipped, err
 		}
 		if task.Type == mailTaskAnalysis {
 			var result MailSummaryResult
@@ -161,10 +168,46 @@ func (m *SyncManager) executeMailTask(ctx context.Context, account Account, task
 		if client == nil {
 			client = &http.Client{Timeout: 10 * time.Second}
 		}
+		// Also applies to retries whose notification payload is already frozen.
+		if skipped, err := m.skipIgnoredMailTask(ctx, account, task); skipped || err != nil {
+			return skipped, err
+		}
 		return false, sendFeishuText(ctx, client, cfg.URL, payload)
 	default:
 		return false, permanentMailTaskError("configuration", fmt.Errorf("unknown mail task type %q", task.Type))
 	}
+}
+
+func mailIgnoreReason(match MailIgnoreMatch) string { return "命中忽略规则：" + match.RuleName }
+
+func (m *SyncManager) skipIgnoredMailTask(ctx context.Context, account Account, task MailTask) (bool, error) {
+	rules, err := m.store.GetMailIgnoreRules(ctx, account.OwnerID, account.ID)
+	if err != nil {
+		return false, err
+	}
+	message, err := loadMailIgnoreHeaders(ctx, m.store.db, account.ID, task.FolderName, task.UID)
+	if err != nil {
+		return false, err
+	}
+	match := MatchMailIgnoreRule(rules, message, task.Type)
+	if match == nil {
+		return false, nil
+	}
+	// Keep the reason separate from errors, and preserve the attempt journal.
+	tx, err := m.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE mail_tasks SET skip_reason=? WHERE account_id=? AND folder_name=? AND uid=? AND task_type=? AND generation_token=? AND status='running'`, mailIgnoreReason(*match), task.AccountID, task.FolderName, task.UID, task.Type, task.Token)
+	if err := checkMailTaskUpdate(result, err); err != nil {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE mail_task_runs SET phase='ignore_rule',context_json=json_set(context_json,'$.ignoreRule',json(?)) WHERE lease_token=? AND status='running'`, marshalJSON(match, "{}"), task.Token)
+	if err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func (m *SyncManager) loadMailTaskBody(ctx context.Context, account Account, task MailTask) (models.Email, error) {

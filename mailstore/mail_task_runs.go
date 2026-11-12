@@ -13,6 +13,7 @@ type MailTaskSkillVersion struct {
 	Revision int64  `json:"revision"`
 }
 type MailTaskRunContext struct {
+	IgnoreRule       *MailIgnoreMatch       `json:"ignoreRule,omitempty"`
 	ModelID          string                 `json:"modelId,omitempty"`
 	ModelName        string                 `json:"modelName,omitempty"`
 	Provider         string                 `json:"provider,omitempty"`

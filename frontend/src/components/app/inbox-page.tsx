@@ -71,9 +71,8 @@ export function setConversationURL(id: string | null, mode: "push" | "replace" =
 
 export function InboxPage() {
   const queryClient = useQueryClient();
-  const { copy: locale, openMobileMenu, openCompose, showAllConversations, setShowAllConversations } = useShell();
+  const { copy: locale, openMobileMenu, openCompose, showAllConversations, selectedTag } = useShell();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [selectedTag, setSelectedTag] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(conversationIdFromURL);
   const [messageTarget, setMessageTarget] = useState<MailFocusTarget | null>(messageTargetFromURL);
   const [chatOpen, setChatOpen] = useState(() => Boolean(conversationIdFromURL()));
@@ -359,7 +358,6 @@ export function InboxPage() {
           data={conversations.data}
           onSearch={() => setSearchOpen(true)}
           selectedTag={selectedTag}
-          onTagChange={setSelectedTag}
           onMenu={openMobileMenu}
           loading={conversations.isPending}
           error={conversations.error}
@@ -379,7 +377,6 @@ export function InboxPage() {
           loadingMore={conversations.loadingMore}
           loadMoreError={conversations.loadMoreError}
           showAllConversations={showAllConversations}
-          onShowAllChange={setShowAllConversations}
           desktopWidth={listWidth}
           className={chatOpen && !chatPage.closing ? "hidden lg:flex" : "flex"}
         />

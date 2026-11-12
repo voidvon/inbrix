@@ -67,12 +67,12 @@ try {
   assert.equal(await row('alice').locator('strong').evaluate(element => element.closest('button') === null), true, 'The title is plain content inside the clickable item');
   assert.equal(await row('alice').locator('p').first().evaluate(element => element.closest('button') === null), true, 'The preview is plain content inside the clickable item');
   assert.equal(await row('alice').getByTestId('conversation-tags').count(), 0, 'Untagged conversations show no tag control in the list');
-  const filter = page.getByTestId('conversation-filter');
+  const filter = page.getByTestId('conversation-filter-open');
   const setFilter = async value => {
-    await filter.click();
-    await page.getByRole('option', { name: value ? '全部' : '待处理', exact: true }).click();
+    if (page.viewportSize().width < 1024) await page.getByTestId('conversation-list').getByRole('button', { name: '文件夹', exact: true }).click();
+    await page.getByTestId(value ? 'conversation-filter-all' : 'conversation-filter-open').click();
   };
-  assert.equal(await filter.innerText(), '待处理');
+  assert.equal(await filter.getAttribute('aria-current'), 'page');
   assert.equal(await row('carol').count(), 0, 'Answered conversations are hidden by default');
   await row('doris').waitFor();
   await setFilter(true);
@@ -169,13 +169,13 @@ try {
 
   const rowIds = () => page.getByTestId('conversation-row').evaluateAll(elements => elements.map(element => element.textContent.match(/(\w+)@example\.com/)[1]));
   // Reload defaults to unanswered and drafts. Bob is now marked no_action.
-  assert.equal(await filter.innerText(), '待处理');
+  assert.equal(await filter.getAttribute('aria-current'), 'page');
   assert.deepEqual(await rowIds(), ['alice', 'doris']);
   await setFilter(true);
-  assert.equal(await filter.innerText(), '全部');
+  assert.equal(await page.getByTestId('conversation-filter-all').getAttribute('aria-current'), 'page');
   assert.deepEqual(await rowIds(), ['alice', 'bob', 'carol', 'doris']);
   await setFilter(false);
-  assert.equal(await filter.innerText(), '待处理');
+  assert.equal(await filter.getAttribute('aria-current'), 'page');
   assert.deepEqual(await rowIds(), ['alice', 'doris'], 'Drafts stay visible alongside unanswered conversations');
   assert.equal(new URL(page.url()).searchParams.get('conversation'), 'bob', 'Filtering keeps the current conversation open');
   // Status updates immediately remove completed items from the filtered list.
@@ -184,6 +184,10 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="conversation-row"]').length === 1);
   assert.deepEqual(await rowIds(), ['doris']);
   assert.equal(await page.getByTestId('mail-search').count(), 0, 'The list toolbar has no search input');
+  assert.equal(await page.getByTestId('open-mail-search').evaluate(element => element.tagName), 'BUTTON', 'The search field is a button, so typing happens in the global dialog');
+  assert.equal(await page.getByTestId('open-mail-search').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(await page.getByTestId('conversation-list').getByRole('textbox').count(), 0, 'The search entry is not an editable input');
+  await page.screenshot({ path: '/tmp/inbrix-search-entry-desktop.png' });
   await page.getByTestId('open-mail-search').click();
   const searchDialog = page.getByTestId('mail-search-dialog');
   const search = page.getByTestId('mail-search');
@@ -191,7 +195,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="mail-search-result"]').length === 4);
   assert.equal(await search.evaluate(element => element === document.activeElement), true, 'Spotlight focuses its search input');
   await page.screenshot({ path: '/tmp/inbrix-spotlight-desktop.png' });
-  assert.equal(await filter.innerText(), '待处理', 'Searching all statuses preserves the list filter');
+  assert.equal(await filter.getAttribute('aria-current'), 'page', 'Searching all statuses preserves the list filter');
   assert.deepEqual(await page.getByTestId('mail-search-result').evaluateAll(elements => elements.map(element => element.textContent.match(/(\w+)@example\.com/)[1])), ['alice', 'bob', 'carol', 'doris']);
   await search.press('ArrowDown');
   await search.press('Enter');
@@ -209,12 +213,12 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/inbox`);
   await row('doris').waitFor();
-  const filterBox = await filter.boundingBox();
   const searchBox = await page.getByTestId('open-mail-search').boundingBox();
-  const tagBox = await page.getByTestId('conversation-tag-filter').boundingBox();
-  assert.ok(filterBox && searchBox && tagBox && filterBox.x >= searchBox.x + searchBox.width && tagBox.x >= filterBox.x + filterBox.width && tagBox.x + tagBox.width <= 390, 'Search and both dropdowns fit on mobile');
+  assert.ok(searchBox && searchBox.x >= 0 && searchBox.x + searchBox.width <= 390, 'Search fits on mobile');
+  assert.equal(await page.getByTestId('conversation-list').getByRole('combobox').count(), 0, 'Dropdown filters have moved out of the toolbar');
+  await page.screenshot({ path: '/tmp/inbrix-search-entry-mobile.png' });
   assert.deepEqual(await rowIds(), ['doris']);
-  assert.equal(await filter.innerText(), '待处理');
+  assert.equal(await filter.getAttribute('aria-current'), 'page');
   await setFilter(true);
   assert.deepEqual(await rowIds(), ['alice', 'bob', 'carol', 'doris']);
   await page.getByTestId('open-mail-search').click();

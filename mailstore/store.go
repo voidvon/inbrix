@@ -352,6 +352,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS account_mail_ignore_rules (
+			account_id TEXT PRIMARY KEY REFERENCES mail_accounts(id) ON DELETE CASCADE,
+			rules_json TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS ai_model_settings (
 			owner_id TEXT PRIMARY KEY,
 			enabled INTEGER NOT NULL DEFAULT 0,
@@ -822,6 +827,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAITaskBindingEnabledColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureMailTaskSkipReasonColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateLegacyAIModelProviders(ctx); err != nil {
