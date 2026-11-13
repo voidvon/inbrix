@@ -498,6 +498,13 @@ export function setDefaultAIModel(id: string) {
   return apiFetch<{ ok: boolean }>(`/api/settings/ai/models/${encodeURIComponent(id)}/default`, { method: "POST" });
 }
 
+export type EmailWritingMessage = {
+  role: "user" | "assistant";
+  content: string;
+  body?: string;
+  translation?: string;
+};
+
 export type GenerateEmailInput = {
   accountEmail: string;
   taskType?: "email_draft" | "reply_suggestion";
@@ -508,10 +515,13 @@ export type GenerateEmailInput = {
   recipients: string;
   context?: string;
   draft?: string;
+  responseFormat?: "structured";
+  replyLanguage?: string;
+  messages?: EmailWritingMessage[];
 };
 
 export function generateEmail(input: GenerateEmailInput) {
-  return apiFetch<{ body: string; persisted?: boolean; updatedAt?: string }>("/api/ai/write-email", {
+  return apiFetch<{ body: string; translation?: string; message?: string; persisted?: boolean; updatedAt?: string }>("/api/ai/write-email", {
     method: "POST",
     body: JSON.stringify(input),
   });

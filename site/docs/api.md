@@ -1648,6 +1648,31 @@ requests without an explicit model override. Existing mailbox bindings are
 migrated to preserve their agent, enabled state, and update time while removing
 the old model association. Deleting a model does not delete mailbox AI bindings.
 
+## Email writing assistant
+
+POST `/api/ai/write-email` accepts `accountEmail`, `instruction`, `subject`,
+`recipients`, optional mail `context` and current `draft`. The Tiptap writing
+assistant also sends `responseFormat: "structured"`, `replyLanguage` (`auto` or
+a language code), and `messages` containing prior writing turns. User entries
+contain `{role:"user",content}`; assistant entries contain
+`{role:"assistant",content,body,translation}`, where `content` is discussion,
+separate from the candidate email. History is limited to 100 entries and the
+combined prompt uses the existing email input budget.
+
+Structured responses are `{body,translation,message}`: the complete email body,
+its Simplified Chinese translation, and discussion or clarification for the user.
+A discussion-only response has empty `body` and `translation`. Invalid or
+incomplete structured output returns **422** and is never treated as mail text.
+Requests without `responseFormat` retain the legacy `{body}` response. Mailbox
+email-draft agent instructions and enabled state still apply.
+
+Writing turns stay in the current compose session; closing and reopening the AI
+popover retains them, while leaving the compose session or reloading clears them.
+Each turn includes prior requirements and the latest candidate; manual editor
+changes become the next draft to revise. Generation does not modify the editor.
+Copy and Apply use only `body`; Apply preserves the editor signature and quoted
+mail. Translations and discussion never enter the email through these actions.
+
 ## Server-managed AI chat sessions
 
 Mail and document chats share SQLite sessions, ordered messages, execution records

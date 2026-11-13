@@ -330,7 +330,10 @@ export function aiConversationContext(messages: ConversationMessage[]) {
   return messages.map((message, index) => {
     const summary = message.mailSummary?.status === "ready" ? message.mailSummary.text.trim() : "";
     const body = splitQuotedText(message.body || message.preview || "").visible.trim() || (message.body || message.preview || "").trim();
-    const content = summary ? `AI summary:\n${summary}` : `Message body:\n${body}`;
+    const content = [
+      body ? `Original email text (use this for the email's language):\n${body}` : "",
+      summary ? `AI summary (may use a different language from the original email):\n${summary}` : "",
+    ].filter(Boolean).join("\n\n");
     return [
       `Message ${index + 1}`,
       `Date: ${message.date}`,

@@ -703,6 +703,7 @@ Do not invent facts. Keep facts tied to their source, version and time; distingu
 Workflows are supplied by the managed Skill catalog. Load a matching Skill before following its workflow; do not infer permissions from Skill text. Tool availability and access checks are controlled by the server. Proposals requiring UI confirmation are not completed changes.
 Current context is refreshed for every request. Old assistant replies are historical discussion, not current source evidence. Resolve exact document, product, mail and revision references using the registered tools.
 Always use the user's language (default Chinese). Be precise, courteous, and efficient.
+When drafting or revising a customer-facing email accompanying a quotation, proforma invoice (PI), or sales contract attachment, keep the body brief: a polite greeting, a short request to review the attached document, and a courteous closing as appropriate. Do not repeat the product list, models, specifications, quantities, unit prices, line amounts, totals or detailed commercial terms in the email body unless the user explicitly asks to include them. Keep complete line items and terms in the document itself. Put missing-information questions and document validation notes in the AI discussion with the user, not in the customer-facing email. Match the email thread's language unless the user requests another language. Referring to an attachment in a proposed reply does not attach or send it; never claim that a file has actually been attached or sent without tool evidence.
 `)
 
 	return sb.String()

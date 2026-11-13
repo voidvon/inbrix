@@ -1,18 +1,14 @@
 import { useEffect, useImperativeHandle, useRef, useState, type FormEvent, type MutableRefObject, type Ref } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Check,
   Code2,
-  Copy as CopyIcon,
   FilePlus2,
   ImagePlus,
   Paperclip,
   Send,
   Signature as SignatureIcon,
-  Sparkles,
   X,
 } from "lucide-react";
-import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import LinkExtension from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -28,7 +24,7 @@ import { ReplyTemplates } from "./reply-templates";
 import { ComposeDocumentAttachment } from "./document-editor-dialog";
 import { ComposeBubble, type ComposeBubbleSize, type ComposeDraftStatus, type ComposeVariant } from "./compose-bubble";
 import { usePersistedPaneHeight, viewportHeightLimit } from "./resize-handle";
-import { deleteDraft, generateEmail, getSignatures, saveDraft, sendMessage, type AIAgentEmailDraft } from "../../lib/api";
+import { deleteDraft, getSignatures, saveDraft, sendMessage, type AIAgentEmailDraft } from "../../lib/api";
 import { composeDraftKey, useComposeDraft } from "../../lib/compose-draft";
 import { cn, formatSize } from "../../lib/utils";
 import {
@@ -48,234 +44,17 @@ import {
   serializeComposeHTML,
   htmlToPlainText,
   setEditorSignature,
-  aiConversationContext,
   replaceEditorDraft,
   draftBodyForStorage,
 } from "../../lib/email-format";
 import { type Copy, zh } from "../../lib/locale";
-import { AIStatusIndicator } from "./ai-status-indicator";
-import { useAIStateMachine } from "../../lib/ai-state-machine";
-import type { ConversationMessage } from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { AppScrollArea as ScrollArea } from "./app-scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Separator } from "../ui/separator";
-import { Textarea } from "../ui/textarea";
-
-export function AIAssistantButton({
-  copy,
-  editor,
-  disabled,
-  composeOpen,
-  accountEmail,
-  subject,
-  recipients,
-  conversation,
-}: {
-  copy: Copy;
-  editor: Editor | null;
-  disabled: boolean;
-  composeOpen: boolean;
-  accountEmail: string;
-  subject: string;
-  recipients: string;
-  conversation?: ConversationMessage[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [instruction, setInstruction] = useState("");
-  const [includeConversation, setIncludeConversation] = useState(false);
-  const [generatedBody, setGeneratedBody] = useState("");
-  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
-  const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
-  const chatRef = useRef<HTMLDivElement>(null);
-  const messages = conversation || [];
-  const hasConversation = messages.length > 0;
-  const isZh = copy === zh;
-  const aiState = useAIStateMachine({
-    taskType: "reply",
-    locale: isZh ? "zh" : "en",
-  });
-
-  const mutation = useMutation({
-    mutationFn: ({ prompt, draft }: { prompt: string; draft?: string }) =>
-      aiState.run(() =>
-        generateEmail({
-          accountEmail,
-          instruction: prompt,
-          subject,
-          recipients,
-          context: includeConversation ? aiConversationContext(messages) : undefined,
-          draft,
-        })
-      ),
-    onSuccess: ({ body }) => {
-      setGeneratedBody(body);
-      setChatMessages((current) => [...current, { role: "assistant", content: body }]);
-    },
-    onError: (value) => toastError(value, copy.aiGenerateFailed),
-  });
-
-  useEffect(() => {
-    setIncludeConversation(false);
-    setInstruction("");
-    setGeneratedBody("");
-    setChatMessages([]);
-    setCopiedMessage(null);
-  }, [composeOpen, conversation]);
-
-  useEffect(() => {
-    if (!open) return;
-    const element = chatRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [chatMessages, mutation.isPending, open]);
-
-  const submitInstruction = () => {
-    const prompt = instruction.trim();
-    const displayedPrompt = prompt || copy.aiGenerateRequest;
-    setChatMessages((current) => [...current, { role: "user", content: displayedPrompt }]);
-    setInstruction("");
-    mutation.mutate({ prompt, draft: generatedBody || undefined });
-  };
-
-  const copyMessage = async (content: string, index: number) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedMessage(index);
-      window.setTimeout(() => setCopiedMessage((current) => (current === index ? null : current)), 1600);
-    } catch {
-      toast.error(copy.copyAIContentFailed);
-    }
-  };
-
-  const useGeneratedBody = () => {
-    if (!editor || !generatedBody) return;
-    replaceEditorDraft(editor, generatedBody);
-    setGeneratedBody("");
-    setInstruction("");
-    setOpen(false);
-  };
-
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(value) => {
-        setOpen(value);
-      }}
-    >
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant={open ? "secondary" : "ghost"}
-            size="icon"
-            disabled={disabled || !editor}
-            aria-label={copy.aiWriteEmail}
-            title={copy.aiWriteEmail}
-          />
-        }
-      >
-        <Sparkles />
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="start" sideOffset={8} className="w-[min(30rem,calc(100vw-2rem))] gap-0 p-4">
-        <PopoverTitle className="text-sm font-semibold">{copy.aiWriteEmail}</PopoverTitle>
-        <PopoverDescription className="mt-1 text-xs">{copy.aiWriteDescription}</PopoverDescription>
-        {chatMessages.length > 0 && (
-          <div ref={chatRef} className="mt-4 flex max-h-72 flex-col gap-3 overflow-y-auto pr-1" aria-live="polite">
-            {chatMessages.map((message, index) =>
-              message.role === "user" ? (
-                <div key={index} className="group ml-10 grid justify-items-end self-end">
-                  <div className="whitespace-pre-wrap rounded-lg border bg-muted/40 px-3 py-2 text-sm leading-5">{message.content}</div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
-                    onClick={() => void copyMessage(message.content, index)}
-                    aria-label={copy.copyAIContent}
-                    title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}
-                  >
-                    {copiedMessage === index ? <Check /> : <CopyIcon />}
-                  </Button>
-                </div>
-              ) : (
-                <div key={index} className="group mr-5 grid self-start">
-                  <div className="whitespace-pre-wrap px-1 text-sm leading-6">{message.content}</div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
-                    onClick={() => void copyMessage(message.content, index)}
-                    aria-label={copy.copyAIContent}
-                    title={copiedMessage === index ? copy.copiedAIContent : copy.copyAIContent}
-                  >
-                    {copiedMessage === index ? <Check /> : <CopyIcon />}
-                  </Button>
-                </div>
-              )
-            )}
-            {mutation.isPending && (
-              <div className="mr-5 my-1">
-                <AIStatusIndicator
-                  snapshot={aiState.snapshot}
-                  variant="card"
-                  showTimer
-                  showSteps
-                />
-              </div>
-            )}
-          </div>
-        )}
-        <Label className="mt-4 grid gap-1.5 text-xs" htmlFor="ai-compose-instruction">
-          {copy.aiInstruction}
-          <Textarea
-            id="ai-compose-instruction"
-            value={instruction}
-            onChange={(event) => {
-              setInstruction(event.target.value);
-            }}
-            placeholder={generatedBody ? copy.refineInstructionPlaceholder : copy.aiInstructionPlaceholder}
-            rows={3}
-            disabled={mutation.isPending}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                if (!mutation.isPending) submitInstruction();
-              }
-            }}
-          />
-        </Label>
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <label className={cn("flex min-w-0 items-center gap-2 text-sm", !hasConversation && "text-muted-foreground")} title={!hasConversation ? copy.noConversationContext : undefined}>
-            <input className="size-4 shrink-0 accent-primary" type="checkbox" checked={includeConversation} disabled={!hasConversation || mutation.isPending} onChange={(event) => setIncludeConversation(event.target.checked)} />
-            <span className="truncate">{copy.includeConversation}</span>
-          </label>
-          <div className="flex shrink-0 gap-2">
-            {generatedBody && (
-              <Button type="button" variant="ghost" size="sm" disabled={mutation.isPending} onClick={useGeneratedBody}>
-                <Check />
-                {copy.useGeneratedDraft}
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant={generatedBody ? "outline" : "default"}
-              size="sm"
-              disabled={mutation.isPending || (!instruction.trim() && !subject.trim() && !includeConversation && !generatedBody)}
-              onClick={submitInstruction}
-            >
-              <Send />
-              {mutation.isPending ? copy.generating : generatedBody ? copy.regenerate : copy.generate}
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
+import { AIAssistantButton } from "./email-writing-assistant";
 
 export function RecipientTagInput({
   copy,
@@ -983,6 +762,7 @@ export function ComposeDialog({
             editor={editor}
             disabled={sourceMode}
             composeOpen={open}
+            conversationId={conversationId}
             accountEmail={accountEmail}
             subject={subject}
             recipients={[...recipients, ...ccRecipients].join(", ")}
