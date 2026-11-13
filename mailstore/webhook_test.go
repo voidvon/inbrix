@@ -114,7 +114,7 @@ func TestSendFeishuWebhookPayloadAndBusinessError(t *testing.T) {
 	if err := json.Unmarshal(client.data, &payload); err != nil {
 		t.Fatalf("decode payload: %v (%s)", err, client.data)
 	}
-	wantText := "alice@example.com\n客户：Acme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。"
+	wantText := "客户：Acme GmbH、德国\n需求：10 件 Spirax Sarco MST21 蒸汽疏水阀\n要求：请确认交期。\nalice@example.com"
 	if payload.MsgType != "text" || payload.Content.Text != wantText {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}

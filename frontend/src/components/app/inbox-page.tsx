@@ -17,7 +17,7 @@ import {
   escapeHTML,
   filterRecipientsByDomain,
   splitRecipientValues,
-  structuredQuotedTextToHTML,
+  replyQuoteHTML,
   uniqueRecipients,
 } from "../../lib/email-format";
 import { migrateLegacyOutgoing } from "../../lib/legacy-outbox-migration";
@@ -266,8 +266,7 @@ export function InboxPage() {
     const cc = filterRecipientsByDomain(originalCc, recipient);
     const sender = source?.fromName && source.from ? `${source.fromName} <${source.from}>` : source?.from || conversation.peerEmail || "";
     const quoteLead = `On ${new Date(source?.date || Date.now()).toLocaleString(locale === en ? "en" : "zh-CN")}, ${sender} wrote:`;
-    const originalBody = source?.body || source?.preview || "";
-    const quotedHTML = structuredQuotedTextToHTML(originalBody);
+    const quotedHTML = replyQuoteHTML(source);
     const references = [...(source?.references || [])];
     if (source?.messageId && !references.includes(source.messageId)) references.push(source.messageId);
     openCompose({

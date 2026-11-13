@@ -127,7 +127,7 @@ func feishuMailText(message models.Email, summary string) string {
 		from = "（未知发件人）"
 	}
 	if summary = strings.TrimSpace(summary); summary != "" {
-		return from + "\n" + summary
+		return summary + "\n" + from
 	}
 	return from
 }

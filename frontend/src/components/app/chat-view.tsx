@@ -867,11 +867,21 @@ export function ChatView({
   useEffect(() => {
     if (!composeOpenHere) return;
     const frame = window.requestAnimationFrame(() => {
-      const editor = contentRef.current?.querySelector<HTMLElement>("[data-testid=compose-inline]");
-      editor?.scrollIntoView({ block: "end", behavior: "smooth" });
+      const scroll = scrollRef.current;
+      if (!scroll) return;
+      // Release the reading anchor before moving, so scroll restoration and
+      // later editor/iframe resizes cannot pull the reply back out of view.
+      scrollAnchor.current = null;
+      stickToBottom.current = !hasNewerRef.current;
+      const previousBehavior = scroll.style.scrollBehavior;
+      scroll.style.scrollBehavior = "auto";
+      scroll.scrollTop = scroll.scrollHeight;
+      programmaticTop.current = scroll.scrollTop;
+      scroll.style.scrollBehavior = previousBehavior;
+      syncScrollRef.current();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [composeOpenHere]);
+  }, [composeOpenHere, compose.defaults]);
 
   // A search hit opens the conversation at the matching message. The bubble is
   // looked up by key rather than a CSS selector so folder names containing

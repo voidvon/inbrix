@@ -166,25 +166,33 @@ export function quotedTextToHTML(text: string) {
   return root.innerHTML;
 }
 
-export function structuredQuotedTextToHTML(text: string): string {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const attribution = /^\s*(?:on\s+.+\bwrote\s*:|(?:在|於)\s*.+(?:写道|寫道)\s*[:：])\s*$/i;
-  const original = /^\s*[-_]{2,}\s*(?:original(?:\s+message)?|原始邮件|原始郵件)\s*[-_]{2,}\s*$/i;
-  const boundary = lines.findIndex((line, index) => index > 0 && (attribution.test(line) || original.test(line.replace(/\u00a0/g, " "))));
-  if (boundary < 0) return quotedTextToHTML(text);
-  const current = quotedTextToHTML(lines.slice(0, boundary).join("\n"));
-  const lead = lines[boundary].trim();
-  const tailLines = lines.slice(boundary + 1);
-  const nonEmptyTail = tailLines.filter((line) => line.trim());
-  const tail = nonEmptyTail.length > 0 && nonEmptyTail.every((line) => /^\s*>/.test(line))
-    ? tailLines.map((line) => line.replace(/^\s*>\s?/, "")).join("\n")
-    : tailLines.join("\n");
-  return `${current}<p>${escapeHTML(lead)}</p><blockquote>${structuredQuotedTextToHTML(tail)}</blockquote>`;
+const quotedHTMLSelector = "blockquote, includetail, .gmail_quote, .yahoo_quoted, .protonmail_quote, .outlook_quote, .quoted-text, .quotedcontent, .original-message";
+
+// A new reply quotes only the selected message's own content. Carrying its
+// embedded history into another quote makes every successive reply longer.
+export function replyQuoteHTML(message?: Pick<ConversationMessage, "body" | "preview" | "html">): string {
+  let text = message?.body || message?.preview || "";
+  if (message?.html) {
+    const document = new DOMParser().parseFromString(message.html, "text/html");
+    document.querySelectorAll("script, style, title").forEach((element) => element.remove());
+    const quotes = document.body.querySelectorAll(`${quotedHTMLSelector}, [data-inbrix-reply-quote], details.inbrix-quoted`);
+    quotes.forEach((element) => element.remove());
+    const outlookHeader = document.getElementById("divRplyFwdMsg");
+    // Outlook can put history after a header rather than inside a quote block.
+    for (let boundary: Element | null = outlookHeader; boundary && boundary !== document.body; boundary = boundary.parentElement) {
+      while (boundary.nextSibling) boundary.nextSibling.remove();
+    }
+    outlookHeader?.remove();
+    if (quotes.length || outlookHeader || !text.trim()) {
+      text = htmlToPlainText(document.body.innerHTML);
+    }
+  }
+  return quotedTextToHTML(splitQuotedText(text).visible);
 }
 
 export function normalizeQuoteHTML(html: string) {
   const document = new DOMParser().parseFromString(html, "text/html");
-  const quoteSelector = "blockquote, includetail, .gmail_quote, .yahoo_quoted, .protonmail_quote, .outlook_quote, .quoted-text, .quotedcontent, .original-message";
+  const quoteSelector = quotedHTMLSelector;
   Array.from(document.body.querySelectorAll(quoteSelector)).reverse().forEach((element) => {
     if (element.closest("[data-inbrix-signature]")) return;
     const tag = element.tagName.toLowerCase();

@@ -13,6 +13,28 @@ No unreleased changes.
 
 ---
 
+## [1.19.20] - 2026-11-14
+
+### Added
+
+- Added multi-turn AI email writing assistance, with a separate workflow for
+  translating email bodies.
+
+### Changed
+
+- Accelerated global email search with a SQLite FTS5 trigram index, reduced
+  repeated message reads and HTML parsing, and canceled superseded requests.
+- Feishu email notifications now show the summary before the sender's address.
+
+### Fixed
+
+- Replying to a message now scrolls to the composer at the bottom of the
+  conversation, including when another reply is already open.
+- New replies quote only the selected message's own content, removing older
+  quoted history from plain-text, HTML, and Outlook messages.
+
+---
+
 ## [1.19.19] - 2026-11-13
 
 ### Added

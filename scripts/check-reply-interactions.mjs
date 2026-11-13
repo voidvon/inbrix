@@ -17,6 +17,15 @@ const message = {
   cc: `team@example.com; Outside <outside@other.com>; Upper <UPPER@EXAMPLE.COM>; team@example.com; ${accountEmail}; alice@example.com; sub@sub.example.com; lookalike@notexample.com`, subject: 'Reply interactions', body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body',
   date: new Date().toISOString(), outgoing: false, messageId: '<original@example.com>', flags: ['\\Seen'],
 };
+let messages = [message];
+const quoteCases = {
+  'chinese-quote': { body: 'Original email body\n\n在 2026年11月14日，Bob 写道：\nEarlier email body' },
+  'original-message': { body: 'Original email body\n\n-----Original Message-----\nFrom: bob@example.com\nEarlier email body' },
+  'angle-quote': { body: 'Original email body\n\n> Earlier email body\n>> Oldest email body' },
+  'html-quote': { body: 'Original email body\nEarlier email body', html: '<p>Original email body</p><details class="inbrix-quoted"><summary>Show quoted message</summary><blockquote>Earlier email body<blockquote>Oldest email body</blockquote></blockquote></details>' },
+  'outlook-quote': { body: 'Original email body\nEarlier email body', html: '<div><p>Original email body</p><div id="divRplyFwdMsg">From: bob@example.com</div><p>Earlier email body</p></div><div>Oldest email body</div>' },
+  'html-only': { body: '', html: '<p>Original email body</p><div class="gmail_quote">Earlier email body<blockquote>Oldest email body</blockquote></div>' },
+};
 let savedDraft;
 let restoredDraft;
 const summary = { id: 'reply', title: 'Alice', peerEmail: message.from, subject: message.subject, count: 1, accountEmail, status: 'unanswered' };
@@ -26,7 +35,7 @@ await page.route('**/api/**', async route => {
   const { pathname } = new URL(route.request().url());
   let json = { calendar: false, models: [], agents: [], bindings: [], documents: [], attachments: [], signatures: [], total: 0 };
   if (pathname === '/api/conversations') json = { locale: 'zh-CN', accountEmail: 'active@other.com', conversations: [summary], folders: [], accounts: [{ id: 'account', email: accountEmail, isActive: false }, { id: 'active', email: 'active@other.com', isActive: true }] };
-  if (pathname === '/api/conversations/reply') json = { conversation: { ...summary, messages: [message], hasMore: false, hasNewer: false } };
+  if (pathname === '/api/conversations/reply') json = { conversation: { ...summary, messages, hasMore: false, hasNewer: false } };
   if (pathname === '/api/drafts') {
     if (route.request().method() === 'POST') {
       savedDraft = route.request().postDataJSON();
@@ -59,6 +68,7 @@ async function checkEditor(label, expectedCc, hasFilteredCc = true) {
   await compose.getByLabel('主题', { exact: true }).fill(`Editable ${label}`);
   assert.equal(await compose.getByLabel('主题', { exact: true }).inputValue(), `Editable ${label}`);
   const quote = compose.locator('.reply-quote').first();
+  assert.equal(await compose.locator('.reply-quote').count(), 1, 'A new reply must have only one quote layer');
   await quote.getByRole('button', { name: 'Expand quoted message', exact: true }).first().click();
   const paragraph = quote.locator('[data-node-view-content-react] > p').filter({ hasText: 'Original email body' });
   await paragraph.click();
@@ -75,7 +85,7 @@ async function checkEditor(label, expectedCc, hasFilteredCc = true) {
   await compose.getByRole('button', { name: '关闭', exact: true }).click();
   await saved;
   assert.ok(savedDraft.bodyHtml.includes('Original email body edited'), 'Quote edits must reach the editor state and draft');
-  assert.ok(savedDraft.bodyHtml.includes('Earlier email body'), 'Nested quotes must survive editing');
+  assert.ok(!savedDraft.bodyHtml.includes('Earlier email body'), 'Earlier quoted mail must not be carried into a new reply');
   assert.equal(savedDraft.inReplyTo, message.messageId, 'Reply headers must survive editing');
   assert.equal(savedDraft.mode, 'reply', 'Replies with Cc must use the regular reply mode');
   assert.equal(savedDraft.to, message.outgoing ? message.to : message.from, 'Reply must address the sender without copying the original To list');
@@ -85,7 +95,7 @@ async function checkEditor(label, expectedCc, hasFilteredCc = true) {
 }
 try {
   const modes = mobile ? ['toolbar', 'context', 'long-press'] : ['toolbar', 'context'];
-  for (const mode of [...modes, 'outgoing', 'multi-domain', 'external-only', 'tecnica', 'restored', 'no-cc']) {
+  for (const mode of [...modes, 'outgoing', 'multi-domain', 'external-only', 'tecnica', 'restored', 'no-cc', ...Object.keys(quoteCases)]) {
     let expectedCc = 'team@example.com, Upper <UPPER@EXAMPLE.COM>';
     let hasFilteredCc = true;
     if (mode === 'outgoing') {
@@ -122,6 +132,11 @@ try {
     if (mode === 'no-cc') {
       restoredDraft = undefined;
       message.cc = '';
+      expectedCc = '';
+      hasFilteredCc = false;
+    }
+    if (quoteCases[mode]) {
+      Object.assign(message, { html: '', ...quoteCases[mode] });
       expectedCc = '';
       hasFilteredCc = false;
     }
@@ -162,6 +177,32 @@ try {
       else await item.press('Enter');
     }
     await checkEditor(mode, expectedCc, hasFilteredCc);
+  }
+  // Replying to older mail must reveal the editor at the end of a long
+  // transcript, including when another reply editor is already open.
+  restoredDraft = undefined;
+  messages = Array.from({ length: 8 }, (_, index) => ({
+    ...message, id: String(index + 1), messageId: `<history-${index + 1}@example.com>`,
+    body: `History ${index + 1}\n${'Message content\n'.repeat(24)}`, html: '',
+  }));
+  summary.count = messages.length;
+  await page.goto(`${base}/inbox?conversation=reply`);
+  await detail.locator('[data-message-key]').first().waitFor();
+  const viewport = detail.locator('[data-slot="scroll-area-viewport"]').first();
+  for (const label of ['open reply', 'reply again while open']) {
+    await viewport.evaluate(element => { element.scrollTop = 0; });
+    await detail.locator('[data-message-key]').first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '回复', exact: true }).click();
+    await compose.locator('.tiptap').waitFor();
+    await page.getByRole('menu').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector('[data-testid="conversation-detail"] [data-slot="scroll-area-viewport"]');
+      return viewport && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 3;
+    });
+    const editor = await compose.boundingBox();
+    const visible = await viewport.boundingBox();
+    assert.ok(editor.y + editor.height > visible.y && editor.y < visible.y + visible.height, `${label}: reply editor must be visible`);
+    assert.equal(await page.evaluate(() => scrollY), 0, `${label}: only the transcript should scroll`);
   }
   assert.deepEqual(errors, []);
   console.log('Reply opens an editable composer, dismisses menus, preserves quote edits, and closes successfully.');
