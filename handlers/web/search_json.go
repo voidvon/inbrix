@@ -84,6 +84,10 @@ func messagePlainText(email models.Email) string {
 // so this second pass keeps markup-only hits (a style rule mentioning "color",
 // for example) out of the result list.
 func mailMessageMatchesTerms(email models.Email, terms []string) bool {
+	return mailMessageMatchesPlainText(email, messagePlainText(email), terms)
+}
+
+func mailMessageMatchesPlainText(email models.Email, plain string, terms []string) bool {
 	if len(terms) == 0 {
 		return true
 	}
@@ -94,7 +98,7 @@ func mailMessageMatchesTerms(email models.Email, terms []string) bool {
 		email.To,
 		email.Cc,
 		email.Preview,
-		messagePlainText(email),
+		plain,
 	}, "\n"))
 	for _, term := range terms {
 		if !strings.Contains(haystack, strings.ToLower(term)) {
@@ -170,9 +174,8 @@ func clipRunes(text string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
-func mailSearchResultJSON(conversation Conversation, message ConversationMessage, terms []string) MailSearchResultJSON {
+func mailSearchResultJSON(conversation Conversation, message ConversationMessage, plain string, terms []string) MailSearchResultJSON {
 	email := message.Email
-	plain := messagePlainText(email)
 	// When only the headers or subject matched, searchSnippet still returns the
 	// head of the mail so the row has context.
 	snippet, matchedBody := searchSnippet(plain, terms)
@@ -262,19 +265,31 @@ func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 		conversation *Conversation
 		message      *ConversationMessage
 	}
-	conversationByMessage := make(map[string]messageContext)
 	conversationHits := make(map[string]bool)
 	results := make([]MailSearchResultJSON, 0)
 	conversationTerms := mailstore.ConversationSearchTerms(query)
 	for i := range conversations {
 		conversation := &conversations[i]
-		for j := range conversation.Messages {
-			message := &conversation.Messages[j]
-			conversationByMessage[message.Email.Folder+"\x00"+message.Email.ID] = messageContext{conversation, message}
-		}
 		if conversationMatchesSearch(*conversation, conversationTerms) {
 			conversationHits[conversation.ID] = true
 			results = append(results, conversationSearchResultJSON(*conversation, terms))
+		}
+	}
+	// Conversation hits sort ahead of all message hits. Once they fill the
+	// page and prove hasMore, searching bodies cannot affect the response.
+	if len(results) > limit {
+		return c.JSON(mailSearchResponse(query, terms, results, limit))
+	}
+	conversationByMessage := make(map[string]messageContext)
+	var outgoing []models.Email
+	for i := range conversations {
+		conversation := &conversations[i]
+		for j := range conversation.Messages {
+			message := &conversation.Messages[j]
+			conversationByMessage[message.Email.Folder+"\x00"+message.Email.ID] = messageContext{conversation, message}
+			if message.Email.Folder == "Outbox" {
+				outgoing = append(outgoing, message.Email)
+			}
 		}
 	}
 
@@ -305,32 +320,35 @@ func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 		}
 	}
 	// Pending and draft sends are part of the transcript as well.
-	if outgoing, outgoingErr := h.mailDB.ListOutgoing(c.UserContext(), account.ID); outgoingErr == nil {
-		for _, record := range outgoing {
-			email := record.Message
-			key := email.Folder + "\x00" + email.ID
-			if _, duplicate := seen[key]; duplicate {
-				continue
-			}
-			if !mailMessageMatchesTerms(email, terms) {
-				continue
-			}
-			seen[key] = struct{}{}
-			candidates = append(candidates, email)
+	// localConversations already loaded the pending sends; reuse those rows.
+	for _, email := range outgoing {
+		key := email.Folder + "\x00" + email.ID
+		if _, duplicate := seen[key]; duplicate {
+			continue
 		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, email)
 	}
 
 	for _, email := range candidates {
 		matched, ok := conversationByMessage[email.Folder+"\x00"+email.ID]
-		if !ok || conversationHits[matched.conversation.ID] || !mailMessageMatchesTerms(email, terms) {
+		if !ok || conversationHits[matched.conversation.ID] {
+			continue
+		}
+		plain := messagePlainText(email)
+		if !mailMessageMatchesPlainText(email, plain, terms) {
 			continue
 		}
 		// localConversations applies saved send timestamps and thread identity.
 		email.Date = matched.message.Email.Date
 		results = append(results, mailSearchResultJSON(*matched.conversation, ConversationMessage{
 			Email: email, Outgoing: matched.message.Outgoing,
-		}, terms))
+		}, plain, terms))
 	}
+	return c.JSON(mailSearchResponse(query, terms, results, limit))
+}
+
+func mailSearchResponse(query string, terms []string, results []MailSearchResultJSON, limit int) MailSearchJSON {
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Kind != results[j].Kind {
 			return results[i].Kind == "conversation"
@@ -345,10 +363,10 @@ func (h *EmailHandler) HandleMailSearchJSON(c *fiber.Ctx) error {
 		results = results[:limit]
 	}
 
-	return c.JSON(MailSearchJSON{
+	return MailSearchJSON{
 		Query:   query,
 		Terms:   terms,
 		Results: results,
 		HasMore: hasMore,
-	})
+	}
 }

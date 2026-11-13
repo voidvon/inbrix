@@ -138,9 +138,9 @@ export function getConversations(options: {
  * Full-text search over the local mail mirror. Results are message-level so the
  * client can open a conversation at the matching message.
  */
-export function searchMailMessages(query: string, limit = 50) {
+export function searchMailMessages(query: string, limit = 50, signal?: AbortSignal) {
   const params = new URLSearchParams({ q: query.trim(), limit: String(limit) });
-  return apiFetch<MailSearchResponse>(`/api/mail/search?${params.toString()}`);
+  return apiFetch<MailSearchResponse>(`/api/mail/search?${params.toString()}`, { signal });
 }
 
 /**

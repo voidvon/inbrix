@@ -18,7 +18,9 @@ var searchOperator = regexp.MustCompile(`(?i)^(from|to|cc|subject|in|is|has|befo
 // HTML-only mail (marketing mail, notifications, many web clients) is
 // searchable too. Matches that only hit HTML markup are filtered out by the
 // caller, which compares the term against the message's plain-text projection.
-const searchTextClause = `(lower(subject) LIKE lower(?) OR lower(from_addr) LIKE lower(?) OR lower(to_addrs) LIKE lower(?) OR lower(cc) LIKE lower(?) OR lower(preview) LIKE lower(?) OR lower(body) LIKE lower(?) OR (trim(body) = '' AND lower(html) LIKE lower(?)))`
+// SQLite LIKE already folds ASCII case, just like its built-in lower(). Avoid
+// allocating lowercase copies of every body, including on the short-term path.
+const searchTextClause = `(subject LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ? OR cc LIKE ? OR preview LIKE ? OR body LIKE ? OR (trim(body) = '' AND html LIKE ?))`
 
 // searchTextArgCount is the number of bound parameters searchTextClause needs.
 const searchTextArgCount = 7
@@ -29,11 +31,12 @@ const searchTextArgCount = 7
 // callers can verify and highlight matches without re-implementing the query
 // grammar.
 type parsedSearch struct {
-	clauses  []string
-	args     []any
-	folder   string
-	terms    []string
-	filtered bool
+	clauses    []string
+	args       []any
+	folder     string
+	terms      []string
+	filtered   bool
+	indexTerms []string
 }
 
 func negatedClause(clause string, negated bool) string {
@@ -57,6 +60,7 @@ func (p *parsedSearch) addTextTerm(term string, negated bool) {
 	if !negated {
 		p.terms = append(p.terms, term)
 	}
+	p.addIndexTerm(term, "", negated)
 }
 
 // parseSearchQuery normalizes a search string into SQL clauses and terms. It
@@ -84,8 +88,9 @@ func parseSearchQuery(query string) parsedSearch {
 			switch key {
 			case "from", "to", "cc", "subject":
 				column := map[string]string{"from": "from_addr", "to": "to_addrs", "cc": "cc", "subject": "subject"}[key]
-				parsed.clauses = append(parsed.clauses, negatedClause(fmt.Sprintf("lower(%s) LIKE lower(?)", column), negated))
+				parsed.clauses = append(parsed.clauses, negatedClause(fmt.Sprintf("%s LIKE ?", column), negated))
 				parsed.args = append(parsed.args, "%"+value+"%")
+				parsed.addIndexTerm(value, column, negated)
 				if !negated && value != "" {
 					parsed.terms = append(parsed.terms, value)
 				}
@@ -124,6 +129,10 @@ func parseSearchQuery(query string) parsedSearch {
 			continue
 		}
 		parsed.addTextTerm(term, negated)
+	}
+	if len(parsed.indexTerms) > 0 {
+		parsed.clauses = append(parsed.clauses, "rowid IN (SELECT rowid FROM messages_search WHERE messages_search MATCH ?)")
+		parsed.args = append(parsed.args, strings.Join(parsed.indexTerms, " AND "))
 	}
 	return parsed
 }

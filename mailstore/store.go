@@ -843,7 +843,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.migrateLegacyAIModelProviders(ctx); err != nil {
 		return err
 	}
-	return nil
+	return s.migrateMessageSearch(ctx)
 }
 
 func (s *Store) ensureAITaskBindingEnabledColumn(ctx context.Context) error {

@@ -352,4 +352,25 @@ func TestHandleMailSearchJSON(t *testing.T) {
 			t.Fatalf("status = %d, want 400", status)
 		}
 	})
+
+	t.Run("pending outgoing message", func(t *testing.T) {
+		record, err := db.CreateOutgoing(ctx, mailstore.OutgoingMessage{
+			AccountID: account.ID, ConversationID: alice.ID,
+			Message: models.Email{
+				From: account.Email, To: "alice@example.com", Subject: "Pending reply",
+				Body: "outbox-search-token", Date: when.Add(4 * time.Hour), MessageID: "<pending-search@example.com>",
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body := search(t, "outbox-search-token")
+		if status != http.StatusOK || len(body.Results) != 1 {
+			t.Fatalf("outgoing search status=%d results=%+v", status, body.Results)
+		}
+		result := body.Results[0]
+		if result.MessageID != record.ID || result.Folder != "Outbox" || result.ConversationID != alice.ID || !result.MatchedBody {
+			t.Fatalf("outgoing result = %+v", result)
+		}
+	})
 }

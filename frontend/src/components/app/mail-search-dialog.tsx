@@ -24,7 +24,7 @@ export function MailSearchDialog({ open, onOpenChange, copy, onSelect }: {
   const waiting = search.trim() !== query;
   const mailSearch = useQuery({
     queryKey: ["mail-search", query],
-    queryFn: () => searchMailMessages(query),
+    queryFn: ({ signal }) => searchMailMessages(query, 50, signal),
     enabled: open && query.length > 0,
     retry: 1,
   });
