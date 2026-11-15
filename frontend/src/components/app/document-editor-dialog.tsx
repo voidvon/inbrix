@@ -103,6 +103,7 @@ export function DocumentAISidebar({
   onClose,
   isMobile = false,
   onPreviewDocument,
+  disabled = false,
 }: {
   copy: Copy;
   editor: CanvasDocumentEditorHandle | null;
@@ -112,10 +113,11 @@ export function DocumentAISidebar({
   onClose?: () => void;
   isMobile?: boolean;
   onPreviewDocument?: () => void;
+  disabled?: boolean;
 }) {
   const isZh = copy === zh;
   const [messages, setMessages] = useState<
-    Array<{ id: string; role: "user" | "assistant"; content: string; time: string; error?: boolean; hasUpdate?: boolean }>
+    Array<{ id: string; role: "user" | "assistant"; content: string; time: string; error?: boolean; hasUpdate?: boolean; retry?: { text: string; history: Array<{ role: "user" | "assistant"; content: string }> } }>
   >(() => [
     {
       id: "initial-msg",
@@ -163,7 +165,7 @@ export function DocumentAISidebar({
       }]);
       if (changed) toast.success(isZh ? "文档已智能更新" : "Document updated");
     },
-    onError: (error) => {
+    onError: (error, request) => {
       if (error instanceof Error && error.name === "AbortError") return;
       const errMsg = error instanceof Error ? error.message : copy.aiDocumentFailed;
       setMessages((prev) => [
@@ -174,15 +176,18 @@ export function DocumentAISidebar({
           content: isZh ? `生成失败：${errMsg}` : `Failed: ${errMsg}`,
           time: new Date().toISOString(),
           error: true,
+          retry: request,
         },
       ]);
       toast.error(errMsg);
     },
+    onSettled: () => { requestRef.current = null; },
   });
 
+  const unavailable = !editor || !accountEmail || disabled;
   const handleSend = () => {
     const trimmed = instruction.trim();
-    if (!trimmed || mutation.isPending || stopping) return;
+    if (!trimmed || unavailable || mutation.isPending || stopping) return;
     setStopped(false);
     setMessages((prev) => [
       ...prev,
@@ -224,7 +229,7 @@ export function DocumentAISidebar({
             <Sparkles className="size-4 text-primary" />
             <span className="text-sm font-semibold">{copy.aiDocument}</span>
             <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-normal">
-              {isZh ? "常驻助手" : "Resident"}
+              {type === "quotation" ? (isZh ? "报价单" : "Quotation") : (isZh ? "形式发票" : "Pro forma invoice")}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -271,6 +276,22 @@ export function DocumentAISidebar({
                   <span>{isZh ? "点击预览最新文档" : "Preview Document"}</span>
                 </Button>
               )}
+              {m.retry && m.id === messages.at(-1)?.id && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7 text-xs"
+                  disabled={unavailable || mutation.isPending || stopping}
+                  onClick={() => {
+                    setStopped(false);
+                    setMessages(prev => prev.filter(message => message.id !== m.id));
+                    mutation.mutate(m.retry!);
+                  }}
+                >
+                  {copy.retry}
+                </Button>
+              )}
             </div>
             <span className="mt-1 text-[9px] text-muted-foreground">{formatTime(m.time)}</span>
           </div>
@@ -296,10 +317,10 @@ export function DocumentAISidebar({
           onStop={() => void handleStop()}
           isStopping={stopping}
           placeholder={isZh ? "输入对当前文档的修改要求…" : "Type changes to document…"}
-          disabled={mutation.isPending || stopping}
+          disabled={unavailable || mutation.isPending || stopping}
           isPending={mutation.isPending || stopping}
           sendLabel={isZh ? "发送" : "Send"}
-          hint={isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line"}
+          hint={!editor ? copy.loadingEditor : disabled ? (isZh ? "文档正在保存或导出，请稍候…" : "Saving or exporting document…") : !accountEmail ? (isZh ? "请先配置邮箱账户" : "Configure an email account first") : (isZh ? "按 Enter 发送，Shift+Enter 换行" : "Enter to send, Shift+Enter for new line")}
         />
       </div>
     </aside>
@@ -766,21 +787,8 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
           {validation.issues.length > 0 && <ul className="mt-1 list-inside list-disc text-muted-foreground">{validation.issues.map((issue, index) => <li key={`${issue.code}-${issue.field}-${index}`}>{issue.message}</li>)}</ul>}
         </div>}
         <div className="flex min-h-0 flex-1 overflow-hidden relative">
-          {/* Mobile AI Chat View */}
-          {isMobile && activeTab === "chat" ? (
-            <DocumentAISidebar
-              copy={copy}
-              editor={editorRef.current}
-              accountEmail={accountEmail}
-              type={type}
-              title={name}
-              isMobile={true}
-              onPreviewDocument={() => setActiveTab("document")}
-            />
-          ) : (
-            <>
-              {/* Left Content Column: Document Editor (+ Toolbar) or Variable Form */}
-              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              {/* Keep the editor mounted even when mobile chat is the initial view. */}
+              <div className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", isMobile && activeTab === "chat" && "hidden")}>
                 {/* Formatting Toolbar: Positioned only in the left content column, shown in document view */}
                 {activeTab === "document" && (
                   <div className="flex h-11 items-center gap-1 overflow-x-auto whitespace-nowrap border-b bg-muted/20 px-2 sm:px-4 py-1.5 scrollbar-none touch-pan-x shrink-0">
@@ -890,19 +898,20 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
                 )}
               </div>
 
-              {/* Right Content Column: AI Document Assistant on Desktop */}
-              {!isMobile && aiSidebarOpen && (
+              {/* Preserve conversation and in-flight requests across views and sizes. */}
+              <div className={cn("flex min-h-0 shrink-0", isMobile && "min-w-0 flex-1", (isMobile ? activeTab !== "chat" : !aiSidebarOpen) && "hidden")}>
                 <DocumentAISidebar
                   copy={copy}
-                  editor={editorRef.current}
+                  editor={editorReady ? editorRef.current : null}
                   accountEmail={accountEmail}
                   type={type}
                   title={name}
+                  isMobile={isMobile}
+                  disabled={exporting || saving}
                   onClose={() => setAiSidebarOpen(false)}
+                  onPreviewDocument={() => setActiveTab("document")}
                 />
-              )}
-            </>
-          )}
+              </div>
         </div>
       </DialogContent>
     </Dialog>

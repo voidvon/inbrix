@@ -53,11 +53,14 @@ await page.route('**/api/**', async route => {
     const { ids } = req.postDataJSON(); documents = documents.filter(doc => !ids.includes(doc.id));
     return route.fulfill({ json: { ok: true, count: ids.length } });
   }
+  if (path === '/api/documents/validate') {
+    return route.fulfill({ json: { html: req.postDataJSON().html, validation: { status: 'ready', issues: [] } } });
+  }
   if (path.startsWith('/api/documents/')) {
     const id = path.split('/').at(-1), doc = documents.find(item => item.id === id);
     if (delayFirstDetail && id === 'doc-0') await firstDetailGate;
     if (failDetail || !doc) return route.fulfill({ status: 404, json: { error: '文档已删除' } });
-    return route.fulfill({ json: { document: { ...doc, name: `服务器最新 ${id}`, revision: 7, html: `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify({ template: 'document', data: { main: [{ value: `LATEST-SERVER-CONTENT-${id}`, size: 16 }] } })}` } } });
+    return route.fulfill({ json: { document: { ...doc, name: `服务器最新 ${id}`, revision: 7, html: `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify({ template: 'document', business: { version: 2, values: {}, calculated: {}, items: [] }, data: { main: [{ value: `LATEST-SERVER-CONTENT-${id}`, size: 16 }] } })}` } } });
   }
   let json = { calendar: false, notifications: false, models: [], agents: [], skills: [], bindings: [], signatures: [], templates: [], stamps: [], documents: [], attachments: [], total: 0 };
   if (path === '/api/accounts') json = { accounts: [account] };

@@ -13,6 +13,25 @@ No unreleased changes.
 
 ---
 
+## [1.20.0] - 2026-11-15
+
+### Added
+
+- Added retry actions for failed document AI requests without duplicating the
+  user's message or conversation history.
+
+### Fixed
+
+- Initialize quotation and pro forma invoice editors in the background when
+  mobile or narrow screens open directly in AI chat, preventing the
+  "Editor is not ready" error.
+- Preserve unsaved document changes, AI conversation history, and in-flight
+  requests when switching views or hiding the document assistant.
+- Disable document AI input until the editor is ready and while saving or
+  exporting the document.
+
+---
+
 ## [1.19.20] - 2026-11-14
 
 ### Added
