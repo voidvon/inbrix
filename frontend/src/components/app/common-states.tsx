@@ -6,13 +6,9 @@ import type { Copy } from "../../lib/locale";
 
 export function ListSkeleton() {
   return (
-    <div className="grid">
-      {Array.from({ length: 7 }, (_, index) => (
-        <div className="grid gap-2 border-b px-4 py-3" key={index}>
-          <Skeleton className="h-2.5 w-2/5" />
-          <Skeleton className="h-2.5 w-4/5" />
-        </div>
-      ))}
+    <div className="grid gap-2 border-b px-4 py-3">
+      <Skeleton className="h-2.5 w-2/5" />
+      <Skeleton className="h-2.5 w-4/5" />
     </div>
   );
 }

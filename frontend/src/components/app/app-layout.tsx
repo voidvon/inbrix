@@ -26,7 +26,7 @@ import { APP_TITLE_NAME, mailDocumentTitle } from "../../lib/document-title";
 import { prefersDarkMode } from "../../lib/theme";
 import { folderKind, folderLabel } from "../../lib/mailbox";
 import { type Copy, useLocale } from "../../lib/locale";
-import { useMailEvents, type MailEventStatus } from "../../lib/use-mail-events";
+import { useMailEvents } from "../../lib/use-mail-events";
 import { useConversationsQuery } from "../../lib/use-conversations";
 import { useAppViewport } from "../../lib/use-app-viewport";
 import type { ComposeDefaults } from "../../lib/email-format";
@@ -67,7 +67,14 @@ export function FolderLink({ copy, folder, selected = false, onClose }: { copy: 
   );
 }
 
-export function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; accounts: ConversationListResponse["accounts"]; accountEmail: string }) {
+export function AccountMenu({ copy, accounts, accountEmail, onSettings, darkMode, onToggleDarkMode }: {
+  copy: Copy;
+  accounts: ConversationListResponse["accounts"];
+  accountEmail: string;
+  onSettings: () => void;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
+}) {
   const active = accounts.find((account) => account.isActive || account.email === accountEmail);
   const selectAccount = async (account: ConversationListResponse["accounts"][number]) => {
     if (account.email === accountEmail) return;
@@ -92,6 +99,15 @@ export function AccountMenu({ copy, accounts, accountEmail }: { copy: Copy; acco
             {(account.isActive || account.email === accountEmail) && <Check className="size-4 shrink-0" />}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="gap-2 px-2 py-2" onClick={onSettings}>
+          <Settings />
+          {copy.settings}
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2 px-2 py-2" onClick={onToggleDarkMode}>
+          {darkMode ? <Sun /> : <Moon />}
+          {darkMode ? copy.lightMode : copy.darkMode}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           variant="destructive"
@@ -121,7 +137,6 @@ export function Sidebar({
   darkMode,
   onToggleDarkMode,
   desktopWidth,
-  realtimeStatus,
   showAllConversations,
   selectedTag,
   tags,
@@ -142,7 +157,6 @@ export function Sidebar({
   darkMode: boolean;
   onToggleDarkMode: () => void;
   desktopWidth: number;
-  realtimeStatus: MailEventStatus;
   showAllConversations: boolean;
   selectedTag: string;
   tags: string[];
@@ -150,7 +164,6 @@ export function Sidebar({
 }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
   const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
-  const realtimeLabel = realtimeStatus === "open" ? copy.realtimeConnected : realtimeStatus === "connecting" ? copy.realtimeConnecting : copy.realtimeDisconnected;
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground aria-current:bg-sidebar-accent aria-current:text-sidebar-accent-foreground";
   const inboxActive = !currentFolder && currentView === "mail";
   const selectFilter = (event: MouseEvent<HTMLAnchorElement>, showAll: boolean, tag = "") => {
@@ -195,16 +208,14 @@ export function Sidebar({
           )}
         </ScrollArea>
         <div className="mt-auto flex min-w-0 items-center justify-start gap-1 border-t pt-3">
-          <span
-            className={cn("size-2 shrink-0 rounded-full", realtimeStatus === "open" ? "bg-emerald-500" : realtimeStatus === "connecting" ? "bg-amber-400" : "bg-red-500")}
-            title={realtimeLabel}
-            aria-label={realtimeLabel}
+          <AccountMenu
+            copy={copy}
+            accounts={accounts}
+            accountEmail={accountEmail}
+            onSettings={onSettings}
+            darkMode={darkMode}
+            onToggleDarkMode={onToggleDarkMode}
           />
-          <AccountMenu copy={copy} accounts={accounts} accountEmail={accountEmail} />
-          <Button variant="ghost" size="icon" onClick={onSettings} aria-label={copy.settings} title={copy.settings}><Settings /></Button>
-          <Button variant="ghost" size="icon" onClick={onToggleDarkMode} aria-label={darkMode ? copy.lightMode : copy.darkMode} title={darkMode ? copy.lightMode : copy.darkMode}>
-            {darkMode ? <Sun /> : <Moon />}
-          </Button>
         </div>
       </nav>
     </aside>
@@ -266,7 +277,7 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
   // SSE is the only refresh channel for mail; the shell query no longer polls.
   // Wait for a mailbox before connecting (a user without an account would be
   // redirected by the server-side mailbox gate), and resync on every reconnect.
-  const realtimeStatus = useMailEvents(!signedOut && Boolean(shell.data?.accountEmail));
+  useMailEvents(!signedOut && Boolean(shell.data?.accountEmail));
   const currentFolderMailbox = currentFolder ? (shell.data?.folders || []).find((folder) => folder.name === currentFolder) : undefined;
   // The server returns the mailbox-wide unread total so the badge does not
   // shrink when only the first page is loaded. Older servers omit it; keep the
@@ -371,7 +382,6 @@ export function AppLayout({ path, children }: { path: string; children: ReactNod
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((value) => !value)}
           desktopWidth={sidebarWidth}
-          realtimeStatus={realtimeStatus}
           showAllConversations={conversationFilter.showAll}
           selectedTag={conversationFilter.tag}
           tags={[...new Set([...(shell.data?.tags || []), ...(shell.data?.conversations || []).flatMap((row) => row.tags || []), ...(conversationFilter.tag ? [conversationFilter.tag] : [])])].sort()}

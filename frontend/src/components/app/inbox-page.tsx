@@ -358,7 +358,7 @@ export function InboxPage() {
           onSearch={() => setSearchOpen(true)}
           selectedTag={selectedTag}
           onMenu={openMobileMenu}
-          loading={conversations.isPending}
+          loading={conversations.isPending || conversations.isPlaceholderData || (conversations.isFetching && !conversations.data?.conversations.length)}
           error={conversations.error}
           selectedId={selectedId}
           onSelect={(id) => {

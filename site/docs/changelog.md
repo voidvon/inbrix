@@ -14,6 +14,28 @@ No unreleased changes.
 
 ---
 
+## [2.0.0] - 2026-11-17
+
+### Changed
+
+- Use white backgrounds for received and sent email bubbles in light mode.
+- Center conversation headers and adapt action labels to the available panel
+  width.
+- Move settings and theme switching into the account menu and simplify inbox
+  loading placeholders.
+- Refine AI email writing instructions to keep drafts focused on the current
+  request, preserve relevant requirements during incremental edits, and avoid
+  carrying unrelated historical topics into a new email.
+- Preserve task boundaries and supported resolution states in AI conversation
+  summaries.
+
+### Fixed
+
+- Show loading placeholders while switching conversation filters or fetching
+  an empty inbox instead of briefly displaying stale results or empty states.
+
+---
+
 ## [1.20.0] - 2026-11-15
 
 ### Added

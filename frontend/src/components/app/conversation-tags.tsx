@@ -19,11 +19,12 @@ export function ConversationTagNames({ tags = [] }: { tags?: string[] }) {
   );
 }
 
-export function ConversationTags({ id, tags = [], options, copy }: {
+export function ConversationTags({ id, tags = [], options, copy, labelClassName = "hidden sm:inline" }: {
   id: string;
   tags?: string[];
   options: string[];
   copy: Copy;
+  labelClassName?: string;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
@@ -59,7 +60,7 @@ export function ConversationTags({ id, tags = [], options, copy }: {
         className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
       >
         <Tag className="size-3.5" />
-        <span className="hidden sm:inline">{copy.conversationTags}</span>
+        <span className={labelClassName}>{copy.conversationTags}</span>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 max-w-[calc(100vw-2rem)]">
         <PopoverTitle>{copy.conversationTags}</PopoverTitle>

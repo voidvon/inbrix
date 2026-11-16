@@ -123,7 +123,7 @@ export function ConversationList({
     (showAllConversations || conversation.status === "unanswered" || conversation.status === "draft") &&
     (!selectedTag || conversation.tags?.includes(selectedTag))
   );
-  const hasData = Boolean(data);
+  const hasData = Boolean(data) && !loading;
 
   // The sentinel loads the next page before it reaches the bottom. The explicit
   // button below is the accessible fallback when IntersectionObserver is not
@@ -525,6 +525,8 @@ export function ChatView({
   const [latestJump, setLatestJump] = useState(0);
   const jumpLatestPending = useRef(false);
   const focusedNavigation = useRef("");
+  const headerRef = useRef<HTMLElement>(null);
+  const headerActionsRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -532,6 +534,22 @@ export function ChatView({
   const programmaticTop = useRef(-1);
   const userScrollDelta = useRef(0);
   const syncScrollRef = useRef<() => void>(() => {});
+
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const actions = headerActionsRef.current;
+    if (!header || !actions) return;
+
+    // Balance the actual action width on both sides of the centered title.
+    const updateSpacing = () => {
+      header.style.setProperty("--header-side-width", `${actions.getBoundingClientRect().width}px`);
+    };
+    updateSpacing();
+    const observer = new ResizeObserver(updateSpacing);
+    observer.observe(actions);
+    return () => observer.disconnect();
+  }, []);
+
   const queryClient = useQueryClient();
   const { compose, openCompose, closeCompose, accountEmail: shellAccountEmail } = useShell();
   // The compose window resolves its own account the same way, so both sides of
@@ -924,7 +942,7 @@ export function ChatView({
   return (
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 overflow-hidden", className)}>
       <section data-testid="conversation-detail" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-surface">
-        <header className="grid h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b bg-card px-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] sm:gap-0 sm:px-5">
+        <header ref={headerRef} className="@container/conversation-header grid h-14 shrink-0 grid-cols-[var(--header-side-width,0px)_minmax(0,1fr)_var(--header-side-width,0px)] items-center gap-2 border-b bg-card px-3 sm:px-5">
           <div className="flex min-w-0 items-center justify-start">
             <Button
               variant="ghost"
@@ -945,8 +963,8 @@ export function ChatView({
               {detail.count} {copy.messages}
             </p>
           </div>
-          <div className="flex min-w-0 items-center justify-end gap-1.5">
-            <ConversationTags key={detail.id} id={detail.id} tags={detail.tags || []} options={tagOptions} copy={copy} />
+          <div ref={headerActionsRef} className="flex w-max items-center justify-self-end gap-1.5">
+            <ConversationTags key={detail.id} id={detail.id} tags={detail.tags || []} options={tagOptions} copy={copy} labelClassName="hidden @min-[40rem]/conversation-header:inline" />
             <Button
               variant="ghost"
               size="sm"
@@ -962,7 +980,7 @@ export function ChatView({
               aria-expanded={isAIChatOpen}
             >
               <Bot className="size-3.5" />
-              <span className="hidden sm:inline">{copy.openAIChat}</span>
+              <span className="hidden @min-[40rem]/conversation-header:inline">{copy.openAIChat}</span>
             </Button>
             {detail.messages.length > 0 && (
               <>
@@ -974,7 +992,7 @@ export function ChatView({
                   title={copy.reply}
                 >
                   <Send className="size-3.5" />
-                  <span className="hidden sm:inline">{copy.reply}</span>
+                  <span className="hidden @min-[40rem]/conversation-header:inline">{copy.reply}</span>
                 </Button>
               </>
             )}
@@ -1405,7 +1423,7 @@ export function MessageBubble({
                 </button>
               </div>
             )}
-            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed transition-all", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : sendNeedsAttention ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-secondary text-secondary-foreground", message.html && "w-full", isFocused && "ring-2 ring-primary/60 border-primary/50 shadow-xs")}>
+            <div className={cn("min-w-0 max-w-[80%] overflow-x-auto rounded-xl border px-3 py-2 text-sm leading-relaxed transition-all", message.sendStatus === "sending" ? "border-dashed border-primary/40 bg-primary/10 text-foreground" : sendNeedsAttention ? "border-destructive/40 bg-destructive/10 text-foreground" : "border-transparent bg-white text-secondary-foreground dark:bg-secondary", message.html && "w-full", isFocused && "ring-2 ring-primary/60 border-primary/50 shadow-xs")}>
               {message.html ? (
                 <EmailHTMLFrame html={message.html} title={message.subject || copy.noSubject} rootRef={rootRef} eager={eager} />
               ) : (
