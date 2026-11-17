@@ -1752,6 +1752,24 @@ subsequent edits and deletions persist across browsers and restarts. Existing
 server templates are preserved. Stamp insertion width (`insertWidth`, millimetres)
 is stored server-side; older records receive the previous 40 mm default.
 
+Document images are immutable attachments, stored separately from the canvas JSON.
+`POST /api/document-attachments` accepts a multipart `file` (PNG, JPEG, GIF, WebP,
+BMP or SVG, up to 10 MiB and 32 megapixels for raster images), returning
+`{attachment: {id, url, contentType, size}}`. Use the returned URL in image values,
+backgrounds and watermarks. `GET /api/document-attachments/:id` authenticates the
+owner and returns the original bytes with `ETag` and `Cache-Control: private,
+no-cache`; conditional requests return 304 only after checking ownership.
+Images are deduplicated by content per owner. They remain available when source
+products, stamps, templates or documents are deleted, so other saved snapshots
+keep their image references.
+
+Saves and validation externalize embedded canvas image data URLs, including nested
+controls, row prototypes and editor options. Existing documents, templates and
+stamps migrate on first read; migration preserves business revisions, timestamps,
+image bytes and editor properties. Stamp `dataUrl`/`value` fields now contain the
+attachment URL. New editor uploads and DOCX imports attach images before inserting
+them. DOCX/PDF/HTML exports still embed the image bytes in the delivered files.
+
 Document AI session queries retain only the response needed by the active view.
 They always refetch on entry, discard inactive responses immediately, and hide
 previous results on a failed refresh. Session list/detail APIs use `no-store`.

@@ -67,6 +67,10 @@ func normalizeCommercialDocument(ctx context.Context, db *mailstore.Store, owner
 		return "", nil, err
 	}
 	validation := validateCommercialDocument(kind, normalized, card)
+	normalized, err = db.ExternalizeDocumentImages(ctx, owner, normalized)
+	if err != nil {
+		return "", nil, err
+	}
 	return normalized, validation, nil
 }
 

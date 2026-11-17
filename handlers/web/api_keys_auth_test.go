@@ -132,6 +132,8 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	g.Get("/documents", documents.HandleListDocuments)
 	g.Post("/documents", documents.HandleSaveDocument)
 	g.Get("/documents/:id", documents.HandleGetDocument)
+	g.Post("/document-attachments", documents.HandleUploadDocumentAttachment)
+	g.Get("/document-attachments/:id", documents.HandleGetDocumentAttachment)
 	return f
 }
 

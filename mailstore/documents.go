@@ -137,6 +137,10 @@ func (s *Store) GetDocument(ctx context.Context, ownerID, id string) (*DocumentR
 	}
 	r.CreatedAt = time.UnixMilli(createdAtMs)
 	r.UpdatedAt = time.UnixMilli(updatedAtMs)
+	r.HTML, err = s.compactStoredDocumentImages(ctx, ownerID, id, r.HTML, "documents", "html")
+	if err != nil {
+		return nil, err
+	}
 	return &r, nil
 }
 
@@ -162,6 +166,10 @@ func (s *Store) SaveDocument(ctx context.Context, doc DocumentRecord, expectedRe
 		if err = validateAIChatDocumentOrigin(ctx, tx, ownerID, doc.ID, *doc.AIOrigin, len(expectedRevision) > 0 && expectedRevision[0] > 0); err != nil {
 			return nil, err
 		}
+	}
+	doc.HTML, err = externalizeDocumentImages(ctx, tx, ownerID, doc.HTML)
+	if err != nil {
+		return nil, err
 	}
 	docID := strings.TrimSpace(doc.ID)
 	if docID == "" {
@@ -375,7 +383,17 @@ func (s *Store) ListDocumentTemplates(ctx context.Context, ownerID string) ([]Do
 	if records == nil {
 		records = []DocumentTemplateRecord{}
 	}
-	return records, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for i := range records {
+		records[i].HTML, err = s.compactStoredDocumentImages(ctx, ownerID, records[i].ID, records[i].HTML, "document_templates", "html")
+		if err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
 }
 
 // SaveDocumentTemplate creates or updates a custom template for an owner.
@@ -407,7 +425,16 @@ func (s *Store) SaveDocumentTemplate(ctx context.Context, tpl DocumentTemplateRe
 	now := time.Now()
 	nowMs := now.UnixMilli()
 
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	tpl.HTML, err = externalizeDocumentImages(ctx, tx, ownerID, tpl.HTML)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO document_templates (id, owner_id, type, name, html, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -419,6 +446,10 @@ func (s *Store) SaveDocumentTemplate(ctx context.Context, tpl DocumentTemplateRe
 	`, tplID, ownerID, docType, name, tpl.HTML, nowMs, nowMs)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: save template: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return &DocumentTemplateRecord{
@@ -483,7 +514,18 @@ func (s *Store) ListDocumentStamps(ctx context.Context, ownerID string) ([]Docum
 	if records == nil {
 		records = []DocumentStampRecord{}
 	}
-	return records, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for i := range records {
+		records[i].DataURL, err = s.compactStoredDocumentImages(ctx, ownerID, records[i].ID, records[i].DataURL, "document_stamps", "image_data")
+		if err != nil {
+			return nil, err
+		}
+		records[i].Value = records[i].DataURL
+	}
+	return records, nil
 }
 
 // SaveDocumentStamp saves or updates an enterprise stamp for an owner.
@@ -520,7 +562,16 @@ func (s *Store) SaveDocumentStamp(ctx context.Context, stamp DocumentStampRecord
 		stamp.InsertWidth = 40
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	dataURL, err = documentImageReference(ctx, tx, ownerID, dataURL)
+	if err != nil {
+		return nil, err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO document_stamps (id, owner_id, name, image_data, width, height, insert_width, aspect_ratio, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -535,6 +586,10 @@ func (s *Store) SaveDocumentStamp(ctx context.Context, stamp DocumentStampRecord
 	`, stampID, ownerID, name, dataURL, stamp.Width, stamp.Height, stamp.InsertWidth, stamp.AspectRatio, createdAt, now)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: save stamp: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return &DocumentStampRecord{

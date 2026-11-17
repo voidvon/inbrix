@@ -1,7 +1,9 @@
 import { captureDocumentBusiness, documentControlUpdates, createBusinessFromTemplate, projectDocumentBusiness, readDocumentBusiness, type DocumentBusiness } from "../../lib/document-business";
 import { documentControlText, projectDocumentControlText } from "../../lib/document-control-values";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { validateDocument } from "../../lib/api";
+import { uploadDocumentImage, validateDocument } from "../../lib/api";
+import { attachDocumentImages } from "../../lib/document-images";
+import { toast } from "../../lib/toast";
 import CanvasEditor, { BackgroundRepeat, BackgroundSize, ControlType, EditorMode, ElementType, ImageDisplay, ListStyle, ListType, PageMode } from "@hufe921/canvas-editor";
 import type { DocumentStamp } from "./document-stamps";
 import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument, type QuotationItem } from "./spirax-quotation-canvas";
@@ -70,7 +72,7 @@ async function prepareEmbeddedImage(file: File | Blob, inTable = false) {
   const maxH = inTable ? 90 : 680;
   const displayScale = Math.min(1, maxW / naturalWidth, maxH / naturalHeight);
   return {
-    value,
+    value: await uploadDocumentImage(await fetch(value).then(response => response.blob())),
     width: Math.max(20, Math.round(naturalWidth * displayScale)),
     height: Math.max(20, Math.round(naturalHeight * displayScale)),
   };
@@ -268,6 +270,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
         .draw?.getPosition?.()?.getPositionContext?.();
       const inTable = Boolean(positionContext?.isTable);
       void prepareEmbeddedImage(file, inTable).then((embedded) => {
+        if (editorRef.current !== editor) return;
         editor.command.executeInsertElementList([
           {
             type: ElementType.IMAGE,
@@ -276,7 +279,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
             height: embedded.height,
           },
         ]);
-      });
+      }).catch(error => toast.error(error instanceof Error ? error.message : "Unable to upload image"));
       return { preventDefault: true };
     };
     // Floating stamps must move independently of text/control drop targets. The
@@ -480,7 +483,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
       const editor = editorRef.current;
       if (!editor) return;
       const { importDocumentDocx } = await import("./document-docx");
-      const snapshot = await importDocumentDocx(file);
+      const snapshot = await attachDocumentImages(await importDocumentDocx(file));
       if (editorRef.current !== editor) return;
       editor.command.executeUpdateOptions(snapshot.options);
       editor.command.executeSetValue(snapshot.data);
@@ -504,6 +507,7 @@ export const CanvasDocumentEditor = forwardRef<CanvasDocumentEditorHandle, Canva
           .draw?.getPosition?.()?.getPositionContext?.();
         const inTable = Boolean(positionContext?.isTable);
         const image = await prepareEmbeddedImage(file, inTable);
+        if (editorRef.current !== editor) return;
         editor.command.executeFocus();
         const imageId = editor.command.executeImage({ ...image, imgDisplay: ImageDisplay.INLINE, extension: { attachmentName: file.name, attachmentType: file.type, attachmentSize: file.size } });
         if (!imageId) throw new Error("Unable to insert image at the current cursor position");

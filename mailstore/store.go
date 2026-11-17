@@ -705,6 +705,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_documents_owner_updated ON documents(owner_id, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_documents_owner_type ON documents(owner_id, type, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS document_attachments (
+			id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			content_type TEXT NOT NULL,
+			data BLOB NOT NULL,
+			FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS document_templates (
 			id TEXT PRIMARY KEY,
 			owner_id TEXT NOT NULL,

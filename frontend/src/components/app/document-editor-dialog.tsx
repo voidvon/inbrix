@@ -453,15 +453,17 @@ export function DocumentEditorDialog({ copy, accountEmail, target, templates, in
     setExporting(true);
     try {
       await reviewSnapshot();
-    const body = editorRef.current?.getHTML() || "";
-    if (!body) return;
-    const blob = new Blob([body], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${resolveExportName()}.html`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+      const html = editorRef.current?.getHTML() || "";
+      if (!html) return;
+      const { embedDocumentHTMLImages } = await import("../../lib/document-images");
+      const body = await embedDocumentHTMLImages(html);
+      const blob = new Blob([body], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${resolveExportName()}.html`;
+      anchor.click();
+      URL.revokeObjectURL(url);
     } catch (error) { toast.error(error instanceof Error ? error.message : copy.loadFailed); }
     finally { setExporting(false); }
   };

@@ -122,7 +122,7 @@ func TestTemplatesAndStampsCRUD(t *testing.T) {
 		ID:          "stamp-1",
 		OwnerID:     ownerID,
 		Name:        "合同章",
-		DataURL:     "data:image/png;base64,abc",
+		DataURL:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
 		Width:       120,
 		Height:      120,
 		AspectRatio: 1.0,
@@ -203,7 +203,7 @@ func TestStampInsertWidthPersistsOnServerAndMigratesOldSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamp, err := s.SaveDocumentStamp(ctx, DocumentStampRecord{OwnerID: owner.ID, Name: "Seal", Value: "data:image/png;base64,abc", Width: 100, Height: 100, InsertWidth: 61})
+	stamp, err := s.SaveDocumentStamp(ctx, DocumentStampRecord{OwnerID: owner.ID, Name: "Seal", Value: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", Width: 100, Height: 100, InsertWidth: 61})
 	if err != nil || stamp.InsertWidth != 61 {
 		t.Fatal(stamp, err)
 	}

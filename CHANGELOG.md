@@ -13,6 +13,28 @@ No unreleased changes.
 
 ---
 
+## [2.0.1] - 2026-11-17
+
+### Changed
+
+- Store quotation and contract images as immutable attachments, deduplicated
+  per owner, with authenticated image URLs and conditional browser caching.
+- Migrate embedded images in existing documents, templates and stamps on first
+  read while preserving document revisions, timestamps and original image bytes.
+- Upload pasted images, inserted image attachments and imported DOCX images
+  separately instead of repeating their base64 data inside canvas snapshots.
+- Reuse image references in commercial row prototypes to avoid duplicating
+  large product images in document API responses and validation requests.
+
+### Fixed
+
+- Keep saved image references available after source stamps or templates are
+  deleted, and reject cross-account image access or attachment references.
+- Embed referenced images in Word, PDF and downloaded HTML exports so delivered
+  files remain self-contained; preserve editor content when image import fails.
+
+---
+
 ## [2.0.0] - 2026-11-17
 
 ### Changed

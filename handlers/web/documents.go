@@ -239,7 +239,7 @@ func (h *DocumentsHandler) HandleSaveTemplate(c *fiber.Ctx) error {
 	}
 	saved, err := h.mailDB.SaveDocumentTemplate(c.UserContext(), record)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to save template: "+err.Error())
+		return documentAttachmentError(err)
 	}
 	return c.JSON(fiber.Map{"ok": true, "template": saved})
 }
@@ -317,7 +317,7 @@ func (h *DocumentsHandler) HandleSaveStamp(c *fiber.Ctx) error {
 	}
 	saved, err := h.mailDB.SaveDocumentStamp(c.UserContext(), record)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to save stamp: "+err.Error())
+		return documentAttachmentError(err)
 	}
 	return c.JSON(fiber.Map{"ok": true, "stamp": saved})
 }

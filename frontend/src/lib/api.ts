@@ -1034,6 +1034,13 @@ export function getDocument(id: string) {
   return apiFetch<{ document: ServerDocument }>(`/api/documents/${encodeURIComponent(id)}`, { cache: "no-store" });
 }
 
+export async function uploadDocumentImage(file: Blob) {
+  const body = new FormData();
+  body.append("file", file, "document-image");
+  const { attachment } = await apiFetch<{ attachment: { id: string; url: string; contentType: string; size: number } }>("/api/document-attachments", { method: "POST", body });
+  return attachment.url;
+}
+
 export function validateDocument(input: { html: string; type: "quotation" | "contract"; id?: string; revision?: number }) {
   return apiFetch<{ html: string; validation: DocumentValidation }>("/api/documents/validate", { method: "POST", body: JSON.stringify(input) });
 }

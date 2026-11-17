@@ -556,6 +556,10 @@ func main() {
 		apiRoutes.Get("/documents/:id", webDocumentsHandler.HandleGetDocument)
 		apiRoutes.Delete("/documents/:id", webDocumentsHandler.HandleDeleteDocument)
 
+		// Immutable document image attachments
+		apiRoutes.Post("/document-attachments", webDocumentsHandler.HandleUploadDocumentAttachment)
+		apiRoutes.Get("/document-attachments/:id", webDocumentsHandler.HandleGetDocumentAttachment)
+
 		// Document templates
 		apiRoutes.Get("/document-templates", webDocumentsHandler.HandleListTemplates)
 		apiRoutes.Post("/document-templates", webDocumentsHandler.HandleSaveTemplate)

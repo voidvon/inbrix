@@ -206,7 +206,7 @@ func TestDocumentsHandlerEndpoints(t *testing.T) {
 	stampPayload := map[string]any{
 		"id":          "stamp-web-1",
 		"name":        "印章测试",
-		"dataUrl":     "data:image/png;base64,123",
+		"dataUrl":     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
 		"width":       100,
 		"height":      100,
 		"aspectRatio": 1.0,
