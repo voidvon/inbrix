@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func reusableTemplateField(id string) bool {
@@ -16,6 +17,13 @@ func reusableTemplateField(id string) bool {
 // properties survive; source templates are never mutated.
 func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, error) {
 	if !strings.HasPrefix(body, canvasDocumentPrefix) {
+		if strings.Contains(body, "data-spirax-invoice") {
+			if card.Values == nil {
+				card.Values = map[string]string{}
+			}
+			card.Values["contract_title"] = "COMMERCIAL INVOICE"
+			return body, nil
+		}
 		if strings.Contains(body, "data-spirax-") {
 			return "", nil
 		}
@@ -32,6 +40,30 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 	main, ok := data["main"].([]any)
 	if !ok {
 		return "", fmt.Errorf("模板缺少正文")
+	}
+	if payload["template"] == "spirax-invoice" {
+		if card.Values == nil {
+			card.Values = map[string]string{}
+		}
+		if _, supplied := card.Values["seller_sign_date"]; !supplied {
+			date := card.Values["contract_date"]
+			if date == "" {
+				date = time.Now().Format("2006-01-02")
+			}
+			card.Values["seller_sign_date"] = date
+		}
+	}
+	// The generic contract draft starts as a proforma invoice. Keep the selected
+	// commercial invoice template's title when filling that draft into its layout.
+	if payload["template"] == "spirax-invoice" && (card.Values["contract_title"] == "" || card.Values["contract_title"] == "PROFORMA INVOICE") {
+		title := "COMMERCIAL INVOICE"
+		if templateValues, _, ok := canvasProjectionContent(body); ok && templateValues["contract_title"] != "" {
+			title = templateValues["contract_title"]
+		}
+		if card.Values == nil {
+			card.Values = map[string]string{}
+		}
+		card.Values["contract_title"] = title
 	}
 	clone := func(v any) any { raw, _ := json.Marshal(v); var out any; _ = json.Unmarshal(raw, &out); return out }
 	var concepts func([]any) []string

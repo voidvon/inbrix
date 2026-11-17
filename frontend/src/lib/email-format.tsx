@@ -167,25 +167,92 @@ export function quotedTextToHTML(text: string) {
 }
 
 const quotedHTMLSelector = "blockquote, includetail, .gmail_quote, .yahoo_quoted, .protonmail_quote, .outlook_quote, .quoted-text, .quotedcontent, .original-message";
+const replyHistorySelector = `${quotedHTMLSelector}, [data-inbrix-reply-quote], details.inbrix-quoted`;
+const mailSignatureSelector = '[data-inbrix-signature], .gmail_signature, .moz-signature, .protonmail_signature, .protonmail_signature_block, [data-smartmail="gmail_signature"], [id="signature" i], .signature';
+
+// Locate plain-text quote markers in the DOM without flattening signature
+// images and links. A line may span several text nodes (e.g. Outlook bolds
+// headers), so remember its first DOM position until the whole line is read.
+function trimReplyHistory(root: Element) {
+  let line = "";
+  let start: { node: Node; offset: number } | null = null;
+  let boundary: Range | null = null;
+  const endLine = () => {
+    if (!boundary && start && splitQuotedText(line).quoted) {
+      boundary = root.ownerDocument.createRange();
+      boundary.setStart(start.node, start.offset);
+      boundary.setEnd(root, root.childNodes.length);
+    }
+    line = "";
+    start = null;
+  };
+  const walk = (node: Node) => {
+    if (boundary) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      let offset = 0;
+      for (const part of (node.textContent || "").split("\n")) {
+        if (offset) endLine();
+        if (boundary) return;
+        if (!start && part) start = { node, offset };
+        line += part;
+        offset += part.length + 1;
+      }
+    } else if (node instanceof Element) {
+      if (node.matches(mailSignatureSelector)) {
+        endLine();
+        return;
+      }
+      const block = /^(?:ADDRESS|ARTICLE|ASIDE|DIV|P|LI|PRE|TABLE|TR|TD|TH|SECTION|HEADER|FOOTER|H[1-6])$/.test(node.tagName);
+      if (block || node.tagName === "BR") endLine();
+      node.childNodes.forEach(walk);
+      if (block) endLine();
+    }
+  };
+  root.childNodes.forEach(walk);
+  endLine();
+  if (boundary) (boundary as Range).deleteContents();
+}
 
 // A new reply quotes only the selected message's own content. Carrying its
 // embedded history into another quote makes every successive reply longer.
 export function replyQuoteHTML(message?: Pick<ConversationMessage, "body" | "preview" | "html">): string {
-  let text = message?.body || message?.preview || "";
+  const text = message?.body || message?.preview || "";
   if (message?.html) {
     const document = new DOMParser().parseFromString(message.html, "text/html");
     document.querySelectorAll("script, style, title").forEach((element) => element.remove());
-    const quotes = document.body.querySelectorAll(`${quotedHTMLSelector}, [data-inbrix-reply-quote], details.inbrix-quoted`);
-    quotes.forEach((element) => element.remove());
+    if (!document.body.textContent?.trim() && !document.body.querySelector("img")) {
+      return quotedTextToHTML(splitQuotedText(text).visible);
+    }
+    const quotes = document.body.querySelectorAll(replyHistorySelector);
+    quotes.forEach((element) => {
+      if (!document.body.contains(element) || element.closest(mailSignatureSelector)) return;
+      // Remove the quote's attribution with its history. Otherwise a later
+      // text-marker pass would also cut off a signature placed after the quote.
+      const previous = element.previousElementSibling;
+      if (previous && !previous.matches(mailSignatureSelector)) trimReplyHistory(previous);
+      element.remove();
+    });
     const outlookHeader = document.getElementById("divRplyFwdMsg");
     // Outlook can put history after a header rather than inside a quote block.
     for (let boundary: Element | null = outlookHeader; boundary && boundary !== document.body; boundary = boundary.parentElement) {
       while (boundary.nextSibling) boundary.nextSibling.remove();
     }
     outlookHeader?.remove();
-    if (quotes.length || outlookHeader || !text.trim()) {
-      text = htmlToPlainText(document.body.innerHTML);
-    }
+    trimReplyHistory(document.body);
+    // Some signatures use blockquotes for indentation. Keep their contents
+    // without introducing another reply-quote layer in the composer.
+    Array.from(document.body.querySelectorAll(replyHistorySelector)).reverse().forEach((element) => {
+      if (!element.closest(mailSignatureSelector)) return;
+      if (element.matches("details.inbrix-quoted")) element.querySelector(":scope > summary")?.remove();
+      element.replaceWith(...Array.from(element.childNodes));
+    });
+    // A quoted sender's signature is part of the quote, not the editable
+    // signature selected for the new reply.
+    document.body.querySelectorAll("[data-inbrix-signature]").forEach((element) => {
+      element.removeAttribute("data-inbrix-signature");
+      element.removeAttribute("data-signature-name");
+    });
+    return document.body.innerHTML;
   }
   return quotedTextToHTML(splitQuotedText(text).visible);
 }

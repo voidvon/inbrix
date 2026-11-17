@@ -105,7 +105,8 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
   if (!html || html.includes("data-spirax-")) {
     if (generated.type === "quotation" || generated.type === "contract") {
       const isQuotation = generated.type === "quotation";
-      const values = isQuotation ? generated.values : { contract_title: "PROFORMA INVOICE", ...generated.values, trade_term: documentDeliveryTerm(generated.values) };
+      const isInvoice = html.includes("data-spirax-invoice");
+      const values = isQuotation ? generated.values : { contract_title: isInvoice ? "COMMERCIAL INVOICE" : "PROFORMA INVOICE", ...generated.values, trade_term: documentDeliveryTerm(generated.values) };
       const date = new Date().toLocaleDateString("zh-CN");
       const docNum = isQuotation
         ? (generated.values?.quote_number || createDocumentNumber("quotation"))
@@ -113,9 +114,9 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
       try {
         const main = isQuotation
           ? createSpiraxQuotationCanvasDocument(date, docNum, values, generated.items)
-          : createSpiraxContractCanvasDocument(date, docNum, values, generated.items);
+          : createSpiraxContractCanvasDocument(date, docNum, values, generated.items, isInvoice ? "commercial" : "proforma");
         const canvasDoc = {
-          template: isQuotation ? "spirax-quotation" : "spirax-contract",
+          template: isQuotation ? "spirax-quotation" : isInvoice ? "spirax-invoice" : "spirax-contract",
           data: { main },
           business: createDocumentBusiness({ ...createBusinessFromTemplate({ main }).values, ...values }, generated.items),
         };

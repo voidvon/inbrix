@@ -193,6 +193,49 @@ func TestBusinessTemplateMaterializationPreservesLayoutAndClearsBuyer(t *testing
 	}
 }
 
+func TestCommercialInvoiceBusinessTemplateKeepsInvoiceIdentity(t *testing.T) {
+	marker := `<div data-spirax-invoice="reference-v1"></div>`
+	card := &AIDocumentCard{Type: "contract", Values: map[string]string{"contract_title": "PROFORMA INVOICE"}}
+	html, err := materializeBusinessTemplate(marker, card)
+	if err != nil || html != marker || card.Values["contract_title"] != "COMMERCIAL INVOICE" {
+		t.Fatalf("commercial invoice marker lost: %q %+v %v", html, card.Values, err)
+	}
+	for _, title := range []string{"COMMERCIAL INVOICE", "CUSTOM COMMERCIAL INVOICE"} {
+		payload := map[string]any{
+			"template": "spirax-invoice",
+			"data": map[string]any{"main": []map[string]any{
+				controlElement("contract_title", title),
+				controlElement("contract_number", "[Invoice number]"),
+				controlElement("contract_date", "2000-01-01"),
+				controlElement("seller_sign_date", "2000-01-01"),
+			}},
+		}
+		seedCanonicalTestSnapshot(payload, map[string]string{"contract_title": title}, nil)
+		raw, _ := json.Marshal(payload)
+		card = &AIDocumentCard{Type: "contract", Values: map[string]string{"contract_title": "PROFORMA INVOICE", "contract_number": "INV-001", "contract_date": "2026-11-18"}}
+		html, err = materializeBusinessTemplate(canvasDocumentPrefix+string(raw), card)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, _, ok := canvasDocumentContent(html)
+		if !ok || values["contract_title"] != title || values["contract_number"] != "INV-001" || !strings.Contains(html, `"template":"spirax-invoice"`) {
+			t.Fatalf("saved commercial invoice became a proforma: %s", html)
+		}
+		if values["contract_date"] != "2026-11-18" || values["seller_sign_date"] != "2026-11-18" {
+			t.Fatal("new invoice reused the template's historical date", values)
+		}
+		card.Values["seller_sign_date"] = "2026-11-19"
+		html, err = materializeBusinessTemplate(canvasDocumentPrefix+string(raw), card)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, _, _ = canvasDocumentContent(html)
+		if values["seller_sign_date"] != "2026-11-19" {
+			t.Fatal("explicit signing date was overwritten", values)
+		}
+	}
+}
+
 func TestBusinessConfiguredTemplateAppliedToFinalDocument(t *testing.T) {
 	var reply string
 	h, app, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return reply })

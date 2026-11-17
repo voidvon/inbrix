@@ -326,6 +326,21 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 			return err
 		}
 	}
+	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "english-commercial-invoice")
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		name := "英文正式发票模板"
+		if english {
+			name = "English commercial invoice"
+		}
+		now := time.Now().UnixMilli()
+		_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "english-commercial-invoice-"+owner, owner, "contract", name, `<div data-spirax-invoice="reference-v1"></div>`, now, now)
+		if err != nil {
+			return err
+		}
+	}
 	// Rename untouched built-ins once. Customized templates and saved documents
 	// remain authoritative, including after later edits or deletions.
 	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "english-proforma-invoice")

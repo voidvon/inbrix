@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -164,7 +165,7 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(first) != 3 || first[0].Type != "quotation" || first[1].Type != "contract" {
+	if err != nil || len(first) != 4 || first[0].Type != "quotation" || first[1].Type != "contract" {
 		t.Fatal(first, err)
 	}
 	first[0].Name, first[0].HTML = "My template", "<p>Edited on server</p>"
@@ -187,11 +188,11 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := reopened.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(current) != 2 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
+	if err != nil || len(current) != 3 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
 		t.Fatal(current, err)
 	}
 	foreign, err := reopened.ListDocumentTemplates(ctx, other.ID)
-	if err != nil || len(foreign) != 3 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
+	if err != nil || len(foreign) != 4 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
 		t.Fatal(foreign, err)
 	}
 }
@@ -241,21 +242,87 @@ func TestChineseContractTemplateSeedsForExistingOwnerOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	templates, err := s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(templates) != 1 || templates[0].Name != "中文购销合同模板" {
+	if err != nil || len(templates) != 2 {
 		t.Fatal(templates, err)
 	}
-	if !strings.Contains(templates[0].HTML, `"version": 2`) || !strings.Contains(templates[0].HTML, "item_price_0") {
+	var chineseTemplate DocumentTemplateRecord
+	for _, template := range templates {
+		if template.ID == "chinese-sales-contract-"+owner.ID {
+			chineseTemplate = template
+		}
+	}
+	if chineseTemplate.Name != "中文购销合同模板" || !strings.Contains(chineseTemplate.HTML, `"version": 2`) || !strings.Contains(chineseTemplate.HTML, "item_price_0") {
 		t.Fatal("not a structured commercial template")
 	}
-	if err := s.DeleteDocumentTemplate(ctx, owner.ID, templates[0].ID); err != nil {
+	if err := s.DeleteDocumentTemplate(ctx, owner.ID, chineseTemplate.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	templates, err = s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(templates) != 0 {
+	if err != nil || len(templates) != 1 || templates[0].ID == chineseTemplate.ID {
 		t.Fatal("deleted template was recreated", templates, err)
+	}
+}
+
+func TestEnglishCommercialInvoiceSeedsForExistingOwnerOnce(t *testing.T) {
+	for _, english := range []bool{false, true} {
+		t.Run(fmt.Sprint(english), func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			owner, err := s.CreateUser(ctx, "commercial-invoice-owner", "Owner", "hash")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO document_template_initializations(owner_id) VALUES(?)`, owner.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, english); err != nil {
+				t.Fatal(err)
+			}
+			id := "english-commercial-invoice-" + owner.ID
+			read := func() *DocumentTemplateRecord {
+				t.Helper()
+				templates, err := s.ListDocumentTemplates(ctx, owner.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, template := range templates {
+					if template.ID == id {
+						return &template
+					}
+				}
+				return nil
+			}
+			name := "英文正式发票模板"
+			if english {
+				name = "English commercial invoice"
+			}
+			template := read()
+			if template == nil || template.Type != "contract" || template.Name != name || template.HTML != `<div data-spirax-invoice="reference-v1"></div>` {
+				t.Fatalf("commercial invoice template not seeded: %+v", template)
+			}
+			template.Name, template.HTML = "Custom invoice", "<p>Custom invoice layout</p>"
+			if _, err := s.SaveDocumentTemplate(ctx, *template); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, !english); err != nil {
+				t.Fatal(err)
+			}
+			if got := read(); got == nil || got.Name != template.Name || got.HTML != template.HTML {
+				t.Fatalf("custom invoice overwritten: %+v", got)
+			}
+			if err := s.DeleteDocumentTemplate(ctx, owner.ID, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, english); err != nil {
+				t.Fatal(err)
+			}
+			if read() != nil {
+				t.Fatal("deleted commercial invoice was recreated")
+			}
+		})
 	}
 }
 

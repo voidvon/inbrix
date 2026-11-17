@@ -1,7 +1,9 @@
 import type { DocumentTemplate } from "./document-storage";
+import { projectDocumentBusiness, readDocumentBusiness } from "./document-business";
+import { documentDate } from "./document-date";
 
 const CANVAS_PREFIX = "__INBRIX_CANVAS_DOCUMENT__:";
-const NUMBER_LABEL = /^(?:Quote No\.|Contract No\.|PI Number|PI \/ Contract No\.|合同编号|报价编号)\s*[:：]?\s*$/i;
+const NUMBER_LABEL = /^(?:Quote No\.|Contract No\.|PI Number|Invoice Number|PI \/ Contract No\.|合同编号|报价编号)\s*[:：]?\s*$/i;
 
 export function createDocumentNumber(type: DocumentTemplate) {
   const now = new Date();
@@ -19,7 +21,16 @@ export function createDocumentNumber(type: DocumentTemplate) {
 // Called only when creating a document from a template, never when reopening one.
 export function numberDocumentTemplate(html: string, number: string): string {
   if (html.startsWith(CANVAS_PREFIX)) {
-    const stored = JSON.parse(html.slice(CANVAS_PREFIX.length)) as { data?: unknown };
+    const stored = JSON.parse(html.slice(CANVAS_PREFIX.length)) as { template?: string; data?: unknown; business?: unknown };
+    if (stored.template === "spirax-invoice") {
+      const business = readDocumentBusiness(stored.business);
+      const today = documentDate();
+      business.values.contract_number = number;
+      business.values.contract_date = today;
+      business.values.seller_sign_date = today;
+      stored.business = business;
+      projectDocumentBusiness(stored.data, business);
+    }
     const visit = (value: unknown): void => {
       if (Array.isArray(value)) {
         value.forEach(visit);
@@ -42,7 +53,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
             .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
             .replace(/\bCT\d{10}\b/g, number)
             .replace(/\bPI-20260919-01\b/g, number)
-            .replace(/\[(?:Contract number|合同编号|Quote number)\]/gi, number);
+            .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number)\]/gi, number);
         }
       }
       if (element.tdList) {
@@ -54,7 +65,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
       }
       if (typeof element.value === "string") {
         element.value = element.value
-          .replace(/\[(?:Contract number|合同编号|Quote number)\]/gi, number)
+          .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number)\]/gi, number)
           .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
           .replace(/\bCT\d{10}\b/g, number);
       }
@@ -66,6 +77,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelector("[data-spirax-quotation]")?.setAttribute("data-document-number", number);
   document.querySelector("[data-spirax-contract]")?.setAttribute("data-document-number", number);
+  document.querySelector("[data-spirax-invoice]")?.setAttribute("data-document-number", number);
   document.querySelectorAll("p").forEach((paragraph) => {
     const label = paragraph.querySelector("strong");
     if (label && NUMBER_LABEL.test(label.textContent?.trim() || "")) {
@@ -147,7 +159,7 @@ export function extractDocumentNumber(source: unknown): string | undefined {
   }
 
   // 5. Match label: value
-  const labelMatch = text.match(/(?:Quote No\.|Contract No\.|PI Number|PI \/ Contract No\.|合同编号|报价编号)\s*[:：]?\s*([A-Za-z0-9_-]+)/i);
+  const labelMatch = text.match(/(?:Quote No\.|Contract No\.|PI Number|Invoice Number|PI \/ Contract No\.|合同编号|报价编号)\s*[:：]?\s*([A-Za-z0-9_-]+)/i);
   if (labelMatch?.[1] && !/^\[.*\]$/.test(labelMatch[1].trim())) {
     return labelMatch[1].trim();
   }

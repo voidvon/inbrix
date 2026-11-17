@@ -20,6 +20,43 @@ func readyCommercialTestDocument() string {
 	})
 }
 
+func TestCommercialInvoiceValidationRequiresBothPartyAddresses(t *testing.T) {
+	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
+	for _, missing := range []string{"", "customer_company", "seller_company", "customer_address", "seller_address"} {
+		t.Run("missing="+missing, func(t *testing.T) {
+			values := map[string]string{
+				"customer_company": "Buyer Ltd", "seller_company": "Seller Ltd",
+				"customer_address": "Buyer registered address", "seller_address": "Seller registered address",
+				"currency": "USD", "payment_terms": "Paid in full",
+				"contract_number": "CI-001", "contract_date": "2026-11-17", "total_amount": "100",
+			}
+			if missing != "" {
+				values[missing] = ""
+			}
+			var main []map[string]any
+			for field, value := range values {
+				main = append(main, controlElement(field, value))
+			}
+			main = append(main, tableElement([][]map[string]any{{
+				controlElement("item_model_0", "VALVE"), controlElement("item_qty_0", "1"),
+				controlElement("item_price_0", "100"), controlElement("item_amount_0", "100"),
+			}}))
+			body := canvasBody(t, "spirax-invoice", main)
+			_, report, err := normalizeCommercialDocument(context.Background(), h.mailDB, account.OwnerID, body, "contract", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if missing == "" {
+				if report.Status != "ready" {
+					t.Fatal("a CI should not require PI lead time or banking instructions", report)
+				}
+			} else if len(report.Issues) != 1 || report.Issues[0].Code != "missing_field" || report.Issues[0].Field != missing {
+				t.Fatal("missing party details were not reported", report)
+			}
+		})
+	}
+}
+
 func TestQuotationTotalWithoutTaxFields(t *testing.T) {
 	h, _, account, _ := agentContextTestApp(t, func(agentTestRequest) string { return "unused" })
 	body := businessCanvas(map[string]string{

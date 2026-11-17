@@ -13,6 +13,31 @@ No unreleased changes.
 
 ---
 
+## [2.0.2] - 2026-11-18
+
+### Added
+
+- Add an English commercial invoice template with seller and buyer details,
+  shipment information, itemized totals, payment terms, and a seller signature
+  section, including support for AI document creation and editing.
+
+### Changed
+
+- Prepopulate commercial invoices with seller contact details and the Shanghai
+  address, simplify payment information, and give the signature and company
+  stamp adequate space.
+
+### Fixed
+
+- Default new commercial invoices and signature dates to the current local day,
+  refreshing dates and invoice numbers when reusing saved templates while
+  preserving the dates of saved invoices.
+- Preserve the selected email's signature text, links, and images when replying
+  while removing older quoted history, including signatures placed after a
+  quoted message. Keep the new reply's own signature separate.
+
+---
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed

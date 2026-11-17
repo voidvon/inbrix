@@ -25,17 +25,29 @@ const quoteCases = {
   'html-quote': { body: 'Original email body\nEarlier email body', html: '<p>Original email body</p><details class="inbrix-quoted"><summary>Show quoted message</summary><blockquote>Earlier email body<blockquote>Oldest email body</blockquote></blockquote></details>' },
   'outlook-quote': { body: 'Original email body\nEarlier email body', html: '<div><p>Original email body</p><div id="divRplyFwdMsg">From: bob@example.com</div><p>Earlier email body</p></div><div>Oldest email body</div>' },
   'html-only': { body: '', html: '<p>Original email body</p><div class="gmail_quote">Earlier email body<blockquote>Oldest email body</blockquote></div>' },
+  'empty-html': { body: 'Original email body\n\n> Earlier email body', html: '<p><br></p>' },
+  'plain-signature': { body: 'Original email body\n\n-- \nAlice | Example Company\nalice@example.com\n\nOn Monday, Bob wrote:\n> Earlier email body\n> Historical signature' },
+  'html-signature': { body: 'Original email body', html: '<p>Original email body</p><div class="gmail_signature"><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></div>' },
+  'signature-before-history': { body: 'Original email body\nEarlier email body', html: '<p>Original email body</p><div class="gmail_signature"><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></div><div class="gmail_quote">On Monday, Bob wrote:<blockquote>Earlier email body<div class="gmail_signature">Historical signature</div></blockquote></div>' },
+  'signature-after-history': { body: 'Original email body\n\nOn Monday, Bob wrote:\n> Earlier email body\n\nAlice | Example Company', html: '<p>Original email body</p><p>On Monday, Bob wrote:</p><details class="inbrix-quoted"><summary>Show quoted message</summary><blockquote>Earlier email body<div class="gmail_signature">Historical signature</div><blockquote>Oldest email body</blockquote></blockquote></details><div class="gmail_signature"><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></div>' },
+  'unmarked-signature': { body: 'Original email body\nEarlier email body', html: '<p>Original email body</p><div>On Monday, Bob wrote:</div><blockquote>Earlier email body<div>Historical signature</div></blockquote><table><tr><td><img src="/test-signature-logo.png" alt="Example logo" width="120"></td><td><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a></td></tr></table>' },
+  'inbrix-signature': { body: 'Original email body', html: '<p>Original email body</p><div data-inbrix-signature="original-sender"><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></div><blockquote>Earlier email body<div data-inbrix-signature="historical-sender">Historical signature</div></blockquote>' },
+  'outlook-signature': { body: 'Original email body\nEarlier email body', html: '<div><p>Original email body</p><div id="Signature"><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></div><div id="divRplyFwdMsg">From: bob@example.com</div><p>Earlier email body</p><div id="old-signature">Historical signature</div></div>' },
+  'signature-quote-formatting': { body: 'Original email body', html: '<p>Original email body</p><div class="gmail_signature"><blockquote><p>Alice | Example Company</p><a href="mailto:alice@example.com">alice@example.com</a><img src="/test-signature-logo.png" alt="Example logo" width="120"></blockquote></div><blockquote>Earlier email body<div>Historical signature</div></blockquote>' },
+  'inline-text-history': { body: 'Original email body\n\nOn Monday, Bob wrote:\nEarlier email body', html: '<div>Original email body<br><br><strong>On Monday, </strong>Bob wrote:<br>Earlier email body<br>Historical signature</div>' },
 };
 let savedDraft;
 let restoredDraft;
 const summary = { id: 'reply', title: 'Alice', peerEmail: message.from, subject: message.subject, count: 1, accountEmail, status: 'unanswered' };
 await page.addInitScript(() => { window.EventSource = class { close() {} }; });
 await page.route('**/csrf', route => route.fulfill({ json: { token: 'test-token' } }));
-await page.route('**/api/**', async route => {
+await page.route('**/test-signature-logo.png', route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64') }));
+await page.route(/\/(?:api|v1)\//, async route => {
   const { pathname } = new URL(route.request().url());
   let json = { calendar: false, models: [], agents: [], bindings: [], documents: [], attachments: [], signatures: [], total: 0 };
   if (pathname === '/api/conversations') json = { locale: 'zh-CN', accountEmail: 'active@other.com', conversations: [summary], folders: [], accounts: [{ id: 'account', email: accountEmail, isActive: false }, { id: 'active', email: 'active@other.com', isActive: true }] };
   if (pathname === '/api/conversations/reply') json = { conversation: { ...summary, messages, hasMore: false, hasNewer: false } };
+  if (pathname === '/v1/settings/signatures') json = { signatures: [{ id: 'my-signature', name: 'Company', html: '<p>My reply signature</p>', default: true }] };
   if (pathname === '/api/drafts') {
     if (route.request().method() === 'POST') {
       savedDraft = route.request().postDataJSON();
@@ -69,6 +81,17 @@ async function checkEditor(label, expectedCc, hasFilteredCc = true) {
   assert.equal(await compose.getByLabel('主题', { exact: true }).inputValue(), `Editable ${label}`);
   const quote = compose.locator('.reply-quote').first();
   assert.equal(await compose.locator('.reply-quote').count(), 1, 'A new reply must have only one quote layer');
+  await compose.locator('[data-inbrix-signature="my-signature"]').getByText('My reply signature', { exact: true }).waitFor();
+  assert.equal(await compose.locator('[data-inbrix-signature]').count(), 1, 'The original signature must stay inside the quote without becoming the new reply signature');
+  if (label.includes('signature')) {
+    const quoteHTML = await quote.innerHTML();
+    assert.ok(quoteHTML.includes('Alice | Example Company'), `${label}: preserve the original sender's signature`);
+    assert.ok(!quoteHTML.includes('Historical signature'), `${label}: strip signatures belonging to historical mail`);
+    if (label !== 'plain-signature') {
+      assert.equal(await quote.locator('img[alt="Example logo"]').getAttribute('src'), '/test-signature-logo.png', `${label}: preserve signature images`);
+      assert.equal(await quote.locator('a[href="mailto:alice@example.com"]').count(), 1, `${label}: preserve signature links`);
+    }
+  }
   await quote.getByRole('button', { name: 'Expand quoted message', exact: true }).first().click();
   const paragraph = quote.locator('[data-node-view-content-react] > p').filter({ hasText: 'Original email body' });
   await paragraph.click();
@@ -84,8 +107,12 @@ async function checkEditor(label, expectedCc, hasFilteredCc = true) {
   const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/drafts' && response.request().method() === 'POST');
   await compose.getByRole('button', { name: '关闭', exact: true }).click();
   await saved;
-  assert.ok(savedDraft.bodyHtml.includes('Original email body edited'), 'Quote edits must reach the editor state and draft');
+  const savedText = await page.evaluate(html => new DOMParser().parseFromString(html, 'text/html').body.textContent.replace(/\s+/g, ' '), savedDraft.bodyHtml);
+  assert.ok(savedText.includes('Original email body edited'), 'Quote edits must reach the editor state and draft');
   assert.ok(!savedDraft.bodyHtml.includes('Earlier email body'), 'Earlier quoted mail must not be carried into a new reply');
+  assert.ok(!savedDraft.bodyHtml.includes('Oldest email body') && !savedDraft.bodyHtml.includes('Historical signature'), 'Historical mail and its signatures must stay removed');
+  assert.ok(savedDraft.bodyHtml.includes('My reply signature'), 'The reply signature must survive draft saving');
+  if (label.includes('signature')) assert.ok(savedDraft.bodyHtml.includes('Alice | Example Company'), 'The original signature must survive draft saving');
   assert.equal(savedDraft.inReplyTo, message.messageId, 'Reply headers must survive editing');
   assert.equal(savedDraft.mode, 'reply', 'Replies with Cc must use the regular reply mode');
   assert.equal(savedDraft.to, message.outgoing ? message.to : message.from, 'Reply must address the sender without copying the original To list');
@@ -170,7 +197,7 @@ try {
           await page.getByRole('menu').waitFor();
           await trigger.dispatchEvent('touchend');
         }
-      } else await trigger.click({ button: 'right' });
+      } else await trigger.click({ button: 'right', position: { x: 20, y: 20 } });
       assert.equal(await page.getByRole('menuitem', { name: '回复全部', exact: true }).count(), 0, 'Message menu must only offer Reply');
       const item = page.getByRole('menuitem', { name: '回复', exact: true });
       if (mobile) await item.tap();

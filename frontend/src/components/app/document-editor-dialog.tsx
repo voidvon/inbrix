@@ -229,7 +229,9 @@ export function DocumentAISidebar({
             <Sparkles className="size-4 text-primary" />
             <span className="text-sm font-semibold">{copy.aiDocument}</span>
             <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-normal">
-              {type === "quotation" ? (isZh ? "报价单" : "Quotation") : (isZh ? "形式发票" : "Pro forma invoice")}
+              {type === "quotation" ? (isZh ? "报价单" : "Quotation")
+                : editor?.getTemplateKind() === "spirax-invoice" ? (isZh ? "正式发票" : "Commercial invoice")
+                : (isZh ? "形式发票" : "Pro forma invoice")}
             </span>
           </div>
           <div className="flex items-center gap-1.5">

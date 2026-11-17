@@ -86,35 +86,41 @@ func validateCommercialDocument(kind, body string, card *AIDocumentCard) *Docume
 			result.Issues = append(result.Issues, issue)
 		}
 	}
-	required := []struct {
+	payload, _ := parseStoredCanvasDocument(body)
+	isCommercialInvoice := kind == "contract" && payload.Template == "spirax-invoice"
+	type requiredField struct {
 		keys  []string
 		label string
-	}{
+	}
+	required := []requiredField{
 		{[]string{"customer_company", "buyer_company"}, "买方公司"},
 		{[]string{"seller_company"}, "卖方公司"},
 		{[]string{"currency"}, "结算币种"},
 		{[]string{"payment_terms"}, "付款条款"},
-		{[]string{"lead_time"}, "交货期"},
+	}
+	if isCommercialInvoice {
+		required = append(required,
+			requiredField{[]string{"customer_address", "buyer_address"}, "买方地址"},
+			requiredField{[]string{"seller_address"}, "卖方地址"},
+		)
+	} else {
+		required = append(required, requiredField{[]string{"lead_time"}, "交货期"})
 	}
 	if kind == "contract" {
-		required = append(required, struct {
-			keys  []string
-			label string
-		}{[]string{"contract_number"}, "合同编号"}, struct {
-			keys  []string
-			label string
-		}{[]string{"contract_date"}, "合同日期"})
+		numberLabel, dateLabel := "合同编号", "合同日期"
+		if isCommercialInvoice {
+			numberLabel, dateLabel = "发票编号", "发票日期"
+		}
+		required = append(required,
+			requiredField{[]string{"contract_number"}, numberLabel},
+			requiredField{[]string{"contract_date"}, dateLabel},
+		)
 	} else {
-		required = append(required, struct {
-			keys  []string
-			label string
-		}{[]string{"quote_number"}, "报价单号"}, struct {
-			keys  []string
-			label string
-		}{[]string{"issue_date"}, "报价日期"}, struct {
-			keys  []string
-			label string
-		}{[]string{"validity", "commercial_validity"}, "报价有效期"})
+		required = append(required,
+			requiredField{[]string{"quote_number"}, "报价单号"},
+			requiredField{[]string{"issue_date"}, "报价日期"},
+			requiredField{[]string{"validity", "commercial_validity"}, "报价有效期"},
+		)
 	}
 	visible, rendered, _ := canvasProjectionContent(body)
 	for _, rule := range required {

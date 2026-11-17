@@ -5,6 +5,7 @@ import clock3Icon from "../../assets/lucide/clock-3.svg?raw";
 import tagIcon from "../../assets/lucide/tag.svg?raw";
 import spiraxQuotationReference from "../../assets/spirax-sarco-quotation-reference.html?raw";
 import { documentDeliveryTerm } from "../../lib/document-delivery";
+import { documentDate } from "../../lib/document-date";
 
 
 
@@ -19,7 +20,9 @@ const FONT = "Arial";
 export const SPIRAX_CONTRACT_SELLER_COMPANY = "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD";
 const REMITTANCE_INSTRUCTIONS = 'Please designate Standard Chartered Bank, USA as the intermediary bank. Include "DO NOT CONVERT" in the payment remarks.';
 
-export function createSpiraxContractCanvasBackground(): string {
+type InvoiceType = "proforma" | "commercial";
+
+export function createSpiraxContractCanvasBackground(invoiceType: InvoiceType = "proforma"): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="794" height="1123" viewBox="0 0 794 1123">
     <!-- Top-right geometric brand accents in Spirax Blue & Navy -->
     <path fill="${BLUE}" d="M520 0h274v42H480z"/>
@@ -34,7 +37,7 @@ export function createSpiraxContractCanvasBackground(): string {
     <!-- Bottom footer accent line -->
     <path d="M38 1052h718" fill="none" stroke="${BLUE}" stroke-width="1.5"/>
     <!-- Bottom footer subtle corporate notice -->
-    <text x="38" y="1069" fill="#64748b" font-family="Arial, sans-serif" font-size="9">SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD.  ·  PROFORMA INVOICE</text>
+    <text x="38" y="1069" fill="#64748b" font-family="Arial, sans-serif" font-size="9">${invoiceType === "commercial" ? "COMMERCIAL INVOICE" : "SHANGHAI SPIRAXSARCO FLUID EQUIPMENT CO., LTD.  ·  PROFORMA INVOICE"}</text>
     <text x="756" y="1069" text-anchor="end" fill="#94a3b8" font-family="Arial, sans-serif" font-size="8.5">Page 1</text>
     <!-- Bottom-right geometric slashes -->
     <g fill="${BLUE}" transform="translate(685 1076) skewX(-28)">
@@ -241,18 +244,155 @@ function contractItemsTable(items?: ContractItem[], values?: SpiraxContractValue
   ]);
 }
 
-export function createSpiraxContractCanvasDocument(
+function createSpiraxCommercialInvoiceCanvasDocument(
   date: string,
-  number = "[PI number]",
-  initialValues?: SpiraxContractValues,
+  number?: string,
+  values: SpiraxContractValues = {},
   items?: ContractItem[]
 ): IElement[] {
+  const logo = svgDataURL(".quote-logo svg");
+  const invoiceNumber = values.contract_number || number || "[Invoice number]";
+  const invoiceDate = values.contract_date || (date ? date.replaceAll("/", "-") : documentDate());
+  const sellerCompany = values.seller_company || SPIRAX_CONTRACT_SELLER_COMPANY;
+  const metaRows = [
+    ["Invoice Number:", invoiceNumber, "contract_number"],
+    ["Invoice Date:", invoiceDate, "contract_date"],
+    ["Customer PO:", values.customer_po || "", "customer_po"],
+    ["Currency:", values.currency || "", "currency"],
+  ];
+  const hero = table([340, 18, 120, 240], [
+    {
+      height: 38,
+      cells: [
+        { ...cell(logo ? [{ type: ElementType.IMAGE, value: logo, width: 175, height: 50 }] : [text("SPIRAX SARCO", { bold: true, color: BLUE, size: 22 })]), rowspan: 5, verticalAlign: VerticalAlign.TOP },
+        { ...cell([controlText("contract_title", values.contract_title ?? "COMMERCIAL INVOICE", "Document Title", { bold: true, size: 22, color: BLUE, rowFlex: RowFlex.RIGHT })]), colspan: 3 },
+      ],
+    },
+    ...metaRows.map(([label, value, conceptId]) => ({
+      height: 23,
+      cells: [
+        cell([text(" ")]),
+        cell([text(label, { bold: true, size: 10.5 })]),
+        cell([controlText(conceptId, value, label, { size: 10.5, rowFlex: RowFlex.RIGHT })]),
+      ],
+    })),
+  ], { borderType: TableBorder.EMPTY });
+
+  const sellerRows = [
+    ["Company:", sellerCompany, "seller_company"],
+    ["Address:", values.seller_address ?? "Xinjunhuan Road, Minhang District, Shanghai, China", "seller_address"],
+    ["Contact:", values.seller_contact ?? "Shane Zhao", "seller_contact"],
+    ["Tel:", values.seller_phone ?? "+86 157 9019 6438 / +1 781 334 8391", "seller_phone"],
+    ["Email:", values.seller_email ?? "sales@spiraxsteam.com", "seller_email"],
+  ];
+  const buyerRows = [
+    ["Company:", values.buyer_company || values.customer_company || "", "buyer_company"],
+    ["Address:", values.buyer_address || values.customer_address || "", "buyer_address"],
+    ["Contact:", values.buyer_contact || values.customer_contact || "", "buyer_contact"],
+    ["Tel:", values.buyer_phone || values.customer_phone || "", "buyer_phone"],
+    ["Email:", values.buyer_email || values.customer_email || "", "buyer_email"],
+  ];
+  const partyCells = ([label, value, conceptId]: string[], bold: boolean) => [
+    cell([text(label, { bold: true, size: 10, color: "#475569" })], PALE, undefined, VerticalAlign.TOP),
+    cell([controlText(conceptId, value, label, { size: 10.5, bold })], PALE, undefined, VerticalAlign.TOP),
+  ];
+  const parties = table([70, 280, 18, 70, 280], [
+    {
+      height: 28,
+      cells: [
+        { ...cell([text("Seller / Exporter", { bold: true, color: BLUE, size: 12 })], PALE), colspan: 2 },
+        cell([text(" ")]),
+        { ...cell([text("Buyer / Bill To", { bold: true, color: BLUE, size: 12 })], PALE), colspan: 2 },
+      ],
+    },
+    ...sellerRows.map((seller, index) => ({
+      height: index <= 1 ? 36 : 25,
+      cells: [...partyCells(seller, index === 0), cell([text(" ")]), ...partyCells(buyerRows[index], index === 0)],
+    })),
+  ], { borderType: TableBorder.EMPTY });
+
+  const shipmentRows = [
+    ["Trade Terms:", documentDeliveryTerm(values), "trade_term", "Country of Origin:", values.origin || "", "origin"],
+    ["Port of Loading:", values.port_of_loading || "", "port_of_loading", "Destination:", values.port_of_discharge || "", "port_of_discharge"],
+    ["Shipment Date:", values.shipment_date || "", "shipment_date", "Shipment Ref.:", values.shipment_reference || "", "shipment_reference"],
+  ];
+  const shipment = table([105, 245, 118, 250], shipmentRows.map(([leftLabel, leftValue, leftId, rightLabel, rightValue, rightId]) => ({
+    height: 27,
+    cells: [
+      cell([text(leftLabel, { bold: true, size: 10 })]),
+      cell([controlText(leftId, leftValue, leftLabel, { size: 10.5 })]),
+      cell([text(rightLabel, { bold: true, size: 10 })]),
+      cell([controlText(rightId, rightValue, rightLabel, { size: 10.5 })]),
+    ],
+  })), { borderType: TableBorder.EMPTY });
+
+  const notes = table([105, 613], [
+    {
+      height: 30,
+      cells: [
+        cell([text("Payment Terms:", { bold: true, size: 10 })]),
+        cell([controlText("payment_terms", values.payment_terms || "", "Payment Terms", { size: 10.5 })]),
+      ],
+    },
+    {
+      height: 36,
+      cells: [
+        cell([text("Remarks:", { bold: true, size: 10 })]),
+        cell([controlText("notes", values.notes || values.remarks || "", "Remarks (if any)", { size: 10.5 })]),
+      ],
+    },
+  ], { borderType: TableBorder.EMPTY });
+  const signature = table([470, 248], [
+    {
+      height: 30,
+      cells: [{ ...cell([
+        text("For and on behalf of the Seller", { bold: true, size: 10.5, color: BLUE }),
+      ], undefined, [TdBorder.TOP]), colspan: 2 }],
+    },
+    {
+      height: 30,
+      cells: [{ ...cell([
+        controlText("seller_company", sellerCompany, "Seller Company", { bold: true, size: 10.5 }),
+      ], undefined, undefined, VerticalAlign.TOP), colspan: 2 }],
+    },
+    {
+      height: 72,
+      cells: [
+        cell([text("________________________________", { size: 10, color: "#64748b" })], undefined, undefined, VerticalAlign.BOTTOM),
+        cell([
+          text("Date: ", { size: 10.5, rowFlex: RowFlex.RIGHT }),
+          controlText("seller_sign_date", values.seller_sign_date || invoiceDate, "Date", { size: 10.5, rowFlex: RowFlex.RIGHT }),
+        ], undefined, undefined, VerticalAlign.BOTTOM),
+      ],
+    },
+    {
+      height: 24,
+      cells: [
+        cell([text("Authorized Signature / Company Stamp", { size: 10, color: "#475569" })], undefined, undefined, VerticalAlign.TOP),
+        cell([text(" ")]),
+      ],
+    },
+  ], { borderType: TableBorder.EMPTY, borderColor: BLUE });
+
+  return [hero, lineBreak({ size: 2 }), parties, lineBreak({ size: 2 }), shipment,
+    lineBreak({ size: 2 }), contractItemsTable(items, values), lineBreak({ size: 2 }), notes,
+    lineBreak({ size: 2 }), signature];
+}
+
+export function createSpiraxContractCanvasDocument(
+  date: string,
+  number?: string,
+  initialValues?: SpiraxContractValues,
+  items?: ContractItem[],
+  invoiceType: InvoiceType = "proforma"
+): IElement[] {
+  if (invoiceType === "commercial") return createSpiraxCommercialInvoiceCanvasDocument(date, number, initialValues, items);
   const logo = svgDataURL(".quote-logo svg");
   const now = new Date();
   const todayFormatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const effectiveDate = initialValues?.contract_date || (date && date !== "[Effective date]" ? date.replaceAll("/", "-") : todayFormatted);
   const sellerDate = initialValues?.seller_sign_date || effectiveDate;
-  const contractNo = initialValues?.contract_number || number;
+  const contractNo = initialValues?.contract_number || number || "[PI number]";
   const buyerCompany = initialValues?.buyer_company || initialValues?.customer_company || "";
   const buyerContact = initialValues?.buyer_contact || initialValues?.customer_contact || "";
   const sellerCompany = initialValues?.seller_company || SPIRAX_CONTRACT_SELLER_COMPANY;
@@ -384,7 +524,7 @@ export function createSpiraxContractCanvasDocument(
   const paymentMemo = initialValues?.payment_memo
     ? initialValues.payment_memo
         .replace(/\bPI-20260919-01\b/g, contractNo)
-        .replace(/\[(?:PI number|Contract number|合同编号)\]/gi, contractNo)
+        .replace(/\[(?:PI number|Invoice number|Contract number|合同编号)\]/gi, contractNo)
     : defaultMemo;
 
   const bankRows: Array<[string, string, string, boolean]> = [

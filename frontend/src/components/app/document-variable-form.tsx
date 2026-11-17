@@ -68,6 +68,9 @@ const VARIABLE_LABELS: Record<string, { zh: string; en: string; group: "basic" |
   lead_time: { zh: "交货期 / 货期", en: "Lead Time", group: "terms" },
   origin: { zh: "原产地", en: "Country of Origin", group: "terms" },
   port_of_loading: { zh: "装运港口", en: "Port of Loading", group: "terms" },
+  port_of_discharge: { zh: "目的地 / 卸货港", en: "Destination / Port of Discharge", group: "terms" },
+  shipment_date: { zh: "发货日期", en: "Shipment Date", group: "terms" },
+  shipment_reference: { zh: "运单号 / 运输参考号", en: "Shipment Reference", group: "terms" },
   payment_terms: { zh: "付款方式与条款", en: "Payment Terms", group: "terms" },
   remarks: { zh: "特别备注", en: "Remarks", group: "terms" },
   notes: { zh: "补充说明", en: "Notes", group: "terms" },
@@ -205,6 +208,8 @@ export function DocumentVariableForm({
     const templateKind = data?.template || "document";
     if (templateKind === "spirax-quotation") {
       ["quote_number", "issue_date", "currency", "validity", "customer_company", "customer_contact", "customer_phone", "customer_email", "customer_address", "seller_company", "seller_contact", "seller_phone", "seller_email", "seller_address", "lead_time", "payment_terms", "commercial_validity", "notes", "remarks"].forEach((k) => allKeys.add(k));
+    } else if (templateKind === "spirax-invoice") {
+      ["contract_number", "contract_date", "contract_title", "customer_po", "currency", "buyer_company", "buyer_address", "buyer_contact", "buyer_phone", "buyer_email", "seller_company", "seller_address", "seller_contact", "seller_phone", "seller_email", "seller_sign_date", "trade_term", "origin", "port_of_loading", "port_of_discharge", "shipment_date", "shipment_reference", "payment_terms", "notes"].forEach((k) => allKeys.add(k));
     } else if (templateKind === "spirax-contract") {
       ["contract_number", "contract_date", "contract_title", "customer_po", "buyer_company", "buyer_contact", "buyer_email", "buyer_address", "seller_company", "seller_sign_company", "seller_sign_date", "trade_term", "lead_time", "origin", "port_of_loading", "payment_terms", "bank_account_name", "bank_account_no", "bank_swift", "bank_name", "bank_address", "bank_country", "bank_account_type", "payment_method", "payment_memo", "order_note_1", "order_note_2", "order_note_3", "order_note_4"].forEach((k) => allKeys.add(k));
     }
@@ -212,7 +217,9 @@ export function DocumentVariableForm({
     for (const key of new Set([...allKeys].map(documentFieldKey))) {
       if (retiredDocumentFields.has(key) || key.startsWith("item_") || calculatedDocumentFields.has(key) || key.startsWith("source_quotation_")) continue; // Handled in items table
       const meta = VARIABLE_LABELS[key];
-      const label = meta ? (isZh ? meta.zh : meta.en) : key.replace(/^[\[_]+|[\]_]+$/g, "");
+      const label = templateKind === "spirax-invoice" && key === "contract_number" ? (isZh ? "发票编号" : "Invoice Number")
+        : templateKind === "spirax-invoice" && key === "contract_date" ? (isZh ? "发票日期" : "Invoice Date")
+        : meta ? (isZh ? meta.zh : meta.en) : key.replace(/^[\[_]+|[\]_]+$/g, "");
       const val = values[key] ?? "";
 
       if (query.trim()) {
