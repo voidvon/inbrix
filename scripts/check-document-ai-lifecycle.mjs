@@ -47,7 +47,8 @@ await page.route('**/api/**', async route => {
   if (path === '/api/conversations') json = { locale: 'zh-CN', accounts: [account], accountEmail: account.email, conversations: [], folders: [] };
   if (path === '/api/capabilities') json = { role: 'user', calendar: false, notifications: false };
   if (path === '/api/document-templates') json = { templates: [
-    { id: 'quote', type: 'quotation', name: '标准报价单模板', html: '<div data-spirax-quotation="reference-v1"></div>', updatedAt: new Date().toISOString() },
+    { id: 'quote', type: 'quotation', name: '英文报价单模板', html: '<div data-spirax-quotation="reference-v1"></div>', updatedAt: new Date().toISOString() },
+    { id: 'quote-zh', type: 'quotation', name: '中文报价单模板', html: '<div data-spirax-quotation="reference-zh-v1"></div>', updatedAt: new Date().toISOString() },
     { id: 'invoice', type: 'contract', name: '英文形式发票模板', html: '<div data-spirax-contract="reference-v1"></div>', updatedAt: new Date().toISOString() },
     { id: 'commercial-invoice', type: 'contract', name: '英文正式发票模板', html: '<div data-spirax-invoice="reference-v1"></div>', updatedAt: new Date().toISOString() },
     ...(reusedInvoiceTemplate ? [reusedInvoiceTemplate] : []),
@@ -93,14 +94,21 @@ try {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   });
-  for (const kind of ['quotation', 'contract', 'commercial-invoice', 'reused-invoice']) {
+  const templateNames = {
+    quotation: '英文报价单模板',
+    'chinese-quotation': '中文报价单模板',
+    contract: '英文形式发票模板',
+    'commercial-invoice': '英文正式发票模板',
+    'reused-invoice': '复用正式发票模板',
+  };
+  for (const [kind, templateName] of Object.entries(templateNames)) {
     const isInvoice = kind.endsWith('-invoice');
     if (kind === 'reused-invoice') {
       await page.reload();
       await page.addStyleTag({ content: '[data-sonner-toaster], [data-sonner-toast] { pointer-events: none !important; }' });
     }
     await page.getByRole('button', { name: '新建文档', exact: true }).click();
-    await page.getByRole('menuitem').filter({ hasText: kind === 'quotation' ? '标准报价单模板' : kind === 'contract' ? '英文形式发票模板' : kind === 'reused-invoice' ? '复用正式发票模板' : '英文正式发票模板' }).click();
+    await page.getByRole('menuitem').filter({ hasText: templateName }).click();
     await dialog.waitFor();
     if (kind === 'quotation') {
       await box.waitFor();
@@ -111,6 +119,11 @@ try {
     await page.waitForFunction(() => document.querySelector('textarea[placeholder="输入对当前文档的修改要求…"]')?.disabled === false);
     await send('预付30%');
     await dialog.getByText('已更新付款条件：预付30%', { exact: true }).waitFor();
+    if (kind === 'chinese-quotation') {
+      const { business } = JSON.parse(writes.at(-1).canvas.slice(prefix.length));
+      assert.equal(business.values.currency, 'CNY');
+      assert.equal(business.values.payment_terms, '30%预付，其余发货前');
+    }
     if (isInvoice) {
       const snapshot = JSON.parse(writes.at(-1).canvas.slice(prefix.length));
       assert.equal(snapshot.template, 'spirax-invoice');
@@ -164,6 +177,15 @@ try {
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await saved;
     assert.equal(JSON.parse(saves.at(-1).html.slice(prefix.length)).business.values.payment_terms, '重试付款条件');
+    if (kind === 'chinese-quotation') {
+      const snapshot = JSON.parse(saves.at(-1).html.slice(prefix.length));
+      assert.equal(snapshot.template, 'spirax-quotation');
+      assert.equal(snapshot.business.values.validity, '30 天内有效');
+      assert.ok(JSON.stringify(snapshot.data).includes('报价明细'));
+      assert.equal(snapshot.business.values.seller_company, '山东克瑞阀门有限公司');
+      assert.equal(snapshot.business.values.bank_name, '济宁银行股份有限公司淄博分行');
+      assert.ok(decodeURIComponent(snapshot.options.background.image).includes('制单人：赵辉'));
+    }
     if (isInvoice) {
       const snapshot = JSON.parse(saves.at(-1).html.slice(prefix.length));
       assert.equal(saves.at(-1).type, 'contract');

@@ -91,7 +91,7 @@ try {
   const contractNumber = await page.evaluate(() => localStorage.getItem('inbrix-documents').match(/(?:CT\d{10}|CT-\d{8}-[A-F0-9]{8})/)?.[0]);
   assert.ok(contractNumber, 'New contract must save an automatically generated contract number');
   await editor.getByRole('combobox').click();
-  await page.getByRole('option', { name: '标准报价单模板', exact: true }).click();
+  await page.getByRole('option', { name: '英文报价单模板', exact: true }).click();
   await editor.getByRole('button', { name: '保存', exact: true }).click();
   const afterSwitch = await page.evaluate(() => [...new Set(localStorage.getItem('inbrix-documents').match(/SP-\d{8}-[A-F0-9]{8}/g))]);
   assert.deepEqual(afterSwitch.sort(), quoteNumbers.sort(), 'Switching back to a quotation must retain its number');

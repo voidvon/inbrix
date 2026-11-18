@@ -3,11 +3,11 @@ import { createBusinessFromTemplate, createDocumentBusiness } from "./document-b
 import type { AIChatAttachment } from "../types";
 import type { AIChatSession, AIAgentDocumentAction, AIBusinessContext, AIToolCall, QuotationItem } from "./api";
 import type { DocumentTemplate, StoredDocument } from "./document-storage";
-import { documentTemplateHTML } from "./document-storage";
+import { documentTemplateHTML, quotationTemplateLanguage } from "./document-storage";
 import { createDocumentNumber } from "./document-number";
 import { documentDeliveryTerm } from "./document-delivery";
 import { type Copy, zh } from "./locale";
-import { createSpiraxQuotationCanvasDocument } from "../components/app/spirax-quotation-canvas";
+import { createSpiraxQuotationCanvasBackground, createSpiraxQuotationCanvasDocument } from "../components/app/spirax-quotation-canvas";
 import { createSpiraxContractCanvasDocument } from "../components/app/spirax-contract-canvas";
 import { ApiError, getDocument } from "./api";
 
@@ -106,6 +106,7 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
     if (generated.type === "quotation" || generated.type === "contract") {
       const isQuotation = generated.type === "quotation";
       const isInvoice = html.includes("data-spirax-invoice");
+      const quotationLanguage = quotationTemplateLanguage(html);
       const values = isQuotation ? generated.values : { contract_title: isInvoice ? "COMMERCIAL INVOICE" : "PROFORMA INVOICE", ...generated.values, trade_term: documentDeliveryTerm(generated.values) };
       const date = new Date().toLocaleDateString("zh-CN");
       const docNum = isQuotation
@@ -113,11 +114,12 @@ export function convertGeneratedToStoredDocument(generated: AIDocumentGeneratedD
         : (generated.values?.contract_number || "SC-" + Date.now().toString().slice(-6));
       try {
         const main = isQuotation
-          ? createSpiraxQuotationCanvasDocument(date, docNum, values, generated.items)
+          ? createSpiraxQuotationCanvasDocument(date, docNum, values, generated.items, quotationLanguage)
           : createSpiraxContractCanvasDocument(date, docNum, values, generated.items, isInvoice ? "commercial" : "proforma");
         const canvasDoc = {
           template: isQuotation ? "spirax-quotation" : isInvoice ? "spirax-invoice" : "spirax-contract",
           data: { main },
+          options: isQuotation && quotationLanguage === "zh-CN" ? { background: createSpiraxQuotationCanvasBackground(quotationLanguage) } : undefined,
           business: createDocumentBusiness({ ...createBusinessFromTemplate({ main }).values, ...values }, generated.items),
         };
         html = `__INBRIX_CANVAS_DOCUMENT__:${JSON.stringify(canvasDoc)}`;

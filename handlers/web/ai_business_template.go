@@ -24,6 +24,9 @@ func materializeBusinessTemplate(body string, card *AIDocumentCard) (string, err
 			card.Values["contract_title"] = "COMMERCIAL INVOICE"
 			return body, nil
 		}
+		if strings.Contains(body, "data-spirax-quotation") {
+			return body, nil
+		}
 		if strings.Contains(body, "data-spirax-") {
 			return "", nil
 		}

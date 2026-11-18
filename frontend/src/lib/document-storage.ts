@@ -9,6 +9,10 @@ export function spiraxQuotationTemplate(date: string) {
   return `<div data-spirax-quotation="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
 }
 
+export function quotationTemplateLanguage(html: string): "en" | "zh-CN" {
+  return html.includes('data-spirax-quotation="reference-zh-v1"') ? "zh-CN" : "en";
+}
+
 export function spiraxContractTemplate(date: string) {
   return `<div data-spirax-contract="reference-v1" data-issue-date="${escapeHTML(date)}"></div>`;
 }

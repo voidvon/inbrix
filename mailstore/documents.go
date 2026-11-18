@@ -13,6 +13,11 @@ import (
 //go:embed templates/chinese-sales-contract.json
 var chineseSalesContractTemplate string
 
+const (
+	englishQuotationTemplateBody = `<div data-spirax-quotation="reference-v1"></div>`
+	chineseQuotationTemplateBody = `<div data-spirax-quotation="reference-zh-v1"></div>`
+)
+
 var ErrDocumentConflict = errors.New("文档已修改或删除，请重新打开最新文档，或让 AI 重新生成修改方案 / Document changed or was deleted; reopen it or regenerate the proposal")
 
 // DocumentRecord represents a user-created quotation or contract document.
@@ -286,6 +291,10 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 		return err
 	}
 	defer tx.Rollback()
+	englishQuotationName, chineseQuotationName := "英文报价单模板", "中文报价单模板"
+	if english {
+		englishQuotationName, chineseQuotationName = "English quotation", "Chinese quotation"
+	}
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_template_initializations(owner_id) VALUES(?)`, owner)
 	if err != nil {
 		return err
@@ -293,18 +302,14 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 	if count, _ := result.RowsAffected(); count > 0 {
 		now := time.Now().UnixMilli()
 		for _, kind := range []string{"quotation", "contract"} {
-			name := "标准报价单模板"
+			name, body := englishQuotationName, englishQuotationTemplateBody
 			if kind == "contract" {
-				name = "英文形式发票模板"
-			}
-			if english {
-				name = "Standard quotation"
-				if kind == "contract" {
+				name, body = "英文形式发票模板", `<div data-spirax-contract="reference-v1"></div>`
+				if english {
 					name = "English proforma invoice"
 				}
 			}
 			legacyID := "default-" + kind
-			body := fmt.Sprintf(`<div data-spirax-%s="reference-v1"></div>`, kind)
 			_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at)
 				SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM document_templates WHERE owner_id=? AND id=?)`, legacyID+"-"+owner, owner, kind, name, body, now, now, owner, legacyID)
 			if err != nil {
@@ -315,6 +320,25 @@ func (s *Store) EnsureDefaultDocumentTemplates(ctx context.Context, owner string
 
 	// Each built-in addition is seeded independently, so existing owners receive
 	// it once while their subsequent edits and deletions remain authoritative.
+	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "chinese-quotation")
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		now := time.Now().UnixMilli()
+		_, err = tx.ExecContext(ctx, `UPDATE document_templates SET name=?,updated_at=?
+			WHERE owner_id=? AND id IN (?,?) AND type='quotation' AND html=? AND name IN (?,?)`,
+			englishQuotationName, now, owner, "default-quotation", "default-quotation-"+owner,
+			englishQuotationTemplateBody, "标准报价单模板", "Standard quotation")
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO document_templates(id,owner_id,type,name,html,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO NOTHING`, "chinese-quotation-"+owner, owner, "quotation", chineseQuotationName, chineseQuotationTemplateBody, now, now)
+		if err != nil {
+			return err
+		}
+	}
 	result, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO document_builtin_template_seeds(owner_id,template_key) VALUES(?,?)`, owner, "chinese-sales-contract")
 	if err != nil {
 		return err
@@ -377,7 +401,7 @@ func (s *Store) ListDocumentTemplates(ctx context.Context, ownerID string) ([]Do
 		SELECT id, owner_id, type, name, html, created_at, updated_at
 		FROM document_templates
 		WHERE owner_id = ?
-		ORDER BY CASE WHEN id LIKE 'default-quotation%' THEN 0 WHEN id LIKE 'default-contract%' THEN 1 ELSE 2 END, updated_at DESC, id DESC
+		ORDER BY CASE WHEN id LIKE 'default-quotation%' THEN 0 WHEN id LIKE 'chinese-quotation-%' THEN 1 WHEN id LIKE 'default-contract%' THEN 2 ELSE 3 END, updated_at DESC, id DESC
 	`, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: list templates: %w", err)

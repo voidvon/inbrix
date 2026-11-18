@@ -165,14 +165,14 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(first) != 4 || first[0].Type != "quotation" || first[1].Type != "contract" {
+	if err != nil || len(first) != 5 || first[0].Name != "英文报价单模板" || first[1].Name != "中文报价单模板" || first[2].Type != "contract" {
 		t.Fatal(first, err)
 	}
 	first[0].Name, first[0].HTML = "My template", "<p>Edited on server</p>"
 	if _, err := s.SaveDocumentTemplate(ctx, first[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteDocumentTemplate(ctx, owner.ID, first[1].ID); err != nil {
+	if err := s.DeleteDocumentTemplate(ctx, owner.ID, first[2].ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.EnsureDefaultDocumentTemplates(ctx, other.ID, true); err != nil {
@@ -188,11 +188,11 @@ func TestServerTemplateDefaultsSeedOnceAndKeepEditsAndDeletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := reopened.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(current) != 3 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
+	if err != nil || len(current) != 4 || current[0].HTML != first[0].HTML || current[0].Name != "My template" {
 		t.Fatal(current, err)
 	}
 	foreign, err := reopened.ListDocumentTemplates(ctx, other.ID)
-	if err != nil || len(foreign) != 4 || foreign[0].Name != "Standard quotation" || foreign[0].ID == first[0].ID {
+	if err != nil || len(foreign) != 5 || foreign[0].Name != "English quotation" || foreign[1].Name != "Chinese quotation" || foreign[0].ID == first[0].ID {
 		t.Fatal(foreign, err)
 	}
 }
@@ -242,7 +242,7 @@ func TestChineseContractTemplateSeedsForExistingOwnerOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	templates, err := s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(templates) != 2 {
+	if err != nil || len(templates) != 3 {
 		t.Fatal(templates, err)
 	}
 	var chineseTemplate DocumentTemplateRecord
@@ -261,8 +261,81 @@ func TestChineseContractTemplateSeedsForExistingOwnerOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	templates, err = s.ListDocumentTemplates(ctx, owner.ID)
-	if err != nil || len(templates) != 1 || templates[0].ID == chineseTemplate.ID {
+	if err != nil || len(templates) != 2 {
 		t.Fatal("deleted template was recreated", templates, err)
+	}
+	for _, template := range templates {
+		if template.ID == chineseTemplate.ID {
+			t.Fatal("deleted template was recreated", template.ID)
+		}
+	}
+}
+
+func TestQuotationTemplatesUpgradeExistingOwnersOnce(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+		legacyID         bool
+	}{
+		{"标准报价单模板", englishQuotationTemplateBody, "英文报价单模板", false},
+		{"Standard quotation", englishQuotationTemplateBody, "英文报价单模板", true},
+		{"我的报价模板", englishQuotationTemplateBody, "我的报价模板", false},
+		{"标准报价单模板", "<p>Custom quotation</p>", "标准报价单模板", false},
+		{"", "", "", false}, // The owner deleted the old built-in.
+	} {
+		t.Run(tt.name+tt.body, func(t *testing.T) {
+			s := openTestStore(t)
+			ctx := context.Background()
+			owner, err := s.CreateUser(ctx, "quotation-owner", "Owner", "hash")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO document_template_initializations(owner_id) VALUES(?)`, owner.ID); err != nil {
+				t.Fatal(err)
+			}
+			englishID := "default-quotation-" + owner.ID
+			if tt.legacyID {
+				englishID = "default-quotation"
+			}
+			if tt.name != "" {
+				if _, err := s.SaveDocumentTemplate(ctx, DocumentTemplateRecord{ID: englishID, OwnerID: owner.ID, Type: "quotation", Name: tt.name, HTML: tt.body}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func() map[string]DocumentTemplateRecord {
+				t.Helper()
+				templates, err := s.ListDocumentTemplates(ctx, owner.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				quotations := map[string]DocumentTemplateRecord{}
+				for _, template := range templates {
+					if template.Type == "quotation" {
+						quotations[template.ID] = template
+					}
+				}
+				return quotations
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, false); err != nil {
+				t.Fatal(err)
+			}
+			chineseID := "chinese-quotation-" + owner.ID
+			quotations := read()
+			if got := quotations[englishID]; got.Name != tt.want || got.HTML != tt.body {
+				t.Fatalf("unexpected English quotation: %+v", got)
+			}
+			if got := quotations[chineseID]; got.Name != "中文报价单模板" || got.HTML != chineseQuotationTemplateBody {
+				t.Fatalf("unexpected Chinese quotation: %+v", got)
+			}
+			if err := s.DeleteDocumentTemplate(ctx, owner.ID, chineseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.EnsureDefaultDocumentTemplates(ctx, owner.ID, true); err != nil {
+				t.Fatal(err)
+			}
+			if got := read(); got[chineseID].ID != "" || got[englishID].Name != tt.want {
+				t.Fatalf("repeat seed changed quotations: %+v", got)
+			}
+		})
 	}
 }
 

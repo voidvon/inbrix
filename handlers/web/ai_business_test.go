@@ -193,6 +193,18 @@ func TestBusinessTemplateMaterializationPreservesLayoutAndClearsBuyer(t *testing
 	}
 }
 
+func TestQuotationBusinessTemplateKeepsLanguageMarker(t *testing.T) {
+	for _, marker := range []string{
+		`<div data-spirax-quotation="reference-v1"></div>`,
+		`<div data-spirax-quotation="reference-zh-v1"></div>`,
+	} {
+		html, err := materializeBusinessTemplate(marker, &AIDocumentCard{Type: "quotation"})
+		if err != nil || html != marker {
+			t.Fatalf("quotation marker lost: %q, %v", html, err)
+		}
+	}
+}
+
 func TestCommercialInvoiceBusinessTemplateKeepsInvoiceIdentity(t *testing.T) {
 	marker := `<div data-spirax-invoice="reference-v1"></div>`
 	card := &AIDocumentCard{Type: "contract", Values: map[string]string{"contract_title": "PROFORMA INVOICE"}}

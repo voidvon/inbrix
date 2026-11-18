@@ -22,12 +22,17 @@ export function createDocumentNumber(type: DocumentTemplate) {
 export function numberDocumentTemplate(html: string, number: string): string {
   if (html.startsWith(CANVAS_PREFIX)) {
     const stored = JSON.parse(html.slice(CANVAS_PREFIX.length)) as { template?: string; data?: unknown; business?: unknown };
-    if (stored.template === "spirax-invoice") {
+    if (stored.template === "spirax-invoice" || stored.template === "spirax-quotation") {
       const business = readDocumentBusiness(stored.business);
       const today = documentDate();
-      business.values.contract_number = number;
-      business.values.contract_date = today;
-      business.values.seller_sign_date = today;
+      if (stored.template === "spirax-quotation") {
+        business.values.quote_number = number;
+        business.values.issue_date = today;
+      } else {
+        business.values.contract_number = number;
+        business.values.contract_date = today;
+        business.values.seller_sign_date = today;
+      }
       stored.business = business;
       projectDocumentBusiness(stored.data, business);
     }
@@ -53,7 +58,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
             .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
             .replace(/\bCT\d{10}\b/g, number)
             .replace(/\bPI-20260919-01\b/g, number)
-            .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number)\]/gi, number);
+            .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number|报价编号)\]/gi, number);
         }
       }
       if (element.tdList) {
@@ -65,7 +70,7 @@ export function numberDocumentTemplate(html: string, number: string): string {
       }
       if (typeof element.value === "string") {
         element.value = element.value
-          .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number)\]/gi, number)
+          .replace(/\[(?:Contract number|Invoice number|PI number|合同编号|Quote number|报价编号)\]/gi, number)
           .replace(/\b(?:SP\d{4}[A-F0-9]{8}|(?:SP|CT)-\d{8}-[A-F0-9]{8})\b/g, number)
           .replace(/\bCT\d{10}\b/g, number);
       }
