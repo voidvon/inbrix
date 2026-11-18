@@ -550,8 +550,6 @@ export function ComposeDialog({
     setInvalid({});
     setSourceMode(false);
     setSourceCode(html);
-    setSelectedSignatureId("none");
-    signatureInitializedRef.current = false;
     setAttachments([]);
     setDocumentAction(null);
     setDocumentBusy(false);
@@ -559,6 +557,14 @@ export function ComposeDialog({
     ccDraftRef.current = "";
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     editor.commands.setContent(html, { emitUpdate: false });
+    const savedSignature = editor.state.doc.children.find((node) => node.type.name === "emailSignature");
+    setSelectedSignatureId(savedSignature?.attrs.signatureId || "none");
+    // Starting a conversation creates a recipient-only draft before the editor opens.
+    // Once a draft has been written, keep the signature choice saved in its body.
+    const hasSavedEdits = stored && (
+      stored.bodyHtml.trim() || stored.bodyText.trim() || stored.subject.trim() || stored.cc.trim()
+    );
+    signatureInitializedRef.current = Boolean(savedSignature || hasSavedEdits);
     editor.commands.focus("start");
     draftIdRef.current = stored?.id || "";
     setHasDraft(Boolean(stored));
@@ -620,12 +626,13 @@ export function ComposeDialog({
   };
 
   useEffect(() => {
-    if (!open || !editor || !signatures.data || signatureInitializedRef.current) return;
+    if (!open || !editor || !signatures.data || sourceMode || signatureInitializedRef.current) return;
+    if (activeWindowRef.current?.defaults !== defaults) return;
     const signature = signatures.data.signatures.find((item) => item.default) || signatures.data.signatures[0] || null;
-    setEditorSignature(editor, signature);
+    setEditorSignature(editor, signature, { updateSelection: false });
     setSelectedSignatureId(signature?.id || "none");
     signatureInitializedRef.current = true;
-  }, [open, editor, signatures.data]);
+  }, [open, editor, signatures.data, defaults, draftLoaded, sourceMode]);
 
   const toggleSourceMode = () => {
     if (!editor) return;
@@ -781,9 +788,10 @@ export function ComposeDialog({
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Select
               value={selectedSignatureId}
-              disabled={sourceMode || signatures.isPending}
+              disabled={sourceMode || signatures.isPending || activeWindowRef.current?.defaults !== defaults}
               onValueChange={(value) => {
                 if (!value) return;
+                signatureInitializedRef.current = true;
                 setSelectedSignatureId(value);
                 if (editor) setEditorSignature(editor, signatures.data?.signatures.find((item) => item.id === value) || null);
               }}

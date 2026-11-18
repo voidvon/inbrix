@@ -378,7 +378,7 @@ export function signatureNodeHTML(signature: EmailSignature) {
   return `<div data-inbrix-signature="${escapeHTML(signature.id)}" data-signature-name="${escapeHTML(signature.name)}">${signature.html.trim() || "<p></p>"}</div>`;
 }
 
-export function setEditorSignature(editor: Editor, signature: EmailSignature | null) {
+export function setEditorSignature(editor: Editor, signature: EmailSignature | null, options?: { updateSelection?: boolean }) {
   let existingRange: { from: number; to: number } | null = null;
   let quotePosition: number | null = null;
   editor.state.doc.descendants((node, position) => {
@@ -394,11 +394,11 @@ export function setEditorSignature(editor: Editor, signature: EmailSignature | n
   });
 
   if (existingRange) {
-    if (signature) editor.commands.insertContentAt(existingRange, signatureNodeHTML(signature));
+    if (signature) editor.commands.insertContentAt(existingRange, signatureNodeHTML(signature), options);
     else editor.commands.deleteRange(existingRange);
     return;
   }
-  if (signature) editor.commands.insertContentAt(quotePosition ?? editor.state.doc.content.size, signatureNodeHTML(signature));
+  if (signature) editor.commands.insertContentAt(quotePosition ?? editor.state.doc.content.size, signatureNodeHTML(signature), options);
 }
 
 export function aiConversationContext(messages: ConversationMessage[]) {

@@ -161,6 +161,13 @@
   input {
     font: inherit;
   }
+
+  /* Restore native list markers in the editor after Tailwind's list reset. */
+  .ProseMirror ul,
+  .ProseMirror ol {
+    list-style-type: revert-layer;
+    padding-left: 1.5rem;
+  }
 }
 
 /* Tiptap owns the editable document, so these are content rules rather than
@@ -183,11 +190,6 @@
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-.ProseMirror ul,
-.ProseMirror ol {
-  padding-left: 1.5rem;
 }
 
 .ProseMirror [data-inbrix-signature] {
