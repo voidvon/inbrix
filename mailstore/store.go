@@ -495,6 +495,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY(account_id) REFERENCES mail_accounts(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_outgoing_account ON outgoing_messages(account_id, created_at)`,
+		// Keep the worker's oldest-queued lookup off the MIME payload table.
+		`CREATE INDEX IF NOT EXISTS idx_outgoing_queued ON outgoing_messages(created_at, id) WHERE status = 'queued'`,
 		`CREATE TABLE IF NOT EXISTS pending_flag_updates (
 			account_id TEXT NOT NULL,
 			folder_name TEXT NOT NULL,
