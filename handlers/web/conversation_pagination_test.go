@@ -133,6 +133,9 @@ func TestConversationListPaginationAndDetailHydration(t *testing.T) {
 	if len(first.Conversations) != 2 || !first.HasMore || first.Total != 3 || first.Unread != 2 {
 		t.Fatalf("first page = %+v", first)
 	}
+	if _, current, err := db.ConversationIndexRevision(ctx, account.ID); err != nil || !current {
+		t.Fatalf("list did not build a current index: current=%t, err=%v", current, err)
+	}
 	if first.Conversations[0].ID == first.Conversations[1].ID {
 		t.Fatalf("first page duplicated a conversation: %+v", first.Conversations)
 	}
@@ -215,6 +218,15 @@ func TestConversationListPaginationAndDetailHydration(t *testing.T) {
 	}
 	if detail.Conversation.Messages[0].Body == "" || !strings.Contains(detail.Conversation.Messages[0].HTML, "carol html") {
 		t.Fatalf("detail did not hydrate the selected thread: %+v", detail.Conversation.Messages[0])
+	}
+	if err := db.UpdateFlags(ctx, account.ID, "INBOX", "103", []string{`\Seen`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, current, err := db.ConversationIndexRevision(ctx, account.ID); err != nil || current {
+		t.Fatalf("message update did not invalidate the index: current=%t, err=%v", current, err)
+	}
+	if updated := decodePage(get("/api/conversations?limit=2")); updated.Unread != 1 || updated.Conversations[0].UnreadCount != 0 {
+		t.Fatalf("updated unread counts = %+v", updated)
 	}
 
 	t.Run("message history", func(t *testing.T) {

@@ -159,6 +159,11 @@ func (s *Store) GetOutgoing(ctx context.Context, accountID, id string) (Outgoing
 	return scanOutgoing(s.db.QueryRowContext(ctx, `SELECT `+outgoingColumns+`, raw_mime FROM outgoing_messages WHERE account_id = ? AND id = ?`, accountID, id), true)
 }
 
+// GetOutgoingWithoutMIME opens an outbox bubble without loading its send payload.
+func (s *Store) GetOutgoingWithoutMIME(ctx context.Context, accountID, id string) (OutgoingMessage, error) {
+	return scanOutgoing(s.db.QueryRowContext(ctx, `SELECT `+outgoingColumns+` FROM outgoing_messages WHERE account_id = ? AND id = ?`, accountID, id), false)
+}
+
 func (s *Store) ListOutgoing(ctx context.Context, accountID string) ([]OutgoingMessage, error) {
 	// The IMAP copy replaces the outbox bubble by exact Message-ID. The audit
 	// record is retained; successful mail never appears twice in the transcript.
@@ -192,7 +197,7 @@ func (s *Store) FinishOutgoing(ctx context.Context, accountID, id, status, lastE
 	if status != "failed" && status != "unknown" && status != "sent" {
 		return fmt.Errorf("mailstore: invalid send result")
 	}
-	record, err := s.GetOutgoing(ctx, accountID, id)
+	record, err := s.GetOutgoingWithoutMIME(ctx, accountID, id)
 	if err != nil {
 		return err
 	}

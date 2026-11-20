@@ -28,17 +28,17 @@ import (
 )
 
 type EmailHandler struct {
-	store          *session.Store
-	config         *config.Config
-	auth           *AuthHandler
-	acctStore      *AccountStore // nil when accounts.enabled = false
-	mailDB         *mailstore.Store
-	kv             storage.KV
-	revisionSource func(userID string) uint64
-	outboxCancel   context.CancelFunc
-	outboxWG       sync.WaitGroup
-	outboxSMTP     func(mailstore.Account) (outboxSender, error)
-	outboxSaveSent func(mailstore.Account, mailstore.OutgoingMessage) error
+	store               *session.Store
+	config              *config.Config
+	auth                *AuthHandler
+	acctStore           *AccountStore // nil when accounts.enabled = false
+	mailDB              *mailstore.Store
+	kv                  storage.KV
+	revisionSource      func(userID string) uint64
+	conversationIndexMu sync.Mutex
+	outboxCancel        context.CancelFunc
+	outboxWG            sync.WaitGroup
+	outboxSMTP          func(mailstore.Account) (outboxSender, error)
 }
 
 func NewEmailHandler(store *session.Store, config *config.Config, auth *AuthHandler) *EmailHandler {
@@ -154,7 +154,7 @@ func (h *EmailHandler) currentMirrorAccount(c *fiber.Ctx) (mailstore.Account, bo
 }
 
 func mirrorMailboxInfos(folders []mailstore.Folder) []*api.MailboxInfo {
-	out := make([]*api.MailboxInfo, 0, len(folders))
+	out := make([]*api.MailboxInfo, 0, len(folders)+1)
 	for _, folder := range folders {
 		out = append(out, &api.MailboxInfo{
 			Name:        folder.Name,
@@ -162,6 +162,9 @@ func mirrorMailboxInfos(folders []mailstore.Folder) []*api.MailboxInfo {
 			Attributes:  append([]string(nil), folder.Attributes...),
 			UnreadCount: folder.UnreadCount,
 		})
+	}
+	if _, ok := firstSentMailbox(folders); !ok {
+		out = append(out, &api.MailboxInfo{Name: "Sent", Delimiter: "/", Attributes: []string{`\Sent`}})
 	}
 	return out
 }
@@ -625,6 +628,13 @@ func (h *EmailHandler) HandleAttachment(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
 		return c.Status(400).SendString("Attachment ID required")
+	}
+	if strings.HasPrefix(id, "outbox_") {
+		messageID, part, ok := strings.Cut(id, ".")
+		if !ok {
+			return c.SendStatus(404)
+		}
+		return h.serveOutgoingAttachment(c, messageID, part)
 	}
 
 	folder, uid, part, err := api.DecodeAttachmentID(id)

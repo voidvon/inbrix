@@ -14,6 +14,7 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,11 @@ func (h *EmailHandler) StartOutbox() error {
 			}
 		}()
 	}
+	h.outboxWG.Add(1)
+	go func() {
+		defer h.outboxWG.Done()
+		h.archiveSentHistory(ctx)
+	}()
 	return nil
 }
 
@@ -197,15 +203,13 @@ func (h *EmailHandler) deliverOutgoing(record mailstore.OutgoingMessage) {
 	if err != nil {
 		return
 	}
-	// SMTP acceptance is durable before best-effort IMAP work. A Sent-copy
-	// failure cannot turn a delivered email into a retryable failure.
-	if h.outboxSaveSent != nil {
-		err = h.outboxSaveSent(account, record)
-	} else {
-		err = h.saveOutgoingSent(account, record)
+	if err := h.archiveSentMessage(ctx, record); err != nil {
+		log.Printf("outbox: archive sent attachments %s: %v", record.ID, err)
 	}
-	if err != nil {
-		log.Printf("outbox: save Sent copy %s: %v", record.ID, err)
+	if record.DraftUID != "" && h.auth != nil {
+		if err := h.deleteOutgoingDraft(account, record.DraftUID); err != nil {
+			log.Printf("outbox: delete draft: %v", err)
+		}
 	}
 	if h.kv != nil {
 		if owner, ownerErr := h.mailDB.GetUser(ctx, account.OwnerID); ownerErr == nil {
@@ -218,40 +222,66 @@ func (h *EmailHandler) deliverOutgoing(record mailstore.OutgoingMessage) {
 	}
 }
 
-func (h *EmailHandler) saveOutgoingSent(account mailstore.Account, record mailstore.OutgoingMessage) error {
+func (h *EmailHandler) deleteOutgoingDraft(account mailstore.Account, uid string) error {
 	client, err := h.auth.CreateIMAPClientForMirrorAccount(account)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	var folder string
-	if saver, ok := client.(interface {
-		SaveToSentWithFolder(string, string, string, []byte) (string, error)
-	}); ok {
-		folder, err = saver.SaveToSentWithFolder(record.Message.To, record.Message.Subject, record.Message.Body, record.RawMIME)
-	} else {
-		err = client.SaveToSent(record.Message.To, record.Message.Subject, record.Message.Body, record.RawMIME)
+	return client.DeleteDraft(uid)
+}
+
+func (h *EmailHandler) archiveSentMessage(ctx context.Context, record mailstore.OutgoingMessage) error {
+	if len(record.RawMIME) == 0 {
+		return nil
 	}
+	files, err := outgoingAttachments(record.RawMIME)
 	if err != nil {
 		return err
 	}
-	if record.DraftUID != "" {
-		if err := client.DeleteDraft(record.DraftUID); err != nil {
-			log.Printf("outbox: delete draft: %v", err)
-		}
-	}
-	if folder != "" && h.auth.syncer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := h.auth.syncer.SyncNewMessagesNow(ctx, account.ID, folder); err != nil {
-			h.auth.syncer.Trigger(account.ID)
-			return err
-		}
-	}
-	return nil
+	return h.mailDB.ArchiveOutgoingAttachments(ctx, record.AccountID, record.ID, files)
 }
 
-func (h *EmailHandler) ownedOutgoing(c *fiber.Ctx) (mailstore.OutgoingMessage, bool) {
+func (h *EmailHandler) archiveSentHistory(ctx context.Context) {
+	const batchSize = 12
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	after := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if after == "" {
+			if err := h.mailDB.CollectOutgoingAttachments(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("outbox: clean up sent attachments: %v", err)
+			}
+		}
+		keys, err := h.mailDB.ListSentMIME(ctx, after, batchSize)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("outbox: list sent MIME: %v", err)
+		}
+		for _, key := range keys {
+			after = key.ID
+			record, err := h.mailDB.GetOutgoing(ctx, key.AccountID, key.ID)
+			if err == nil {
+				err = h.archiveSentMessage(ctx, record)
+			}
+			if err != nil && !errors.Is(err, mailstore.ErrNotFound) && ctx.Err() == nil {
+				log.Printf("outbox: migrate sent attachments %s: %v", key.ID, err)
+			}
+		}
+		if len(keys) == batchSize {
+			timer.Reset(2 * time.Second)
+		} else {
+			after = ""
+			timer.Reset(time.Minute)
+		}
+	}
+}
+
+func (h *EmailHandler) ownedOutgoing(c *fiber.Ctx, id string) (mailstore.OutgoingMessage, bool) {
 	if h.mailDB == nil {
 		_ = c.Status(501).JSON(fiber.Map{"error": "Server outbox is unavailable"})
 		return mailstore.OutgoingMessage{}, false
@@ -268,7 +298,7 @@ func (h *EmailHandler) ownedOutgoing(c *fiber.Ctx) (mailstore.OutgoingMessage, b
 		return mailstore.OutgoingMessage{}, false
 	}
 	for _, account := range accounts {
-		record, err := h.mailDB.GetOutgoing(c.UserContext(), account.ID, c.Params("id"))
+		record, err := h.mailDB.GetOutgoingWithoutMIME(c.UserContext(), account.ID, id)
 		if err == nil {
 			return record, true
 		}
@@ -282,7 +312,7 @@ func (h *EmailHandler) ownedOutgoing(c *fiber.Ctx) (mailstore.OutgoingMessage, b
 }
 
 func (h *EmailHandler) HandleRetryOutgoing(c *fiber.Ctx) error {
-	record, ok := h.ownedOutgoing(c)
+	record, ok := h.ownedOutgoing(c, c.Params("id"))
 	if !ok {
 		return nil
 	}
@@ -299,7 +329,7 @@ func (h *EmailHandler) HandleRetryOutgoing(c *fiber.Ctx) error {
 }
 
 func (h *EmailHandler) HandleDeleteOutgoing(c *fiber.Ctx) error {
-	record, ok := h.ownedOutgoing(c)
+	record, ok := h.ownedOutgoing(c, c.Params("id"))
 	if !ok {
 		return nil
 	}
@@ -321,19 +351,49 @@ func outgoingAttachmentURL(id string) string {
 }
 
 func (h *EmailHandler) HandleOutgoingAttachment(c *fiber.Ctx) error {
-	record, ok := h.ownedOutgoing(c)
+	return h.serveOutgoingAttachment(c, c.Params("id"), c.Params("part"))
+}
+
+func (h *EmailHandler) serveOutgoingAttachment(c *fiber.Ctx, id, part string) error {
+	record, ok := h.ownedOutgoing(c, id)
 	if !ok {
 		return nil
 	}
-	index, err := strconv.Atoi(c.Params("part"))
-	if err != nil || index < 0 {
+	index, err := strconv.Atoi(part)
+	if err != nil || index < 0 || index >= len(record.Message.Attachments) {
 		return c.SendStatus(404)
 	}
-	files, err := outgoingAttachments(record.RawMIME)
-	if err != nil || index >= len(files) {
+	if record.HasPayload {
+		// Read the current row in case it was archived after authorization.
+		record, err = h.mailDB.GetOutgoing(c.UserContext(), record.AccountID, record.ID)
+		if errors.Is(err, mailstore.ErrNotFound) {
+			return c.SendStatus(404)
+		}
+		if err != nil {
+			return c.SendStatus(500)
+		}
+	}
+	file := record.Message.Attachments[index]
+	if record.HasPayload {
+		files, err := outgoingAttachments(record.RawMIME)
+		if err != nil || index >= len(files) {
+			return c.SendStatus(404)
+		}
+		setOutgoingAttachmentHeaders(c, file)
+		return c.Send(files[index].Content)
+	}
+	stream, err := h.mailDB.OpenOutgoingAttachment(record, index)
+	if errors.Is(err, mailstore.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 		return c.SendStatus(404)
 	}
-	file := files[index]
+	if err != nil {
+		return c.SendStatus(500)
+	}
+	setOutgoingAttachmentHeaders(c, file)
+	return c.SendStream(stream, file.Size)
+}
+
+func setOutgoingAttachmentHeaders(c *fiber.Ctx, file models.Attachment) {
 	c.Set("Cache-Control", "private, no-store")
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Content-Type", file.ContentType)
@@ -344,7 +404,6 @@ func (h *EmailHandler) HandleOutgoingAttachment(c *fiber.Ctx) error {
 		disposition = "inline"
 	}
 	c.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": file.Filename}))
-	return c.Send(file.Content)
 }
 
 // Decode only the attachment leaves of MIME produced by our builder. Keeping

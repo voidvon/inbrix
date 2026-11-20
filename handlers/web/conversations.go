@@ -246,6 +246,13 @@ func conversationTitle(messages []models.Email, mailbox string, participants []s
 	return strings.Join(labels, ", "), strings.Join(participants, ", ")
 }
 
+func decodeConversationMessageText(email *models.Email) {
+	email.Subject = string(api.DecodeLegacyText([]byte(email.Subject)))
+	email.Preview = string(api.DecodeLegacyText([]byte(email.Preview)))
+	email.Body = string(api.DecodeLegacyText([]byte(email.Body)))
+	email.HTML = string(api.DecodeLegacyText([]byte(email.HTML)))
+}
+
 func buildConversations(account mailstore.Account, emails []models.Email) []Conversation {
 	if len(emails) == 0 {
 		return nil
@@ -254,10 +261,7 @@ func buildConversations(account mailstore.Account, emails []models.Email) []Conv
 		if emails[i].Folder == "" {
 			emails[i].Folder = conversationViewFolder
 		}
-		emails[i].Subject = string(api.DecodeLegacyText([]byte(emails[i].Subject)))
-		emails[i].Preview = string(api.DecodeLegacyText([]byte(emails[i].Preview)))
-		emails[i].Body = string(api.DecodeLegacyText([]byte(emails[i].Body)))
-		emails[i].HTML = string(api.DecodeLegacyText([]byte(emails[i].HTML)))
+		decodeConversationMessageText(&emails[i])
 		emails[i].AccountEmail = account.Email
 		emails[i].AccountLabel = account.Label
 		emails[i].AccountColor = account.Color
@@ -517,22 +521,30 @@ func (h *EmailHandler) hydrateConversation(c *fiber.Ctx, accountID string, conve
 	return nil
 }
 
-func (h *EmailHandler) conversationPageData(c *fiber.Ctx, includeBodies bool) (fiber.Map, error) {
+func (h *EmailHandler) conversationAccounts(c *fiber.Ctx) (mailstore.Account, []mailstore.Account, error) {
 	username, _ := c.Locals("username").(string)
 	if username == "" {
-		return nil, fiber.ErrUnauthorized
+		return mailstore.Account{}, nil, fiber.ErrUnauthorized
 	}
 	active, ok := h.currentMirrorAccount(c)
 	if !ok {
-		return nil, fmt.Errorf("mailbox is not configured")
+		return mailstore.Account{}, nil, fmt.Errorf("mailbox is not configured")
 	}
-	all := c.Query("unified") == "1"
 	accounts := []mailstore.Account{active}
-	if all {
+	if c.Query("unified") == "1" {
 		if mirrorAccounts, _, err := h.mirrorAccounts(c); err == nil && len(mirrorAccounts) > 0 {
 			accounts = mirrorAccounts
 		}
 	}
+	return active, accounts, nil
+}
+
+func (h *EmailHandler) conversationPageData(c *fiber.Ctx, includeBodies bool) (fiber.Map, error) {
+	active, accounts, err := h.conversationAccounts(c)
+	if err != nil {
+		return nil, err
+	}
+	username, _ := c.Locals("username").(string)
 	conversations, accountErrors, err := h.localConversations(c, accounts, includeBodies)
 	if err != nil {
 		return nil, err
@@ -568,7 +580,7 @@ func (h *EmailHandler) conversationPageData(c *fiber.Ctx, includeBodies bool) (f
 		"SelectedConversationID":  selectedID,
 		"ConversationUnreadCount": unread,
 		"AccountErrors":           accountErrors,
-		"Unified":                 all && len(accounts) > 1,
+		"Unified":                 c.Query("unified") == "1" && len(accounts) > 1,
 		"UnifiedAvailable":        len(accounts) > 1,
 		"Token":                   token,
 		"CurrentFolder":           conversationViewFolder,

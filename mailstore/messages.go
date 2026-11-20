@@ -524,9 +524,8 @@ func (s *Store) ListMessagesByKeys(ctx context.Context, accountID string, keys [
 		return nil, nil
 	}
 
-	clauses := make([]string, 0, len(keys))
+	values := make([]string, 0, len(keys))
 	args := make([]any, 0, len(keys)*2+1)
-	args = append(args, accountID)
 	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		folder := strings.TrimSpace(key.FolderName)
@@ -534,19 +533,24 @@ func (s *Store) ListMessagesByKeys(ctx context.Context, accountID string, keys [
 		if err != nil || folder == "" {
 			continue
 		}
-		dedupe := folder + "\x00" + key.UID
+		dedupe := folder + "\x00" + fmt.Sprint(uid)
 		if _, ok := seen[dedupe]; ok {
 			continue
 		}
 		seen[dedupe] = struct{}{}
-		clauses = append(clauses, "(folder_name = ? AND uid = ?)")
+		values = append(values, "(?, ?)")
 		args = append(args, folder, uid)
 	}
-	if len(clauses) == 0 {
+	if len(values) == 0 {
 		return nil, nil
 	}
 
-	query := `SELECT ` + messageColumns + ` FROM messages WHERE account_id = ? AND (` + strings.Join(clauses, " OR ") + `)`
+	// Drive one composite primary-key lookup per requested message. With an
+	// OR of keys SQLite can instead scan every message in the account.
+	query := `WITH selected(lookup_folder, lookup_uid) AS (VALUES ` + strings.Join(values, ",") + `)
+		SELECT ` + messageColumns + ` FROM selected CROSS JOIN messages
+		WHERE account_id = ? AND folder_name = lookup_folder AND uid = lookup_uid`
+	args = append(args, accountID)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("mailstore: list messages by keys: %w", err)

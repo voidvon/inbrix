@@ -519,6 +519,14 @@ func (h *EmailHandler) conversationListJSON(c *fiber.Ctx, query string, filter s
 	// Conversation search may match a body, so only that legacy path asks for
 	// full rows. The normal inbox list stays on the header projection.
 	includeBodies := strings.TrimSpace(query) != ""
+	if !includeBodies {
+		response, err := h.indexedConversationListJSON(c, filter, limit, cursor, revision)
+		if err == nil || errors.Is(err, errInvalidConversationCursor) {
+			return response, err
+		}
+		// A source update can invalidate the index while the request is running.
+		// The direct read remains available while the index catches up.
+	}
 	data, err := h.conversationPageData(c, includeBodies)
 	if err != nil {
 		return ConversationListJSON{}, err
@@ -692,27 +700,68 @@ func (h *EmailHandler) HandleStartConversationJSON(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"conversation": conversationDetailJSON(conversation)})
 }
 
-func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
-	data, err := h.conversationPageData(c, false)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
+func (h *EmailHandler) conversationViewPage(c *fiber.Ctx, indexed bool) (*Conversation, mailstore.Account, conversationMessagePage, error) {
+	var selected *Conversation
+	var account mailstore.Account
+	var page conversationMessagePage
+	var revision int64
+	var err error
+	if indexed {
+		selected, revision, err = h.indexedConversation(c, c.Params("id"))
+		if err != nil {
+			return nil, account, page, mailstore.ErrConversationIndexStale
+		}
+	} else {
+		data, err := h.conversationPageData(c, false)
+		if err != nil {
+			return nil, account, page, err
+		}
+		selected = findConversation(data["Conversations"].([]Conversation), c.Params("id"))
 	}
-	selected := findConversation(data["Conversations"].([]Conversation), c.Params("id"))
 	if selected == nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Conversation not found"})
+		return nil, account, page, fiber.NewError(fiber.StatusNotFound, "Conversation not found")
 	}
 	account, accountOK := h.mirrorAccountForEmail(c, selected.AccountEmail)
 	if !accountOK {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Mail account not found"})
+		return nil, account, page, fiber.NewError(fiber.StatusNotFound, "Mail account not found")
 	}
-	page, err := pageConversationMessages(c, selected)
+	page, err = pageConversationMessages(c, selected)
+	if err != nil {
+		return nil, account, page, err
+	}
+	if err := h.hydrateConversation(c, account.ID, selected); err != nil {
+		return nil, account, page, err
+	}
+	if indexed {
+		if err := h.hydrateIndexedOutbox(c, account.ID, selected); err != nil {
+			return nil, account, page, mailstore.ErrConversationIndexStale
+		}
+		// A source write between the lookup and hydration can remove a page
+		// member or change its ordering. Read the current thread in that case.
+		current, _, err := h.mailDB.ConversationIndexRevision(c.UserContext(), account.ID)
+		if err != nil || current != revision {
+			return nil, account, page, mailstore.ErrConversationIndexStale
+		}
+	}
+	return selected, account, page, nil
+}
+
+func (h *EmailHandler) HandleConversationViewJSON(c *fiber.Ctx) error {
+	selected, account, page, err := h.conversationViewPage(c, true)
+	if errors.Is(err, mailstore.ErrConversationIndexStale) {
+		selected, account, page, err = h.conversationViewPage(c, false)
+	}
 	if errors.Is(err, errMessageTargetNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found in conversation"})
 	}
-	if err != nil {
+	if errors.Is(err, errInvalidMessageCursor) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid message cursor"})
 	}
-	if err := h.hydrateConversation(c, account.ID, selected); err != nil {
+	var routeErr *fiber.Error
+	if errors.As(err, &routeErr) && routeErr.Code == fiber.StatusNotFound {
+		return c.Status(routeErr.Code).JSON(fiber.Map{"error": routeErr.Message})
+	}
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error loading local conversation"})
 	}
 	response := conversationDetailJSONForLocale(*selected, CurrentLocale(c))

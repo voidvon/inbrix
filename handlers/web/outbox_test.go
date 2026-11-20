@@ -11,8 +11,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +44,7 @@ func (s *fakeOutboxSender) SendRawMessage(to []string, raw []byte) error {
 func outboxTestApp(t *testing.T) (*EmailHandler, *fiber.App, mailstore.Account, mailstore.Account) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := mailstore.Open(":memory:")
+	db, err := mailstore.Open(filepath.Join(t.TempDir(), "mail.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +110,10 @@ func outboxTestApp(t *testing.T) (*EmailHandler, *fiber.App, mailstore.Account, 
 	app.Post("/api/outbox/:id/retry", h.HandleRetryOutgoing)
 	app.Delete("/api/outbox/:id", h.HandleDeleteOutgoing)
 	app.Get("/api/outbox/:id/attachments/:part", h.HandleOutgoingAttachment)
+	app.Get("/api/attachment/:id", h.HandleAttachment)
+	app.Get("/api/attachments", h.HandleLocalAttachmentsJSON)
+	app.Get("/api/mail/messages", h.HandleLocalFolderMessagesJSON)
+	app.Get("/api/mail/messages/:uid", h.HandleLocalFolderMessageJSON)
 	app.Get("/api/conversations", h.HandleConversationListJSON)
 	app.Get("/api/conversations/:id", h.HandleConversationViewJSON)
 	return h, app, account, other
@@ -166,7 +173,6 @@ func TestOutboxServerAcknowledgesThenFailsAndRetriesSameMIME(t *testing.T) {
 	ctx := context.Background()
 	sender := &fakeOutboxSender{result: errors.New("TLS handshake failed: EOF")}
 	h.outboxSMTP = func(mailstore.Account) (outboxSender, error) { return sender, nil }
-	h.outboxSaveSent = func(mailstore.Account, mailstore.OutgoingMessage) error { return errors.New("IMAP unavailable") }
 	id := submitOutbox(t, app, "/api/compose", map[string]string{"request_id": "same-upload"}, true)
 	if sender.calls != 0 {
 		t.Fatal("SMTP ran before durable acknowledgement")
@@ -219,10 +225,119 @@ func TestOutboxServerAcknowledgesThenFailsAndRetriesSameMIME(t *testing.T) {
 	}
 	h.deliverOutgoing(claimed)
 	record, _ = h.mailDB.GetOutgoing(ctx, account.ID, id)
-	if record.Status != "sent" || sender.calls != 2 || !bytes.Equal(sender.raw, raw) || sender.recipients[1] != "hidden@example.com" {
-		t.Fatalf("retry changed payload or IMAP failure made it retryable: %+v", record)
+	if record.Status != "sent" || record.HasPayload || sender.calls != 2 || !bytes.Equal(sender.raw, raw) || sender.recipients[1] != "hidden@example.com" {
+		t.Fatalf("retry changed the submitted payload or retained the sent MIME: %+v", record)
 	}
 	assertOutboxConversation(t, app, "answered", "sent", 2)
+}
+
+func TestSentHistoryUsesLocalAttachmentsAndRecoversFromArchiveFailure(t *testing.T) {
+	h, app, account, _ := outboxTestApp(t)
+	ctx := context.Background()
+	if err := h.mailDB.PruneFolders(ctx, account.ID, []string{"INBOX"}); err != nil {
+		t.Fatal(err)
+	}
+	h.outboxSMTP = func(mailstore.Account) (outboxSender, error) { return &fakeOutboxSender{}, nil }
+	id := submitOutbox(t, app, "/api/compose", map[string]string{"request_id": "local-history"}, true)
+	claimed, err := h.mailDB.ClaimOutgoing(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate storage being temporarily unavailable at SMTP acceptance.
+	root := h.mailDB.Path() + ".attachments"
+	if err := os.WriteFile(root, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.deliverOutgoing(claimed)
+	record, err := h.mailDB.GetOutgoing(ctx, account.ID, id)
+	if err != nil || record.Status != "sent" || !bytes.Equal(record.RawMIME, claimed.RawMIME) {
+		t.Fatalf("archive failure must preserve the accepted email and MIME: %v, %s", err, record.Status)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.StartOutbox(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.StopOutbox)
+	var archived mailstore.OutgoingMessage
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		archived, err = h.mailDB.GetOutgoing(ctx, account.ID, id)
+		if err != nil || !archived.HasPayload || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	h.StopOutbox()
+	if err != nil || archived.HasPayload || !archived.Message.Date.Equal(record.Message.Date) {
+		t.Fatalf("sent MIME was not released or send time changed: %+v, %v", archived, err)
+	}
+
+	get := func(path string, outsider bool) *http.Response {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if outsider {
+			req.Header.Set("X-Test-Outsider", "true")
+		}
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+	var shell ConversationListJSON
+	shellResponse := get("/api/conversations", false)
+	if err := json.NewDecoder(shellResponse.Body).Decode(&shell); err != nil {
+		t.Fatal(err)
+	}
+	hasSent := false
+	for _, folder := range shell.Folders {
+		hasSent = hasSent || folder.Name == "Sent"
+	}
+	if !hasSent {
+		t.Fatal("no local Sent navigation when IMAP does not have a Sent folder")
+	}
+	listResponse := get("/api/mail/messages?folder=Sent", false)
+	var page LocalFolderMessagesJSON
+	if err := json.NewDecoder(listResponse.Body).Decode(&page); err != nil || len(page.Messages) != 1 || page.Messages[0].ID != id || !page.Messages[0].HasAttachments {
+		t.Fatalf("sent folder: status %d, page %+v, error %v", listResponse.StatusCode, page, err)
+	}
+	var detail FolderMessageDetailJSON
+	detailResponse := get("/api/mail/messages/"+id+"?folder=Sent", false)
+	if err := json.NewDecoder(detailResponse.Body).Decode(&detail); err != nil || detail.Body != "reply" || len(detail.Attachments) != 1 || !strings.Contains(detail.HTML, "/api/outbox/"+id+"/attachments/0") {
+		t.Fatalf("sent detail lost body, PDF/file or inline URL: status %d, detail %+v, error %v", detailResponse.StatusCode, detail, err)
+	}
+	var library AttachmentsJSON
+	libraryResponse := get("/api/attachments?q=data.bin", false)
+	if err := json.NewDecoder(libraryResponse.Body).Decode(&library); err != nil || library.Total != 1 || len(library.Attachments) != 1 || library.Attachments[0].MessageID != id {
+		t.Fatalf("attachment library: status %d, page %+v, error %v", libraryResponse.StatusCode, library, err)
+	}
+	files, err := outgoingAttachments(claimed.RawMIME)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, file := range files {
+		path := "/api/attachment/" + id + "." + strconv.Itoa(index)
+		res := get(path, false)
+		data, err := io.ReadAll(res.Body)
+		if err != nil || res.StatusCode != 200 || !bytes.Equal(data, file.Content) {
+			t.Fatalf("attachment %d: status %d, bytes %q, error %v", index, res.StatusCode, data, err)
+		}
+		if res := get(path, true); res.StatusCode != 404 {
+			t.Fatalf("another account could access the attachment: %d", res.StatusCode)
+		}
+	}
+	if err := h.mailDB.DeleteOutgoing(ctx, account.ID, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.mailDB.CollectOutgoingAttachments(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted message left attachment files: %v", err)
+	}
 }
 
 func assertOutboxConversation(t *testing.T, app *fiber.App, status, sendStatus string, count int) {
@@ -254,7 +369,7 @@ func assertOutboxConversation(t *testing.T, app *fiber.App, status, sendStatus s
 	for _, message := range detail.Conversation.Messages {
 		if message.Folder == "Outbox" {
 			found = true
-			if message.SendStatus != sendStatus || message.SendRetryable == nil || !*message.SendRetryable {
+			if message.SendStatus != sendStatus || message.SendRetryable == nil || *message.SendRetryable != (sendStatus != "sent") {
 				t.Fatalf("bubble state: %+v", message)
 			}
 			if message.HTML != "" && bytes.Contains([]byte(message.HTML), []byte("cid:")) {

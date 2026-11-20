@@ -476,6 +476,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_list ON messages(account_id, folder_name, date_unix DESC, uid DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_subject ON messages(account_id, folder_name, subject)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_msgid ON messages(account_id, folder_name, message_id)`,
 		`CREATE TABLE IF NOT EXISTS outgoing_messages (
 			id TEXT PRIMARY KEY,
 			account_id TEXT NOT NULL,
@@ -497,6 +498,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_outgoing_account ON outgoing_messages(account_id, created_at)`,
 		// Keep the worker's oldest-queued lookup off the MIME payload table.
 		`CREATE INDEX IF NOT EXISTS idx_outgoing_queued ON outgoing_messages(created_at, id) WHERE status = 'queued'`,
+		`CREATE INDEX IF NOT EXISTS idx_outgoing_sent ON outgoing_messages(account_id, updated_at DESC, id DESC) WHERE status = 'sent'`,
+		`CREATE INDEX IF NOT EXISTS idx_outgoing_sent_message_id ON outgoing_messages(account_id, message_id) WHERE status = 'sent'`,
+		`CREATE INDEX IF NOT EXISTS idx_outgoing_sent_mime ON outgoing_messages(id) WHERE status = 'sent' AND length(raw_mime) > 0`,
+		`CREATE TABLE IF NOT EXISTS outgoing_attachment_gc (
+			id TEXT PRIMARY KEY
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS outgoing_attachment_gc_delete AFTER DELETE ON outgoing_messages
+			WHEN old.status = 'sent' BEGIN
+				INSERT OR IGNORE INTO outgoing_attachment_gc(id) VALUES(old.id);
+			END`,
 		`CREATE TABLE IF NOT EXISTS pending_flag_updates (
 			account_id TEXT NOT NULL,
 			folder_name TEXT NOT NULL,
@@ -850,6 +861,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.migrateLegacyAIModelProviders(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateConversationIndex(ctx); err != nil {
 		return err
 	}
 	return s.migrateMessageSearch(ctx)
@@ -1612,6 +1626,18 @@ func (s *Store) UpsertFolder(ctx context.Context, folder Folder) error {
 			unread_count=excluded.unread_count, message_count=excluded.message_count`,
 		folder.AccountID, folder.Name, folder.Delimiter, marshalJSON(folder.Attributes, "[]"), folder.UnreadCount,
 		folder.MessageCount, boolInt(folder.SyncComplete), unixOrZero(folder.LastSyncAt), folder.LastError)
+	return err
+}
+
+// upsertFolderMetadata records an IMAP LIST entry while preserving the local
+// counts used to detect remote deletions during incremental sync.
+func (s *Store) upsertFolderMetadata(ctx context.Context, folder Folder) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO folders(account_id, name, delimiter, attributes_json)
+		VALUES(?, ?, ?, ?)
+		ON CONFLICT(account_id, name) DO UPDATE SET
+			delimiter=excluded.delimiter, attributes_json=excluded.attributes_json`,
+		folder.AccountID, folder.Name, folder.Delimiter, marshalJSON(folder.Attributes, "[]"))
 	return err
 }
 

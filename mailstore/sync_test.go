@@ -13,6 +13,57 @@ import (
 	"github.com/emersion/go-imap"
 )
 
+type deletionSyncClient struct {
+	*api.Client
+}
+
+func (*deletionSyncClient) Select(string, bool) (*imap.MailboxStatus, error) {
+	return &imap.MailboxStatus{UidNext: 7, Messages: 1}, nil
+}
+
+func (*deletionSyncClient) FetchMessageFlagsPaged(string, uint32, uint32) ([]api.MessageFlagItem, error) {
+	return []api.MessageFlagItem{{UID: 6, Flags: []string{imap.SeenFlag}}}, nil
+}
+
+func (*deletionSyncClient) FetchMessageUIDs(string) ([]uint32, error) {
+	return []uint32{6}, nil
+}
+
+func TestSyncListedFoldersReconcilesRemoteDeletion(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	account := testAccount(t, s, "owner", "sales@example.com", true)
+	if err := s.UpsertFolder(ctx, Folder{AccountID: account.ID, Name: "INBOX"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMessages(ctx, account.ID, "INBOX", []models.Email{
+		{ID: "5"}, {ID: "6", Flags: []string{imap.SeenFlag}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateFolderStats(ctx, account.ID, "INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkFolderSync(ctx, account.ID, "INBOX", true, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewSyncManager(s, "", config.MailSyncConfig{})
+	if err := m.syncListedFolders(ctx, &deletionSyncClient{}, account.ID, []*api.MailboxInfo{{Name: "INBOX", Delimiter: "/"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetMessage(ctx, account.ID, "INBOX", "5"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted message still in mirror: GetMessage error = %v", err)
+	}
+	if _, err := s.GetMessage(ctx, account.ID, "INBOX", "6"); err != nil {
+		t.Fatalf("read remaining message: %v", err)
+	}
+	folder, err := s.GetFolder(ctx, account.ID, "INBOX")
+	if err != nil || folder.MessageCount != 1 || folder.UnreadCount != 0 || folder.Delimiter != "/" {
+		t.Fatalf("folder stats after pruning: %+v, err = %v", folder, err)
+	}
+}
+
 func TestNeedsInitialFolderSyncUntilBaselineIsEstablished(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

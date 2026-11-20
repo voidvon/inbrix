@@ -65,23 +65,50 @@ func (s *Store) ListAttachments(ctx context.Context, accountID string, options A
 	// Some clients label embedded CID images as regular attachments. Treat the
 	// HTML body as authoritative so stale or BODYSTRUCTURE-only metadata cannot
 	// surface signatures and other in-message resources in attachment search.
-	where := ` WHERE a.account_id = ? AND a.is_inline = 0
-		AND (trim(a.content_id) = '' OR instr(lower(m.html), 'cid:' || lower(trim(trim(a.content_id), '<>'))) = 0)`
+	where := ` WHERE a.is_inline = 0
+		AND (trim(a.content_id) = '' OR instr(lower(a.html), 'cid:' || lower(trim(trim(a.content_id), '<>'))) = 0)`
 	args := []any{accountID}
 	if query := strings.ToLower(strings.TrimSpace(options.Query)); query != "" {
-		where += ` AND (lower(a.filename) LIKE ? ESCAPE '\' OR lower(m.subject) LIKE ? ESCAPE '\' OR lower(m.from_addr) LIKE ? ESCAPE '\' OR lower(m.from_name) LIKE ? ESCAPE '\')`
+		where += ` AND (lower(a.filename) LIKE ? ESCAPE '\' OR lower(a.subject) LIKE ? ESCAPE '\' OR lower(a.from_addr) LIKE ? ESCAPE '\' OR lower(a.from_name) LIKE ? ESCAPE '\')`
 		pattern := "%" + escapeAttachmentLike(query) + "%"
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	kindClause, kindArgs := attachmentKindClause(options.Kind)
 	where += kindClause
 	args = append(args, kindArgs...)
-	join := ` FROM message_attachments a JOIN messages m ON m.account_id = a.account_id AND m.folder_name = a.folder_name AND m.uid = a.uid`
+	source := `WITH attachments AS (
+		SELECT a.account_id, a.folder_name, CAST(a.uid AS TEXT) AS uid, a.uid AS sort_uid, a.attachment_id, a.part_id,
+			a.filename, a.content_type, a.size_bytes, a.is_inline, a.content_id, m.date_unix, m.from_addr, m.from_name, m.subject, m.html
+		FROM message_attachments a JOIN messages m ON m.account_id = a.account_id AND m.folder_name = a.folder_name AND m.uid = a.uid
+		WHERE a.account_id = ?1 AND a.is_inline = 0 AND NOT EXISTS (
+			SELECT 1 FROM outgoing_messages o WHERE o.account_id = ?1 AND o.status = 'sent'
+			AND o.message_id IN (m.message_id, '<' || substr(m.message_id, 19))
+			AND json_array_length(o.message_json, '$.attachments') > 0 AND ` + outgoingMirrorMatch + `
+			AND EXISTS (SELECT 1 FROM folders f WHERE f.account_id = m.account_id AND f.name = m.folder_name AND (
+				lower(f.name) IN ('sent', 'sent items', 'sent mail', 'sent messages')
+				OR lower(f.name) LIKE '%/sent' OR lower(f.name) LIKE '%/sent messages'
+				OR EXISTS (SELECT 1 FROM json_each(f.attributes_json) x WHERE lower(trim(x.value)) = '\sent'))))
+		UNION ALL
+		SELECT o.account_id, 'Sent', o.id, 0, o.id || '.' || part.key, CAST(part.key AS TEXT),
+			COALESCE(json_extract(part.value, '$.filename'), ''),
+			COALESCE(json_extract(part.value, '$.contentType'), ''),
+			COALESCE(json_extract(part.value, '$.size'), 0),
+			COALESCE(json_extract(part.value, '$.isInline'), 0),
+			COALESCE(json_extract(part.value, '$.contentId'), ''),
+			o.updated_at / 1000,
+			COALESCE(json_extract(o.message_json, '$.from'), ''),
+			COALESCE(json_extract(o.message_json, '$.fromName'), ''),
+			COALESCE(json_extract(o.message_json, '$.subject'), ''),
+			COALESCE(json_extract(o.message_json, '$.html'), '')
+		FROM outgoing_messages o JOIN json_each(o.message_json, '$.attachments') part
+		WHERE o.account_id = ?1 AND o.status = 'sent'
+	)`
+	join := ` FROM attachments a`
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+join+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, source+` SELECT COUNT(*)`+join+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("mailstore: count attachments: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.account_id, a.folder_name, a.uid, a.attachment_id, a.part_id, a.filename, a.content_type, a.size_bytes, a.is_inline, a.content_id, m.date_unix, m.from_addr, m.from_name, m.subject`+join+where+` ORDER BY m.date_unix DESC, m.uid DESC, a.filename LIMIT ? OFFSET ?`, append(args, options.Limit, options.Offset)...)
+	rows, err := s.db.QueryContext(ctx, source+` SELECT a.account_id, a.folder_name, a.uid, a.attachment_id, a.part_id, a.filename, a.content_type, a.size_bytes, a.is_inline, a.content_id, a.date_unix, a.from_addr, a.from_name, a.subject`+join+where+` ORDER BY a.date_unix DESC, a.sort_uid DESC, a.uid DESC, a.filename, a.part_id LIMIT ? OFFSET ?`, append(args, options.Limit, options.Offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("mailstore: list attachments: %w", err)
 	}
@@ -89,12 +116,11 @@ func (s *Store) ListAttachments(ctx context.Context, accountID string, options A
 	records := make([]AttachmentRecord, 0)
 	for rows.Next() {
 		var record AttachmentRecord
-		var uid, dateUnix int64
+		var dateUnix int64
 		var inline int
-		if err := rows.Scan(&record.AccountID, &record.FolderName, &uid, &record.AttachmentID, &record.PartID, &record.Filename, &record.ContentType, &record.Size, &inline, &record.ContentID, &dateUnix, &record.From, &record.FromName, &record.Subject); err != nil {
+		if err := rows.Scan(&record.AccountID, &record.FolderName, &record.UID, &record.AttachmentID, &record.PartID, &record.Filename, &record.ContentType, &record.Size, &inline, &record.ContentID, &dateUnix, &record.From, &record.FromName, &record.Subject); err != nil {
 			return nil, 0, fmt.Errorf("mailstore: scan attachment: %w", err)
 		}
-		record.UID = fmt.Sprintf("%d", uid)
 		record.IsInline = intBool(inline)
 		record.MessageDate = timeFromUnix(dateUnix)
 		records = append(records, record)

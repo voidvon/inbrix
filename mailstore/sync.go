@@ -319,6 +319,10 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 		_ = m.store.SetAccountError(ctx, accountID, "list folders: "+err.Error())
 		return err
 	}
+	return m.syncListedFolders(ctx, client, accountID, folders)
+}
+
+func (m *SyncManager) syncListedFolders(ctx context.Context, client folderSyncClient, accountID string, folders []*api.MailboxInfo) error {
 	var folderErrors int
 	seenFolders := make([]string, 0, len(folders))
 	for _, remote := range folders {
@@ -332,7 +336,7 @@ func (m *SyncManager) syncAccount(ctx context.Context, accountID string) error {
 			Delimiter:  remote.Delimiter,
 			Attributes: append([]string(nil), remote.Attributes...),
 		}
-		if err := m.store.UpsertFolder(ctx, folder); err != nil {
+		if err := m.store.upsertFolderMetadata(ctx, folder); err != nil {
 			return err
 		}
 		if err := m.syncFolder(ctx, client, accountID, remote.Name); err != nil {
@@ -531,7 +535,7 @@ func (m *SyncManager) syncFolder(ctx context.Context, client folderSyncClient, a
 	// A capped initial scan is intentionally marked incomplete, but it still
 	// establishes a valid high-water mark. A transient error must preserve that
 	// baseline: a full history scan would store new mail without its tasks.
-	// UpsertFolder creates the state before this method runs; a zero sync
+	// Folder discovery creates the state before this method runs; a zero sync
 	// timestamp means the initial mailbox baseline is not established yet.
 	full := needsInitialFolderSync(state, stateErr)
 	if !full {

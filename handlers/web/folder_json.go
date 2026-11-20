@@ -218,6 +218,30 @@ func (h *EmailHandler) HandleLocalFoldersJSON(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"folders": mirrorMailboxInfos(folders)})
 }
 
+func firstSentMailbox(folders []mailstore.Folder) (mailstore.Folder, bool) {
+	for _, folder := range folders {
+		if isSentMailbox(folder) {
+			return folder, true
+		}
+	}
+	return mailstore.Folder{}, false
+}
+
+func (h *EmailHandler) localFolder(c *fiber.Ctx, accountID, name string) (mailstore.Folder, error) {
+	folder, err := h.mailDB.GetFolder(c.UserContext(), accountID, name)
+	if !errors.Is(err, mailstore.ErrNotFound) || !strings.EqualFold(name, "Sent") {
+		return folder, err
+	}
+	folders, err := h.mailDB.ListFolders(c.UserContext(), accountID)
+	if err != nil {
+		return mailstore.Folder{}, err
+	}
+	if folder, ok := firstSentMailbox(folders); ok {
+		return folder, nil
+	}
+	return mailstore.Folder{Name: "Sent", SyncComplete: true}, nil
+}
+
 // HandleLocalFolderMessagesJSON lists one synchronized folder entirely from
 // SQLite. IMAP remains the source of truth, but is only contacted by the
 // background synchronizer and mutation handlers.
@@ -233,7 +257,7 @@ func (h *EmailHandler) HandleLocalFolderMessagesJSON(c *fiber.Ctx) error {
 	if folder == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Folder is required"})
 	}
-	state, err := h.mailDB.GetSyncState(c.UserContext(), account.ID, folder)
+	state, err := h.localFolder(c, account.ID, folder)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Folder not found in local mirror"})
 	}
@@ -245,7 +269,11 @@ func (h *EmailHandler) HandleLocalFolderMessagesJSON(c *fiber.Ctx) error {
 		limit = maxLocalFolderPageSize
 	}
 	offset := localFolderPageInt(c, "offset", 0)
-	emails, err := h.mailDB.ListMessages(c.UserContext(), account.ID, folder, limit, offset)
+	list := h.mailDB.ListMessages
+	if isSentMailbox(state) {
+		list = h.mailDB.ListSentMessages
+	}
+	emails, err := list(c.UserContext(), account.ID, state.Name, limit, offset)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read local messages"})
 	}
@@ -288,12 +316,26 @@ func (h *EmailHandler) HandleLocalFolderMessageJSON(c *fiber.Ctx) error {
 	if folder == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Folder is required"})
 	}
-	if _, err := h.mailDB.GetSyncState(c.UserContext(), account.ID, folder); errors.Is(err, mailstore.ErrNotFound) {
+	state, err := h.localFolder(c, account.ID, folder)
+	if errors.Is(err, mailstore.ErrNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Folder not found in local mirror"})
 	} else if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read folder sync state"})
 	}
-	email, err := h.mailDB.GetMessage(c.UserContext(), account.ID, folder, strings.TrimSpace(c.Params("uid")))
+	folder = state.Name
+	uid := strings.TrimSpace(c.Params("uid"))
+	if isSentMailbox(state) && strings.HasPrefix(uid, "outbox_") {
+		record, err := h.mailDB.GetOutgoingWithoutMIME(c.UserContext(), account.ID, uid)
+		if errors.Is(err, mailstore.ErrNotFound) || (err == nil && record.Status != "sent") {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not read local message"})
+		}
+		record.Message.Folder = folder
+		return c.JSON(FolderMessageDetailJSON{Email: folderMessageDetailJSON(record.Message, account, CurrentLocale(c))})
+	}
+	email, err := h.mailDB.GetMessage(c.UserContext(), account.ID, folder, uid)
 	if errors.Is(err, mailstore.ErrNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Message not found"})
 	}

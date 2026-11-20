@@ -21,7 +21,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { ApiError, getCapabilities, signOut, switchAccount } from "../../lib/api";
-import { cn, isSentMailbox } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 import { APP_TITLE_NAME, mailDocumentTitle } from "../../lib/document-title";
 import { prefersDarkMode } from "../../lib/theme";
 import { folderKind, folderLabel } from "../../lib/mailbox";
@@ -163,7 +163,7 @@ export function Sidebar({
   onConversationFilterChange: (showAll: boolean, tag: string) => void;
 }) {
   const [foldersOpen, setFoldersOpen] = useState(true);
-  const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox" && !isSentMailbox(folder));
+  const visibleFolders = folders.filter((folder) => folder.name.toLowerCase() !== "inbox");
   const navClass = "w-full justify-start gap-2.5 px-3 text-muted-foreground aria-current:bg-sidebar-accent aria-current:text-sidebar-accent-foreground";
   const inboxActive = !currentFolder && currentView === "mail";
   const selectFilter = (event: MouseEvent<HTMLAnchorElement>, showAll: boolean, tag = "") => {
